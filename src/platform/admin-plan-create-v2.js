@@ -7,7 +7,6 @@ const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const reportingCurrency = require('./reporting-currency');
 const planPricing = require('../payments/plan-pricing');
-const planPolicy = require('../entitlements/plan-lifecycle-policy');
 const { esc, layout } = require('./admin-html');
 
 const BILLING = { trial: { label: 'Trial', days: 1 }, month: { label: 'Monthly', days: 30 }, '6_months': { label: '6 months', days: 183 }, year: { label: 'Yearly', days: 365 }, custom: { label: 'Custom duration', days: null } };
@@ -80,12 +79,9 @@ function parse(body = {}, forcedCurrency = null) {
     audio: jellyfin && b(body.allowAudioTranscoding), remux: jellyfin && b(body.allowRemuxing), live: jellyfin && b(body.allowLiveTv),
     liveManagement: jellyfin && b(body.allowLiveTvManagement), remote: jellyfin && b(body.allowRemoteAccess), fourk: jellyfin && b(body.allow4k),
     subtitles: jellyfin && b(body.allowSubtitleEditing),
-    libraryMode: jellyfin ? libraryMode : 'all', libraries: jellyfin ? libraries : []
+    libraryMode: jellyfin ? libraryMode : 'all', libraries: jellyfin ? libraries : [],
+    inactivityPolicy: {}
   };
-  plan.inactivityPolicy = planPolicy.validateForPlan(
-    { price_minor: priceMinor, billing_interval: billing, service_type: serviceType },
-    { enabled: b(body.inactivityEnabled), dryRun: b(body.inactivityDryRun), noPlaybackDays: body.noPlaybackDays, minimumPlaybackMinutes: body.minimumPlaybackMinutes, playbackWindowDays: body.playbackWindowDays, minimumObservationHours: body.minimumObservationHours }
-  );
   return plan;
 }
 
@@ -133,15 +129,12 @@ function values(req, input = {}, currency = 'GBP') {
     stremioIpReplacementCooldownMinutes: input.stremioIpReplacementCooldownMinutes ?? '1440',
     serverClass: planKind === 'free_jellyfin' ? 'free' : (input.serverClass || 'premium'),
     libraryAccessMode: input.libraryAccessMode || 'all',
-    playbackWindowDays: input.playbackWindowDays ?? 7,
-    minimumObservationHours: input.minimumObservationHours ?? 24,
     visible: submitted ? b(input.visible) : true,
     active: submitted ? b(input.active) : true,
     allowAudioTranscoding: submitted ? b(input.allowAudioTranscoding) : true,
     allowRemoteAccess: submitted ? b(input.allowRemoteAccess) : true,
     allow4k: submitted ? b(input.allow4k) : true,
-    allowSubtitleEditing: submitted ? b(input.allowSubtitleEditing) : true,
-    inactivityDryRun: submitted ? b(input.inactivityDryRun) : true
+    allowSubtitleEditing: submitted ? b(input.allowSubtitleEditing) : true
   };
 }
 
@@ -178,7 +171,7 @@ function form(req, input = {}, error = '', currency = 'GBP') {
 
       <section class="section adaptivePlanCard" data-jellyfin-libraries ${jellyfin ? '' : 'hidden'}><div class="sectionHead"><div><span class="uiEyebrow">Jellyfin</span><h3>Libraries</h3></div></div><div class="formGroup"><label>Library access</label><select class="input" name="libraryAccessMode"><option value="all" ${selected('all', v.libraryAccessMode)}>All libraries</option><option value="include" ${selected('include', v.libraryAccessMode)}>Only named libraries</option><option value="exclude" ${selected('exclude', v.libraryAccessMode)}>All except named libraries</option></select></div><div class="formGroup"><label>Library names</label><textarea class="input" name="libraryNames" rows="4" placeholder="Movies\nTV\n4K Movies">${esc(v.libraryNames || '')}</textarea><div class="inlineHelp">One per line or comma-separated. Live-discovered libraries can be refined after creation.</div></div></section>
 
-      <section class="section adaptivePlanCard" data-free-lifecycle ${freeJellyfin ? '' : 'hidden'}><div class="sectionHead"><div><span class="uiEyebrow">Free Jellyfin</span><h3>Usage rule <span class="muted">optional</span></h3></div></div><div class="operatorCallout compactCallout"><strong>Portal accounts are preserved.</strong><span> Matching this rule disables Jellyfin access only.</span></div><div class="formGrid adaptiveTwo"><div class="formGroup"><label>No playback for</label><div class="inputUnit"><input class="input" type="number" name="noPlaybackDays" min="1" max="3650" value="${esc(v.noPlaybackDays || '')}" placeholder="7"><span>days</span></div></div><div class="formGroup"><label>Minimum playback</label><div class="inputUnit"><input class="input" type="number" name="minimumPlaybackMinutes" min="1" max="1000000" value="${esc(v.minimumPlaybackMinutes || '')}" placeholder="30"><span>minutes</span></div></div><div class="formGroup"><label>Playback window</label><div class="inputUnit"><input class="input" type="number" name="playbackWindowDays" min="1" max="365" value="${esc(v.playbackWindowDays)}"><span>days</span></div></div><div class="formGroup"><label>Minimum observation</label><div class="inputUnit"><input class="input" type="number" name="minimumObservationHours" min="1" max="2160" value="${esc(v.minimumObservationHours)}"><span>hours</span></div></div></div><div class="toggleGrid compactToggles">${toggle('inactivityEnabled', 'Enable usage rule', b(v.inactivityEnabled))}${toggle('inactivityDryRun', 'Dry run only', b(v.inactivityDryRun), 'Recommended until the evidence preview looks right.')}</div></section>
+      ${freeJellyfin ? '<div class="operatorCallout statusInfo adaptivePlanSpan"><strong>Free Server lifecycle is automatic.</strong><span> New Free Server plans inherit the global inactivity policy. Jellyfin users are removed when the inactivity rule is met; there is no disabled-user state.</span></div>' : ''}
     </div>
     <div class="adaptivePlanSaveBar"><div><strong data-plan-save-summary>${freeJellyfin ? 'Free Jellyfin plan' : paidJellyfin ? 'Paid Jellyfin plan' : 'Stremio plan'}</strong><span class="muted"> · availability starts closed when slots are 0</span></div><div class="buttonRow"><a class="button secondary" href="/admin/plans">Cancel</a><button class="button" type="submit">Create plan</button></div></div>
   </form><script src="/js/admin-plan-create-v2.js" defer></script>`;
