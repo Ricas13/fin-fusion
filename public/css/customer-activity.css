@@ -8,3 +8,39 @@
 @media(max-width:900px){.activityPageHeader{margin-top:12px}.activityRangeTabs{overflow-x:auto;max-width:70vw}.activityMiddleGrid{grid-template-columns:1fr}.activityHeatCard{grid-column:auto}.activityRecentRow{grid-template-columns:32px minmax(0,1fr) 70px 90px}.customerNowPlaying:not([hidden])+.activityPageHeader{margin-top:12px}}
 @media(max-width:700px){.activityPageHeader{flex-direction:column}.activityPeriodSelect{width:100%}.activityKpis{grid-template-columns:1fr 1fr}.activityKpi{padding:11px}.activityKpiIcon{flex-basis:38px;width:38px;height:38px}.activityKpiIcon svg{width:19px;height:19px}.activityKpi strong{font-size:17px}.activityCardHeading{align-items:flex-start}.activityRangeTabs{max-width:100%;width:100%;margin-top:6px}.activityWatchCard .activityCardHeading{display:block}.activityGenresBody{grid-template-columns:120px minmax(0,1fr)}.activityDonut{width:100px;height:100px}.activityDonut::after{width:58px;height:58px}.activityRecentRow{grid-template-columns:32px minmax(0,1fr) 64px}.activityRecentRow .activityProgress{grid-column:2/-1}.activityDeviceRow{grid-template-columns:20px minmax(0,1fr) 72px 25px}.activityInsightGrid{grid-template-columns:1fr}.activityInsightGrid article{padding:10px 0!important;border-left:0!important}.activityInsightGrid article+article{border-top:1px solid #263442}.usageGrid{grid-template-columns:1fr 1fr}}
 @media(max-width:450px){.activityKpis{grid-template-columns:1fr}.activityHeatRow>div{gap:1px}.activityHeatRow i{border-radius:1px}.activityInsightsCard{padding:12px}.usageGrid{grid-template-columns:1fr}}
+
+/* Readability floor: increase only compact supporting text. Layout geometry,
+   chart dimensions, card sizes and primary type remain unchanged. */
+.activityKpi span,
+.activityCardHeading>a,
+.activityMutedLink,
+.activityRecentInfo strong,
+.activityMiniEmpty,
+.activityPeriodSelect select{
+  font-size:11px;
+  line-height:1.35;
+}
+.activityKpi small,
+.activityRangeTabs a,
+.activityYAxis,
+.activityXAxis,
+.activityDonut span,
+.activityGenreLegend>div:not(.activityGenreEmpty),
+.activityGenreLegend strong,
+.activityGenreEmpty,
+.activityPoster,
+.activityRecentInfo span,
+.activityRecentRow time,
+.activityProgress span,
+.activityDeviceRow strong,
+.activityDeviceRow span:last-child,
+.activityHeatRow>span,
+.activityHeatAxis,
+.activityHeatCard>small,
+.activityInsightGrid strong,
+.activityInsightGrid p,
+.activityDetailsPanel .sectionHead p,
+.activityRecentType{
+  font-size:10px;
+  line-height:1.35;
+}
