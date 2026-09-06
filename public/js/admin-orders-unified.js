@@ -51,22 +51,131 @@
     if (control && !control.getAttribute('aria-label')) control.setAttribute('aria-label', label);
   }
 
-  const rangeForm = document.querySelector('[data-orders-range-form]');
-  const range = rangeForm?.querySelector('[data-orders-range]');
-  const custom = rangeForm?.querySelector('[data-orders-custom]');
-  if (range && rangeForm) {
-    range.addEventListener('change', () => {
-      const isCustom = range.value === 'custom';
-      if (custom) custom.hidden = !isCustom;
-      if (!isCustom) {
-        rangeForm.querySelectorAll('input[name="from"],input[name="to"]').forEach(input => { input.disabled = true; });
-        rangeForm.submit();
-      } else {
-        rangeForm.querySelectorAll('input[name="from"],input[name="to"]').forEach(input => { input.disabled = false; });
-        custom?.querySelector('input[name="from"]')?.focus();
+  function todayIso() {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  }
+
+  function purchaseFilterParams() {
+    const params = new URLSearchParams();
+    const filterForm = document.querySelector('.ordersPurchaseFilters');
+    if (!filterForm) return params;
+    for (const name of ['orderQ', 'orderStatus', 'orderProvider', 'orderPlan', 'orderFrom', 'orderTo']) {
+      const control = filterForm.elements.namedItem(name);
+      const value = String(control?.value || '').trim();
+      if (value) params.set(name, value);
+    }
+    return params;
+  }
+
+  function analyticsHref(key, from = '', to = '') {
+    const params = purchaseFilterParams();
+    params.set('range', key);
+    params.delete('from');
+    params.delete('to');
+    params.delete('page');
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return `${location.pathname}?${params.toString()}`;
+  }
+
+  function appendDateControl(form, labelText, name, value) {
+    const label = document.createElement('label');
+    label.append(document.createTextNode(labelText));
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.name = name;
+    input.value = value;
+    input.required = true;
+    label.appendChild(input);
+    form.appendChild(label);
+  }
+
+  function enhanceRangeControl() {
+    const legacyForm = document.querySelector('[data-orders-range-form]');
+    if (!legacyForm) return;
+    const rangeSelect = legacyForm.querySelector('[data-orders-range]');
+    const fromInput = legacyForm.querySelector('input[name="from"]');
+    const toInput = legacyForm.querySelector('input[name="to"]');
+    const rangeLabel = legacyForm.querySelector('.ordersRangeSelect small')?.textContent?.trim() || 'Selected period';
+    const current = String(rangeSelect?.value || '30d');
+    const from = String(fromInput?.value || '');
+    const to = String(toInput?.value || '');
+    const today = todayIso();
+    const todayActive = current === 'custom' && from === today && to === today;
+    const presets = [
+      ['today', 'Today'],
+      ['7d', '7 days'],
+      ['30d', '30 days'],
+      ['90d', '90 days'],
+      ['180d', '6 months'],
+      ['365d', '12 months'],
+      ['ytd', 'YTD'],
+      ['all', 'All time']
+    ];
+
+    const section = document.createElement('section');
+    section.className = 'dashboardRangeBar ordersDashboardRangeBar';
+    section.dataset.ordersAnalyticsRange = 'true';
+
+    const meta = document.createElement('div');
+    meta.className = 'rangeMeta';
+    const strong = document.createElement('strong');
+    strong.textContent = rangeLabel;
+    const description = document.createElement('span');
+    description.textContent = 'Every historical KPI and chart below uses this same period. Payment alerts, upcoming renewals and Recent Purchases remain independent.';
+    meta.append(strong, description);
+
+    const controls = document.createElement('div');
+    controls.className = 'rangeControls';
+    const presetWrap = document.createElement('div');
+    presetWrap.className = 'rangePresets';
+    for (const [key, label] of presets) {
+      const link = document.createElement('a');
+      const isToday = key === 'today';
+      const isActive = isToday ? todayActive : !todayActive && current === key;
+      link.className = `rangePreset ${isActive ? 'active' : ''}`;
+      link.textContent = label;
+      link.href = isToday ? analyticsHref('custom', today, today) : analyticsHref(key);
+      presetWrap.appendChild(link);
+    }
+
+    const customForm = document.createElement('form');
+    customForm.className = 'rangeCustom';
+    customForm.method = 'get';
+    customForm.action = location.pathname;
+    const rangeInput = document.createElement('input');
+    rangeInput.type = 'hidden';
+    rangeInput.name = 'range';
+    rangeInput.value = 'custom';
+    customForm.appendChild(rangeInput);
+    appendDateControl(customForm, 'From', 'from', from);
+    appendDateControl(customForm, 'To', 'to', to);
+    const apply = document.createElement('button');
+    apply.className = 'button secondary';
+    apply.type = 'submit';
+    apply.textContent = 'Apply';
+    customForm.appendChild(apply);
+    customForm.addEventListener('submit', () => {
+      for (const [name, value] of purchaseFilterParams()) {
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = name;
+        hidden.value = value;
+        customForm.appendChild(hidden);
       }
     });
+
+    controls.append(presetWrap, customForm);
+    section.append(meta, controls);
+    const hero = legacyForm.closest('.ordersHeroLine');
+    if (hero) hero.insertAdjacentElement('afterend', section);
+    else legacyForm.insertAdjacentElement('afterend', section);
+    legacyForm.remove();
   }
+
+  enhanceRangeControl();
 
   document.querySelectorAll('.ordersPurchaseFilters select').forEach(select => {
     select.addEventListener('change', () => {
