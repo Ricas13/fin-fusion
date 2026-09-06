@@ -37,6 +37,55 @@ function operationError(server,method,url,timeoutMs,error){
     return wrapped;
 }
 
+function jellyfinUserMutationTarget(endpoint,method){
+    const verb=String(method||'GET').toUpperCase();
+    if(!['POST','PUT','PATCH','DELETE'].includes(verb))return null;
+    const match=String(endpoint||'').match(/^\/Users\/([^/?]+)(?:\/(Policy|Password))?(?:\?.*)?$/i);
+    if(!match)return null;
+    let userId;
+    try{userId=decodeURIComponent(match[1]);}catch{return null;}
+    if(!userId||/^New$/i.test(userId))return null;
+    return{userId,verb,suffix:String(match[2]||'').toLowerCase()};
+}
+
+async function assertJellyfinAdministratorProtected(server,endpoint,method,timeoutMs){
+    if(mediaProvider.normalizeType(server.media_server_type)!=='jellyfin')return;
+    const target=jellyfinUserMutationTarget(endpoint,method);
+    if(!target)return;
+    const apiPath=mediaProvider.apiPath('jellyfin',`/Users/${encodeURIComponent(target.userId)}`);
+    const url=new URL(apiPath,`${server.base_url}/`);
+    if(url.origin!==new URL(server.base_url).origin)throw new Error('Media-server API endpoint escaped the configured server origin.');
+    let response;
+    try{
+        response=await outbound.safeFetch(url,{
+            purpose:`Jellyfin administrator protection check on ${server.name}`,
+            method:'GET',
+            timeoutMs:Math.min(Number(timeoutMs||10000),5000),
+            headers:authHeaders(server.apiKey,{mediaServerType:'jellyfin'})
+        });
+    }catch(error){
+        const protectedError=operationError(server,'GET',url,Math.min(Number(timeoutMs||10000),5000),error);
+        protectedError.code='JELLYFIN_ADMIN_PROTECTION_CHECK_FAILED';
+        throw protectedError;
+    }
+    const text=await response.text();let parsed=null;if(text){try{parsed=JSON.parse(text)}catch{parsed=text}}
+    if(response.status===404&&target.verb==='DELETE')return;
+    if(!response.ok){
+        const error=new Error(`Jellyfin administrator protection check for ${target.userId} returned HTTP ${response.status}`);
+        error.code='JELLYFIN_ADMIN_PROTECTION_CHECK_FAILED';
+        error.status=response.status;
+        error.retryable=response.status===408||response.status===429||response.status>=500;
+        throw error;
+    }
+    if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)&&parsed.Policy?.IsAdministrator===true){
+        const error=new Error('Jellyfin administrator accounts are protected and cannot be modified or deleted by CAPTAiNFiN automation.');
+        error.code='JELLYFIN_ADMIN_PROTECTED';
+        error.retryable=false;
+        error.jellyfinUserId=target.userId;
+        throw error;
+    }
+}
+
 async function managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevicePolicy=false}={}){
     if(String(method||'GET').toUpperCase()==='POST'&&body&&typeof body==='object'&&!Array.isArray(body)&&/^\/Users\/[^/]+\/Policy(?:\?.*)?$/i.test(String(endpoint||''))&&body.IsDisabled===true){
         const error=new Error('Managed media users cannot be disabled. Remove the account when access ends.');
@@ -81,6 +130,7 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
 
     const server=await getServerSecret(serverId);
     if(!server||!server.enabled)throw new Error('Media server is unavailable or disabled');
+    await assertJellyfinAdministratorProtected(server,endpoint,method,timeoutMs);
     const policySafeBody=await managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevicePolicy});
     const apiPath=mediaProvider.apiPath(server.media_server_type,endpoint);
     const requestBody=mediaProvider.requestBody(server.media_server_type,endpoint,policySafeBody);
@@ -143,4 +193,4 @@ async function healthcheckServer(serverId){
         return{ok:false,latencyMs:Date.now()-started,error:err.message};
     }
 }
-module.exports={normalizeBaseUrl,authHeaders,listServers,getServerSecret,request,healthcheckServer,decryptJellyfinKey,operationError,managedDevicePolicyBody,mediaProvider};
+module.exports={normalizeBaseUrl,authHeaders,listServers,getServerSecret,request,healthcheckServer,decryptJellyfinKey,operationError,managedDevicePolicyBody,jellyfinUserMutationTarget,assertJellyfinAdministratorProtected,mediaProvider};
