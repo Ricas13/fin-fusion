@@ -22,6 +22,9 @@ assert(!cursors.includes('admin_operator_read_cursors'),'operator unread state m
 assert(cursors.includes("const NAV_PREFIX = 'operator.business.'"),'operator cursors must use a namespaced nav key');
 assert(cursors.includes("'payments'")&&cursors.includes('FROM payment_events'),'payment callback notifications must share the canonical per-admin read cursor');
 assert(cursors.includes('processing_error IS NOT NULL OR processed_at IS NULL'),'payment read watermark must match the callback problem predicate');
+for(const eventType of ['operation.new','operation.pending','operation.pending internal','operation.expired','operation.cancelled','operation.cancelled duplicate'])assert(cursors.includes(`'${eventType}'`),`routine Plisio lifecycle event ${eventType} must be excluded from payment alerts`);
+assert(cursors.includes("provider='plisio'")&&cursors.includes('ACTIONABLE_PAYMENT_EVENT_SQL'),'routine Plisio callback suppression must be centralized in the actionable payment-event predicate');
+assert(operator.includes('readCursors.ACTIONABLE_PAYMENT_EVENT_SQL'),'operator payment alert count must reuse the canonical actionable payment-event predicate');
 assert(cursors.includes('GREATEST(admin_nav_read_state.last_seen_at,EXCLUDED.last_seen_at)'),'read cursor must move forward only');
 assert(cursors.includes("MAX(COALESCE(last_customer_reply_at,created_at))"),'ticket read watermark must use latest customer activity');
 assert(operator.includes('snapshot(res.locals.operatorActorUserId)'),'unread snapshot must be administrator-specific');
