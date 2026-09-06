@@ -15,6 +15,9 @@ const reporting=read('src/platform/reporting-currency.js');
 const profit=read('src/platform/business-profitability.js');
 const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const growthCss=read('public/css/admin-dashboard-growth.css');
+const ordersClient=read('public/js/admin-orders-unified.js');
+const analyticsCss=read('public/css/admin-dashboard-analytics.css');
+const ordersPolishCss=read('public/css/admin-orders-visual-polish.css');
 
 assert(dashboard.includes("require('./admin-dashboard-main')"),'Dashboard must use the widget-registry-based renderer');
 assert(!dashboard.includes("require('./admin-dashboard-view-v2')"),'Dashboard must not depend on the retired dashboard renderer path');
@@ -47,6 +50,15 @@ assert(growthView.includes("sum(rows,'bucket_seconds')")&&growthView.includes('d
 assert(growthCss.includes('--growth-amber:rgb(')&&growthCss.includes('--growth-green:rgb(')&&growthCss.includes('--growth-purple:rgb('),'analytics charts must use a disciplined multi-colour data palette');
 assert(growthCss.includes('[data-dashboard-key="main"]>.analyticsCard.widgetCard{height:auto;min-height:300px'),'analytics cards must remain compact instead of inheriting the old full-height stretch regression');
 assert(growthCss.includes('@media(max-width:1180px)')&&growthCss.includes('grid-column:span 6')&&growthCss.includes('@media(max-width:820px)'),'3-column analytics cards must collapse to 2 and then 1 columns responsively');
+
+const ordersFoundationAt=ordersClient.indexOf('/css/admin-dashboard-analytics.css?v=');
+const ordersPolishAt=ordersClient.indexOf('/css/admin-orders-visual-polish.css?v=');
+assert(ordersFoundationAt>=0&&ordersPolishAt>ordersFoundationAt,'Orders must load the shared chart foundation before its page-specific visual polish');
+assert(ordersClient.includes("chartStyleRevision = '20260906-orders-charts'"),'Orders chart styles must use an explicit asset revision so repaired graphics are not hidden by stale CSS');
+assert(analyticsCss.includes('.chartGridLine{stroke:')&&analyticsCss.includes('.chartAxisText{fill:')&&analyticsCss.includes('.chartLine{fill:none;stroke:'),'Orders revenue chart must inherit visible grid, axis and line styling from the shared analytics foundation');
+assert(analyticsCss.includes('.chartDonutSlice{fill:none}')&&analyticsCss.includes('.chartDonutTotal{fill:'),'Orders donut charts must remain hollow styled rings instead of browser-default black SVG circles');
+assert(analyticsCss.includes('.barTrack{')&&analyticsCss.includes('.barFill{'),'Orders plan-performance bars must retain their shared track and fill styling');
+assert(ordersPolishCss.includes('.page-commerce-orders .ordersChartCard')&&ordersPolishCss.includes('.page-commerce-orders .ordersAnalyticsGrid'),'Orders-specific chart cards and analytics layout must retain their scoped visual-polish layer');
 
 assert(dashboardCss.includes('.profitHeroGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Dashboard summary must keep the compact three-column top-card rhythm');
 assert(profit.includes('revenue.netMinor-booked.totalMinor'),'Profit must remain net provider receipts minus booked expenses');
