@@ -12,7 +12,7 @@ function serviceType(detail){return String(detail?.primaryEntitlement?.service_t
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
 function liveSubscriptions(detail){return (detail.subscriptions||[]).filter(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()));}
 function activeSubscription(detail){return liveSubscriptions(detail)[0]||detail.subscriptions?.[0]||null;}
-function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
+function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[char]));}
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${escapeHtml(token)}">`;}
 function fmtDate(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 function initials(value){const parts=String(value||'U').trim().split(/\s+/).filter(Boolean);if(parts.length>1)return(parts[0][0]+parts[parts.length-1][0]).toUpperCase();return String(parts[0]||'U').slice(0,2).toUpperCase();}
@@ -103,8 +103,9 @@ async function body(detail,token,options={}){
   const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
   const rawActions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const actions=addPlanRevokeAction(rawActions,safe);
-  const main=removeLegacyPlanRevoke(await compact.render(safe,token,options));
-  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${main}`;
+  const main=await compact.render(safe,token,options);
+  const filteredMain=removeLegacyPlanRevoke(main);
+  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${filteredMain}`;
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,removeLegacyPlanRevoke,addPlanRevokeAction,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,mockHero};
