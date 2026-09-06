@@ -10,9 +10,11 @@ function csrfRequiredForAuthenticatedMutation(req,principal){
     const method=String(req.method||'GET').toUpperCase();
     if(SAFE_METHODS.has(method))return false;
     const requestPath=String(req.path||'');
-    // Impersonation has its own earlier-audited read-only mutation boundary.
-    // Do not pre-empt that policy here; its explicit exit route verifies CSRF.
-    if(req.session?.impersonation&&requestPath.startsWith('/account'))return false;
+    // Editable impersonation still carries the authenticated administrator's
+    // browser session, so every unsafe /account mutation must pass the same
+    // CSRF boundary before the later no-spend policy decides whether the action
+    // is financially allowed. Never rely on route-local CSRF alone here.
+    if(req.session?.impersonation&&requestPath.startsWith('/account'))return true;
     if(principal==='admin')return requestPath==='/admin'||requestPath.startsWith('/admin/');
     if(principal==='customer')return requestPath==='/account'||requestPath.startsWith('/account/');
     return false;
