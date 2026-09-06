@@ -12,7 +12,7 @@ const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
 const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
 const SERVICE_VALUES = ['jellyfin', 'stremio'];
-const ACCESS_VALUES = ['active', 'needs_access', 'attention', 'provisioning', 'expired', 'no_entitlement', 'portal_disabled'];
+const ACCESS_VALUES = ['active', 'needs_access', 'attention', 'provisioning', 'blocked', 'expired', 'no_entitlement', 'portal_disabled'];
 const PRICE_TYPES = ['free', 'paid'];
 const BILLING_INTERVALS = ['trial', 'month', '6_months', 'year', 'custom'];
 const MAX_MATCHING = 5000;
@@ -22,6 +22,8 @@ const SERVICE_EXPR = `COALESCE(NULLIF(cur.service_type_snapshot,''),p.service_ty
 // current in time while access is explicitly blocked (inactivity, delinquency,
 // admin removal, etc.), so customer-service readiness must require both.
 const LIVE_EXPR = `(COALESCE(cur.is_current,FALSE)=TRUE AND COALESCE(cur.blocked,FALSE)=FALSE)`;
+const BLOCKED_EXPR = `(COALESCE(cur.is_current,FALSE)=TRUE AND COALESCE(cur.blocked,FALSE)=TRUE)`;
+const EXPIRED_EXPR = `(COALESCE(cur.is_current,FALSE)=FALSE AND cur.id IS NOT NULL)`;
 const CUSTOMER_JELLYFIN_REQUIRED = `(${SERVICE_EXPR} IN ('jellyfin','bundle'))`;
 const MISSING_JELLYFIN = `(${CUSTOMER_JELLYFIN_REQUIRED} AND COALESCE(acc.customer_account_count,0)=0)`;
 const PROVISIONING_EXPR = `(${LIVE_EXPR} AND ${MISSING_JELLYFIN} AND provision.status IN ('pending','running'))`;
@@ -40,7 +42,7 @@ const CUSTOMER_SORTS = Object.freeze({
     registered: { expression: 'c.created_at', defaultDirection: 'desc', nulls: 'last' },
     name: { expression: CUSTOMER_NAME_SORT, defaultDirection: 'asc', nulls: 'last' },
     plan: { expression: "COALESCE(p.name,'')", defaultDirection: 'asc' },
-    access: { expression: `CASE WHEN ${NEEDS_ACCESS_EXPR} THEN 0 WHEN ${PROVISIONING_EXPR} THEN 1 WHEN ${LIVE_EXPR} THEN 2 WHEN cur.id IS NULL THEN 4 ELSE 3 END`, defaultDirection: 'asc' },
+    access: { expression: `CASE WHEN ${NEEDS_ACCESS_EXPR} THEN 0 WHEN ${PROVISIONING_EXPR} THEN 1 WHEN ${LIVE_EXPR} THEN 2 WHEN ${BLOCKED_EXPR} THEN 3 WHEN ${EXPIRED_EXPR} THEN 4 ELSE 5 END`, defaultDirection: 'asc' },
     expiring: { expression: 'CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE COALESCE(cur.access_expires_at,cur.current_period_end) END', defaultDirection: 'asc', nulls: 'last' },
     server: { expression: "COALESCE(acc.server_names,'')", defaultDirection: 'asc' }
 });
@@ -152,7 +154,8 @@ function buildWhere(filters, scope) {
     else if (filters.access === 'needs_access') where.push(NEEDS_ACCESS_EXPR);
     else if (filters.access === 'attention') where.push(ATTENTION_EXPR);
     else if (filters.access === 'provisioning') where.push(PROVISIONING_EXPR);
-    else if (filters.access === 'expired') where.push(`NOT ${LIVE_EXPR} AND cur.id IS NOT NULL`);
+    else if (filters.access === 'blocked') where.push(BLOCKED_EXPR);
+    else if (filters.access === 'expired') where.push(EXPIRED_EXPR);
     else if (filters.access === 'no_entitlement') where.push('cur.id IS NULL');
     else if (filters.access === 'portal_disabled') where.push('au.active=FALSE');
 
