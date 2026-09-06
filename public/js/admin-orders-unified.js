@@ -80,6 +80,18 @@
     return `${location.pathname}?${params.toString()}`;
   }
 
+  function appendDateControl(form, labelText, name, value) {
+    const label = document.createElement('label');
+    label.append(document.createTextNode(labelText));
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.name = name;
+    input.value = value;
+    input.required = true;
+    label.appendChild(input);
+    form.appendChild(label);
+  }
+
   function enhanceRangeControl() {
     const legacyForm = document.querySelector('[data-orders-range-form]');
     if (!legacyForm) return;
@@ -133,7 +145,18 @@
     customForm.className = 'rangeCustom';
     customForm.method = 'get';
     customForm.action = location.pathname;
-    customForm.innerHTML = `<input type="hidden" name="range" value="custom"><label>From<input type="date" name="from" value="${from}" required></label><label>To<input type="date" name="to" value="${to}" required></label><button class="button secondary" type="submit">Apply</button>`;
+    const rangeInput = document.createElement('input');
+    rangeInput.type = 'hidden';
+    rangeInput.name = 'range';
+    rangeInput.value = 'custom';
+    customForm.appendChild(rangeInput);
+    appendDateControl(customForm, 'From', 'from', from);
+    appendDateControl(customForm, 'To', 'to', to);
+    const apply = document.createElement('button');
+    apply.className = 'button secondary';
+    apply.type = 'submit';
+    apply.textContent = 'Apply';
+    customForm.appendChild(apply);
     customForm.addEventListener('submit', () => {
       for (const [name, value] of purchaseFilterParams()) {
         const hidden = document.createElement('input');
