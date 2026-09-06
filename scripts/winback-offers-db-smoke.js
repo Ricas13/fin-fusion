@@ -37,7 +37,38 @@ async function voluntary(subscriptionId) {
     `, [String(subscriptionId)]);
 }
 
+function assertRecoveryEmail() {
+    const message = winback.recoveryMessage(
+        { offerDays: 7, trigger_reason: 'payment_failed' },
+        { display_name: 'Taylor' },
+        { siteName: 'CAPTAiNFiN', publicBaseUrl: 'https://portal.example.test' },
+        {
+            monthly: { code: 'WELCOME_BACK_25' },
+            longterm: { code: 'WELCOME_BACK_10' }
+        }
+    );
+
+    assert(message.subject.includes('CAPTAiNFiN'), 'win-back subject must carry the live brand');
+    assert(message.subject.includes('25%') && message.subject.includes('10%'), 'subject must surface both comeback values');
+    assert(message.text.includes('Hi Taylor'), 'plain-text fallback must keep the customer greeting');
+    assert(message.text.includes('WELCOME_BACK_25') && message.text.includes('WELCOME_BACK_10'), 'plain-text fallback must carry both checkout codes');
+    assert(message.text.includes('You can use one of these offers once.'), 'copy must make clear only one comeback option can be redeemed');
+    assert(!message.text.includes('payment could not be renewed'), 'failed-payment recipients should receive positive comeback copy rather than a payment-failure reminder');
+
+    assert(message.html.startsWith('<!doctype html>'), 'win-back email must render through the shared professional HTML template');
+    assert(message.html.includes('max-width:640px'), 'win-back email must keep the shared professional card layout');
+    assert(message.html.includes('Welcome-back offer'), 'win-back email must carry the shared event badge');
+    assert(message.html.includes('A little something to welcome you back'), 'win-back email must use the approved conversion-focused heading');
+    assert(message.html.includes('Monthly plan') && message.html.includes('25% off first payment'), 'monthly comeback option must be visually surfaced');
+    assert(message.html.includes('6-month / yearly') && message.html.includes('10% off first term'), 'long-term comeback option must be visually surfaced');
+    assert(message.html.includes('WELCOME_BACK_25') && message.html.includes('WELCOME_BACK_10'), 'HTML email must carry both checkout codes');
+    assert(message.html.includes('See plans &amp; claim offer'), 'win-back email must have a clear account CTA');
+    assert(message.html.includes('This marketing message was sent by CAPTAiNFiN.'), 'win-back email must retain the shared marketing footer');
+}
+
 (async () => {
+    assertRecoveryEmail();
+
     const monthly = (await query(`
         INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,service_type)
         VALUES('winback-month','Winback Month','direct','month',30,600,'USD',3,'premium',TRUE,TRUE,'jellyfin')

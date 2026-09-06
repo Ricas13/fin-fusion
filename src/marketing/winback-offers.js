@@ -145,10 +145,32 @@ async function recoveryDiscounts(){
 async function brand(){await runtimeSettings.ensureLoaded().catch(()=>{});const settings=await operations.get().catch(()=>operations.DEFAULTS);return{siteName:runtimeSettings.siteName()||'CAPTAiNFiN',publicBaseUrl:String(settings?.publicBaseUrl||'').replace(/\/+$/,'')};}
 function recoveryMessage(offer,customer,branding,discounts){
   const accountUrl=branding.publicBaseUrl?`${branding.publicBaseUrl}/account`:'';
-  const subject='Come back and save on your next membership';
-  const reasonText=offer.trigger_reason==='payment_failed'?'Your previous paid membership ended after its payment could not be renewed.':'Your previous paid membership has now ended.';
-  const text=`Hi ${customer.display_name},\n\n${reasonText}\n\nIf you would like to come back, we have saved two one-time offers for you:\n\n• 25% off your first monthly payment — code ${discounts.monthly.code}\n• 10% off your first 6-month or yearly term — code ${discounts.longterm.code}\n\nThe offer is tied to your account, can be used once, and expires in ${offer.offerDays} days. Future renewals return to the normal price.${accountUrl?`\n\nOpen your account: ${accountUrl}`:''}`;
-  const html=renderProfessionalEmail({subject,title:'We would love to have you back',text:`${reasonText}\n\n25% off your first monthly payment — ${discounts.monthly.code}\n\n10% off your first 6-month or yearly term — ${discounts.longterm.code}\n\nThese one-time offers are tied to your account and expire in ${offer.offerDays} days. Future renewals return to the normal price.`,eventLabel:'Win-back offer',actionLabel:accountUrl?'Choose your plan':'',actionUrl:accountUrl,siteName:branding.siteName,publicBaseUrl:branding.publicBaseUrl,transactional:false});
+  const siteName=branding.siteName||'CAPTAiNFiN';
+  const days=Math.max(1,Number(offer.offerDays)||DEFAULT_OFFER_DAYS);
+  const subject=`Come back to ${siteName} — save 25% on monthly or 10% on longer plans`;
+  const preheader=`Choose 25% off your first monthly payment or 10% off your first 6-month/yearly term. Reserved for your account for ${days} days.`;
+  const intro=`Hi ${customer.display_name},\n\nYour previous membership has ended, but we would love to welcome you back. For the next ${days} days, we have reserved a comeback offer for your account. Choose the option that suits you best.`;
+  const terms=`You can use one of these offers once. It applies to your first payment or term only, and future renewals return to the normal price.`;
+  const text=`${intro}\n\nMONTHLY — 25% OFF\nUse code ${discounts.monthly.code} for 25% off your first monthly payment.\n\n6-MONTH OR YEARLY — 10% OFF\nUse code ${discounts.longterm.code} for 10% off your first 6-month or yearly term.\n\n${terms}${accountUrl?`\n\nSee plans and claim your offer: ${accountUrl}`:''}`;
+  const html=renderProfessionalEmail({
+    subject,
+    title:'A little something to welcome you back',
+    preheader,
+    text:`${intro}\n\nChoose one of the two options below, then enter the matching code at checkout.\n\n${terms}`,
+    eventLabel:'Welcome-back offer',
+    facts:[
+      {label:'Monthly plan',value:`25% off first payment · ${discounts.monthly.code}`},
+      {label:'6-month / yearly',value:`10% off first term · ${discounts.longterm.code}`},
+      {label:'Offer window',value:`${days} days`},
+      {label:'After the offer',value:'Future renewals return to the normal price'}
+    ],
+    nextStep:'Choose a paid plan and enter the matching code at checkout',
+    actionLabel:accountUrl?'See plans & claim offer':'',
+    actionUrl:accountUrl,
+    siteName,
+    publicBaseUrl:branding.publicBaseUrl,
+    transactional:false
+  });
   return{subject,text,html};
 }
 
@@ -213,4 +235,4 @@ async function markRedeemedTx(client,{customerId,discountCodeId,subscriptionId})
   return updated;
 }
 
-module.exports={DEFAULT_DELAY_DAYS,DEFAULT_OFFER_DAYS,DEFAULT_COOLDOWN_DAYS,config,planMatchesKind,discoverCandidates,run,validateDiscountEligibility,reserveDiscountTx,releaseCheckoutReservation,markRedeemedTx,assertOfferEligibility};
+module.exports={DEFAULT_DELAY_DAYS,DEFAULT_OFFER_DAYS,DEFAULT_COOLDOWN_DAYS,config,planMatchesKind,recoveryMessage,discoverCandidates,run,validateDiscountEligibility,reserveDiscountTx,releaseCheckoutReservation,markRedeemedTx,assertOfferEligibility};
