@@ -4,6 +4,7 @@ const express = require('express');
 const crypto = require('crypto');
 const csrf = require('../auth/csrf');
 const { requireOwner, ownerStatus } = require('../auth/owner-guard');
+const impersonationCredentials = require('../security/admin-impersonation-credentials');
 const { query } = require('../db');
 
 function esc(value) {
@@ -101,6 +102,15 @@ async function auditImpersonationEnd(imp, metadata = {}) {
     if (!imp) return;
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.end','customer',$2,$3::jsonb)`, [imp.actorUserId,imp.customerId,JSON.stringify({ targetUserId:imp.customerUserId,impersonationId:imp.id,startedAt:imp.startedAt,...metadata })]);
 }
+function coherentOwnerImpersonation(req) {
+    const imp=req.session?.impersonation;
+    return Boolean(imp
+        && req.session?.authUserId
+        && req.session?.authRole==='admin'
+        && String(imp.actorUserId)===String(req.session.authUserId)
+        && String(imp.customerId)===String(req.session.customerId)
+        && String(imp.customerUserId)===String(req.session.customerUserId));
+}
 
 // Mounted very early in application.js, before every /account router: an
 // earlier-mounted account router that sends its own response would otherwise
@@ -187,6 +197,40 @@ function createAdminImpersonationRouter() {
         return res.redirect(`/admin/users/${encodeURIComponent(customerId)}`);
     });
 
+    // The ordinary customer password route requires the customer's existing
+    // portal password. In owner impersonation mode, replace that re-auth step
+    // with the already-authenticated owner authority: set a new password, revoke
+    // customer sessions, and record the real administrator as actor. Normal
+    // customer sessions fall through to the regular customer-security router.
+    router.post('/account/security/password', async (req,res,next) => {
+        if (!req.session?.impersonation) return next();
+        try {
+            if (!coherentOwnerImpersonation(req) || !await ownerStatus(req.session.authUserId)) return res.status(403).send('Owner impersonation is required for this action.');
+            if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+            if (String(req.body?.newPassword||'') !== String(req.body?.confirmPassword||'')) throw new Error('New passwords do not match.');
+            const changed=await impersonationCredentials.setPortalPassword({targetUserId:req.session.customerUserId,actorUserId:req.session.authUserId,newPassword:String(req.body?.newPassword||'')});
+            req.session.customerSessionVersion=changed.sessionVersion;
+            await save(req);
+            return res.redirect('/account/security?message='+encodeURIComponent(`Portal password set by administrator. ${changed.revokedSessions} customer session(s) signed out.`));
+        } catch (error) {
+            return res.redirect('/account/security?error='+encodeURIComponent(error.message||'Portal password could not be changed.'));
+        }
+    });
+
+    // Rewrite only the password form on Account Security while impersonating;
+    // no existing password is displayed, read, or requested from the owner.
+    router.use('/account/security', async (req,res,next) => {
+        if (req.method!=='GET' || String(req.originalUrl||'').split('?')[0]!=='/account/security' || !req.session?.impersonation) return next();
+        try {
+            if (!coherentOwnerImpersonation(req) || !await ownerStatus(req.session.authUserId)) return next();
+            const send=res.send.bind(res);
+            res.send=body=>send(impersonationCredentials.rewriteSecurityPage(body));
+            return next();
+        } catch (error) {
+            return next(error);
+        }
+    });
+
     // Add the action to Customer 360 without creating a second preview page.
     // This must stay mounted after the more specific /admin/users/* routes
     // (e.g. /admin/users/dashboard) so this wildcard never shadows them.
@@ -209,4 +253,4 @@ function createAdminImpersonationRouter() {
     return router;
 }
 
-module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, wantsJson, injectBanner, injectAdminButton };
+module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, wantsJson, injectBanner, injectAdminButton, coherentOwnerImpersonation };
