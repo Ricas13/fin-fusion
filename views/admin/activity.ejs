@@ -11,8 +11,11 @@
     <header class="topBar"><div>Jellyfin</div><div class="muted">Playback operations</div></header>
     <div class="content page-playback">
       <div class="pageHeader">
-        <h1>Playback Operations</h1>
-        <div class="muted">See live playback and concurrency exceptions first; policy controls and historical detail stay secondary.</div>
+        <div>
+          <h1>Playback Operations</h1>
+          <div class="muted">See live playback and concurrency exceptions first; policy controls and historical detail stay secondary.</div>
+        </div>
+        <div class="pageHeaderActions" aria-label="Page actions"><a class="button secondary" href="/admin/activity/me">My activity</a></div>
       </div>
 
       <% if(message){ %><div class="notice success"><%= message %></div><% } %>

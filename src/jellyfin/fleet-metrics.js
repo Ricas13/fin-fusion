@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const registry = require('./registry');
+const adminPlaybackTelemetry = require('./admin-playback-telemetry');
 
 function intEnv(name, fallback, min, max) {
     const value = Number.parseInt(process.env[name] || '', 10);
@@ -223,6 +224,19 @@ async function refreshAll(options = {}) {
             return { serverId: row.serverId, ok: false, error: String(error?.message || error) };
         }
     });
+
+    // Run after the normal fleet/policy collection boundary. These sessions are
+    // deliberately written without customer_id, jellyfin_account_id or a stream
+    // limit, so the administrator account is observable but never manageable.
+    try {
+        const telemetry = await adminPlaybackTelemetry.runAdminPlaybackTelemetryCycle();
+        if (telemetry.failures.length) {
+            console.warn(`Admin playback telemetry: ${telemetry.failures.length}/${telemetry.servers} server(s) unavailable`);
+        }
+    } catch (error) {
+        console.warn('Admin playback telemetry refresh failed:', error.message);
+    }
+
     return results;
 }
 
