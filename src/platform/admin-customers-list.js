@@ -130,11 +130,7 @@ function expiryInfo(x){
     if(x.is_free_tier)return{primary:'—',secondary:''};
     const end=x.access_expires_at||x.current_period_end;
     if(!end)return{primary:'—',secondary:''};
-    const endMs=new Date(end).getTime();
-    if(!Number.isFinite(endMs))return{primary:'—',secondary:''};
-    // Historical expiry is useful as a date, but not as an ever-growing
-    // "Expired N days ago" counter. Relative text is reserved for upcoming access.
-    if(!x.has_current_entitlement||endMs<=Date.now())return{primary:formatDate(end),secondary:''};
+    if(!x.has_current_entitlement)return{primary:formatDate(end),secondary:`Expired ${relativeTime(end)}`,tone:'bad'};
     if(x.billing_interval==='trial'||x.subscription_status==='trialing')return{primary:formatDate(end),secondary:`Ends ${relativeTime(end)}`,tone:'warn'};
     if(['past_due','paused','cancelled','expired'].includes(x.subscription_status))return{primary:formatDate(end),secondary:`Access ${relativeTime(end)}`,tone:'warn'};
     return{primary:formatDate(end),secondary:relativeTime(end)};
