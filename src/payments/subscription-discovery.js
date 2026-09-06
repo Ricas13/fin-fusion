@@ -5,6 +5,7 @@ const { query } = require('../db');
 const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
 const billingMode = require('./subscription-billing-mode');
+const unlinkedPaidTerm = require('./unlinked-paid-term');
 
 const MAX_REMOTE_SUBSCRIPTIONS = 5000;
 const MAX_PROVIDER_PAGES = 2000;
@@ -26,6 +27,12 @@ function recurringId(provider, id) {
 }
 function localRecurring(row) {
     return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
+}
+function endingWithoutRenewal(row) {
+    return !localRecurring(row) && unlinkedPaidTerm.fixedTermWithoutProvider(row);
+}
+function needsProviderLink(row) {
+    return !localRecurring(row) && !endingWithoutRenewal(row);
 }
 function currentRemote(remote) {
     if (remote?.provider === 'stripe') return STRIPE_CURRENT.has(String(remote.status || '').toLowerCase());
@@ -69,7 +76,7 @@ async function premiumEntitlements() {
     const result = await query(`
         SELECT e.customer_id,e.subscription_id,e.plan_id,e.status,e.source,e.current_period_end,e.cancel_at_period_end,
                e.provider_customer_id,e.provider_subscription_id,e.provider_price_id_snapshot,e.server_class,
-               s.billing_mode,
+               s.billing_mode,s.commercial_snapshot,
                COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) AS service_type,
                COALESCE(e.price_minor_snapshot,e.price_minor,0) AS price_minor,
                COALESCE(NULLIF(e.plan_name_snapshot,''),e.name) AS plan_name,
@@ -161,6 +168,10 @@ function matchPremiumRows(premiumRows, remotes, context) {
     for (const local of premiumRows) {
         if (localRecurring(local)) {
             rows.push({ local, state: 'linked', candidates: [], match: null, reason: 'Already linked to a recurring provider subscription.' });
+            continue;
+        }
+        if (endingWithoutRenewal(local)) {
+            rows.push({ local, state: 'ending', candidates: [], match: null, reason: 'Paid access is intentionally fixed to the current paid-through date; no recurring provider link is required.' });
             continue;
         }
         const candidateDetails = [];
@@ -327,7 +338,7 @@ async function paypalRemoteSubscriptions() {
 }
 
 function summarizeMatches(rows, remotes, warnings) {
-    const counts = { premium: rows.length, linked: 0, safe: 0, ambiguous: 0, conflict: 0, unresolved: 0 };
+    const counts = { premium: rows.length, linked: 0, ending: 0, safe: 0, ambiguous: 0, conflict: 0, unresolved: 0 };
     for (const row of rows) counts[row.state] = (counts[row.state] || 0) + 1;
     return { rows, remotes, warnings, counts, currentRemote: remotes.filter(currentRemote).length };
 }
@@ -341,7 +352,9 @@ async function preview() {
 async function coverageStats() {
     const premium = await premiumEntitlements();
     const linked = premium.filter(localRecurring).length;
-    return { premium: premium.length, linked, missing: premium.length - linked };
+    const ending = premium.filter(endingWithoutRenewal).length;
+    const missing = premium.filter(needsProviderLink).length;
+    return { premium: premium.length, linked, ending, missing };
 }
 
 async function linkOne(item, actorUserId) {
@@ -362,7 +375,7 @@ async function linkOne(item, actorUserId) {
 }
 async function apply(actorUserId) {
     const result = await preview();
-    const summary = { premium: result.counts.premium, linkedBefore: result.counts.linked, safeFound: result.counts.safe, linked: 0, failed: 0, unresolved: result.counts.ambiguous + result.counts.conflict + result.counts.unresolved, failures: [], warnings: result.warnings };
+    const summary = { premium: result.counts.premium, linkedBefore: result.counts.linked, ending: result.counts.ending, safeFound: result.counts.safe, linked: 0, failed: 0, unresolved: result.counts.ambiguous + result.counts.conflict + result.counts.unresolved, failures: [], warnings: result.warnings };
     for (const item of result.rows.filter(row => row.state === 'safe')) {
         try { const linked = await linkOne(item, actorUserId); if (!linked.already) summary.linked += 1; }
         catch (error) { summary.failed += 1; summary.failures.push({ customerId: item.local.customer_id, error: clean(error?.message || error, 300) }); }
@@ -377,6 +390,8 @@ module.exports = {
     PAYPAL_TRANSACTION_TYPES,
     recurringId,
     localRecurring,
+    endingWithoutRenewal,
+    needsProviderLink,
     currentRemote,
     normalizeStripeSubscription,
     normalizePayPalSubscription,
