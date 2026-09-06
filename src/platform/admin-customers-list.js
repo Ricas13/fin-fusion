@@ -234,12 +234,12 @@ function healthPanel({total,healthy,attention}){
     const inactive=Math.max(0,total-healthy-attention),healthyPct=pct(healthy,total),attentionPct=pct(attention,total),inactivePct=Math.max(0,100-healthyPct-attentionPct);
     return `<article class="customerInsight customerHealthPanel"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon good">♡</span> Customer health</h3><p>Overall customer access and service readiness.</p></div><div class="customerInsightTotal"><strong>${esc(number(total))}</strong><span>total</span></div></div><div class="customerHealthBar" aria-label="${healthyPct}% active and healthy, ${attentionPct}% needs attention, ${inactivePct}% inactive or no access"><span class="good" style="width:${healthyPct}%">${healthyPct>=8?`${healthyPct}%`:''}</span><span class="bad" style="width:${attentionPct}%">${attentionPct>=4?`${attentionPct}%`:''}</span><span class="neutral" style="width:${inactivePct}%">${inactivePct>=8?`${inactivePct}%`:''}</span></div><div class="customerHealthLegend"><span><i class="good"></i>Active & healthy <strong>${esc(number(healthy))}</strong></span><span><i class="bad"></i>Needs attention <strong>${esc(number(attention))}</strong></span><span><i></i>Inactive / no access <strong>${esc(number(inactive))}</strong></span></div></article>`;
 }
-function planMixPanel(plans,total){
+function planMixPanel(plans){
     const colors=['#45b7ff','#7b8cff','#45d0c2','#b4e76d','#ffd064','#8d67dc','#748291'];
-    const rows=(plans||[]).slice(0,7),denom=Math.max(Number(total||0),1);let cursor=0;
+    const allRows=plans||[],rows=allRows.slice(0,7),total=allRows.reduce((sum,row)=>sum+Number(row.count||0),0),denom=Math.max(total,1);let cursor=0;
     const stops=rows.map((row,index)=>{const start=cursor,share=(Number(row.count||0)/denom)*100;cursor+=share;return `${colors[index%colors.length]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`});
     if(cursor<100)stops.push(`#25323e ${cursor.toFixed(2)}% 100%`);
-    return `<article class="customerInsight customerPlanMix"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon blue">⌁</span> Plan mix</h3><p>Current customer distribution.</p></div></div><div class="customerPlanMixBody"><div class="customerPlanDonut" style="background:conic-gradient(${esc(stops.join(','))})"><div><strong>${esc(number(total))}</strong><span>customers</span></div></div><div class="customerPlanLegend">${rows.map((row,index)=>`<div><span class="customerPlanName"><i style="background:${colors[index%colors.length]}"></i>${esc(row.name)}</span><strong>${esc(number(row.count))}</strong><span>${pct(row.count,total)}%</span></div>`).join('')}</div></div></article>`;
+    return `<article class="customerInsight customerPlanMix"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon blue">⌁</span> Plan mix</h3><p>Active customers by current plan.</p></div></div><div class="customerPlanMixBody"><div class="customerPlanDonut" style="background:conic-gradient(${esc(stops.join(','))})"><div><strong>${esc(number(total))}</strong><span>active</span></div></div><div class="customerPlanLegend">${rows.map((row,index)=>`<div><span class="customerPlanName"><i style="background:${colors[index%colors.length]}"></i>${esc(row.name)}</span><strong>${esc(number(row.count))}</strong><span>${pct(row.count,total)}%</span></div>`).join('')}</div></div></article>`;
 }
 function readinessRow(label,value,total,tone='good'){return `<div class="customerReadinessRow"><span>${esc(label)}</span><strong>${esc(number(value))}</strong><div class="customerReadinessTrack"><i class="${tone}" style="width:${pct(value,total)}%"></i></div><small>${pct(value,total)}%</small></div>`}
 function accessSupportPanel(summary,supportCount,total){return `<article class="customerInsight customerReadiness"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon blue">⚙</span> Access & support</h3><p>Activation, service readiness and support.</p></div></div><div class="customerReadinessRows">${readinessRow('Activated & ready',summary.ready_access||0,total,'good')}${readinessRow('Pending activation',summary.provisioning_pending||0,total,'blue')}${readinessRow('Missing Jellyfin access',summary.missing_jellyfin||0,total,'bad')}${readinessRow('Support requests',supportCount||0,total,'warn')}</div></article>`}
@@ -287,7 +287,20 @@ async function customerOverview(){
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(p.price_minor,0)>0) paid,
             (SELECT COUNT(*)::int FROM customers c WHERE NOT EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id)) no_plan
         `).catch(()=>({rows:[{}]})),
-        query(`SELECT COALESCE(p.name,'No plan') name,COUNT(*)::int count FROM customers c LEFT JOIN effective_customer_entitlements e ON e.customer_id=c.id LEFT JOIN plans p ON p.id=e.plan_id GROUP BY 1 ORDER BY count DESC,name LIMIT 7`).catch(()=>({rows:[]})),
+        query(`SELECT p.name name,COUNT(DISTINCT e.customer_id)::int count
+               FROM effective_customer_entitlements e
+               JOIN plans p ON p.id=e.plan_id
+               WHERE COALESCE(e.blocked,FALSE)=FALSE
+                 AND COALESCE(p.is_addon,FALSE)=FALSE
+                 AND (
+                    COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,p.service_type,'jellyfin') NOT IN ('jellyfin','bundle')
+                    OR EXISTS(
+                        SELECT 1 FROM jellyfin_accounts ja
+                        WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin'
+                    )
+                 )
+               GROUP BY p.id,p.name
+               ORDER BY count DESC,p.name`).catch(()=>({rows:[]})),
         supportTickets.staffQueueSummary().catch(()=>({count:0}))
     ]);
     const s=summary.rows[0]||{};
@@ -296,7 +309,7 @@ async function customerOverview(){
 }
 function customerOverviewHtml(data){
     const s=data.summary||{},p=data.presets||{},total=Number(s.total||p.all||0),active=Number(s.active_access||0),ready=Number(p.active||s.ready_access||0),recent=Number(s.active_30d||0),attention=Number(p.attention||0),healthy=Math.max(0,Math.min(ready,total-attention));
-    return `<section class="customerOverview"><div class="customerKpiGrid">${kpiCard({kind:'customers',label:'Total customers',value:total,meta:`${number(s.new_30d)} joined in the last 30 days`,detail:s.new_30d?`+${number(s.new_30d)}`:'',tone:'blue'})}${kpiCard({kind:'active',label:'Active access',value:active,meta:`${pct(active,total)}% of total`,detail:`${pct(active,total)}%`,tone:'good'})}${kpiCard({kind:'recent',label:'Recently active',value:recent,meta:'active in the last 30 days',detail:`${pct(recent,total)}%`,tone:'blue'})}${kpiCard({kind:'attention',label:'Needs attention',value:attention,meta:'need your attention',detail:attention?'Review':'Clear',tone:attention?'bad':'good'})}</div><div class="customerInsightGrid">${healthPanel({total,healthy,attention})}${planMixPanel(data.plans,total)}${accessSupportPanel(s,data.supportCount,total)}</div></section>`;
+    return `<section class="customerOverview"><div class="customerKpiGrid">${kpiCard({kind:'customers',label:'Total customers',value:total,meta:`${number(s.new_30d)} joined in the last 30 days`,detail:s.new_30d?`+${number(s.new_30d)}`:'',tone:'blue'})}${kpiCard({kind:'active',label:'Active access',value:active,meta:`${pct(active,total)}% of total`,detail:`${pct(active,total)}%`,tone:'good'})}${kpiCard({kind:'recent',label:'Recently active',value:recent,meta:'active in the last 30 days',detail:`${pct(recent,total)}%`,tone:'blue'})}${kpiCard({kind:'attention',label:'Needs attention',value:attention,meta:'need your attention',detail:attention?'Review':'Clear',tone:attention?'bad':'good'})}</div><div class="customerInsightGrid">${healthPanel({total,healthy,attention})}${planMixPanel(data.plans)}${accessSupportPanel(s,data.supportCount,total)}</div></section>`;
 }
 function productContext(filters){if(!filters.service)return'';const label=serviceLabel(filters.service);return `<div class="securityNote standalone"><strong>${esc(label)} customer context</strong><div class="subText">This is the shared customer system filtered to customers with ${esc(label)} or bundle history. Change the Product filter below to switch context.</div></div>`}
 function tableToolbar(filters,sort,pageSize,total){
