@@ -130,10 +130,12 @@ function expiryInfo(x){
     if(x.is_free_tier)return{primary:'—',secondary:''};
     const end=x.access_expires_at||x.current_period_end;
     if(!end)return{primary:'—',secondary:''};
-    if(!x.has_current_entitlement)return{primary:formatDate(end),secondary:`Expired ${relativeTime(end)}`,tone:'bad'};
-    if(x.billing_interval==='trial'||x.subscription_status==='trialing')return{primary:formatDate(end),secondary:`Ends ${relativeTime(end)}`,tone:'warn'};
-    if(['past_due','paused','cancelled','expired'].includes(x.subscription_status))return{primary:formatDate(end),secondary:`Access ${relativeTime(end)}`,tone:'warn'};
-    return{primary:formatDate(end),secondary:relativeTime(end)};
+    const remainingMs=new Date(end).getTime()-Date.now();
+    if(!x.has_current_entitlement||!Number.isFinite(remainingMs)||remainingMs<=0)return{primary:formatDate(end),secondary:`Expired ${relativeTime(end)}`,tone:'bad'};
+    const tone=remainingMs<=48*60*60*1000?'warn':'good';
+    if(x.billing_interval==='trial'||x.subscription_status==='trialing')return{primary:formatDate(end),secondary:`Ends ${relativeTime(end)}`,tone};
+    if(['past_due','paused','cancelled','expired'].includes(x.subscription_status))return{primary:formatDate(end),secondary:`Access ${relativeTime(end)}`,tone};
+    return{primary:formatDate(end),secondary:relativeTime(end),tone};
 }
 function planCommercialType(x){
     if(!x.plan_id)return'No plan';
@@ -195,6 +197,8 @@ function row(x){
     const identity=customerIdentity(x),customerName=identity.primary,state=rowState(x),expiry=expiryInfo(x);
     const portalNote=x.login_active===false?'<div class="subText customerPortalWarning">Portal sign-in disabled</div>':'';
     const last=x.last_activity_at?{primary:relativeTime(x.last_activity_at),secondary:formatDate(x.last_activity_at)}:{primary:'Never',secondary:''};
+    const expiryColour=({good:'#5ae0a0',warn:'#e6bd62',bad:'#ff6f78'})[expiry.tone]||'';
+    const expiryStyle=expiryColour?` style="color:${expiryColour}!important"`:'';
     return `<tr data-customer-row>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
         <td data-label="Customer"><div class="customerIdentityCell"><span class="customerAvatar" aria-hidden="true">${esc(initials(customerName))}</span><div><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</div></div></td>
@@ -202,7 +206,7 @@ function row(x){
         <td data-label="Access status">${pill(state.access,state.tone)}<div class="subText customerAccessReason">${esc(state.reason)}</div></td>
         <td data-label="Jellyfin / service">${serviceCell(x,state)}</td>
         <td data-label="Server">${serverCell(x)}</td>
-        <td data-label="Renewal / expiry"><strong class="${expiry.tone?`customerDateTone ${expiry.tone}`:''}">${esc(expiry.primary)}</strong>${expiry.secondary?`<div class="subText ${expiry.tone?`customerDateTone ${expiry.tone}`:''}">${esc(expiry.secondary)}</div>`:''}</td>
+        <td data-label="Renewal / expiry"><strong class="${expiry.tone?`customerDateTone ${expiry.tone}`:''}"${expiryStyle}>${esc(expiry.primary)}</strong>${expiry.secondary?`<div class="subText ${expiry.tone?`customerDateTone ${expiry.tone}`:''}"${expiryStyle}>${esc(expiry.secondary)}</div>`:''}</td>
         <td data-label="Last active"><strong>${esc(last.primary)}</strong>${last.secondary?`<div class="subText">${esc(last.secondary)}</div>`:''}</td>
         <td data-label="Actions"><div class="customerRowActions"><a class="button secondary btn-sm" href="/admin/users/${esc(x.id)}">${esc(state.action)}</a><a class="customerRowMenu" href="/admin/users/${esc(x.id)}" aria-label="More actions for ${esc(customerName)}">•••</a></div></td>
     </tr>`;
