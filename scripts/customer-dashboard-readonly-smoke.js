@@ -39,6 +39,39 @@ assert(!inspectBlock.includes('UPDATE jellyfin_account_lifecycle'),'read-only re
 assert(!inspectBlock.includes('INSERT INTO audit_log'),'read-only restoration inspection must not append mutation audit events');
 assert(cleanup.slice(mutateStart).includes('await returningCustomerStatus(customerId)'),'restoration mutation must re-check eligibility instead of trusting stale GET state');
 
+// Admin impersonation is a separate read-only boundary: only an active owner
+// may enter it, and once entered every unsafe customer /account mutation is
+// denied centrally before payment/security/subscription routers can run.
+const impersonationSource=read('src/platform/admin-impersonation.js');
+const ownerGuardSource=read('src/auth/owner-guard.js');
+const application=read('src/application.js');
+const {restrictedImpersonationAction,wantsJson}=require('../src/platform/admin-impersonation');
+assert(impersonationSource.includes("const { requireOwner, ownerStatus } = require('../auth/owner-guard');"),'impersonation must use the canonical owner capability service');
+assert(impersonationSource.includes("router.post('/admin/users/:customerId/impersonate', gate, requireOwner"),'support administrators must not be able to start customer impersonation');
+assert(impersonationSource.includes('if (!await ownerStatus(req.session.authUserId)) return next();'),'Customer 360 must hide the impersonation action from support-only administrators');
+assert(ownerGuardSource.includes('COALESCE(is_owner,FALSE) AS is_owner')&&ownerGuardSource.includes("user.role === 'admin' && user.active && user.is_owner"),'owner authorization must be database-backed, active, and fail closed');
+assert(/row\?\.role === 'customer'/.test(impersonationSource),'privileged/admin identities must never be impersonation targets');
+
+const impersonated=(method,pathname)=>({session:{impersonation:{id:'test'}},method,path:pathname});
+for(const method of ['POST','PUT','PATCH','DELETE']){
+    for(const pathname of ['/account/profile','/account/security/password','/account/checkout/stripe','/account/stremio/install','/account/provisioning/retry']){
+        assert.strictEqual(restrictedImpersonationAction(impersonated(method,pathname)),'customer changes',`impersonation must block ${method} ${pathname}`);
+    }
+}
+for(const method of ['GET','HEAD','OPTIONS'])assert.strictEqual(restrictedImpersonationAction(impersonated(method,'/account')),null,`${method} browsing must remain available while impersonating`);
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/impersonation/exit')),null,'audited impersonation exit must remain available');
+assert.strictEqual(restrictedImpersonationAction({session:{},method:'POST',path:'/account/checkout/stripe'}),null,'normal customer sessions must not be affected by impersonation policy');
+assert.strictEqual(wantsJson({headers:{accept:'application/json'}}),true,'API-style impersonation denials must support structured JSON responses');
+assert.strictEqual(wantsJson({headers:{accept:'text/html'}}),false,'normal browser denials must remain HTML/text responses');
+assert(impersonationSource.includes("error:'impersonation_read_only'")&&impersonationSource.includes('Payments and account-changing actions are disabled.'),'blocked impersonation writes must return a stable read-only error contract');
+assert(impersonationSource.includes('Payments and account-changing actions are disabled while impersonating this customer.'),'the persistent impersonation banner must clearly explain the financial/account-change boundary');
+assert(impersonationSource.includes("'admin.impersonation.customer_action'")&&impersonationSource.includes("'admin.impersonation.start'")&&impersonationSource.includes("'admin.impersonation.end'"),'impersonation start, denied writes and exit must remain auditable');
+const impersonationAppPos=application.indexOf('app.use(createImpersonationAuditRouter())');
+for(const marker of ['app.use(createCustomerPasswordSyncRouter())','app.use(createCustomerSubscriptionActionsRouter())','app.use(createFlexibleCheckoutRouter())']){
+    const pos=application.indexOf(marker);
+    assert(impersonationAppPos>=0&&pos>impersonationAppPos,`impersonation default-deny middleware must run before ${marker}`);
+}
+
 const activity=read('src/platform/customer-activity.js');
 assert(activity.includes("optionalInsightQuery('summary'")&&activity.includes("optionalInsightQuery('recent-items'"),'personalised Activity analytics must isolate production query failures by analytics slice');
 assert(activity.includes('insightData(customerId,rawRange).catch(error=>'),'optional personalised analytics must never make the core Activity page return a 500');
@@ -48,5 +81,5 @@ const fallback=activityModule.fallbackInsights('30d');
 assert(fallback.degraded===true&&fallback.range.key==='30d','Activity fallback must explicitly mark analytics as degraded while retaining the requested range');
 assert(Array.isArray(fallback.heatmap)&&fallback.heatmap.length===7&&Array.isArray(fallback.timeline)&&fallback.timeline.length>=28,'Activity fallback must remain render-safe for the heatmap and daily chart');
 
-console.log('customer dashboard read-only GET and Activity resilience smoke: ok');
+console.log('customer dashboard and impersonation read-only boundaries smoke: ok');
 require('./customer-workflow-completion-smoke');

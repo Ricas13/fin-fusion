@@ -3,6 +3,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const csrf = require('../auth/csrf');
+const { requireOwner, ownerStatus } = require('../auth/owner-guard');
 const { query } = require('../db');
 
 function esc(value) {
@@ -35,11 +36,16 @@ function restrictedImpersonationAction(req) {
     if (path.startsWith('/account')) return 'customer changes';
     return null;
 }
+function wantsJson(req) {
+    const accept = String(req.get?.('accept') || req.headers?.accept || '').toLowerCase();
+    const requestedWith = String(req.get?.('x-requested-with') || req.headers?.['x-requested-with'] || '').toLowerCase();
+    return accept.includes('application/json') || requestedWith === 'xmlhttprequest';
+}
 function banner(req) {
     const imp = req.session?.impersonation;
     if (!imp) return '';
     const label = imp.displayName || imp.username || 'customer';
-    return `<div class="captainfinImpersonation"><div><strong>Read-only support view: ${esc(label)}</strong><span>You can inspect this customer portal, but all customer account changes are blocked while impersonating. Exit impersonation before making an approved support change from the admin area.</span></div><form method="post" action="/account/impersonation/exit"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button type="submit">Exit impersonation</button></form></div><style>.captainfinImpersonation{position:sticky;top:0;z-index:10000;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;background:#5b2a10;color:#fff;border-bottom:1px solid #d9874b;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.captainfinImpersonation strong{display:block;font-size:13px}.captainfinImpersonation span{display:block;margin-top:2px;font-size:11px;opacity:.86}.captainfinImpersonation form{margin:0}.captainfinImpersonation button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:7px 11px;font-weight:700;cursor:pointer}@media(max-width:650px){.captainfinImpersonation{align-items:flex-start;flex-direction:column}}</style>`;
+    return `<div class="captainfinImpersonation"><div><strong>Read-only support view: ${esc(label)}</strong><span>Payments and account-changing actions are disabled while impersonating this customer. For clarity, all customer account changes are blocked while impersonating. Exit impersonation before making an approved support change from the admin area.</span></div><form method="post" action="/account/impersonation/exit"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button type="submit">Exit impersonation</button></form></div><style>.captainfinImpersonation{position:sticky;top:0;z-index:10000;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;background:#5b2a10;color:#fff;border-bottom:1px solid #d9874b;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.captainfinImpersonation strong{display:block;font-size:13px}.captainfinImpersonation span{display:block;margin-top:2px;font-size:11px;opacity:.86}.captainfinImpersonation form{margin:0}.captainfinImpersonation button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:7px 11px;font-weight:700;cursor:pointer}@media(max-width:650px){.captainfinImpersonation{align-items:flex-start;flex-direction:column}}</style>`;
 }
 function injectBanner(html, req) {
     if (typeof html !== 'string' || !req.session?.impersonation) return html;
@@ -82,7 +88,9 @@ function createImpersonationAuditRouter() {
         await auditImpersonatedMutation(req,res);
         const restrictedAction = restrictedImpersonationAction(req);
         if (restrictedAction) {
-            return res.status(403).send(`This ${restrictedAction} action is disabled while an administrator is using the read-only support view.`);
+            const message = 'Impersonation is read-only. Payments and account-changing actions are disabled.';
+            if (wantsJson(req)) return res.status(403).json({ error:'impersonation_read_only', message });
+            return res.status(403).send(message);
         }
         if (req.session?.impersonation && req.path.startsWith('/account')) {
             const send = res.send.bind(res);
@@ -96,7 +104,9 @@ function createImpersonationAuditRouter() {
 function createAdminImpersonationRouter() {
     const router = express.Router();
 
-    router.post('/admin/users/:customerId/impersonate', gate, async (req,res) => {
+    // Customer impersonation crosses the staff/customer privilege boundary and
+    // therefore belongs to platform owners, not ordinary support administrators.
+    router.post('/admin/users/:customerId/impersonate', gate, requireOwner, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
             const target = await targetCustomer(req.params.customerId);
@@ -134,6 +144,9 @@ function createAdminImpersonationRouter() {
         }
     });
 
+    // Exit deliberately remains available to any valid admin session that is
+    // already impersonating, so stale/legacy sessions can always fail safely
+    // back into the admin area even if owner status changed mid-session.
     router.post('/account/impersonation/exit', gate, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const imp = req.session.impersonation;
@@ -155,6 +168,9 @@ function createAdminImpersonationRouter() {
     router.use('/admin/users/:customerId', gate, async (req,res,next) => {
         if (req.method !== 'GET') return next();
         try {
+            // Do not advertise an action to support admins that the owner-only
+            // mutation boundary will reject. A failed lookup is fail-closed.
+            if (!await ownerStatus(req.session.authUserId)) return next();
             const target = await targetCustomer(req.params.customerId);
             if (!eligibleTarget(target)) return next();
             const send = res.send.bind(res);
@@ -168,4 +184,4 @@ function createAdminImpersonationRouter() {
     return router;
 }
 
-module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, injectBanner, injectAdminButton };
+module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, wantsJson, injectBanner, injectAdminButton };
