@@ -84,7 +84,7 @@ async function discoverCandidates({limit=200}={}){
     if(!reason)continue;
     const inserted=await query(`
       INSERT INTO winback_offers(customer_id,trigger_subscription_id,trigger_reason,service_type,terminal_at,eligible_at,next_attempt_at)
-      VALUES($1,$2,$3,$4,$5,$5+make_interval(days=>$6),$5+make_interval(days=>$6))
+      VALUES($1,$2,$3,$4,$5::timestamptz,($5::timestamptz)+make_interval(days=>$6),($5::timestamptz)+make_interval(days=>$6))
       ON CONFLICT(trigger_subscription_id) DO NOTHING RETURNING id
     `,[row.customer_id,row.subscription_id,reason,row.service_type,row.terminal_at,cfg.delayDays]);
     discovered+=inserted.rowCount;
