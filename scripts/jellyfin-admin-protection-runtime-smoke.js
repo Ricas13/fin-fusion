@@ -46,6 +46,34 @@ async function expectCode(promise, code) {
         assert.strictEqual(calls[0].options.method, 'GET');
         assert.match(calls[0].url, /\/Users\/admin-user$/);
 
+        const currentCustomer={
+            Id:'customer-user',
+            Name:'old-name',
+            ServerId:'server-identity',
+            Configuration:{AudioLanguagePreference:'eng',EnableNextEpisodeAutoPlay:true},
+            Policy:{IsAdministrator:false,EnableRemoteAccess:true}
+        };
+        outbound.safeFetch = async () => response(200, currentCustomer);
+        const protectedCustomer=await registry.assertJellyfinAdministratorProtected(server, '/Users/customer-user', 'POST', 10000);
+        assert.deepStrictEqual(protectedCustomer,currentCustomer,'Non-admin protection preflight must return the current Jellyfin UserDto for a state-preserving update');
+
+        const renamed=registry.jellyfinUserUpdateBody('/Users/customer-user','POST',protectedCustomer,{Id:'customer-user',Name:'new-name'});
+        assert.strictEqual(renamed.Name,'new-name','Rename must override only the requested username');
+        assert.deepStrictEqual(renamed.Configuration,currentCustomer.Configuration,'Rename must preserve the remote Jellyfin user configuration');
+        assert.deepStrictEqual(renamed.Policy,currentCustomer.Policy,'Rename must preserve the rest of the current Jellyfin UserDto');
+        assert.strictEqual(renamed.ServerId,'server-identity','Rename must preserve remote DTO fields Jellyfin may expect');
+        assert.strictEqual(currentCustomer.Name,'old-name','State-preserving update construction must not mutate the fetched Jellyfin DTO');
+        assert.deepStrictEqual(
+            registry.jellyfinUserUpdateBody('/Users/customer-user/Policy','POST',protectedCustomer,{EnableRemoteAccess:false}),
+            {EnableRemoteAccess:false},
+            'Policy mutations must not be rewritten as root UserDto updates'
+        );
+        assert.deepStrictEqual(
+            registry.jellyfinUserUpdateBody('/Users/New','POST',protectedCustomer,{Name:'new-user'}),
+            {Name:'new-user'},
+            'User creation payloads must remain untouched'
+        );
+
         outbound.safeFetch = async () => response(200, { Id: 'customer-user', Policy: { IsAdministrator: false } });
         await registry.assertJellyfinAdministratorProtected(server, '/Users/customer-user/Password', 'POST', 10000);
 
