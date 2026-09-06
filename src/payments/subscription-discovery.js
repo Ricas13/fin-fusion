@@ -27,6 +27,12 @@ function recurringId(provider, id) {
 function localRecurring(row) {
     return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
 }
+function endingWithoutRenewal(row) {
+    return !localRecurring(row) && Boolean(row?.cancel_at_period_end);
+}
+function needsProviderLink(row) {
+    return !localRecurring(row) && !Boolean(row?.cancel_at_period_end);
+}
 function currentRemote(remote) {
     if (remote?.provider === 'stripe') return STRIPE_CURRENT.has(String(remote.status || '').toLowerCase());
     if (remote?.provider === 'paypal') return PAYPAL_CURRENT.has(String(remote.status || '').toUpperCase());
@@ -161,6 +167,10 @@ function matchPremiumRows(premiumRows, remotes, context) {
     for (const local of premiumRows) {
         if (localRecurring(local)) {
             rows.push({ local, state: 'linked', candidates: [], match: null, reason: 'Already linked to a recurring provider subscription.' });
+            continue;
+        }
+        if (endingWithoutRenewal(local)) {
+            rows.push({ local, state: 'ending', candidates: [], match: null, reason: 'Paid access is intentionally ending after the current period; no provider link is required.' });
             continue;
         }
         const candidateDetails = [];
@@ -327,7 +337,7 @@ async function paypalRemoteSubscriptions() {
 }
 
 function summarizeMatches(rows, remotes, warnings) {
-    const counts = { premium: rows.length, linked: 0, safe: 0, ambiguous: 0, conflict: 0, unresolved: 0 };
+    const counts = { premium: rows.length, linked: 0, ending: 0, safe: 0, ambiguous: 0, conflict: 0, unresolved: 0 };
     for (const row of rows) counts[row.state] = (counts[row.state] || 0) + 1;
     return { rows, remotes, warnings, counts, currentRemote: remotes.filter(currentRemote).length };
 }
@@ -341,7 +351,9 @@ async function preview() {
 async function coverageStats() {
     const premium = await premiumEntitlements();
     const linked = premium.filter(localRecurring).length;
-    return { premium: premium.length, linked, missing: premium.length - linked };
+    const ending = premium.filter(endingWithoutRenewal).length;
+    const missing = premium.filter(needsProviderLink).length;
+    return { premium: premium.length, linked, ending, missing };
 }
 
 async function linkOne(item, actorUserId) {
@@ -362,7 +374,7 @@ async function linkOne(item, actorUserId) {
 }
 async function apply(actorUserId) {
     const result = await preview();
-    const summary = { premium: result.counts.premium, linkedBefore: result.counts.linked, safeFound: result.counts.safe, linked: 0, failed: 0, unresolved: result.counts.ambiguous + result.counts.conflict + result.counts.unresolved, failures: [], warnings: result.warnings };
+    const summary = { premium: result.counts.premium, linkedBefore: result.counts.linked, ending: result.counts.ending, safeFound: result.counts.safe, linked: 0, failed: 0, unresolved: result.counts.ambiguous + result.counts.conflict + result.counts.unresolved, failures: [], warnings: result.warnings };
     for (const item of result.rows.filter(row => row.state === 'safe')) {
         try { const linked = await linkOne(item, actorUserId); if (!linked.already) summary.linked += 1; }
         catch (error) { summary.failed += 1; summary.failures.push({ customerId: item.local.customer_id, error: clean(error?.message || error, 300) }); }
@@ -377,6 +389,8 @@ module.exports = {
     PAYPAL_TRANSACTION_TYPES,
     recurringId,
     localRecurring,
+    endingWithoutRenewal,
+    needsProviderLink,
     currentRemote,
     normalizeStripeSubscription,
     normalizePayPalSubscription,
