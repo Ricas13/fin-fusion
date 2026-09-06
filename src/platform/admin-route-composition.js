@@ -65,6 +65,7 @@ const { createAdminServerLibraryDashboardRouter } = require('./admin-server-libr
 const { createAdminStremioManagedSourcesRouter } = require('./admin-stremio-managed-sources');
 const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
+const { createAdminMyActivityRouter } = require('./admin-my-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
 const { createAdminCustomerAccessHoldsRouter } = require('./admin-customer-access-holds');
 const { createAdminCustomerManagementRouter } = require('./admin-customer-management');
@@ -173,6 +174,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminServerLibraryDashboardRouter());
   app.use(createAdminStremioManagedSourcesRouter());
   app.use(createAdminServersRouter());
+  app.use(createAdminMyActivityRouter());
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
   app.use(createAdminJellyfinReenableRouter());
