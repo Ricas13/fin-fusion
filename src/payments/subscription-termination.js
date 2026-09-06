@@ -124,7 +124,7 @@ async function hardRevokeRefundedStremio(customerId,result){
         error.code='STREMIO_REFUND_CLEANUP_INCOMPLETE';
         throw error;
     }
-    return{...result,stremioRevoked:true,managedStremioRevoked:Number(managedCleanup?.revoked||0)};
+    return{...result,changed:true,stremioRevoked:true,managedStremioRevoked:Number(managedCleanup?.revoked||0)};
 }
 
 // Service-agnostic version of terminateLocal for confirmed-refund handling:
