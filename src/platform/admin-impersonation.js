@@ -7,7 +7,7 @@ const { requireOwner, ownerStatus } = require('../auth/owner-guard');
 const { query } = require('../db');
 
 function esc(value) {
-    return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;' }[c]));
 }
 function gate(req,res,next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -27,13 +27,37 @@ async function targetCustomer(customerId) {
 function eligibleTarget(row) {
     return Boolean(row?.user_id && row?.active && row?.role === 'customer');
 }
+
+// Impersonation is intentionally an "act on behalf of" mode, not a read-only
+// preview. Owners may perform ordinary customer account/service mutations, but
+// they must never create or increase a customer charge. Keep the spending
+// boundary here, before every /account router, so UI changes cannot bypass it.
 function restrictedImpersonationAction(req) {
     if (!req.session?.impersonation) return null;
     const method = String(req.method || '').toUpperCase();
     if (['GET','HEAD','OPTIONS'].includes(method)) return null;
-    const path = String(req.path || req.originalUrl || '').split('?')[0];
+    const path = String(req.path || req.originalUrl || '').split('?')[0].replace(/\/$/,'') || '/';
+    if (!path.startsWith('/account')) return null;
     if (method === 'POST' && path === '/account/impersonation/exit') return null;
-    if (path.startsWith('/account')) return 'customer changes';
+
+    // Starting checkout can charge now or establish recurring billing. Cancelling
+    // an abandoned checkout is explicitly non-spending and remains available.
+    if (path === '/account/checkout' || path.startsWith('/account/checkout/')) {
+        if (path === '/account/checkout/cancel' || path === '/account/checkout/cancel-open') return null;
+        return 'spending';
+    }
+
+    // The renewal endpoint handles both directions. Stopping renewal reduces
+    // future spend; resuming it creates a future-charge obligation.
+    if (path === '/account/subscription/renewal') {
+        return String(req.body?.action || '').trim().toLowerCase() === 'resume' ? 'spending' : null;
+    }
+
+    // Future payment-instrument/purchase mutations should fail safe even if a
+    // new UI reaches them before this policy is extended with a more specific
+    // exception. Read-only GET billing/history pages are already allowed above.
+    if (/^\/account\/(?:billing|payments?|payment-methods?|purchase|upgrade|add-ons?)(?:\/|$)/i.test(path)) return 'spending';
+
     return null;
 }
 function wantsJson(req) {
@@ -45,7 +69,7 @@ function banner(req) {
     const imp = req.session?.impersonation;
     if (!imp) return '';
     const label = imp.displayName || imp.username || 'customer';
-    return `<div class="captainfinImpersonation"><div><strong>Read-only support view: ${esc(label)}</strong><span>Payments and account-changing actions are disabled while impersonating this customer. For clarity, all customer account changes are blocked while impersonating. Exit impersonation before making an approved support change from the admin area.</span></div><form method="post" action="/account/impersonation/exit"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button type="submit">Exit impersonation</button></form></div><style>.captainfinImpersonation{position:sticky;top:0;z-index:10000;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;background:#5b2a10;color:#fff;border-bottom:1px solid #d9874b;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.captainfinImpersonation strong{display:block;font-size:13px}.captainfinImpersonation span{display:block;margin-top:2px;font-size:11px;opacity:.86}.captainfinImpersonation form{margin:0}.captainfinImpersonation button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:7px 11px;font-weight:700;cursor:pointer}@media(max-width:650px){.captainfinImpersonation{align-items:flex-start;flex-direction:column}}</style>`;
+    return `<div class="captainfinImpersonation"><div><strong>Admin editing as customer: ${esc(label)}</strong><span>You can manage this customer's account and services. Purchases, payment-method changes, resumed renewal, and anything else that could create or increase a charge are disabled while impersonating.</span></div><form method="post" action="/account/impersonation/exit"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button type="submit">Exit impersonation</button></form></div><style>.captainfinImpersonation{position:sticky;top:0;z-index:10000;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;background:#5b2a10;color:#fff;border-bottom:1px solid #d9874b;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.captainfinImpersonation strong{display:block;font-size:13px}.captainfinImpersonation span{display:block;margin-top:2px;font-size:11px;opacity:.86}.captainfinImpersonation form{margin:0}.captainfinImpersonation button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:7px 11px;font-weight:700;cursor:pointer}@media(max-width:650px){.captainfinImpersonation{align-items:flex-start;flex-direction:column}}</style>`;
 }
 function injectBanner(html, req) {
     if (typeof html !== 'string' || !req.session?.impersonation) return html;
@@ -55,7 +79,7 @@ function injectBanner(html, req) {
     return html.slice(0,body.index + body[0].length) + value + html.slice(body.index + body[0].length);
 }
 function impersonateButton(req, customerId) {
-    return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/impersonate" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button" type="submit">View portal (read-only)</button></form>`;
+    return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/impersonate" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button" type="submit">Manage customer portal</button></form>`;
 }
 function injectAdminButton(html, req, customerId) {
     if (typeof html !== 'string') return html;
@@ -68,8 +92,9 @@ async function auditImpersonatedMutation(req,res) {
     const imp = req.session?.impersonation;
     if (!imp || !req.path.startsWith('/account') || ['GET','HEAD','OPTIONS'].includes(req.method)) return;
     const snapshot = { ...imp };
+    const restriction = restrictedImpersonationAction(req);
     res.once('finish', () => {
-        query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.customer_action','customer',$2,$3::jsonb)`, [snapshot.actorUserId,snapshot.customerId,JSON.stringify({ targetUserId:snapshot.customerUserId,method:req.method,path:String(req.originalUrl||req.path).slice(0,500),statusCode:res.statusCode,blocked:res.statusCode===403,impersonationId:snapshot.id })]).catch(error => console.error('Impersonation audit failed:', error.message));
+        query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.customer_action','customer',$2,$3::jsonb)`, [snapshot.actorUserId,snapshot.customerId,JSON.stringify({ targetUserId:snapshot.customerUserId,method:req.method,path:String(req.originalUrl||req.path).slice(0,500),statusCode:res.statusCode,blockedByImpersonation:Boolean(restriction),restriction:restriction||null,impersonationId:snapshot.id })]).catch(error => console.error('Impersonation audit failed:', error.message));
     });
 }
 async function auditImpersonationEnd(imp, metadata = {}) {
@@ -88,8 +113,8 @@ function createImpersonationAuditRouter() {
         await auditImpersonatedMutation(req,res);
         const restrictedAction = restrictedImpersonationAction(req);
         if (restrictedAction) {
-            const message = 'Impersonation is read-only. Payments and account-changing actions are disabled.';
-            if (wantsJson(req)) return res.status(403).json({ error:'impersonation_read_only', message });
+            const message = 'Spending actions are disabled while impersonating. Exit impersonation to make a purchase, resume automatic renewal, or change payment details.';
+            if (wantsJson(req)) return res.status(403).json({ error:'impersonation_spending_disabled', message });
             return res.status(403).send(message);
         }
         if (req.session?.impersonation && req.path.startsWith('/account')) {
@@ -136,7 +161,7 @@ function createAdminImpersonationRouter() {
             req.session.customerUserId = target.user_id;
             req.session.customerUsername = target.username;
             req.session.customerSessionVersion = Number(target.session_version || 1);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.start','customer',$2,$3::jsonb)`, [req.session.authUserId,target.customer_id,JSON.stringify({ targetUserId:target.user_id,impersonationId:req.session.impersonation.id,mode:'read_only',replacedImpersonationId:previous?.id||null })]);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.start','customer',$2,$3::jsonb)`, [req.session.authUserId,target.customer_id,JSON.stringify({ targetUserId:target.user_id,impersonationId:req.session.impersonation.id,mode:'admin_on_behalf_no_spend',replacedImpersonationId:previous?.id||null })]);
             await save(req);
             return res.redirect('/account');
         } catch (error) {
