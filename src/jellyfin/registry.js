@@ -40,7 +40,7 @@ function operationError(server,method,url,timeoutMs,error){
 function jellyfinUserMutationTarget(endpoint,method){
     const verb=String(method||'GET').toUpperCase();
     if(!['POST','PUT','PATCH','DELETE'].includes(verb))return null;
-    const match=String(endpoint||'').match(/^\/Users\/([^/?]+)(?:\/(Policy|Password))?(?:\?.*)?$/i);
+    const match=String(endpoint||'').match(/^\/Users\/([^/?]+)(?:\/([^?]+))?(?:\?.*)?$/i);
     if(!match)return null;
     let userId;
     try{userId=decodeURIComponent(match[1]);}catch{return null;}
