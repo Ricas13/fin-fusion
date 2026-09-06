@@ -5,6 +5,7 @@ const { query } = require('../db');
 const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
 const billingMode = require('./subscription-billing-mode');
+const unlinkedPaidTerm = require('./unlinked-paid-term');
 
 const MAX_REMOTE_SUBSCRIPTIONS = 5000;
 const MAX_PROVIDER_PAGES = 2000;
@@ -28,10 +29,10 @@ function localRecurring(row) {
     return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
 }
 function endingWithoutRenewal(row) {
-    return !localRecurring(row) && Boolean(row?.cancel_at_period_end);
+    return !localRecurring(row) && unlinkedPaidTerm.fixedTermWithoutProvider(row);
 }
 function needsProviderLink(row) {
-    return !localRecurring(row) && !Boolean(row?.cancel_at_period_end);
+    return !localRecurring(row) && !endingWithoutRenewal(row);
 }
 function currentRemote(remote) {
     if (remote?.provider === 'stripe') return STRIPE_CURRENT.has(String(remote.status || '').toLowerCase());
@@ -75,7 +76,7 @@ async function premiumEntitlements() {
     const result = await query(`
         SELECT e.customer_id,e.subscription_id,e.plan_id,e.status,e.source,e.current_period_end,e.cancel_at_period_end,
                e.provider_customer_id,e.provider_subscription_id,e.provider_price_id_snapshot,e.server_class,
-               s.billing_mode,
+               s.billing_mode,s.commercial_snapshot,
                COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) AS service_type,
                COALESCE(e.price_minor_snapshot,e.price_minor,0) AS price_minor,
                COALESCE(NULLIF(e.plan_name_snapshot,''),e.name) AS plan_name,
@@ -170,7 +171,7 @@ function matchPremiumRows(premiumRows, remotes, context) {
             continue;
         }
         if (endingWithoutRenewal(local)) {
-            rows.push({ local, state: 'ending', candidates: [], match: null, reason: 'Paid access is intentionally ending after the current period; no provider link is required.' });
+            rows.push({ local, state: 'ending', candidates: [], match: null, reason: 'Paid access is intentionally fixed to the current paid-through date; no recurring provider link is required.' });
             continue;
         }
         const candidateDetails = [];
