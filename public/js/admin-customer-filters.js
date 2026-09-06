@@ -13,15 +13,18 @@
 
   // Keep renewal/expiry dates as a simple traffic-light signal:
   // green while comfortably inside the access period, amber inside the final
-  // 48 hours, and red once expired. The server still owns the displayed date
-  // and relative-time copy; this only normalises the visual urgency.
+  // 48 hours, and red once expired.
   const colourCustomerExpiryDates = () => {
     if (!customerTable) return;
 
     if (!document.querySelector('#customerExpiryTrafficLightStyles')) {
       const style = document.createElement('style');
       style.id = 'customerExpiryTrafficLightStyles';
-      style.textContent = '.customerDateTone.good{color:#5ae0a0!important}';
+      style.textContent = [
+        '.customerTable td[data-label="Renewal / expiry"] .customerDateTone.good{color:#5ae0a0!important}',
+        '.customerTable td[data-label="Renewal / expiry"] .customerDateTone.warn{color:#e6bd62!important}',
+        '.customerTable td[data-label="Renewal / expiry"] .customerDateTone.bad{color:#ff6f78!important}'
+      ].join('');
       document.head.appendChild(style);
     }
 
@@ -39,6 +42,7 @@
 
     const now = Date.now();
     const fortyEightHours = 48 * 60 * 60 * 1000;
+    const colours = { good: '#5ae0a0', warn: '#e6bd62', bad: '#ff6f78' };
     customerTable.querySelectorAll('td[data-label="Renewal / expiry"]').forEach(cell => {
       const primary = cell.querySelector('strong');
       if (!primary) return;
@@ -55,6 +59,7 @@
       [primary, secondary].filter(Boolean).forEach(node => {
         node.classList.remove('good', 'warn', 'bad');
         node.classList.add('customerDateTone', tone);
+        node.style.setProperty('color', colours[tone], 'important');
       });
     });
   };
