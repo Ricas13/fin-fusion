@@ -44,7 +44,7 @@ function jellyfinUserMutationTarget(endpoint,method){
     if(!match)return null;
     let userId;
     try{userId=decodeURIComponent(match[1]);}catch{return null;}
-    if(!userId||/^New$/i.test(userId))return null;
+    if(!userId||/^(New|AuthenticateByName|AuthenticateWithQuickConnect|ForgotPassword)$/i.test(userId))return null;
     return{userId,verb,suffix:String(match[2]||'').toLowerCase()};
 }
 
