@@ -52,6 +52,13 @@ try {
     assert.strictEqual(registry.mediaProvider.normalizeType(undefined), 'jellyfin', 'legacy rows must default to Jellyfin semantics');
     assert.throws(() => registry.mediaProvider.normalizeType('plex'), /Unsupported media server type/);
 
+    assert.strictEqual(registry.jellyfinUserMutationTarget('/Users/u1','GET'),null,'Read-only user lookup must not invoke administrator mutation protection');
+    assert.strictEqual(registry.jellyfinUserMutationTarget('/Users/New','POST'),null,'New user creation must not be mistaken for an existing administrator mutation');
+    assert.strictEqual(registry.jellyfinUserMutationTarget('/Users/AuthenticateByName','POST'),null,'Authentication endpoints must not be mistaken for user mutation endpoints');
+    assert.deepStrictEqual(registry.jellyfinUserMutationTarget('/Users/u1/Policy','POST'),{userId:'u1',verb:'POST',suffix:'policy'});
+    assert.deepStrictEqual(registry.jellyfinUserMutationTarget('/Users/u1/Password','POST'),{userId:'u1',verb:'POST',suffix:'password'});
+    assert.deepStrictEqual(registry.jellyfinUserMutationTarget('/Users/u1','DELETE'),{userId:'u1',verb:'DELETE',suffix:''});
+
     const jellyfinPolicy = {
         IsAdministrator:false, IsDisabled:false, EnableRemoteAccess:true, SyncPlayAccess:'JoinGroups',
         AuthenticationProviderId:'Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider',
@@ -90,7 +97,7 @@ try {
         {Id:'stale',LastActivityDate:'2026-08-30T07:50:00.000Z',SupportsRemoteControl:true}
     ],{now:sessionNow});
     assert.deepStrictEqual(embySessions.map(session=>session.Id),['recent'],'Emby sessions outside the requested freshness window must be filtered locally');
-    assert.strictEqual(embySessions[0].SupportsMediaControl,true,'Emby SupportsRemoteControl must normalize to CAPTAiNFiN media-control capability');
+    assert.strictEqual(embySessions[0].SupportsMediaControl,true,'Emby SupportsRemoteControl must normalize to CAPTaINFiN media-control capability');
     const jellyfinSessions=[{Id:'jf',LastActivityDate:'2020-01-01T00:00:00.000Z',SupportsMediaControl:true}];
     assert.strictEqual(registry.mediaProvider.responseBody('jellyfin','/Sessions?activeWithinSeconds=120',jellyfinSessions,{now:sessionNow}),jellyfinSessions,'Jellyfin session responses must remain untouched');
 
@@ -102,9 +109,12 @@ try {
     assert.strictEqual(fleetMetrics.isNewerActivity('2026-08-25T12:00:00.000Z','2026-08-26T12:00:00.000Z'),true);
 
     const root = path.join(__dirname, '..');
+    const registrySource = fs.readFileSync(path.join(root, 'src/jellyfin/registry.js'), 'utf8');
     const fleetSource = fs.readFileSync(path.join(root, 'src/jellyfin/fleet-metrics.js'), 'utf8');
     const inactivitySource = fs.readFileSync(path.join(root, 'src/automation/customer-inactivity-scoped.js'), 'utf8');
     const jobsSource = fs.readFileSync(path.join(root, 'src/automation/jobs.js'), 'utf8');
+    assert(registrySource.includes('await assertJellyfinAdministratorProtected(server,endpoint,method,timeoutMs);'),'Every registry request must pass the Jellyfin administrator protection boundary before a user mutation is sent');
+    assert(registrySource.includes("parsed.Policy?.IsAdministrator===true")&&registrySource.includes("error.code='JELLYFIN_ADMIN_PROTECTED'"),'Administrator policy detection must fail closed with the dedicated protected-user error code');
     assert(fleetSource.includes('incoming.activity_at > ja.last_activity_at'),'Fleet activity persistence must keep a monotonic last_activity_at guard');
     assert(fleetSource.includes("registry.request(serverId, '/Users'") && fleetSource.includes('await persistUserActivity(serverId, users)'),'The regular fleet poll must refresh managed media-server user activity from /Users');
     assert(jobsSource.includes("require('./customer-inactivity-scoped')"),'Automation must use server-scoped inactivity safety checks');
