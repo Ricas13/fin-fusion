@@ -1,0 +1,106 @@
+name: Apply Stremio Home Fix
+
+on:
+  push:
+    branches:
+      - fix/stremio-home-server-render
+    paths:
+      - .github/workflows/apply-stremio-home-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/stremio-home-server-render
+          fetch-depth: 0
+      - name: Apply focused server-rendered fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          dashboard = Path('views/customer/dashboard.ejs')
+          text = dashboard.read_text()
+          hero_marker = '<% if(stremioInstallUrl){ %><a class="button primary" href="<%= stremioInstallUrl %>">Install in Stremio</a>'
+          panel_marker = '<% if(hasStremio){ %><section class="sectionBlock simpleServiceCard" id="stremio-access">'
+          assert hero_marker in text, 'expected Home Stremio hero CTA not found'
+          assert panel_marker in text, 'expected Home Stremio setup panel not found'
+          lines = text.splitlines(keepends=True)
+          lines = [line for line in lines if hero_marker not in line and panel_marker not in line]
+          text = ''.join(lines)
+          assert 'id="stremio-access"' not in text, 'Home still server-renders Stremio setup panel'
+          assert 'action="/account/stremio/install"' not in text, 'Home still server-renders Stremio install action'
+          assert 'action="/account/stremio/revoke"' not in text, 'Home still server-renders Stremio revoke action'
+          assert 'action="/account/stremio/reset-household"' not in text, 'Home still server-renders household reset action'
+          assert 'class="accessSummaryCard"' in text and 'href="/account/access"' in text, 'Home active access summary / My Access navigation missing'
+          dashboard.write_text(text)
+
+          checkout = Path('public/js/customer-checkout.js')
+          text = checkout.read_text()
+          stale = "    home.querySelector('#stremio-access')?.remove();\n"
+          assert stale in text, 'expected client-side Stremio removal workaround not found'
+          checkout.write_text(text.replace(stale, '', 1))
+
+          customer = Path('src/platform/customer-stremio.js')
+          text = customer.read_text()
+          old = "r.get('/account/stremio',(req,res)=>res.redirect(302,'/account#stremio-access'));"
+          new = "r.get('/account/stremio',(req,res)=>res.redirect(302,'/account/access#stremio-access'));"
+          assert old in text, 'legacy Stremio redirect shape changed unexpectedly'
+          customer.write_text(text.replace(old, new, 1))
+
+          access_view = Path('views/customer/jellyfin.ejs').read_text()
+          access_js = Path('public/js/customer-jellyfin.js').read_text()
+          assert 'id="stremio-access"' in access_view and 'data-stremio-access' in access_view, 'My Access Stremio mount is missing'
+          for needle in ['/account/stremio/installation.json', 'Household access', 'Get started with Stremio', 'Installation manifest', '/account/stremio/reset-household', '/account/stremio/revoke']:
+              assert needle in access_js, f'My Access Stremio experience missing: {needle}'
+          assert "cache:'no-store'" in access_js, 'My Access installation state must bypass browser cache'
+
+          smoke = Path('scripts/stremio-journey-polish-smoke.js')
+          smoke.write_text("""'use strict';
+          const assert=require('assert');
+          const fs=require('fs');
+          const path=require('path');
+          const root=path.resolve(__dirname,'..');
+          const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+
+          const customer=read('src/platform/customer-stremio.js');
+          const dashboard=read('views/customer/dashboard.ejs');
+          const checkout=read('public/js/customer-checkout.js');
+          const access=read('views/customer/jellyfin.ejs');
+          const accessJs=read('public/js/customer-jellyfin.js');
+
+          assert(customer.includes("r.get('/account/stremio',(req,res)=>res.redirect(302,'/account/access#stremio-access'))"),'legacy Stremio URL must redirect to My Access');
+          assert(customer.includes('installationLinks.current(req,customerId)'),'My Access must recover the authoritative current installation credential');
+          assert(customer.includes("res.setHeader('Cache-Control','no-store, private, max-age=0')"),'installation state endpoint must remain no-store');
+
+          assert(dashboard.includes('class="multiAccessSummary"'),'Home must keep the active access summary');
+          assert(dashboard.includes('class="accessSummaryCard"'),'Home must keep active plan cards');
+          assert(dashboard.includes('href="/account/access"'),'Home must link active access to My Access');
+          assert(!dashboard.includes('id="stremio-access"'),'Home must not server-render the Stremio setup panel');
+          assert(!dashboard.includes('action="/account/stremio/install"'),'Home must not own Stremio installation actions');
+          assert(!dashboard.includes('action="/account/stremio/revoke"'),'Home must not own Stremio revoke actions');
+          assert(!dashboard.includes('action="/account/stremio/reset-household"'),'Home must not own Stremio household actions');
+          assert(!dashboard.includes('Installation manifest'),'Home must not expose Stremio setup details');
+          assert(!checkout.includes("querySelector('#stremio-access')"),'Home must not rely on JavaScript to remove server-rendered Stremio setup');
+
+          assert(access.includes('id="stremio-access"')&&access.includes('data-stremio-access'),'My Access must contain the Stremio setup mount');
+          for(const needle of ['/account/stremio/installation.json','Household access','Get started with Stremio','Installation manifest','/account/stremio/install','/account/stremio/reset-household','/account/stremio/revoke'])assert(accessJs.includes(needle),`My Access Stremio UI missing ${needle}`);
+          assert(accessJs.includes("cache:'no-store'"),'My Access must fetch fresh installation-link state');
+          assert(accessJs.includes("name=\\\"returnTo\\\" value=\\\"access\\\""),'My Access Stremio mutations must return to My Access');
+
+          console.log('stremio journey polish smoke: ok');
+          """)
+          PY
+
+          node scripts/stremio-journey-polish-smoke.js
+          git diff --check
+          git config user.name "Ricas13"
+          git config user.email "56263921+Ricas13@users.noreply.github.com"
+          git add views/customer/dashboard.ejs public/js/customer-checkout.js src/platform/customer-stremio.js scripts/stremio-journey-polish-smoke.js
+          git commit -m "Fix Stremio Home server rendering"
+          git push origin HEAD:fix/stremio-home-server-render
