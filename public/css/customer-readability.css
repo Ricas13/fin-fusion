@@ -1,0 +1,45 @@
+/* Readability floor for dense customer-facing analytics.
+   Typography only: card, grid, chart and responsive geometry are untouched. */
+.activityPage .activityKpi span,
+.activityPage .activityCardHeading>a,
+.activityPage .activityMutedLink,
+.activityPage .activityRecentInfo strong,
+.activityPage .activityMiniEmpty,
+.activityPage .activityPeriodSelect select{
+  font-size:12px;
+  line-height:1.4;
+}
+
+.activityPage .activityKpi small,
+.activityPage .activityRangeTabs a,
+.activityPage .activityYAxis,
+.activityPage .activityXAxis,
+.activityPage .activityDonut span,
+.activityPage .activityGenreLegend>div:not(.activityGenreEmpty),
+.activityPage .activityGenreLegend strong,
+.activityPage .activityGenreEmpty,
+.activityPage .activityPoster,
+.activityPage .activityRecentInfo span,
+.activityPage .activityRecentRow time,
+.activityPage .activityProgress span,
+.activityPage .activityDeviceRow strong,
+.activityPage .activityDeviceRow span:last-child,
+.activityPage .activityHeatRow>span,
+.activityPage .activityHeatAxis,
+.activityPage .activityHeatCard>small,
+.activityPage .activityInsightGrid strong,
+.activityPage .activityInsightGrid p,
+.activityPage .activityDetailsPanel .sectionHead p,
+.activityPage .activityRecentType{
+  font-size:11px;
+  line-height:1.4;
+}
+
+/* Keep text legible when a narrow card cannot accommodate a longer label.
+   Existing overflow behaviour remains in charge; no container grows. */
+.activityPage .activityKpi span,
+.activityPage .activityKpi small,
+.activityPage .activityRecentInfo strong,
+.activityPage .activityRecentInfo span{
+  min-width:0;
+}

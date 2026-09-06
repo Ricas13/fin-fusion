@@ -82,18 +82,18 @@ body[data-section=settings]{--hue:var(--h-settings)}
    typographic decision leaking into either renderer. */
 .navSectionLabel{text-transform:none;letter-spacing:0}
 
-/* Readability floor for the existing dense admin surfaces.
-   These selectors intentionally have one extra class of specificity so the
-   floor remains effective regardless of stylesheet order. Typography only:
-   no card, grid, chart or spacing geometry is changed. */
+/* Visible readability floor for dense admin surfaces. Typography only: the
+   existing cards, grids, charts, spacing and responsive geometry stay intact. */
+.customer360Core .detailTab,
 .customer360Core .profileMeta,
+.customer360Core .profileCardHead h2,
 .customer360Core .kvValue,
 .customer360Core .timelineTitle,
 .customer360Core .emptyCompact,
 .customer360Core .customerClaimInviteHead strong,
 .customer360Core .customerClaimInviteStatus{
-  font-size:11px;
-  line-height:1.35;
+  font-size:12px;
+  line-height:1.4;
 }
 .customer360Core .summaryLabel,
 .customer360Core .summarySub,
@@ -106,16 +106,28 @@ body[data-section=settings]{--hue:var(--h-settings)}
 .customer360Core .controlCentreSummary span,
 .customer360Core .customerClaimInviteHead span,
 .customer360Core .customerClaimInviteHelp{
-  font-size:10px;
-  line-height:1.35;
+  font-size:11px;
+  line-height:1.4;
 }
 
+.analyticsDashboard .rangeCustom label,
+.analyticsDashboard .analyticsKpiLabel,
+.analyticsDashboard .analyticsKpiMeta,
+.analyticsDashboard .analyticsCardHeader p,
+.analyticsDashboard .barValue,
+.analyticsDashboard .analyticsSectionTitle span,
+.analyticsDashboard .chartLegendItem,
+.analyticsDashboard .widgetHealthDetail{
+  font-size:12px;
+  line-height:1.4;
+}
 .analyticsDashboard .delta,
 .analyticsDashboard .analyticsCardHeaderStat span,
 .analyticsDashboard .chartAxisText,
 .analyticsDashboard .miniStat span,
 .analyticsDashboard .barItemLabel span,
 .analyticsDashboard .analyticsTable th,
+.analyticsDashboard .analyticsTable td,
 .analyticsDashboard .analyticsTable .sub,
 .analyticsDashboard .serverLoadName span,
 .analyticsDashboard .serverLoadStats,
@@ -124,6 +136,23 @@ body[data-section=settings]{--hue:var(--h-settings)}
 .analyticsDashboard .chartHeatmap th,
 .analyticsDashboard .chartHeatmap td,
 .analyticsDashboard .widgetTimeframePill{
-  font-size:10px;
+  font-size:11px;
+  line-height:1.4;
+}
+
+/* The live-playback panel has its own very dense stylesheet. Use an extra
+   container class here so this floor wins regardless of stylesheet order. */
+.adminLiveStreams .adminLiveStreamsEyebrow,
+.adminLiveStreams .adminLiveStreamsCount,
+.adminLiveStreams .adminLiveStreamsHeaderMeta,
+.adminLiveStreams .adminLiveStreamSubtitle,
+.adminLiveStreams .adminLiveStreamBadge,
+.adminLiveStreams .adminLiveStreamBottom,
+.adminLiveStreams .adminLiveStreamReasons{
+  font-size:11px;
+  line-height:1.4;
+}
+.adminLiveStreams .adminLiveStreamTitle{
+  font-size:13px;
   line-height:1.35;
 }
