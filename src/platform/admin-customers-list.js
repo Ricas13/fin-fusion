@@ -82,7 +82,7 @@ function advancedActive(filters){return Boolean(filters.status||filters.accountS
 // <option value="">All servers</option>
 // More Advanced Filters
 function filterForm(filters,options,sort,counts={}){
-    const accessOptions=[['','Any'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
+    const accessOptions=[['','Any'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['blocked','Access removed'],['expired','Expired'],['no_entitlement','No entitlement']];
     const advanced=advancedActive(filters);
     return `<form class="customerFilterPanel compactFilterForm" method="get" action="/admin/users" data-native-submit="true">
         <input type="hidden" name="sort" value="${esc(sort.key)}"><input type="hidden" name="dir" value="${esc(sort.direction)}">
@@ -130,7 +130,11 @@ function expiryInfo(x){
     if(x.is_free_tier)return{primary:'—',secondary:''};
     const end=x.access_expires_at||x.current_period_end;
     if(!end)return{primary:'—',secondary:''};
-    if(!x.has_current_entitlement)return{primary:formatDate(end),secondary:`Expired ${relativeTime(end)}`,tone:'bad'};
+    const endMs=new Date(end).getTime();
+    if(!Number.isFinite(endMs))return{primary:'—',secondary:''};
+    // Historical expiry is useful as a date, but not as an ever-growing
+    // "Expired N days ago" counter. Relative text is reserved for upcoming access.
+    if(!x.has_current_entitlement||endMs<=Date.now())return{primary:formatDate(end),secondary:''};
     if(x.billing_interval==='trial'||x.subscription_status==='trialing')return{primary:formatDate(end),secondary:`Ends ${relativeTime(end)}`,tone:'warn'};
     if(['past_due','paused','cancelled','expired'].includes(x.subscription_status))return{primary:formatDate(end),secondary:`Access ${relativeTime(end)}`,tone:'warn'};
     return{primary:formatDate(end),secondary:relativeTime(end)};
@@ -149,6 +153,7 @@ function planMeta(x){
 function serviceActivity(x){return x.last_activity_at?`Last used ${relativeTime(x.last_activity_at)}`:'Never used'}
 function rowState(x){
     const current=x.has_current_entitlement===true;
+    const blocked=x.access_blocked===true;
     const jellyfinRequired=['jellyfin','bundle',null,undefined].includes(x.service_type);
     const jfCount=Number(x.customer_account_count||0);
     const missing=current&&jellyfinRequired&&jfCount===0;
@@ -164,6 +169,12 @@ function rowState(x){
         if(x.is_free_tier)return{access:'Ready',tone:'good',reason:'All good',action:'Open'};
         if(x.subscription_status==='trialing')return{access:'Ready',tone:'good',reason:'Trial access active',action:'Open'};
         return{access:'Ready',tone:'good',reason:'All good',action:'Open'};
+    }
+    if(blocked){
+        if(jfCount>0)return{access:'Access removed',tone:'bad',reason:'Jellyfin access still present',action:'Remove access'};
+        if(x.is_free_tier)return{access:'Inactive',tone:'',reason:'Free access is inactive',action:'Open'};
+        if(x.subscription_status==='past_due')return{access:'Payment ended',tone:'warn',reason:'Access removed after payment issue',action:'Billing'};
+        return{access:'Access removed',tone:'',reason:'Service access is blocked',action:'Open'};
     }
     if(x.plan_id){
         const stale=jfCount>0;
@@ -238,33 +249,38 @@ async function customerOverview(){
             (SELECT COUNT(*)::int FROM customers) total,
             (SELECT COUNT(*)::int FROM customers WHERE created_at>=NOW()-INTERVAL '30 days') new_30d,
             (SELECT COUNT(DISTINCT customer_id)::int FROM playback_history WHERE customer_id IS NOT NULL AND started_at>=NOW()-INTERVAL '30 days') active_30d,
-            (SELECT COUNT(DISTINCT customer_id)::int FROM effective_customer_entitlements) active_access,
+            (SELECT COUNT(DISTINCT customer_id)::int FROM effective_customer_entitlements WHERE COALESCE(blocked,FALSE)=FALSE) active_access,
             (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e
-                WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') NOT IN ('jellyfin','bundle')
-                   OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')) ready_access,
+                WHERE COALESCE(e.blocked,FALSE)=FALSE
+                  AND (COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') NOT IN ('jellyfin','bundle')
+                   OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin'))) ready_access,
             (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e
-                WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                WHERE COALESCE(e.blocked,FALSE)=FALSE
+                  AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
                   AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')) missing_jellyfin,
             (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e
-                WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                WHERE COALESCE(e.blocked,FALSE)=FALSE
+                  AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
                   AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')
                   AND EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=e.customer_id AND cps.status IN('pending','running'))) provisioning_pending,
             (SELECT COUNT(DISTINCT c.id)::int FROM customers c
                 LEFT JOIN app_users au ON au.id=c.user_id
                 WHERE au.active=FALSE
                    OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
-                       WHERE e.customer_id=c.id AND e.status='past_due')
+                       WHERE e.customer_id=c.id AND COALESCE(e.blocked,FALSE)=FALSE AND e.status='past_due')
                    OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
                        WHERE e.customer_id=c.id
+                         AND COALESCE(e.blocked,FALSE)=FALSE
                          AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
                          AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')
                          AND NOT EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=c.id AND cps.status IN('pending','running')))
                    OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
                        WHERE e.customer_id=c.id
+                         AND COALESCE(e.blocked,FALSE)=FALSE
                          AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
                          AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')
                          AND EXISTS(SELECT 1 FROM jellyfin_accounts ja2 JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id WHERE ja2.customer_id=c.id AND ja2.account_purpose='jellyfin' AND jpr.status='failed'))
-                   OR (NOT EXISTS(SELECT 1 FROM effective_customer_entitlements e WHERE e.customer_id=c.id)
+                   OR (NOT EXISTS(SELECT 1 FROM effective_customer_entitlements e WHERE e.customer_id=c.id AND COALESCE(e.blocked,FALSE)=FALSE)
                        AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin'))) attention,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE p.billing_interval='trial' OR e.status='trialing') trials,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE COALESCE(p.is_free_tier,FALSE)=TRUE OR COALESCE(p.price_minor,0)=0) free,
