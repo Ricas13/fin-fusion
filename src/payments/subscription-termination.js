@@ -111,6 +111,22 @@ async function recoverProviderOperation(op,{adapter=null}={}){
     return{...result,id:op.id,type:op.operation_type};
 }
 
+async function hardRevokeRefundedStremio(customerId,result){
+    if(!result||!['stremio','bundle'].includes(String(result.serviceType||'')))return result;
+    const stremio=require('../stremio/entitlements');
+    const remaining=await stremio.entitledSubscription(customerId);
+    if(remaining)return{...result,stremioRevoked:false,stremioPreservedBySubscription:true};
+    await stremio.revoke(customerId);
+    const managed=require('../stremio/managed-entitlements');
+    const managedCleanup=await managed.revokeInactiveMappings();
+    if(Number(managedCleanup?.failed||0)>0){
+        const error=new Error(managedCleanup.warning||'Some managed Stremio access could not be revoked after the refund.');
+        error.code='STREMIO_REFUND_CLEANUP_INCOMPLETE';
+        throw error;
+    }
+    return{...result,changed:true,stremioRevoked:true,managedStremioRevoked:Number(managedCleanup?.revoked||0)};
+}
+
 // Service-agnostic version of terminateLocal for confirmed-refund handling:
 // "a confirmed refund removes the associated plan" applies to any service
 // (Jellyfin, Stremio, bundle, add-on), not only the Jellyfin primary lane,
@@ -119,9 +135,15 @@ async function recoverProviderOperation(op,{adapter=null}={}){
 // canceling this subscription row does not defeat an active admin_present
 // directive, which independently keeps the service eligible regardless of
 // the underlying subscription's status.
+//
+// Stremio is deliberately stricter after a confirmed refund than an ordinary
+// expiry. An expiry may keep the old installation credential around so the
+// addon can show the friendly "subscription ended" state. A refund is an
+// explicit removal: once no other Stremio/bundle entitlement remains, the
+// install credential and managed media-server identities are revoked too.
 async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,reason='',reference=null}={}){
     const note=reasonText(reason),auditReference=reference?String(reference).slice(0,200):null;
-    return transaction(async client=>{
+    const local=await transaction(async client=>{
         const row=await client.query(`
             SELECT s.*,p.service_type
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
@@ -129,8 +151,8 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             FOR UPDATE OF s
         `,[subscriptionId,customerId]);
         if(!row.rowCount)return{changed:false,reason:'not_found_or_superseded'};
-        const subscription=row.rows[0];
-        if(subscription.status==='cancelled'&&Number(subscription.service_extension_days||0)===0)return{changed:false,reason:'already_terminated',id:subscription.id};
+        const subscription=row.rows[0],effectiveServiceType=serviceType(subscription);
+        if(subscription.status==='cancelled'&&Number(subscription.service_extension_days||0)===0)return{changed:false,reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType};
         const ended=await client.query(`
             UPDATE subscriptions
             SET status='cancelled',current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),service_extension_days=0,cancel_at_period_end=TRUE,updated_at=NOW()
@@ -138,9 +160,10 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_for_refund','subscription',$2,$3::jsonb)`,
-            [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription)})]);
-        return{changed:true,...ended.rows[0],customerId};
+            [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType})]);
+        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType};
     });
+    return hardRevokeRefundedStremio(customerId,local);
 }
 
-module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,terminateLocal,terminateForRefund,terminateRecurringNow,recoverProviderOperation};
+module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};

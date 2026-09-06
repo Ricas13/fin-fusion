@@ -10,11 +10,29 @@ const moneyFormat=require('./money-format');
 
 function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
-function activeSubscription(detail){return (detail.subscriptions||[]).find(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()))||detail.subscriptions?.[0]||null;}
+function liveSubscriptions(detail){return (detail.subscriptions||[]).filter(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()));}
+function activeSubscription(detail){return liveSubscriptions(detail)[0]||detail.subscriptions?.[0]||null;}
 function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${escapeHtml(token)}">`;}
 function fmtDate(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 function initials(value){const parts=String(value||'U').trim().split(/\s+/).filter(Boolean);if(parts.length>1)return(parts[0][0]+parts[parts.length-1][0]).toUpperCase();return String(parts[0]||'U').slice(0,2).toUpperCase();}
+
+function removeLegacyPlanRevoke(html){
+  return String(html||'').replace(
+    /<form class="plainForm" method="post" action="\/admin\/customers\/bulk\/preview">(?:(?!<\/form>)[\s\S])*?<input type="hidden" name="action" value="end_jellyfin_plan">(?:(?!<\/form>)[\s\S])*?<\/form>/g,
+    ''
+  );
+}
+
+function addPlanRevokeAction(actions,detail){
+  if(!liveSubscriptions(detail).length)return String(actions||'');
+  const id=detail.customer.id;
+  const tile=`<a class="actionTile" href="/admin/users/${encodeURIComponent(id)}/subscriptions/revoke" aria-label="Choose a specific plan or add-on to revoke"><span class="actionIcon" aria-hidden="true">×</span><strong>Revoke a plan…</strong><small>Choose a specific plan or add-on</small></a>`;
+  return String(actions||'').replace(
+    /(<div class="customerActionGrid">)([\s\S]*?)(<\/div><\/section>)/,
+    (_match,open,content,close)=>`${open}${content}${tile}${close}`
+  );
+}
 
 function accessWorkspaceSection(detail,token,accessDetail){
   const sub=activeSubscription(detail);
@@ -83,9 +101,11 @@ async function body(detail,token,options={}){
   const safe=customerFacingDetail(detail);
   const heroSummary=mockHero(safe,token,options.permanent);
   const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
-  const actions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
+  const rawActions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
+  const actions=addPlanRevokeAction(rawActions,safe);
   const main=await compact.render(safe,token,options);
-  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${main}`;
+  const filteredMain=removeLegacyPlanRevoke(main);
+  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${filteredMain}`;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,activeSubscription,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,mockHero};
+module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,removeLegacyPlanRevoke,addPlanRevokeAction,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,mockHero};
