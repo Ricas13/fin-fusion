@@ -97,7 +97,7 @@ try {
         {Id:'stale',LastActivityDate:'2026-08-30T07:50:00.000Z',SupportsRemoteControl:true}
     ],{now:sessionNow});
     assert.deepStrictEqual(embySessions.map(session=>session.Id),['recent'],'Emby sessions outside the requested freshness window must be filtered locally');
-    assert.strictEqual(embySessions[0].SupportsMediaControl,true,'Emby SupportsRemoteControl must normalize to CAPTaINFiN media-control capability');
+    assert.strictEqual(embySessions[0].SupportsMediaControl,true,'Emby SupportsRemoteControl must normalize to CAPTAiNFiN media-control capability');
     const jellyfinSessions=[{Id:'jf',LastActivityDate:'2020-01-01T00:00:00.000Z',SupportsMediaControl:true}];
     assert.strictEqual(registry.mediaProvider.responseBody('jellyfin','/Sessions?activeWithinSeconds=120',jellyfinSessions,{now:sessionNow}),jellyfinSessions,'Jellyfin session responses must remain untouched');
 
@@ -140,6 +140,7 @@ try {
     assert.deepStrictEqual(safeRows.map(row => row.customer_id),['free-customer'],'An unrelated offline server must not block eligible users on a healthy target server');
     assert.deepStrictEqual(scopedInactivity.eligibleOnReadyServers([{server_id:'free-server',eligible:true}],{'free-server':{ready:false,error:'activity unavailable'}}),[],'If the target Free Server activity refresh fails, enforcement must fail safe for that server');
 
+    execFileSync(process.execPath,[path.join(root,'scripts/jellyfin-admin-protection-runtime-smoke.js')],{stdio:'inherit',env:process.env});
     execFileSync(process.execPath,[path.join(root,'scripts/emby-registry-runtime-smoke.js')],{stdio:'inherit',env:process.env});
     console.log('Jellyfin/Emby registry URL/auth/activity validation smoke test passed.');
 } finally {
