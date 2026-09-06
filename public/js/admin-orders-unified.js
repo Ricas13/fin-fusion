@@ -4,12 +4,19 @@
   if (window.__captainfinOrdersUnifiedBound) return;
   window.__captainfinOrdersUnifiedBound = true;
 
-  if (!document.querySelector('link[data-orders-visual-polish]')) {
-    const polish = document.createElement('link');
-    polish.rel = 'stylesheet';
-    polish.href = '/css/admin-orders-visual-polish.css';
-    polish.dataset.ordersVisualPolish = 'true';
-    document.head.appendChild(polish);
+  const chartStyleRevision = '20260906-orders-charts';
+  const chartStyles = [
+    ['ordersChartFoundation', `/css/admin-dashboard-analytics.css?v=${chartStyleRevision}`],
+    ['ordersVisualPolish', `/css/admin-orders-visual-polish.css?v=${chartStyleRevision}`]
+  ];
+  for (const [datasetKey, href] of chartStyles) {
+    const selector = `link[data-${datasetKey.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}]`;
+    if (document.querySelector(selector)) continue;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.dataset[datasetKey] = 'true';
+    document.head.appendChild(link);
   }
 
   const calendarSvg = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3v3M17 3v3M4.5 9h15M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 19 20.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5Z" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
