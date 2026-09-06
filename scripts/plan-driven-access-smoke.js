@@ -7,7 +7,6 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
 const inactivityRuntime=require('../src/automation/customer-inactivity');
-const planLifecyclePage=require('../src/platform/admin-jellyfin-plan-editor');
 const globalLifecyclePage=require('../src/platform/admin-jellyfin-lifecycle');
 const accessEditorRuntime=require('../src/platform/admin-plan-access');
 const laneStreamRuntime=require('../src/jellyfin/lane-stream-policy');
@@ -44,39 +43,33 @@ assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer
 assert(nav.includes("['users','All customers','/admin/users']")&&nav.includes("['activity','Playback','/admin/activity']"),'All customers and Playback must remain visible operator starting points in the fixed rail');
 assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate administration must remain a permanent Commerce destination');
 
-// New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.
+// New customer plans are inventory-controlled and Jellyfin plans expose the real
+// media policy surface. Lifecycle/inactivity is no longer a per-plan setting.
 for(const token of ['capacityLimit','streams','allowDownloads','allowVideoTranscoding','allowAudioTranscoding','allowRemuxing','allowLiveTv','allowLiveTvManagement','allowRemoteAccess','libraryAccessMode','libraryNames'])assert(createPlan.includes(token),`New plan is missing ${token}`);
 assert(createPlan.includes('allow_4k'),'New Jellyfin plans must persist the existing 4K catalogue flag');
 assert(createPlan.includes('allowSubtitleEditing')&&createPlan.includes("'Edit subtitles'"),'New Jellyfin plans must expose the real Jellyfin subtitle-management permission');
-assert(createPlan.includes('inactivityEnabled')&&createPlan.includes('minimumPlaybackMinutes')&&createPlan.includes('noPlaybackDays'),'Free plan creation must include configurable Jellyfin usage rules');
-assert(planPolicy.includes("billing_interval||'')==='trial'"),'Plan usage disabling must explicitly exclude trial plans');
+for(const retired of ['inactivityEnabled','minimumPlaybackMinutes','noPlaybackDays'])assert(!createPlan.includes(retired),`Plan creation must not expose retired lifecycle field ${retired}`);
+assert(!planLifecycleSource.includes('name="_lifecycleCheckboxes"'),'Unified plan editor must not render per-plan lifecycle controls');
+assert(!planLifecycleSource.includes("editor-lifecycle"),'Unified plan editor must not own a per-plan lifecycle save action');
+assert(planPolicy.includes("action:'remove_jellyfin'"),'Lifecycle policy compatibility code must use direct Jellyfin removal, never a disabled state');
+
+// Existing rows may still be interpreted by compatibility code, but an empty
+// plan policy inherits the one global Free Server inactivity policy.
 const inheritedPolicy=planPolicyRuntime.effectiveForFreePlan({},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
 assert.strictEqual(inheritedPolicy.enabled,true,'Free plan with no lifecycle override must inherit globally enabled automation');
 assert.strictEqual(inheritedPolicy.dryRun,false,'Free plan with no lifecycle override must inherit global enforcement mode');
 assert.strictEqual(inheritedPolicy.noPlaybackDays,7,'Free plan with no lifecycle override must inherit global no-playback threshold');
+assert.strictEqual(inheritedPolicy.action,'remove_jellyfin','Free inactivity must remove the Jellyfin identity directly');
 assert.strictEqual(planPolicyRuntime.hasUsageTrigger(inheritedPolicy),true,'Inherited Free rule must be an actionable usage policy');
-const explicitlyDisabled=planPolicyRuntime.effectiveForFreePlan({enabled:false,dryRun:false,noPlaybackDays:7},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
-assert.strictEqual(explicitlyDisabled.enabled,false,'Explicit per-plan disable must override a globally enabled lifecycle');
-const globallyDry=planPolicyRuntime.effectiveForFreePlan({enabled:true,dryRun:false,noPlaybackDays:3},{enabled:true,dryRun:true,freeNoPlaybackDays:7});
-assert.strictEqual(globallyDry.dryRun,true,'Global dry-run must prevent a plan override from forcing enforcement');
-assert(inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')")&&inactivity.includes('planPolicy.effectiveForFreePlan'),'Free inactivity worker must resolve the effective global-plus-plan lifecycle policy');
-assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE"),'Free candidates must not be silently excluded just because their plan has no explicit enabled override');
+assert(inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')")&&inactivity.includes('planPolicy.effectiveForFreePlan'),'Free inactivity worker must resolve the effective global lifecycle policy');
+assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE"),'Free candidates must not require a per-plan enabled flag');
 assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity must apply to the canonical Free entitlement regardless of acquisition source');
-assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor plan-scoped inactivity holds independently of subscription source');
+assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor inactivity holds independently of subscription source');
 assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptionState.includes("ja.access_lane='free'"),'Dormant cleanup blocking must remain scoped to the Free Jellyfin lane');
 assert(inactivity.includes('observation_started_at')&&inactivity.includes('observationStartedAt'),'Inactivity audit evidence must record the effective observation start');
 
-// Browser checkbox semantics must not be confused with backend fail-safe defaults.
-assert(planLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&planLifecycleSource.includes('lifecycleFormInput(req.body)'),'Free-plan lifecycle form must explicitly mark browser checkbox submissions');
+// The global lifecycle page is the only operator-configurable Free inactivity surface.
 assert(globalLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&globalLifecycleSource.includes('lifecycleFormInput(req.body)'),'Global lifecycle form must explicitly mark browser checkbox submissions');
-const planUnchecked=planLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',noPlaybackDays:'7'});
-assert.strictEqual(planUnchecked.enabled,'on');
-assert.strictEqual(planUnchecked.dryRun,false,'Unticking plan Dry run only must persist explicit false instead of falling back to safe true');
-const planChecked=planLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on',noPlaybackDays:'7'});
-assert.strictEqual(planChecked.dryRun,'on','Checked plan Dry run only must remain true-like for policy normalization');
-const planUnmarked=planLifecyclePage.lifecycleFormInput({enabled:'on',noPlaybackDays:'7'});
-assert.strictEqual(Object.prototype.hasOwnProperty.call(planUnmarked,'dryRun'),false,'Unmarked/internal plan input must not synthesize enforcement');
-assert.strictEqual(planPolicyRuntime.normalize(planUnmarked).dryRun,true,'Unmarked/internal plan input must retain the backend safe dry-run default');
 const globalUnchecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',freeNoPlaybackDays:'7'});
 assert.strictEqual(globalUnchecked.enabled,false,'Unticking global lifecycle automation must persist explicit false');
 assert.strictEqual(globalUnchecked.dryRun,false,'Unticking global dry run must persist explicit false');
@@ -100,8 +93,8 @@ const strandedHeldFreeAccount={inactivity_policy:{},account_created_at:new Date(
 const strandedPolicy=planPolicyRuntime.effectiveForFreePlan(strandedHeldFreeAccount.inactivity_policy,{enabled:true,dryRun:false,freeNoPlaybackDays:7});
 const strandedAssessment=inactivityRuntime.assessUsage(strandedHeldFreeAccount,strandedPolicy,now);
 const strandedEligible=strandedPolicy.enabled&&!strandedHeldFreeAccount.automation_protected&&!strandedHeldFreeAccount.currently_playing&&(strandedAssessment.noPlaybackEligible||strandedAssessment.usageEligible);
-assert.strictEqual(strandedEligible,true,'An existing inactivity hold on an enabled Free account must retry disable/reconcile instead of being skipped forever');
-assert(inactivity.includes('repairExistingHold:Boolean(row.already_held&&eligible)'),'Inactivity candidates must flag held-but-enabled Free accounts for repair visibility');
+assert.strictEqual(strandedEligible,true,'An existing inactivity hold on an enabled Free account must retry removal/reconcile instead of being skipped forever');
+assert(inactivity.includes('repairExistingHold:Boolean(row.already_held&&eligible)'),'Inactivity candidates must flag held-but-present Free accounts for repair visibility');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 // The dormant-account cleanup pipeline that used to live in this module (getCleanup/
@@ -144,7 +137,7 @@ assert(composition.includes('createAdminPlanCreateV2Router()'),'Full-policy plan
 assert(!composition.includes('createAdminCatalogShellRouter'),'Legacy catalogue create routes must not be mounted alongside the V2 plan-create owner');
 assert(composition.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
 assert(composition.includes('createLegacyJellyfinImportRedirectRouter()')&&!composition.includes('createAdminJellyfinImportRouter'),'Only the server-guidance landing route may own the legacy Jellyfin Import URL');
-assert(composition.includes('createAdminServerUsersRouter()')&&composition.includes('createAdminJellyfinPlanEditorRouter()')&&composition.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle (now part of the unified Jellyfin plan editor)/inventory and server import routes must be mounted');
+assert(composition.includes('createAdminServerUsersRouter()')&&composition.includes('createAdminJellyfinPlanEditorRouter()')&&composition.includes('createAdminPlanInventoryRouter()'),'Unified Jellyfin plan/inventory and server import routes must be mounted');
 
 // Jellyfin/Emby playback limits must be independently selectable. Explicit 0
 // is the persisted "unlimited/off" sentinel for concurrent streams, while bad
