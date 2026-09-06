@@ -6,6 +6,7 @@ const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
+const inactivityStatus=require('../automation/customer-inactivity-status');
 const runtimeSettings=require('./runtime-settings');
 const customerNav=require('./customer-nav-html');
 const requestUsers=require('../integrations/request-user-sync');
@@ -26,6 +27,11 @@ function entitlementStreams(entitlement){const value=Number(entitlement?.streams
 function mediaType(account){return String(account?.media_server_type||'jellyfin').toLowerCase()==='emby'?'emby':'jellyfin';}
 function mediaLabel(account){return mediaType(account)==='emby'?'Emby':'Jellyfin';}
 function accessLabel(account){if(mediaType(account)==='emby')return'Emby Share';return String(account?.access_lane||'primary')==='free'?'Free Server':'Premium Jellyfin';}
+function serviceType(subscription){const type=String(subscription?.service_type_snapshot||subscription?.service_type||'jellyfin').toLowerCase();return ['jellyfin','emby','stremio','bundle'].includes(type)?type:'jellyfin';}
+function subscriptionKind(subscription){if(subscription?.is_free_tier)return'Free Server';const type=serviceType(subscription);if(type==='emby')return'Emby Share';if(type==='stremio')return'Stremio';if(type==='bundle')return'Jellyfin + Stremio';return String(subscription?.billing_interval_snapshot||subscription?.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin';}
+function subscriptionName(subscription){return subscription?.plan_name||subscription?.contract_plan_name||subscription?.name||subscription?.plan_code||subscription?.code||'Streaming access';}
+function planPriceMinor(subscription){const value=subscription?.price_minor_snapshot??subscription?.price_minor??0;return Number.isFinite(Number(value))?Number(value):0;}
+function asDate(value){if(!value)return null;const date=new Date(value);return Number.isNaN(date.getTime())?null:date;}
 function redirectAccess(res,key,message,hash=''){
   const params=new URLSearchParams();
   params.set(key,String(message||''));
@@ -49,6 +55,75 @@ function markRemovedFreeAccess(subscriptions,returnStatus){
     if(freePlanId&&String(subscription.plan_id||'')!==freePlanId)return subscription;
     return{...subscription,access_removed:true,access_removed_reason:'inactivity'};
   });
+}
+function inactiveReason(subscription,holdType=null,{removedForInactivity=false}={}){
+  if(removedForInactivity||holdType==='inactivity_policy'||holdType==='jellyfin_cleanup')return'Free Server access was removed because the activity requirements were not met.';
+  if(holdType==='payment_delinquency')return'Access ended because payment could not be collected.';
+  if(holdType==='admin_hold'||holdType==='admin_disabled')return'Access was removed by an administrator.';
+  const status=String(subscription?.status||'').toLowerCase();
+  const interval=String(subscription?.billing_interval_snapshot||subscription?.billing_interval||'').toLowerCase();
+  if(status==='refunded'||status==='refund')return'Access ended because the payment was refunded.';
+  if(status==='canceled'||status==='cancelled')return'Your subscription was cancelled and this access is no longer active.';
+  if(status==='expired'&&interval==='trial')return'Your trial ended.';
+  if(status==='expired')return'This plan reached the end of its access period.';
+  const end=asDate(subscription?.current_period_end);
+  if(end&&end.getTime()<=Date.now())return interval==='trial'?'Your trial ended.':'This plan reached the end of its access period.';
+  return'This plan is no longer active.';
+}
+function inactiveEndAt(subscription){return subscription?.current_period_end||subscription?.canceled_at||subscription?.cancelled_at||subscription?.updated_at||null;}
+function hoursUntil(date,now=Date.now()){const parsed=asDate(date);return parsed?(parsed.getTime()-now)/3600000:null;}
+function addHours(date,hours){const parsed=asDate(date);return parsed&&Number.isFinite(hours)?new Date(parsed.getTime()+hours*3600000):null;}
+function freeAccessHealth(status,{now=Date.now()}={}){
+  if(!status?.applies)return null;
+  const policy=status.policy||{},minimumObservationHours=Math.max(0,Number(policy.minimumObservationHours)||0),deadlines=[];
+  const noPlaybackDays=Number(policy.noPlaybackDays),playbackWindowDays=Number(policy.playbackWindowDays),minimumPlaybackMinutes=Number(policy.minimumPlaybackMinutes);
+  const observation=asDate(status.observationStartedAt),inactiveReference=asDate(status.inactiveReferenceAt);
+  if(Number.isFinite(noPlaybackDays)&&noPlaybackDays>0){
+    const inactivityDeadline=addHours(inactiveReference,noPlaybackDays*24),observationDeadline=addHours(observation,Math.max(minimumObservationHours,noPlaybackDays*24));
+    if(inactivityDeadline)deadlines.push(inactivityDeadline);if(observationDeadline)deadlines.push(observationDeadline);
+  }
+  if(Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0){
+    const usageDeadline=addHours(observation,Math.max(minimumObservationHours,playbackWindowDays*24));if(usageDeadline)deadlines.push(usageDeadline);
+  }
+  const removalAt=deadlines.length?new Date(Math.max(...deadlines.map(date=>date.getTime()))):null;
+  const remainingHours=removalAt?hoursUntil(removalAt,now):null;
+  const rules=[];
+  if(Number.isFinite(noPlaybackDays)&&noPlaybackDays>0)rules.push(`do not go ${noPlaybackDays} day${noPlaybackDays===1?'':'s'} without playback`);
+  if(Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0)rules.push(`watch at least ${minimumPlaybackMinutes} minutes in each ${playbackWindowDays}-day window`);
+  const rulesText=rules.length?`To keep Free Server access, ${rules.join(' and ')}.`:'Keep using the Free Server regularly to retain your place.';
+  if(status.automationProtected)return{tone:'good',label:'Protected',detail:'This account is protected from automatic inactivity removal.',rulesText,removalAt:null,remainingHours:null,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  if(status.currentlyPlaying)return{tone:'good',label:"You're good",detail:'You are currently playing something on the Free Server.',rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  if(!status.enforcementReady)return{tone:'good',label:"You're good",detail:'Automatic inactivity removal is currently paused while activity telemetry is unavailable.',rulesText,removalAt:null,remainingHours:null,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  if(Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&status.playbackMinutes>=minimumPlaybackMinutes)return{tone:'good',label:"You're good",detail:`You have ${status.playbackMinutes} minutes of playback in the current ${playbackWindowDays}-day window.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  if(status.eligible||remainingHours!=null&&remainingHours<=12)return{tone:'bad',label:'Removal risk',detail:status.eligible?'The activity threshold has been reached. Access can be removed on the next automation run.':`Less than ${Math.max(1,Math.ceil(remainingHours))} hours remain before the inactivity threshold is reached.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  if(remainingHours!=null&&remainingHours<=48)return{tone:'warn',label:'48-hour warning',detail:`About ${Math.max(1,Math.ceil(remainingHours))} hours remain before the inactivity threshold is reached.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  return{tone:'good',label:"You're good",detail:remainingHours==null?'Your Free Server activity is currently within the allowed limits.':`About ${Math.max(1,Math.ceil(remainingHours))} hours remain before inactivity could qualify for removal.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+}
+async function inactiveAccessHistory(customerId,portal,returnStatus){
+  const holdResult=await query(`SELECT hold_type,source_key,reason,created_at FROM customer_access_holds WHERE customer_id=$1 AND released_at IS NULL ORDER BY created_at DESC`,[customerId]).catch(()=>({rows:[]}));
+  const holdByPlan=new Map();
+  for(const hold of holdResult.rows||[]){const match=String(hold.source_key||'').match(/^plan:(.+)$/);if(match&&!holdByPlan.has(match[1]))holdByPlan.set(match[1],hold);}
+  const freePlanId=String(returnStatus?.freePlanId||'');
+  const rows=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[]).filter(subscription=>!subscription?.is_addon&&['jellyfin','emby','stremio','bundle'].includes(serviceType(subscription)));
+  const items=[];
+  for(const subscription of rows){
+    const planId=String(subscription.plan_id||''),hold=holdByPlan.get(planId)||null,removedForInactivity=Boolean(returnStatus?.canRestoreDeletedFree&&subscription.is_free_tier&&(!freePlanId||planId===freePlanId));
+    if(customerNav.liveServiceSubscription(subscription)&&!hold&&!removedForInactivity)continue;
+    items.push({
+      id:String(subscription.id||subscription.subscription_id||`${planId}:${subscription.created_at||''}`),
+      planId:planId||null,
+      planCode:subscription.plan_code||subscription.contract_plan_code||subscription.code||null,
+      planName:subscriptionName(subscription),
+      kind:subscriptionKind(subscription),
+      reason:inactiveReason(subscription,hold?.hold_type,{removedForInactivity}),
+      endedAt:inactiveEndAt(subscription),
+      paid:planPriceMinor(subscription)>0&&String(subscription.billing_interval_snapshot||subscription.billing_interval||'')!=='trial',
+      status:String(subscription.status||'inactive')
+    });
+  }
+  const deduped=new Map();
+  for(const item of items.sort((a,b)=>new Date(b.endedAt||0)-new Date(a.endedAt||0))){const key=item.planId||item.planCode||item.id;if(!deduped.has(key))deduped.set(key,item);}
+  return[...deduped.values()].slice(0,8);
 }
 
 async function mediaRows(customerId){
@@ -148,6 +223,13 @@ function createCustomerJellyfinRouter(){
   router.use('/account/access',accessSurfaceLimit);
 
   router.get('/account/jellyfin',requireCustomer,legacyAccessRedirect);
+  router.get('/account/access-history.json',requireCustomer,async(req,res)=>{
+    try{
+      const customerId=req.session.customerId,portal=await customers.getCustomerPortal(customerId),returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(()=>({eligible:false,canRestoreDeletedFree:false,freePlanId:null}));
+      res.setHeader('Cache-Control','no-store, private, max-age=0');
+      return res.json({items:await inactiveAccessHistory(customerId,portal,returnStatus)});
+    }catch(error){console.warn('Customer inactive access history unavailable:',{customerId:req.session.customerId,error:error.message});return res.status(503).json({items:[]});}
+  });
   router.get('/account/access',requireCustomer,async(req,res,next)=>{
     try{
       await runtimeSettings.ensureLoaded();
@@ -156,21 +238,22 @@ function createCustomerJellyfinRouter(){
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
         .filter(customerNav.liveServiceSubscription)
         .sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
-      const [accounts,requestState,returnStatus]=await Promise.all([
+      const [accounts,requestState,returnStatus,rawFreeUsage]=await Promise.all([
         accessAccountsForCustomer(customerId,portal),
         requestStateForCustomer(customerId),
-        cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,canRestoreDeletedFree:false,freePlanId:null,error:error.message}))
+        cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,canRestoreDeletedFree:false,freePlanId:null,error:error.message})),
+        inactivityStatus.customerStatus(customerId).catch(error=>({applies:false,error:error.message,telemetry:{ready:false}}))
       ]);
-      const subscriptions=markRemovedFreeAccess(rawSubscriptions,returnStatus);
+      const subscriptions=markRemovedFreeAccess(rawSubscriptions,returnStatus),freeUsage=freeAccessHealth(rawFreeUsage);
       if(!subscriptions.length&&!requestState.eligible){
         return res.redirect('/account?error='+encodeURIComponent('You do not currently have active streaming access.'));
       }
       res.setHeader('Cache-Control','no-store, private, max-age=0');
       res.setHeader('Pragma','no-cache');
       return res.render('customer/jellyfin',{
-        siteName:runtimeSettings.siteName(),portal,accounts,subscriptions,requestState,returnStatus,
+        siteName:runtimeSettings.siteName(),portal,accounts,subscriptions,requestState,returnStatus,freeUsage,
         navOptions:customerNav.optionsFromPortal(portal),csrfToken:csrf.token(req),
-        message:req.query.message||null,error:req.query.error||returnStatus.error||null
+        message:req.query.message||null,error:req.query.error||returnStatus.error||rawFreeUsage.error||null
       });
     }catch(error){return next(error);}
   });
@@ -219,4 +302,4 @@ function createCustomerJellyfinRouter(){
   return router;
 }
 
-module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,markRemovedFreeAccess};
+module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,markRemovedFreeAccess,freeAccessHealth,inactiveAccessHistory};
