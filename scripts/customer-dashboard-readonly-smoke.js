@@ -39,5 +39,14 @@ assert(!inspectBlock.includes('UPDATE jellyfin_account_lifecycle'),'read-only re
 assert(!inspectBlock.includes('INSERT INTO audit_log'),'read-only restoration inspection must not append mutation audit events');
 assert(cleanup.slice(mutateStart).includes('await returningCustomerStatus(customerId)'),'restoration mutation must re-check eligibility instead of trusting stale GET state');
 
-console.log('customer dashboard read-only GET smoke: ok');
+const activity=read('src/platform/customer-activity.js');
+assert(activity.includes("optionalInsightQuery('summary'")&&activity.includes("optionalInsightQuery('recent-items'"),'personalised Activity analytics must isolate production query failures by analytics slice');
+assert(activity.includes('insightData(customerId,rawRange).catch(error=>'),'optional personalised analytics must never make the core Activity page return a 500');
+assert(activity.includes('fallbackInsights(rawRange'),'/account/activity must have a complete no-analytics fallback model');
+const activityModule=require('../src/platform/customer-activity');
+const fallback=activityModule.fallbackInsights('30d');
+assert(fallback.degraded===true&&fallback.range.key==='30d','Activity fallback must explicitly mark analytics as degraded while retaining the requested range');
+assert(Array.isArray(fallback.heatmap)&&fallback.heatmap.length===7&&Array.isArray(fallback.timeline)&&fallback.timeline.length>=28,'Activity fallback must remain render-safe for the heatmap and daily chart');
+
+console.log('customer dashboard read-only GET and Activity resilience smoke: ok');
 require('./customer-workflow-completion-smoke');
