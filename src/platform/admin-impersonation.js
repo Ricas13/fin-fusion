@@ -26,20 +26,43 @@ async function targetCustomer(customerId) {
 function eligibleTarget(row) {
     return Boolean(row?.user_id && row?.active && row?.role === 'customer');
 }
-function restrictedImpersonationAction(req) {
+function requestPath(req) {
+    return String(req.path || req.originalUrl || '').split('?')[0];
+}
+function chargeCreatingImpersonationAction(req) {
     if (!req.session?.impersonation) return null;
     const method = String(req.method || '').toUpperCase();
     if (['GET','HEAD','OPTIONS'].includes(method)) return null;
-    const path = String(req.path || req.originalUrl || '').split('?')[0];
+    const path = requestPath(req);
     if (method === 'POST' && path === '/account/impersonation/exit') return null;
-    if (path.startsWith('/account')) return 'customer changes';
+
+    // Checkout initiation can create a provider charge, paid subscription,
+    // plan change, add-on, or even activate a zero-value promotional order.
+    // Cancellation of an in-progress checkout is deliberately excluded.
+    if (method === 'POST' && path.startsWith('/account/checkout/') && path !== '/account/checkout/cancel-open') {
+        return 'purchase or checkout';
+    }
+
+    // Keep provider billing-management entry points blocked if/when they are
+    // mounted. These pages can change payment methods or paid subscriptions.
+    if (method === 'POST' && [
+        '/account/billing/portal',
+        '/account/billing/manage',
+        '/account/stripe/portal',
+        '/account/payments/portal'
+    ].includes(path)) {
+        return 'charge-creating billing';
+    }
     return null;
+}
+function restrictedImpersonationAction(req) {
+    return chargeCreatingImpersonationAction(req);
 }
 function banner(req) {
     const imp = req.session?.impersonation;
     if (!imp) return '';
     const label = imp.displayName || imp.username || 'customer';
-    return `<div class="captainfinImpersonation"><div><strong>Read-only support view: ${esc(label)}</strong><span>You can inspect this customer portal, but all customer account changes are blocked while impersonating. Exit impersonation before making an approved support change from the admin area.</span></div><form method="post" action="/account/impersonation/exit"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button type="submit">Exit impersonation</button></form></div><style>.captainfinImpersonation{position:sticky;top:0;z-index:10000;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;background:#5b2a10;color:#fff;border-bottom:1px solid #d9874b;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.captainfinImpersonation strong{display:block;font-size:13px}.captainfinImpersonation span{display:block;margin-top:2px;font-size:11px;opacity:.86}.captainfinImpersonation form{margin:0}.captainfinImpersonation button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:7px 11px;font-weight:700;cursor:pointer}@media(max-width:650px){.captainfinImpersonation{align-items:flex-start;flex-direction:column}}</style>`;
+    return `<div class="captainfinImpersonation"><div><strong>Support view: ${esc(label)}</strong><span>Customer account actions are live. Purchases, checkout and other charge-creating billing actions are blocked while you are impersonating this customer.</span></div><form method="post" action="/account/impersonation/exit"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button type="submit">Exit impersonation</button></form></div><style>.captainfinImpersonation{position:sticky;top:0;z-index:10000;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;background:#5b2a10;color:#fff;border-bottom:1px solid #d9874b;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.captainfinImpersonation strong{display:block;font-size:13px}.captainfinImpersonation span{display:block;margin-top:2px;font-size:11px;opacity:.86}.captainfinImpersonation form{margin:0}.captainfinImpersonation button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:7px 11px;font-weight:700;cursor:pointer}@media(max-width:650px){.captainfinImpersonation{align-items:flex-start;flex-direction:column}}</style>`;
 }
 function injectBanner(html, req) {
     if (typeof html !== 'string' || !req.session?.impersonation) return html;
@@ -49,7 +72,7 @@ function injectBanner(html, req) {
     return html.slice(0,body.index + body[0].length) + value + html.slice(body.index + body[0].length);
 }
 function impersonateButton(req, customerId) {
-    return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/impersonate" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button" type="submit">View portal (read-only)</button></form>`;
+    return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/impersonate" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button" type="submit">Open customer portal</button></form>`;
 }
 function injectAdminButton(html, req, customerId) {
     if (typeof html !== 'string') return html;
@@ -82,7 +105,7 @@ function createImpersonationAuditRouter() {
         await auditImpersonatedMutation(req,res);
         const restrictedAction = restrictedImpersonationAction(req);
         if (restrictedAction) {
-            return res.status(403).send(`This ${restrictedAction} action is disabled while an administrator is using the read-only support view.`);
+            return res.status(403).send(`This ${restrictedAction} action is disabled while an administrator is impersonating a customer.`);
         }
         if (req.session?.impersonation && req.path.startsWith('/account')) {
             const send = res.send.bind(res);
@@ -126,7 +149,7 @@ function createAdminImpersonationRouter() {
             req.session.customerUserId = target.user_id;
             req.session.customerUsername = target.username;
             req.session.customerSessionVersion = Number(target.session_version || 1);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.start','customer',$2,$3::jsonb)`, [req.session.authUserId,target.customer_id,JSON.stringify({ targetUserId:target.user_id,impersonationId:req.session.impersonation.id,mode:'read_only',replacedImpersonationId:previous?.id||null })]);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.start','customer',$2,$3::jsonb)`, [req.session.authUserId,target.customer_id,JSON.stringify({ targetUserId:target.user_id,impersonationId:req.session.impersonation.id,mode:'support_with_financial_guard',replacedImpersonationId:previous?.id||null })]);
             await save(req);
             return res.redirect('/account');
         } catch (error) {
@@ -168,4 +191,4 @@ function createAdminImpersonationRouter() {
     return router;
 }
 
-module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, injectBanner, injectAdminButton };
+module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, requestPath, chargeCreatingImpersonationAction, restrictedImpersonationAction, injectBanner, injectAdminButton };
