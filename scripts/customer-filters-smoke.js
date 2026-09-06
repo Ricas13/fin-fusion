@@ -30,24 +30,27 @@ function main() {
         assert.ok(built.whereSql.includes('p.billing_interval=$1'),'billing interval must be bound');
         assert.ok(built.whereSql.includes("c.created_at<=NOW()-($2::int*INTERVAL '1 day')"),'account age must be parameterized');
         assert.ok(built.whereSql.includes('effective_customer_entitlements live'),'lapsed audiences must use effective-entitlement authority');
+        assert.ok(built.whereSql.includes('COALESCE(live.blocked,FALSE)=FALSE'),'blocked entitlement rows must count as lapsed/no-access for audience targeting');
         assert.ok(built.whereSql.includes("COALESCE(cur.access_expires_at,cur.current_period_end)<=NOW()+($4::int*INTERVAL '1 day')"),'expiry targeting must respect effective extension/permanent semantics');
         assert.ok(built.whereSql.includes('FROM playback_history ph_segment'),'playback inactivity must use canonical playback history');
         assert.deepStrictEqual(built.params,['year',30,14,7,60]);
     }
 
-    // Access means media-service access. Portal sign-in and historical sync
-    // failures must not make a provisioned customer look as though access is missing.
+    // Access means media-service access. A time-current entitlement that is
+    // explicitly blocked must never become Ready, Needs access or Provisioning.
     {
         const active=buildWhere({access:'active'},null);
         const needsAccess=buildWhere({access:'needs_access'},null);
         const attention=buildWhere({access:'attention'},null);
         const provisioning=buildWhere({access:'provisioning'},null);
+        const blocked=buildWhere({access:'blocked'},null);
         const expired=buildWhere({access:'expired'},null);
-        assert.ok(active.whereSql.includes('cur.is_current'),'ready filter must use effective current entitlement truth');
+        assert.ok(active.whereSql.includes('cur.is_current')&&active.whereSql.includes('cur.blocked'),'ready filter must require a current, unblocked entitlement');
         assert.ok(active.whereSql.includes('customer_account_count'),'current Jellyfin/bundle access must require a present customer Jellyfin identity');
         assert.ok(!active.whereSql.includes('au.active'),'portal sign-in must not decide media access readiness');
-        assert.ok(needsAccess.whereSql.includes("NOT IN ('pending','running')")&&needsAccess.whereSql.includes('customer_account_count'),'needs-access must mean current entitlement with missing Jellyfin access');
-        assert.ok(provisioning.whereSql.includes("provision.status IN ('pending','running')"),'provisioning must only describe an in-progress missing-access state');
+        assert.ok(needsAccess.whereSql.includes("NOT IN ('pending','running')")&&needsAccess.whereSql.includes('customer_account_count')&&needsAccess.whereSql.includes('cur.blocked'),'needs-access must mean current unblocked entitlement with missing Jellyfin access');
+        assert.ok(provisioning.whereSql.includes("provision.status IN ('pending','running')")&&provisioning.whereSql.includes('cur.blocked'),'provisioning must only describe an in-progress missing-access state for unblocked access');
+        assert.ok(blocked.whereSql.includes('cur.is_current')&&blocked.whereSql.includes('cur.blocked'),'blocked access must be independently filterable rather than misreported as expired');
         assert.ok(attention.whereSql.includes("cur.status='past_due'")&&attention.whereSql.includes('recon.rank'),'attention may still surface billing and policy-sync issues');
         assert.ok(expired.whereSql.includes('cur.is_current')&&expired.whereSql.includes('cur.id IS NOT NULL'),'expired must mean plan history exists but no effective entitlement is current');
         const legacy=buildWhere({accountStatus:'disabled'},null);
@@ -58,7 +61,9 @@ function main() {
         const moduleSource=fs.readFileSync(path.join(__dirname,'../src/platform/customer-filters.js'),'utf8');
         assert.ok(moduleSource.includes('effective_customer_entitlements e'),'customer list must select the same effective entitlement authority as provisioning');
         assert.ok(moduleSource.includes("ja.account_purpose='jellyfin'"),'Jellyfin readiness must ignore internal Stremio delivery accounts');
-        assert.ok(moduleSource.includes('COALESCE(cur.is_current,FALSE) AS has_current_entitlement'),'rows must expose whether displayed plan history is actually current');
+        assert.ok(moduleSource.includes('COALESCE(e.blocked,FALSE) AS blocked'),'customer list must carry the entitlement block state into row classification');
+        assert.ok(moduleSource.includes('COALESCE(cur.blocked,FALSE) AS access_blocked'),'rows must expose block state independently from subscription history');
+        assert.ok(moduleSource.includes('${LIVE_EXPR} AS has_current_entitlement'),'rows must expose usable current access rather than time-current blocked entitlement');
     }
 
     {
@@ -84,6 +89,11 @@ function main() {
 
         assert.ok(source.includes('customerKpiGrid')&&source.includes('customerInsightGrid'),'customer overview must use the compact KPI + insight layout');
         for(const label of ['Total customers','Active access','Recently active','Needs attention','Customer health','Plan mix','Access & support'])assert.ok(source.includes(label),`overview card missing: ${label}`);
+        assert.ok(source.includes("['blocked','Access removed']"),'blocked service access must have a dedicated operator filter');
+        assert.ok(source.includes('COALESCE(blocked,FALSE)=FALSE) active_access'),'Active access KPI must exclude blocked entitlements');
+        assert.ok(source.includes('COALESCE(e.blocked,FALSE)=FALSE'),'overview readiness and attention queries must ignore expected blocked access');
+        assert.ok(source.includes("if(blocked){"),'blocked customers must be classified separately from expired subscriptions');
+        assert.ok(!source.includes('secondary:`Expired ${relativeTime(end)}`'),'past expiry must not display a growing days-ago counter');
 
         assert.ok(source.includes('customerPrimaryFilters'),'primary customer controls must share one visible toolbar');
         assert.ok(source.includes('placeholder="Name, email or Jellyfin username"'),'customer search must match the approved Name-first filter while retaining useful identity search');
