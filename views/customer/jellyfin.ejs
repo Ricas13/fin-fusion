@@ -40,7 +40,7 @@
     <div class="jellyfinSubhead"><div><span class="eyebrow">Subscriptions</span><h2 id="active-subscriptions-heading">Your active access</h2><p>Each subscription stays separate, including Free Server and temporary trials.</p></div><span class="jellyfinLibraryCount"><%= activeSubscriptions.length %> active</span></div>
     <% if(!activeSubscriptions.length){ %><div class="jellyfinEmptyLibraries">No active subscriptions.</div><% } else { %>
       <div class="jellyfinCredentialGrid">
-      <% activeSubscriptions.forEach(function(subscription){const type=serviceType(subscription); %>
+      <% subscriptions.forEach(function(subscription){if(subscription.access_removed)return;const type=serviceType(subscription); %>
         <article class="jellyfinCredential">
           <span><%= subscriptionKind(subscription) %> · <%= subscriptionStatus(subscription) %></span>
           <strong><%= subscriptionName(subscription) %></strong>
