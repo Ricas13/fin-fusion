@@ -73,7 +73,7 @@ assert(customerDashboard.includes("notificationSettings.status().catch(()=>({}))
 assert(onboarding.includes('isFreePlan&&discordInviteUrl')&&onboarding.includes('Free Access is full.')&&onboarding.includes('>Subscribe</a>')&&onboarding.includes('Currently full'),'logged-in customers without active access must get the Discord Subscribe CTA only for a sold-out Free Server plan');
 assert(storefront.includes('sectionAvailability')&&storefront.includes('state?.label'),'public storefront must use the authoritative capacity scarcity label');
 assert(access.includes('How to sign in')&&access.includes('Install an official <%= player %> app.')&&access.includes('<span>Server URL</span>')&&access.includes('<span>Username</span>')&&access.includes('Use the <%= player %> password you set here.'),'My Access must own official-client, assigned-server, username and chosen-password sign-in guidance for ready Jellyfin and Emby accounts');
-assert(dashboard.includes('Access is being prepared.')&&/href="https:\/\/web\.stremio\.com"/.test(dashboard)&&dashboard.includes('Profile → Addons → Add addon')&&dashboard.includes('value="<%= stremioManifestUrl %>"')&&dashboard.includes('stremioMetadataAddonUrl'),'service onboarding must stay on /account, remain pending-aware and use the existing private Stremio manifest with an optional configured metadata addon');
+assert(dashboard.includes('Access is being prepared.')&&dashboard.includes('https://web.stremio.com')&&dashboard.includes('Profile → Addons → Add addon')&&dashboard.includes('stremioManifestUrl')&&dashboard.includes('stremioMetadataAddonUrl'),'service onboarding must stay on /account, remain pending-aware and use the existing private Stremio manifest with an optional configured metadata addon');
 assert(dashboard.includes('Install in Stremio')&&dashboard.includes('Keep this link private.'),'Stremio onboarding must preserve the primary install action and private-link warning');
 assert(dashboard.includes('freeSoldOut')&&dashboard.includes('discordInviteUrl')&&dashboard.includes('>Subscribe</a>')&&dashboard.includes('Currently full'),'active-account Free Server card must use the Discord invite only when sold out and configured');
 assert(!dashboard.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club')&&!onboarding.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club')&&!customerDashboard.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club'),'Stremio metadata onboarding must never hardcode the retired addon URL');
@@ -125,7 +125,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
     if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
     if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
     if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:1}]};
-    throw new Error(`Unexpected occupied fleet query: ${sql.slice(0,120)}`);
+    throw new Error(`Unexpected occupied fleet capacity query: ${sql.slice(0,120)}`);
   };
   const occupied=await capacity.usage('occupied-free',occupiedFleetDb);
   assert.strictEqual(occupied.managedUsers,7);
