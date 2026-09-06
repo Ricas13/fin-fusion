@@ -10,6 +10,7 @@ const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const dashboardRoute=read('src/platform/customer-dashboard.js');
+const dashboardCss=read('public/css/customer-dashboard.css');
 const checkoutRoute=read('src/platform/flexible-checkout.js');
 const checkoutClient=read('public/js/customer-checkout.js');
 const onboardingSelector=read('public/js/customer-stream-selector.js');
@@ -18,7 +19,10 @@ const planChangeSource=read('src/payments/customer-plan-change.js');
 const migration=read('db/migrations/20260901170000_plan_change_access_variants.sql');
 
 assert(dashboardRoute.includes("r.get('/account/plan-variants',requireCustomer"),'active-customer portal must expose a signed-in variant-state endpoint');
-assert(dashboardRoute.includes('sellablePlans(Array.from(livePlanIds(accessRows)))'),'active customers must keep their canonical current plan visible even when its acquisition family is currently full');
+assert(dashboardRoute.includes('includedPlanIds=Array.from(livePlanIds(accessRows))')&&dashboardRoute.includes('homeCataloguePlans(allPlans,includedPlanIds)')&&dashboardRoute.includes('keep.has(String(plan.id))'),'active customers must keep their canonical current plan visible even when its acquisition family is currently full');
+assert(dashboardRoute.includes('sale_ready:Boolean(readiness.sellable)')&&dashboardRoute.includes('payment_options:readiness.sellable?plan.payment_options:[]'),'customer Home may retain temporarily unready catalogue cards, but must remove checkout provider options while acquisition is not ready');
+assert(dashboardRoute.includes('plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds)'),'existing customer Home must use the stable catalogue while no-access onboarding remains restricted to sale-ready plans');
+assert(dashboardCss.includes('.accessPlanGroup[data-plan-family="free"] .planCard')&&dashboardCss.includes('grid-template-areas:"top price description features actions"')&&dashboardCss.includes('min-height:0'),'Free Server plan must retain its compact horizontal desktop row rather than inheriting the tall paid-plan card');
 assert(dashboardRoute.includes('replacementFits=Boolean(samePlan&&currentQuantity&&quantity<=currentQuantity)'),'same-plan reductions must not be marked sold out just because the shared fleet is full');
 assert(dashboardRoute.includes("replacementFits&&variant.capacity?.soldOut?'Available as a reduction'"),'variant state must explain that a capacity-neutral reduction remains available');
 assert(dashboardRoute.includes("res.setHeader('Cache-Control','no-store, private, max-age=0')"),'customer-specific variant state must not be cached publicly');
