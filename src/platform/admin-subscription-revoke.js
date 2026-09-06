@@ -7,7 +7,6 @@ const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 const billingControl=require('../payments/billing-control');
 const subscriptionTermination=require('../payments/subscription-termination');
-const subscriptionState=require('../entitlements/subscription-state');
 const planChange=require('../payments/customer-plan-change');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const stremio=require('../stremio/entitlements');
@@ -44,7 +43,7 @@ async function ownedSubscription(customerId,subscriptionId){const result=await q
 `,[subscriptionId,customerId]);return result.rows[0]||null;}
 
 async function terminateGenericLocal(row,actorUserId,reason,providerBillingChanged){
-  const result=await transaction(async client=>{
+  return transaction(async client=>{
     const locked=(await client.query(`SELECT s.id,s.customer_id,s.status,s.current_period_end,s.service_extension_days,s.superseded_by FROM subscriptions s WHERE s.id=$1 AND s.customer_id=$2 FOR UPDATE`,[row.id,row.customer_id])).rows[0];
     if(!locked||locked.superseded_by)throw new Error('This plan is no longer current. Refresh the customer page.');
     if(!active(locked)&&!(locked.status==='cancelled'&&Number(locked.service_extension_days||0)>0))throw new Error('This plan has already ended.');
@@ -52,7 +51,6 @@ async function terminateGenericLocal(row,actorUserId,reason,providerBillingChang
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.subscription.revoke_selected','subscription',$2,$3::jsonb)`,[actorUserId,row.id,JSON.stringify({customerId:row.customer_id,planId:row.plan_id,planName:row.plan_name,serviceType:serviceType(row),isAddon:Boolean(row.is_addon),provider:row.source||null,providerBillingChanged:Boolean(providerBillingChanged),reason})]);
     return updated.rows[0];
   });
-  return result;
 }
 
 async function cleanupStremio(customerId){
@@ -64,7 +62,7 @@ async function cleanupStremio(customerId){
   return{revoked:true,preserved:false,managedRevoked:Number(cleanup?.revoked||0)};
 }
 
-async function revokeSelected(row,{actorUserId=null,reason='' }={}){
+async function revokeSelected(row,{actorUserId=null,reason=''}={}){
   if(!row)throw new Error('Plan not found.');
   if(!active(row))throw new Error('This plan is no longer active. Refresh the customer page.');
   const note=text(reason,500);if(note.length<3)throw new Error('Enter a reason of at least 3 characters.');
@@ -92,7 +90,7 @@ async function revokeSelected(row,{actorUserId=null,reason='' }={}){
 function subscriptionCard(row,token,customerId){
   const recurringCopy=recurring(row)?`Recurring ${String(row.source||'provider')} billing will be cancelled and verified before local access is removed.`:'Only this local/prepaid entitlement is ended.';
   const stremioCopy=['stremio','bundle'].includes(serviceType(row))?' If this is the customer’s last Stremio entitlement, its installation credential and managed Stremio access are revoked too.':'';
-  return `<section class="serverCard" style="padding:16px"><div class="sectionHead"><div><h3 style="margin:0">${esc(row.plan_name||row.plan_code||'Plan')}</h3><div class="muted">${esc(roleLabel(row))} · ${esc(serviceLabel(row))} · ${esc(row.source||'local')} · ends ${esc(dt(row.current_period_end))}</div></div><span class="pill ${row.is_addon?'warn':'good'}">${esc(roleLabel(row))}</span></div><div class="inlineHelp" style="margin-top:10px">${esc(recurringCopy+stremioCopy)}</div><details class="opInlineDetails" style="margin-top:12px"><summary>Revoke this plan…</summary><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(customerId)}/subscriptions/${encodeURIComponent(row.id)}/revoke" data-native-submit="true"> <input type="hidden" name="_csrf" value="${esc(token)}"><div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why is this specific plan being revoked?"></div><div class="notice error"><strong>Only ${esc(row.plan_name||'this plan')} will be revoked.</strong> Other active plans/add-ons remain in place unless they depend on this bundle.</div><div class="formGroup"><label>Type REVOKE to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Revoke ${esc(row.plan_name||'selected plan')}</button></form></details></section>`;
+  return `<section class="serverCard"><div class="sectionHead"><div><h3>${esc(row.plan_name||row.plan_code||'Plan')}</h3><div class="muted">${esc(roleLabel(row))} · ${esc(serviceLabel(row))} · ${esc(row.source||'local')} · ends ${esc(dt(row.current_period_end))}</div></div><span class="pill ${row.is_addon?'warn':'good'}">${esc(roleLabel(row))}</span></div><div class="inlineHelp">${esc(recurringCopy+stremioCopy)}</div><details class="opInlineDetails"><summary>Revoke this plan…</summary><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(customerId)}/subscriptions/${encodeURIComponent(row.id)}/revoke" data-native-submit="true"><input type="hidden" name="_csrf" value="${esc(token)}"><div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why is this specific plan being revoked?"></div><div class="notice error"><strong>Only ${esc(row.plan_name||'this plan')} will be revoked.</strong> Other active plans/add-ons remain in place unless they depend on this bundle.</div><div class="formGroup"><label>Type REVOKE to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Revoke ${esc(row.plan_name||'selected plan')}</button></form></details></section>`;
 }
 
 async function page(req,res,next){
@@ -100,7 +98,7 @@ async function page(req,res,next){
     await runtimeSettings.ensureLoaded();
     const c=await customer(req.params.customerId);if(!c)return res.status(404).send('Customer not found');
     const rows=await subscriptions(c.id),token=csrf.token(req);
-    const body=`<section class="section"><div class="sectionHead"><div><h2>Revoke a specific plan</h2><div class="muted">${esc(c.name)} · choose exactly which entitlement to end. Other plans are preserved.</div></div><a class="button secondary" href="${esc(backPath(c.id))}">Back to customer</a></div><div class="notice"><strong>Plan-specific control.</strong> This page never guesses the customer’s “main” plan. Each action is bound to the subscription shown below.</div>${rows.length?`<div class="serverGrid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:16px">${rows.map(row=>subscriptionCard(row,token,c.id)).join('')}</div>`:'<div class="emptyCompact" style="margin-top:16px">No currently active plans or add-ons are available to revoke.</div>'}</section>`;
+    const body=`<section class="section"><div class="sectionHead"><div><h2>Revoke a specific plan</h2><div class="muted">${esc(c.name)} · choose exactly which entitlement to end. Other plans are preserved.</div></div><a class="button secondary" href="${esc(backPath(c.id))}">Back to customer</a></div><div class="notice"><strong>Plan-specific control.</strong> This page never guesses the customer’s “main” plan. Each action is bound to the subscription shown below.</div>${rows.length?`<div class="serverGrid">${rows.map(row=>subscriptionCard(row,token,c.id)).join('')}</div>`:'<div class="emptyCompact">No currently active plans or add-ons are available to revoke.</div>'}</section>`;
     return res.send(layout({siteName:runtimeSettings.siteName(),active:'users',title:'Revoke a plan',subtitle:c.name,body}));
   }catch(error){return next(error);}
 }
