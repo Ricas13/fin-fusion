@@ -3,6 +3,7 @@
 const {query,transaction}=require('../db');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('./subscription-state');
+const accessHolds=require('./access-holds');
 
 function reasonText(value){return String(value||'Permanent access granted by administrator').trim().slice(0,500)||'Permanent access granted by administrator';}
 function revokeReasonText(value){return String(value||'Permanent access removed by administrator').trim().slice(0,500)||'Permanent access removed by administrator';}
@@ -63,9 +64,38 @@ async function revokeInTransaction(client,customerId,{actorUserId=null,reason=''
     if(!row.rowCount||!row.rows[0].permanent_access||row.rows[0].revoked_at)return{changed:false};
     const current=row.rows[0];
     if(expectedSubscriptionId&&String(current.subscription_id)!==String(expectedSubscriptionId))return{changed:false,subscriptionMismatch:true,subscriptionId:current.subscription_id};
+
+    // A Free Server user that was previously removed for inactivity can still
+    // carry the old inactivity hold while an admin-forced/permanent override is
+    // keeping the newly re-added Jellyfin account present. If we revoke the
+    // permanent override first, the reconciliation at the end of revoke() sees
+    // that stale hold and removes the account immediately. Release only the
+    // matching Free-plan inactivity hold in this same transaction, before the
+    // override becomes non-permanent. PR #634 then uses revoked_at as the start
+    // of the fresh inactivity observation window.
+    const plan=await client.query(`
+        SELECT p.id AS plan_id,p.is_free_tier,p.price_minor,
+               COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS service_type
+        FROM subscriptions s
+        JOIN plans p ON p.id=s.plan_id
+        WHERE s.id=$1 AND s.customer_id=$2
+        LIMIT 1
+    `,[current.subscription_id,customerId]);
+    const contract=plan.rows[0]||null;
+    const freeJellyfin=Boolean(contract?.is_free_tier&&Number(contract?.price_minor||0)===0&&['jellyfin','bundle'].includes(String(contract?.service_type||'jellyfin').toLowerCase()));
+    if(freeJellyfin){
+        await accessHolds.releaseHold({
+            customerId,
+            type:'inactivity_policy',
+            sourceKey:`plan:${contract.plan_id}`,
+            actorUserId,
+            resolutionReason:'Free Server returned to automation; start a fresh inactivity observation window'
+        },client);
+    }
+
     await client.query(`UPDATE customer_entitlement_overrides SET permanent_access=FALSE,reason=$2,revoked_at=NOW(),revoked_by=$3,updated_by=$3,updated_at=NOW() WHERE customer_id=$1`,[customerId,note,actorUserId]);
     await client.query(`UPDATE customers SET automation_protected=$2,automation_protected_reason=$3,automation_protected_at=CASE WHEN $2 THEN $4::timestamptz ELSE NULL END,automation_protected_by=CASE WHEN $2 THEN $5::uuid ELSE NULL END,updated_at=NOW() WHERE id=$1`,[customerId,Boolean(current.previous_automation_protected),current.previous_automation_reason||null,current.previous_automation_protected_at||null,current.previous_automation_protected_by||null]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.revoke','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:current.subscription_id,reason:note,providerBillingChanged:false,restoredAutomationProtected:Boolean(current.previous_automation_protected),restoredAutomationProtectedAt:current.previous_automation_protected_at||null,restoredAutomationProtectedBy:current.previous_automation_protected_by||null})]);
+    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.revoke','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:current.subscription_id,reason:note,providerBillingChanged:false,restoredAutomationProtected:Boolean(current.previous_automation_protected),restoredAutomationProtectedAt:current.previous_automation_protected_at||null,restoredAutomationProtectedBy:current.previous_automation_protected_by||null,freeInactivityHoldReleasedBeforeAutomationResume:freeJellyfin})]);
     return{changed:true,subscriptionId:current.subscription_id};
 }
 
