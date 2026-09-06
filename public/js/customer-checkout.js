@@ -134,7 +134,26 @@
     try{const response=await fetch('/account/plan-variants',{headers:{Accept:'application/json'},credentials:'same-origin'});if(!response.ok)return;const payload=await response.json();for(const plan of payload.plans||[])installVariantPicker(plan);}catch(_){/* Keep server-rendered base plan actions as fallback. */}
   }
 
+  function simplifyHomeAccess(){
+    const home=document.querySelector('.customerSimpleHome');
+    if(!home)return;
+    home.querySelector('#stremio-access')?.remove();
+    for(const card of home.querySelectorAll('.accessSummaryCard')){
+      if(card.dataset.accessCardLinkReady==='1')continue;
+      card.dataset.accessCardLinkReady='1';
+      card.tabIndex=0;
+      card.setAttribute('role','link');
+      const plan=card.querySelector('.accessSummaryPlan')?.textContent?.trim()||'this plan';
+      card.setAttribute('aria-label',`Open My Access for ${plan}`);
+      card.style.cursor='pointer';
+      const open=()=>window.location.assign('/account/access');
+      card.addEventListener('click',event=>{if(event.target.closest('a,button,input,select,textarea,form,summary,details'))return;open();});
+      card.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});
+    }
+  }
+
   prepareCards();
+  simplifyHomeAccess();
   for(const input of promoInputs()){
     input.addEventListener('input',()=>schedule(input));
     input.addEventListener('change',()=>preview(input));
