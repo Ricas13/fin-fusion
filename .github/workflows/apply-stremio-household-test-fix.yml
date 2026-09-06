@@ -1,0 +1,48 @@
+name: Apply Stremio Household Test Fix
+
+on:
+  push:
+    branches:
+      - fix/stremio-home-server-render
+    paths:
+      - .github/workflows/apply-stremio-household-test-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/stremio-home-server-render
+          fetch-depth: 0
+      - name: Update household ownership regression
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/stremio-household-access-smoke.js')
+          s=p.read_text()
+          old="const dashboard=read('views/customer/dashboard.ejs');\n"
+          assert old in s
+          s=s.replace(old,old+"const accessJs=read('public/js/customer-jellyfin.js');\n",1)
+          replacements={
+          "assert(customerDashboard.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'Account Home must own unlimited playback copy while customer Stremio routes retain server-enforced household replacement');":"assert(accessJs.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'My Access must own unlimited playback copy while customer Stremio routes retain server-enforced household replacement');",
+          "assert(customerDashboard.includes('stremioHouseholdForCustomer')&&customerDashboard.includes('householdAccess.replacementState'),'Account Home must load the current Stremio household state');":"assert(customerStremio.includes('customerSetupState')&&customerStremio.includes('householdAccess.replacementState'),'My Access installation-state endpoint must load the current Stremio household state');",
+          "assert(dashboard.includes('<%= stremioHousehold.accessModel %>')&&!dashboard.includes('/64')&&dashboard.includes('Use a different household connection'),'Account Home Stremio UI must show household access without exposing network implementation detail and retain the household replacement control');":"assert(accessJs.includes('Household access')&&!accessJs.includes('/64')&&accessJs.includes('Use a different household connection'),'My Access Stremio UI must show household access without exposing network implementation detail and retain the household replacement control');\nassert(!dashboard.includes('id=\\\"stremio-access\\\"')&&!dashboard.includes('action=\\\"/account/stremio/reset-household\\\"'),'Account Home must not own Stremio household setup or replacement controls');"
+          }
+          for a,b in replacements.items():
+              assert a in s, f'missing expected assertion: {a}'
+              s=s.replace(a,b,1)
+          p.write_text(s)
+          PY
+          node scripts/stremio-household-access-smoke.js
+          node scripts/stremio-journey-polish-smoke.js
+          git diff --check
+          git config user.name "Ricas13"
+          git config user.email "56263921+Ricas13@users.noreply.github.com"
+          git add scripts/stremio-household-access-smoke.js
+          git commit -m "Update Stremio household UI ownership regression"
+          git push origin HEAD:fix/stremio-home-server-render
