@@ -31,5 +31,5 @@ BEGIN
        OR position('username_change' IN constraint_definition) = 0 THEN
         RAISE EXCEPTION 'provisioning_runs_action_check must allow username_change';
     END IF;
-END
+END;
 $$;
