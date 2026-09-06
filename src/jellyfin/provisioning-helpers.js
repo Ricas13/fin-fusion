@@ -135,11 +135,9 @@ async function notifyNewJellyfinAccess(customerId, account) {
     const found = await query(`
       SELECT COALESCE(c.email,u.email) email,
              COALESCE(c.display_name,u.username,'Customer') customer_name,
-             u.username portal_username,u.role user_role,c.registration_source,
-             cp.phone_e164,cp.whatsapp_opt_in
+             u.username portal_username,u.role user_role,c.registration_source
       FROM customers c
       LEFT JOIN app_users u ON u.id=c.user_id
-      LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id
       WHERE c.id=$1
     `, [customerId]);
     if (!found.rowCount) return;
@@ -166,7 +164,6 @@ async function notifyNewJellyfinAccess(customerId, account) {
       text: steps,
       adminSubject: `${site}: Jellyfin access provisioned`,
       adminText: `${row.customer_name} (${row.email || customerId}) was provisioned as ${account.jellyfin_username || username}${serverUrl ? ` on ${serverUrl}` : ''}.`,
-      whatsappTo: row.whatsapp_opt_in ? row.phone_e164 : null,
       dedupeKey: `jellyfin-provisioned:${account.id}`,
       forceEmail: true
     });
