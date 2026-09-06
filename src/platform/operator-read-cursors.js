@@ -4,6 +4,18 @@ const { query, transaction } = require('../db');
 
 const AREAS = new Set(['customers', 'orders', 'tickets', 'payments']);
 const NAV_PREFIX = 'operator.business.';
+const ACTIONABLE_PAYMENT_EVENT_SQL = `(processing_error IS NOT NULL OR processed_at IS NULL)
+    AND NOT (
+        provider='plisio'
+        AND event_type IN (
+            'operation.new',
+            'operation.pending',
+            'operation.pending internal',
+            'operation.expired',
+            'operation.cancelled',
+            'operation.cancelled duplicate'
+        )
+    )`;
 
 function area(value) {
     const key = String(value || '').trim().toLowerCase();
@@ -33,7 +45,7 @@ async function latestFor(client, key) {
         return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
     }
     if (key === 'payments') {
-        return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`)).rows[0].seen_at;
+        return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${ACTIONABLE_PAYMENT_EVENT_SQL}`)).rows[0].seen_at;
     }
     return (await client.query(`SELECT COALESCE(MAX(COALESCE(last_customer_reply_at,created_at)),NOW()) seen_at FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0].seen_at;
 }
@@ -55,4 +67,4 @@ async function markSeen(adminUserId, value) {
     });
 }
 
-module.exports = { AREAS, NAV_PREFIX, area, navKey, list, markSeen, latestFor };
+module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, area, navKey, list, markSeen, latestFor };
