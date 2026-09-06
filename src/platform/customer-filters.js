@@ -35,6 +35,21 @@ const ATTENTION_EXPR = `(
     OR (NOT ${LIVE_EXPR} AND COALESCE(acc.customer_account_count,0)>0)
     OR au.active=FALSE
 )`;
+const EXPIRY_AT_EXPR = `COALESCE(cur.access_expires_at,cur.current_period_end)`;
+// Sort renewal/expiry using the same traffic-light lifecycle shown to operators:
+// expired/removed first, then <=48h, then healthy future access, with free/
+// permanent/no-expiry records last. Within expired rows, newest expiries come
+// first; within live rows, the soonest expiry comes first.
+const EXPIRY_URGENCY_SORT = `CASE
+    WHEN cur.id IS NULL OR COALESCE(p.is_free_tier,FALSE)=TRUE OR EXISTS(
+        SELECT 1 FROM customer_entitlement_overrides ceo_sort
+        WHERE ceo_sort.customer_id=c.id AND ceo_sort.permanent_access=TRUE
+          AND ceo_sort.revoked_at IS NULL AND ceo_sort.subscription_id=cur.id
+    ) OR ${EXPIRY_AT_EXPR} IS NULL THEN ARRAY[3::numeric,0::numeric]
+    WHEN NOT ${LIVE_EXPR} OR ${EXPIRY_AT_EXPR}<=NOW() THEN ARRAY[0::numeric,-EXTRACT(EPOCH FROM ${EXPIRY_AT_EXPR})::numeric]
+    WHEN ${EXPIRY_AT_EXPR}<=NOW()+INTERVAL '48 hours' THEN ARRAY[1::numeric,EXTRACT(EPOCH FROM ${EXPIRY_AT_EXPR})::numeric]
+    ELSE ARRAY[2::numeric,EXTRACT(EPOCH FROM ${EXPIRY_AT_EXPR})::numeric]
+END`;
 
 const CUSTOMER_SORTS = Object.freeze({
     attention: { expression: `CASE WHEN ${ATTENTION_EXPR} THEN 0 ELSE 1 END`, defaultDirection: 'asc' },
@@ -43,7 +58,7 @@ const CUSTOMER_SORTS = Object.freeze({
     name: { expression: CUSTOMER_NAME_SORT, defaultDirection: 'asc', nulls: 'last' },
     plan: { expression: "COALESCE(p.name,'')", defaultDirection: 'asc' },
     access: { expression: `CASE WHEN ${NEEDS_ACCESS_EXPR} THEN 0 WHEN ${PROVISIONING_EXPR} THEN 1 WHEN ${LIVE_EXPR} THEN 2 WHEN ${BLOCKED_EXPR} THEN 3 WHEN ${EXPIRED_EXPR} THEN 4 ELSE 5 END`, defaultDirection: 'asc' },
-    expiring: { expression: 'CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE COALESCE(cur.access_expires_at,cur.current_period_end) END', defaultDirection: 'asc', nulls: 'last' },
+    expiring: { expression: EXPIRY_URGENCY_SORT, defaultDirection: 'asc' },
     server: { expression: "COALESCE(acc.server_names,'')", defaultDirection: 'asc' }
 });
 
