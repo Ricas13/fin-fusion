@@ -29,6 +29,11 @@ assert(admin.includes("router.use('/admin/tickets',gate)"),'admin ticket routes 
 assert(admin.includes('csrf.verify(req)'),'admin ticket mutations must use CSRF');
 assert(admin.includes('row.customer_username||row.customer_email'),'admin ticket inbox must use canonical customer identity fields');
 assert(admin.includes('t.customer_username||t.customer_email')||admin.includes('t.customer_email||t.customer_username'),'admin ticket details must use canonical customer identity fields regardless of display preference');
+assert(admin.includes("tickets.listForAdmin('closed')"),'support history must explicitly load closed tickets');
+assert(admin.includes('Recently resolved / closed (last 7 days)'),'support history must visibly include recently closed tickets');
+assert(admin.includes("queue=view==='active'?requestedQueue:'all'"),'non-active lifecycle filters must show their rows instead of remaining trapped in the needs-reply queue');
+assert(!admin.includes("${view!=='active'?`<input type=\"hidden\" name=\"view\""),'support filter form must not submit duplicate view fields');
+assert(admin.includes('/admin/tickets?view=closed&queue=all'),'support inbox must provide a direct path to all closed tickets');
 assert(admin.includes('email:current.ticket.customer_email'),'staff-reply notification must use the canonical resolved customer email');
 assert(!admin.includes('.login_email')&&!admin.includes('.login_username'),'admin support UI must not depend on retired/nonexistent customer login fields');
 assert(admin.includes("catch(error){console.warn('Support reply notification could not be queued:'"),'notification failure must not invalidate a committed staff reply');
