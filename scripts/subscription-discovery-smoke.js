@@ -11,6 +11,8 @@ assert(discovery.recurringId('stripe', 'sub_123'));
 assert(discovery.recurringId('paypal', 'I-ABC123'));
 assert(!discovery.recurringId('stripe', 'pi_123'));
 assert(!discovery.recurringId('paypal', 'PAY-123'));
+assert(discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), 'a real Stripe subscription ID must remain linked');
+assert(!discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_123' }), 'a PaymentIntent must never count as a linked recurring Stripe subscription');
 
 const stripe = discovery.normalizeStripeSubscription({
     id: 'sub_live', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
@@ -94,6 +96,10 @@ assert.strictEqual(matches[0].state, 'unresolved', 'a known provider-customer-ID
 matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_existing' }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'linked', 'already-linked premium users must not be rewritten');
 
+matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_legacy_wrong_object' }], [stripe], baseContext());
+assert.strictEqual(matches[0].state, 'safe', 'a legacy PaymentIntent stored as the recurring ID must be offered for verified provider-link repair');
+assert.strictEqual(matches[0].match.id, 'sub_live');
+
 matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }], baseContext());
 assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptions must not be used to justify premium access');
 
@@ -114,6 +120,7 @@ assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(di
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
 assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lifecycle must own discovered provider-subscription attachment');
 assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
+assert.ok(lifecycleSource.includes('state.recurringProvider(local) && validRemoteRecurringId(local.source, local.provider_subscription_id)'), 'lifecycle must allow repair when billing_mode says recurring but the stored provider object is not a real recurring subscription');
 assert.ok(/plan_id=\$2[\s\S]*external_id=ANY\(\$3::text\[\]\)/.test(lifecycleSource), 'lifecycle must snapshot the exact remote price/plan that maps to the existing premium plan');
 
 assert.ok(manualSource.includes("require('./subscription-discovery')"), 'manual recovery must reuse canonical premium/discovery normalization');
@@ -137,14 +144,14 @@ assert.ok(adminSource.includes('/admin/billing/discover/preview'), 'Billing must
 assert.ok(adminSource.includes('/admin/billing/discover/apply'), 'Billing must expose an explicit safe-link action');
 assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'provider linking must require explicit confirmation');
 assert.ok(adminSource.includes('Missing provider links'), 'Billing must permanently name the missing-provider operator queue');
-assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.localRecurring(row))"), 'Billing must list unlinked premium customers using canonical local recurring truth instead of provider-ID shape inference');
+assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.localRecurring(row))"), 'Billing must list unlinked premium customers using canonical provider-link validation');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-preview'), 'each missing link must support read-only provider verification');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-link'), 'each missing link must support explicit verified attachment');
 assert.ok(adminSource.includes('Verify provider subscription'), 'manual resolution must show provider truth before attachment');
 assert.ok(adminSource.includes('/manual-preview#manual-provider-preview'), 'manual verification submissions must target the rendered verification feedback instead of returning the operator to the page top');
 assert.ok(adminSource.includes('data-native-submit="true"'), 'manual provider verification must use native navigation so server-rendered 400 details are not swallowed by generic AJAX form feedback');
 assert.ok(adminSource.includes('Subscription verification failed'), 'manual verification failures must be visibly rendered in the same operator workflow');
-assert.ok(adminSource.includes('Provider verification succeeded.'), 'successful provider verification must have explicit visible feedback before linking');
+assert.ok(adminSource.includes('Provider verification succeeded.'), 'successful manual provider verification must have explicit visible feedback before linking');
 assert.ok(adminSource.includes('manualAttempt'), 'manual verification errors must preserve enough attempted-provider context to explain what failed');
 assert.ok(adminSource.includes('${verification}${table}'), 'manual verification feedback must render before the missing-subscription table, not after the full page');
 assert.ok(adminSource.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'intentional end-of-period cancellations must not remain in the urgent past-due queue');

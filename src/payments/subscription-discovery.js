@@ -17,13 +17,16 @@ const PAYPAL_CURRENT = new Set(['ACTIVE', 'SUSPENDED']);
 function clean(value, max = 500) { return String(value == null ? '' : value).trim().slice(0, max); }
 function emailKey(value) { return clean(value, 320).toLowerCase(); }
 function objectId(value) { return typeof value === 'string' ? clean(value, 255) : clean(value?.id, 255); }
-// Remote discovery still validates the provider's documented remote object
-// families. Local recurring truth never depends on these prefixes.
+// billing_mode remains the authoritative local commercial contract. Discovery
+// additionally requires a real provider recurring object before calling a row
+// "linked", so legacy/corrupt pi_/PAY-* references stay repairable.
 function recurringId(provider, id) {
     const value = clean(id, 255);
     return (provider === 'stripe' && /^sub_/i.test(value)) || (provider === 'paypal' && /^I-/i.test(value));
 }
-function localRecurring(row) { return billingMode.isRecurring(row); }
+function localRecurring(row) {
+    return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
+}
 function currentRemote(remote) {
     if (remote?.provider === 'stripe') return STRIPE_CURRENT.has(String(remote.status || '').toLowerCase());
     if (remote?.provider === 'paypal') return PAYPAL_CURRENT.has(String(remote.status || '').toUpperCase());
