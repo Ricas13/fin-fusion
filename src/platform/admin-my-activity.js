@@ -79,6 +79,40 @@ async function jellyfinAdminIdentities(username) {
   return { identities, failures };
 }
 
+async function liveAdminSessions(identities) {
+  const sessions = [];
+  const failures = [];
+  await Promise.all(identities.map(async identity => {
+    try {
+      const rows = await registry.request(
+        identity.serverId,
+        '/Sessions?activeWithinSeconds=120',
+        { timeoutMs: 7000, cacheTtlMs: 5000 }
+      );
+      if (!Array.isArray(rows)) throw new Error('Jellyfin sessions response was not an array');
+      for (const session of rows) {
+        if (!session?.Id || !session?.NowPlayingItem) continue;
+        if (String(session.UserId || '').toLowerCase() !== identity.userId.toLowerCase()) continue;
+        const method = String(session?.PlayState?.PlayMethod || '').toLowerCase();
+        sessions.push({
+          item_name: session.NowPlayingItem.Name || null,
+          item_type: session.NowPlayingItem.Type || null,
+          device_name: session.DeviceName || null,
+          client_name: session.Client || null,
+          playback_method: method === 'directplay' ? 'directplay' : method === 'directstream' ? 'directstream' : (method === 'transcode' || session.TranscodingInfo) ? 'transcode' : 'unknown',
+          is_paused: Boolean(session?.PlayState?.IsPaused),
+          first_seen_at: session.LastActivityDate || null,
+          last_seen_at: session.LastActivityDate || null,
+          server_name: identity.serverName
+        });
+      }
+    } catch (error) {
+      failures.push({ serverId: identity.serverId, serverName: identity.serverName, error: String(error?.message || error) });
+    }
+  }));
+  return { sessions, failures };
+}
+
 async function scopedQuery(identities, sqlBuilder, extraParams = []) {
   const scope = identityScope(identities, 'ph');
   return query(sqlBuilder(scope.sql, scope.params.length), [...scope.params, ...extraParams]);
@@ -173,20 +207,9 @@ async function activityData(username, rawRange) {
     ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 20
   `, [since]);
 
-  const activeScope = identityScope(identities, 'aps');
-  const activePromise = query(`
-    SELECT aps.item_name,aps.item_type,aps.device_name,aps.client_name,aps.playback_method,
-           aps.is_paused,aps.first_seen_at,aps.last_seen_at,js.name server_name
-    FROM active_playback_sessions aps
-    JOIN jellyfin_servers js ON js.id=aps.server_id
-    WHERE ${activeScope.sql}
-      AND aps.customer_id IS NULL
-      AND aps.jellyfin_account_id IS NULL
-    ORDER BY aps.first_seen_at ASC
-  `, activeScope.params);
-
-  const [summaryResult,timelineResult,topTitlesResult,devicesResult,methodsResult,serversResult,recentResult,activeResult] = await Promise.all([
-    summaryPromise,timelinePromise,topTitlesPromise,devicesPromise,methodsPromise,serversPromise,recentPromise,activePromise
+  const livePromise = liveAdminSessions(identities);
+  const [summaryResult,timelineResult,topTitlesResult,devicesResult,methodsResult,serversResult,recentResult,live] = await Promise.all([
+    summaryPromise,timelinePromise,topTitlesPromise,devicesPromise,methodsPromise,serversPromise,recentPromise,livePromise
   ]);
 
   const summaryRow = summaryResult.rows[0] || {};
@@ -194,7 +217,7 @@ async function activityData(username, rawRange) {
     range,
     ranges: RANGES,
     identities,
-    identityFailures: failures,
+    identityFailures: [...failures, ...live.failures],
     summary: {
       seconds: Number(summaryRow.seconds || 0),
       sessions: Number(summaryRow.sessions || 0),
@@ -209,7 +232,7 @@ async function activityData(username, rawRange) {
     methods: methodsResult.rows.map(row => ({ ...row, seconds: Number(row.seconds || 0), plays: Number(row.plays || 0) })),
     servers: serversResult.rows.map(row => ({ ...row, seconds: Number(row.seconds || 0), plays: Number(row.plays || 0) })),
     recent: recentResult.rows.map(row => ({ ...row, seconds: Number(row.seconds || 0) })),
-    active: activeResult.rows
+    active: live.sessions
   };
 }
 
@@ -240,6 +263,7 @@ module.exports = {
   startFor,
   identityScope,
   jellyfinAdminIdentities,
+  liveAdminSessions,
   activityData,
   createAdminMyActivityRouter
 };
