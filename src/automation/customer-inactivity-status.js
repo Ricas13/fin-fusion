@@ -28,6 +28,7 @@ async function customerStatus(customerId){
     planCode:row.plan_code||null,
     lastPlaybackAt:row.last_playback_at||null,
     inactiveReferenceAt:row.inactive_reference_at||null,
+    observationStartedAt:row.observation_started_at||null,
     playbackMinutes:Math.max(0,Math.round(Number(row.playback_seconds||0)/60)),
     currentlyPlaying:Boolean(row.currently_playing),
     automationProtected:Boolean(row.automation_protected),
