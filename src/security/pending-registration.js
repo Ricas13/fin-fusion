@@ -32,6 +32,13 @@ function cleanCommunicationPreferences(value={}){
 }
 async function serialize(client){await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:pending-registration',$1::bigint))`,[LOCK_SEED]);}
 async function assertNoUnclaimedJellyfinUsername(client,username){const conflict=await client.query(`SELECT 1 FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id WHERE c.user_id IS NULL AND lower(ja.jellyfin_username)=lower($1) LIMIT 1`,[username]);if(conflict.rowCount)throw new Error('That username belongs to an existing Jellyfin account. Use the existing-account claim link instead of creating a new account.');}
+async function lockExistingCustomerForRegistration(client,email){
+    const matches=await client.query(`SELECT id,user_id,display_name,email FROM customers WHERE lower(BTRIM(COALESCE(email,'')))=lower(BTRIM($1)) ORDER BY created_at ASC,id ASC FOR UPDATE`,[email]);
+    if(matches.rowCount>1)return{terminalError:'Multiple customer records already use this email. Please use your existing-account invite or contact support.'};
+    const customer=matches.rows[0]||null;
+    if(customer?.user_id)return{terminalError:'This customer record already has a portal account. Please sign in or use account recovery.'};
+    return{customer};
+}
 async function terminalize(client,pendingId,message){
     await client.query(`UPDATE pending_registrations SET consumed_at=COALESCE(consumed_at,NOW()),updated_at=NOW() WHERE id=$1`,[pendingId]);
     await client.query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()),updated_at=NOW() WHERE pending_registration_id=$1 AND consumed_at IS NULL AND released_at IS NULL`,[pendingId]);
@@ -114,12 +121,21 @@ async function consume(rawToken){
         const exists=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) OR lower(username)=lower($2) LIMIT 1`,[pending.email,pending.username]);
         if(exists.rowCount)return terminalize(client,pending.id,'An account already exists with that email or username');
         try{await assertNoUnclaimedJellyfinUsername(client,pending.username);}catch(error){return terminalize(client,pending.id,error.message);}
+        const existingCustomer=await lockExistingCustomerForRegistration(client,pending.email);
+        if(existingCustomer.terminalError)return terminalize(client,pending.id,existingCustomer.terminalError);
         const user=(await client.query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',NOW()) RETURNING id,email,username,role,active,email_verified_at,created_at,session_version`,[pending.email,pending.username,pending.password_hash])).rows[0];
-        const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
+        let customer;
+        if(existingCustomer.customer){
+            const linked=await client.query(`UPDATE customers SET user_id=$1,display_name=CASE WHEN NULLIF(BTRIM(COALESCE(display_name,'')),'') IS NULL THEN $2 ELSE display_name END,email=$3 WHERE id=$4 AND user_id IS NULL RETURNING *`,[user.id,pending.username,pending.email,existingCustomer.customer.id]);
+            if(!linked.rowCount)throw new Error('Customer portal identity changed while registration was being verified');
+            customer=linked.rows[0];
+        }else{
+            customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
+        }
         await client.query(`INSERT INTO customer_communication_preferences(customer_id,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,$4,$5) ON CONFLICT(customer_id) DO UPDATE SET telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
         let referralCodeId=null;if(pending.referral_code&&await referrals.attributionEnabled(client))referralCodeId=await referrals.attributeReferral(customer.id,pending.referral_code,client);
         await client.query(`UPDATE pending_registrations SET consumed_at=NOW(),updated_at=NOW() WHERE id=$1`,[pending.id]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,referralAttributed:Boolean(referralCodeId),freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,linkedExistingCustomer:Boolean(existingCustomer.customer),referralAttributed:Boolean(referralCodeId),freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
         return{user,customer,referralCodeId,pendingRegistrationId:pending.id,freeAccessRequested:Boolean(pending.free_access_requested),freeReservation:reservation};
     });
     if(!created)return null;
@@ -136,4 +152,4 @@ async function cleanupExpired(limit=500){
 }
 async function recent(limit=50){const result=await query(`SELECT id,email,username,expires_at,consumed_at,free_access_requested,created_at FROM pending_registrations ORDER BY created_at DESC LIMIT $1`,[Math.max(1,Math.min(200,Number(limit)||50))]);return result.rows;}
 async function stats(){const result=await query(`SELECT COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at>NOW())::int pending,COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at<=NOW())::int expired FROM pending_registrations`);return result.rows[0]||{pending:0,expired:0};}
-module.exports={FREE_HOLD_MINUTES,begin,consume,reserveFreeAccess,reservationForSession,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,sessionHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername,refreshFreePlacesStatus};
+module.exports={FREE_HOLD_MINUTES,begin,consume,reserveFreeAccess,reservationForSession,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,sessionHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername,lockExistingCustomerForRegistration,refreshFreePlacesStatus};

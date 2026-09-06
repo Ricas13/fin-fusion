@@ -99,6 +99,10 @@ const suites = [
     ],
   },
   {
+    name: 'Verified customer registration linkage',
+    commands: [['node', ['scripts/pending-registration-existing-customer-db-smoke.js']]],
+  },
+  {
     name: 'Fleet-aware placement',
     env: { PLACEMENT_FLEET_METRICS_STALE_SECONDS: '300' },
     commands: [['node', ['scripts/fleet-aware-placement-smoke.js']]],
