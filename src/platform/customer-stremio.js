@@ -74,4 +74,4 @@ function createCustomerStremioRouter(){
   r.post('/account/stremio/revoke',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await stremio.revoke(req.session.customerId);await managedEntitlements.revokeInactiveMappings();return res.redirect(requestRedirect(req,'message','Stremio installation link revoked. Create a new link whenever you want to use Stremio again.'));}catch(error){return res.redirect(requestRedirect(req,'error',error.message));}});
   return r;
 }
-module.exports={createCustomerStremioRouter,issueCustomerInstallation,customerSetupState};
+module.exports={createCustomerStremioRouter,issueCustomerInstallation};
