@@ -68,7 +68,7 @@ async function expectCode(promise, code) {
     } finally {
         outbound.safeFetch = originalSafeFetch;
     }
-})().catch(error => {
-    console.error(error);
+})().catch(() => {
+    console.error('Jellyfin administrator mutation protection runtime smoke test failed.');
     process.exitCode = 1;
 });
