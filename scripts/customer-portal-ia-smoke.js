@@ -45,6 +45,7 @@ const nowPlayingClient=read('public/js/customer-now-playing.js');
 const accessRoute=read('src/platform/customer-jellyfin.js');
 const accessView=read('views/customer/jellyfin.ejs');
 const homeAccessClient=read('public/js/customer-home-access.js');
+const dashboardModule=require('../src/platform/customer-dashboard');
 
 for(const label of ['Home','My Access','Activity','Support','Help','Payments','Account','Notifications'])assert(nav.includes(label),`customer navigation missing ${label}`);
 assert(!nav.includes('>Setup</a>')&&!nav.includes('Plan &amp; billing'),'customer navigation must not restore the redundant Setup or Plan & billing destinations');
@@ -71,7 +72,7 @@ assert(accessRoute.includes("router.post('/account/access/media/:accountId/usern
 assert(accessRoute.includes("router.post('/account/access/media/:accountId/password'")&&accessRoute.includes("router.post('/account/access/requests/password'"),'My Access must own Jellyfin/Emby and Overseerr password management');
 assert(accessView.includes('/account/access/media/<%= account.id %>/password')&&accessView.includes('/account/access/requests/password'),'My Access must render the service-password controls instead of Account security');
 assert(accessRoute.includes("router.get('/account/jellyfin'")&&accessRoute.includes("'/account/access'"),'legacy Jellyfin-hub links must redirect to My Access');
-assert(accessRoute.includes('.filter(customerNav.liveServiceSubscription)')&&accessView.includes('subscriptions.forEach(function(subscription)'),'My Access must show every current streaming-service subscription rather than one selected Jellyfin lane');
+assert(accessRoute.includes('.filter(customerNav.liveServiceSubscription)')&&accessRoute.includes('rawSubscriptions')&&accessView.includes('accessRows=Array.isArray(subscriptions)?subscriptions:[]')&&accessView.includes('activeSubscriptions'),'My Access must show every current streaming-service subscription rather than one selected Jellyfin lane');
 assert(accessRoute.includes('liveFreeJellyfinSubscription')&&accessRoute.includes('effectiveEmbySubscription'),'My Access must resolve free Jellyfin and Emby lanes independently');
 assert(accessRoute.includes('disabled:Boolean(!entitlement')&&accessRoute.includes('if(!subscriptions.length&&!requestState.eligible)'),'stale media accounts must not keep My Access available or appear ready after service entitlement ends');
 assert(accessView.includes('/account/libraries/<%= account.id %>')&&accessView.includes('A Free Server and a 24-hour trial can therefore have different selections'),'library visibility controls must stay scoped to each Jellyfin account/server');
@@ -150,4 +151,24 @@ assert(pending.includes('FREE_HOLD_MINUTES=10')&&pending.includes('async functio
 assert(capacity.includes('free_access_registration_reservations')&&capacity.includes('reserved'),'plan capacity must count live registration holds');
 assert(publicAuth.includes('await establish(req,created)')&&publicAuth.includes('activateRequestedFreeAccess(created)'),'verified registration must establish the customer session and continue onboarding automatically');
 assert(publicAuth.includes('hold expired before verification'),'expired Free Access holds must preserve the new account and explain the next step');
+{
+  const future=new Date(Date.now()+86400000).toISOString();
+  const inactivePast=new Date(Date.now()-86400000).toISOString();
+  const portal={subscriptions:[
+    {id:'free-sub',plan_id:'free-plan',status:'active',current_period_end:null,is_free_tier:true,service_type:'jellyfin',billing_interval:'month',created_at:'2026-01-01T00:00:00.000Z'},
+    {id:'paid-sub',plan_id:'paid-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'jellyfin',billing_interval:'month',created_at:'2026-01-02T00:00:00.000Z'},
+    {id:'trial-sub',plan_id:'trial-plan',status:'trialing',current_period_end:future,is_free_tier:false,service_type:'jellyfin',billing_interval:'trial',created_at:'2026-01-03T00:00:00.000Z'},
+    {id:'stremio-sub',plan_id:'stremio-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'stremio',billing_interval:'month',created_at:'2026-01-04T00:00:00.000Z'},
+    {id:'emby-sub',plan_id:'emby-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'emby',billing_interval:'month',created_at:'2026-01-05T00:00:00.000Z'},
+    {id:'addon-sub',plan_id:'addon-plan',status:'active',current_period_end:future,is_addon:true,service_type:'stremio',billing_interval:'month',created_at:'2026-01-06T00:00:00.000Z'},
+    {id:'expired-sub',plan_id:'expired-plan',status:'active',current_period_end:inactivePast,is_free_tier:false,service_type:'jellyfin',billing_interval:'month',created_at:'2026-01-07T00:00:00.000Z'}
+  ]};
+  const rows=dashboardModule.canonicalAccessRows(portal,{freePlan:{...portal.subscriptions[0],blocked:true},currentPlan:portal.subscriptions[1]});
+  const ids=new Set(rows.map(row=>row.id));
+  for(const id of ['free-sub','paid-sub','trial-sub','stremio-sub','emby-sub'])assert(ids.has(id),`customer Home must keep simultaneous live access row ${id}`);
+  assert(!ids.has('addon-sub')&&!ids.has('expired-sub'),'customer Home access summary must not promote add-ons or expired access as active access rows');
+  const canonicalized=dashboardModule.canonicalizePortalSubscriptions({subscriptions:portal.subscriptions.slice()},rows);
+  const renderedLiveIds=new Set(canonicalized.subscriptions.filter(row=>dashboardModule.liveSubscription(row)&&!row.is_addon).map(row=>row.id));
+  for(const id of ['free-sub','paid-sub','trial-sub','stremio-sub','emby-sub'])assert(renderedLiveIds.has(id),`portal subscription canonicalization must preserve ${id} for rendering`);
+}
 console.log('customer portal IA smoke: ok');

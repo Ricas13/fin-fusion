@@ -10,6 +10,9 @@
 // existing scripts/jellyfin-account-creation-recovery-db-smoke.js, untouched
 // by this refactor, and is not duplicated here.
 
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('canonical service authority DB smoke')) process.exit(0);
+
 const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
