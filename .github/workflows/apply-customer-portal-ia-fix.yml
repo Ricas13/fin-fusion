@@ -18,6 +18,11 @@ jobs:
         with:
           ref: fix/stremio-home-server-render
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Update canonical Stremio destination regression
         shell: bash
         run: |
