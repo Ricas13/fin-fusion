@@ -28,7 +28,7 @@ function fixedTermWithoutProvider(row) {
     const mode = billingMode.modeFor(row);
     if (mode === 'payment') return true;
     if (mode === 'manual' && !isLegacyImport(row)) return true;
-    return disposition(row) === ENDING;
+    return Boolean(row?.cancel_at_period_end) && disposition(row) === ENDING;
 }
 
 async function setEnding({ subscriptionId, actorUserId = null, ending = true }) {
