@@ -22,6 +22,9 @@
   const accessRows=Array.isArray(subscriptions)?subscriptions:[];
   const activeSubscriptions=accessRows.filter(subscription=>!subscription.access_removed);
   const removedSubscriptions=accessRows.filter(subscription=>subscription.access_removed);
+  const stremioSubscriptions=activeSubscriptions.filter(subscription=>['stremio','bundle'].includes(serviceType(subscription)));
+  const stremioSubscription=stremioSubscriptions[0]||null;
+  const hasStremioAccess=Boolean(stremioSubscription);
   const accessReturnStatus=typeof returnStatus==='object'&&returnStatus?returnStatus:{};
   const freeHealth=typeof freeUsage==='object'&&freeUsage?freeUsage:null;
   const hasPendingMediaAccess=activeSubscriptions.some(subscription=>['jellyfin','emby','bundle'].includes(serviceType(subscription)));
@@ -61,7 +64,7 @@
   <% } %>
 
   <div class="jellyfinAccountList">
-  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]);const player=account.serviceType==='emby'?'Emby':'Jellyfin';const showFreeHealth=account.accessLane==='free'&&freeHealth&&freeHealth.rulesText; %>
+  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]);const player=account.serviceType==='emby'?'Emby':'Jellyfin';const showFreeHealth=account.accessLane==='free'&&freeHealth&&freeHealth.rulesText;const minimumMinutes=showFreeHealth?Number(freeHealth.minimumPlaybackMinutes):0;const watchedMinutes=showFreeHealth?Math.max(0,Number(freeHealth.playbackMinutes)||0):0;const watchProgress=minimumMinutes>0?Math.min(100,Math.round((watchedMinutes/minimumMinutes)*100)):100; %>
     <section class="jellyfinAccountCard <%= account.disabled?'isUnavailable':'' %>" id="account-<%= account.id %>">
       <div class="jellyfinAccountHead">
         <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLabel %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
@@ -70,11 +73,17 @@
 
       <% if(showFreeHealth){ %>
       <section class="freeAccessHealth freeAccessHealth--<%= freeHealth.tone %>" aria-label="Free Server activity status">
-        <div class="freeAccessHealthIcon" aria-hidden="true"><%= freeHealth.tone==='bad'?'!':freeHealth.tone==='warn'?'!':'✓' %></div>
-        <div class="freeAccessHealthCopy">
-          <div class="freeAccessHealthTop"><strong><%= freeHealth.label %></strong><% if(freeHealth.removalAt&&freeHealth.tone!=='good'){ %><span><%= formatDateTime(freeHealth.removalAt) %></span><% } %></div>
-          <p><%= freeHealth.detail %></p>
-          <small><%= freeHealth.rulesText %><% if(Number.isFinite(Number(freeHealth.minimumPlaybackMinutes))&&Number(freeHealth.minimumPlaybackMinutes)>0){ %> Current window: <strong><%= freeHealth.playbackMinutes %> / <%= freeHealth.minimumPlaybackMinutes %> minutes</strong>.<% } %></small>
+        <div class="freeWatchSummary">
+          <div class="freeAccessHealthIcon" aria-hidden="true"><%= freeHealth.tone==='bad'?'!':freeHealth.tone==='warn'?'!':'▶' %></div>
+          <div class="freeWatchCopy"><span class="freeWatchLabel">Watch status</span><strong><%= freeHealth.label %></strong><p><%= freeHealth.detail %></p></div>
+        </div>
+        <div class="freeWatchRules">
+          <div class="freeWatchBars" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div><strong><%= freeHealth.tone==='good'?'Meeting usage rules':'Free Server usage rules' %></strong><small><%= freeHealth.rulesText %></small></div>
+        </div>
+        <div class="freeWatchProgress">
+          <% if(minimumMinutes>0){ %><div class="freeWatchRing" style="--watch-progress:<%= watchProgress %>%" aria-hidden="true"><span><%= watchedMinutes>=minimumMinutes?'✓':watchedMinutes %></span></div><div><strong><%= watchedMinutes %> / <%= minimumMinutes %> minutes</strong><small>Current <%= Number(freeHealth.playbackWindowDays)||7 %>-day window</small></div>
+          <% } else { %><div class="freeWatchRing" style="--watch-progress:100%" aria-hidden="true"><span>✓</span></div><div><strong><%= freeHealth.tone==='good'?'Within limits':'Needs attention' %></strong><small><% if(freeHealth.removalAt){ %>Next threshold <%= formatDateTime(freeHealth.removalAt) %><% } else { %>Activity policy status<% } %></small></div><% } %>
         </div>
       </section>
       <% } %>
@@ -83,6 +92,7 @@
         <div class="jellyfinCredential"><span>Server URL</span><strong><%= account.publicUrl||'Being prepared' %></strong></div>
         <div class="jellyfinCredential"><span>Username</span><strong><%= account.username||'Being prepared' %></strong></div>
         <div class="jellyfinCredential"><span>Password</span><strong><%= account.passwordSetupRequired?'Choose a password':'Set by you' %></strong></div>
+        <div class="jellyfinCredential"><span>Stream allowance</span><strong><%= account.streams?`${account.streams} stream${account.streams===1?'':'s'}`:'Plan controlled' %></strong></div>
       </div>
 
       <% if(account.passwordSetupRequired){ %>
@@ -120,10 +130,23 @@
   <% }) %>
   </div>
 
+  <% if(hasStremioAccess){ %>
+  <section class="jellyfinAccountCard stremioAccessCard" id="stremio-access" data-stremio-access>
+    <div class="jellyfinAccountHead">
+      <div><div class="jellyfinAccountTitle"><strong>Stremio</strong><span class="pill accent">Stremio</span><span class="pill good" data-stremio-status><%= subscriptionStatus(stremioSubscription) %></span></div><div class="jellyfinPlanLine"><%= subscriptionName(stremioSubscription) %> · private installation manifest</div></div>
+      <div class="stremioHeadActions"><a class="button primary" href="#" data-stremio-install hidden>Install in Stremio</a><form class="plainForm" method="post" action="/account/stremio/install" data-stremio-create><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="access"><button class="button primary" type="submit">Create installation link</button></form><form class="plainForm" method="post" action="/account/stremio/revoke" data-stremio-revoke hidden><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="access"><button class="button secondary" type="submit">Revoke link</button></form></div>
+    </div>
+    <div class="stremioManifestBody">
+      <div class="stremioManifestCopy"><h2>manifest.json</h2><p>This is your private Stremio installation link. Keep it private — anyone with the link can use your Stremio access.</p></div>
+      <div class="stremioManifestField"><label for="stremio-manifest-url">Installation manifest</label><div class="stremioManifestControl"><input id="stremio-manifest-url" class="input" value="Loading your current manifest…" readonly data-stremio-manifest><button class="button ghost small" type="button" data-stremio-copy disabled>Copy</button></div><small data-stremio-help>Checking your current Stremio installation link.</small></div>
+    </div>
+  </section>
+  <% } %>
+
   <% if(requestState&&requestState.eligible){const requestReady=Boolean(requestState.access&&requestState.access.external_user_id&&!requestState.access.access_suspended); %>
   <section class="jellyfinAccountCard" id="overseerr">
     <div class="jellyfinAccountHead"><div><div class="jellyfinAccountTitle"><strong>Request content</strong><span class="pill accent">Overseerr</span><span class="pill <%= requestReady?'good':'warn' %>"><%= requestReady?'Ready':'Password needed' %></span></div><div class="jellyfinPlanLine">Included with your current streaming access</div></div><% if(requestReady&&requestState.configuration.baseUrl){ %><a class="button primary" href="<%= requestState.configuration.baseUrl %>" target="_blank" rel="noopener noreferrer">Open Overseerr</a><% } %></div>
-    <div class="jellyfinAccountBody"><section class="jellyfinLibraries"><div class="jellyfinSubhead"><div><h2>Overseerr password</h2><p>Set or reset your request-site password here. It remains separate from your CAPTAiNFiN portal and media-server passwords.</p></div></div></section><aside class="jellyfinManage"><form method="post" action="/account/access/requests/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New Overseerr password</label><input class="input" type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="8" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit"><%= requestReady?'Reset Overseerr password':'Set Overseerr password' %></button></form></aside></div>
+    <div class="jellyfinRequestReset"><div class="jellyfinRequestCopy"><h2>Overseerr password</h2><p>Set or reset your request-site password here. It remains separate from your CAPTAiNFiN portal and media-server passwords.</p></div><form class="jellyfinRequestForm" method="post" action="/account/access/requests/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New Overseerr password</label><input class="input" type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="8" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit"><%= requestReady?'Reset Overseerr password':'Set Overseerr password' %></button></form></div>
   </section>
   <% } %>
 </main></div></body></html>
