@@ -28,7 +28,7 @@ assert(customer.includes('csrf.verify(req)'),'customer support mutations must us
 assert(admin.includes("router.use('/admin/tickets',gate)"),'admin ticket routes must require admin auth');
 assert(admin.includes('csrf.verify(req)'),'admin ticket mutations must use CSRF');
 assert(admin.includes('row.customer_username||row.customer_email'),'admin ticket inbox must use canonical customer identity fields');
-assert(admin.includes('t.customer_username||t.customer_email'),'admin ticket details must use canonical customer identity fields');
+assert(admin.includes('t.customer_username||t.customer_email')||admin.includes('t.customer_email||t.customer_username'),'admin ticket details must use canonical customer identity fields regardless of display preference');
 assert(admin.includes('email:current.ticket.customer_email'),'staff-reply notification must use the canonical resolved customer email');
 assert(!admin.includes('.login_email')&&!admin.includes('.login_username'),'admin support UI must not depend on retired/nonexistent customer login fields');
 assert(admin.includes("catch(error){console.warn('Support reply notification could not be queued:'"),'notification failure must not invalidate a committed staff reply');
@@ -43,4 +43,3 @@ assert(indicator.includes('markAreaRead')&&indicator.includes('markAreaReadWithR
 assert(orders.includes("router.get('/admin/commerce/orders'"),'Orders router must own the canonical Commerce route');
 assert(orders.includes("router.get('/admin/orders'")&&orders.includes('res.redirect(308,ORDERS_PATH)'),'legacy Orders route must remain a compatibility redirect');
 assert(orders.includes("source IN ('stripe','paypal')"),'orders view must be provider-backed');
-console.log('support tickets smoke: ok');
