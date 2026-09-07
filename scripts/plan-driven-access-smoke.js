@@ -77,19 +77,24 @@ const globalChecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes
 assert.strictEqual(globalChecked.enabled,'on');
 assert.strictEqual(globalChecked.dryRun,'on');
 
-// A recently imported mapping may already carry trustworthy historical Jellyfin
-// activity. That history should satisfy the observation window, while a genuinely
-// new mapping with no prior evidence must retain the full grace period.
+// Free inactivity is scoped to the current allocation. Historical Jellyfin activity
+// from before import/re-entry must never consume the new allocation's observation
+// window or make a newly allocated place immediately removable.
 const now=Date.UTC(2026,7,27,9,0,0),day=86400000;
 const usagePolicy={enabled:true,dryRun:true,noPlaybackDays:7,playbackWindowDays:7,minimumPlaybackMinutes:null,minimumObservationHours:24};
-const importedAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:null,playback_seconds:0},usagePolicy,now);
-assert.strictEqual(importedAssessment.noPlaybackEligible,true,'Historical Jellyfin activity older than the threshold must make a recently imported Free mapping eligible');
-assert.strictEqual(importedAssessment.observationStartedAt.getTime(),now-10*day,'Historical activity must extend the observation window back before local import');
-const newAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:null,last_playback_at:null,playback_seconds:0},usagePolicy,now);
-assert.strictEqual(newAssessment.noPlaybackEligible,false,'A genuinely new Free mapping with no historical activity must retain the observation grace period');
-const recentPlaybackAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:new Date(now-2*day),playback_seconds:60},usagePolicy,now);
-assert.strictEqual(recentPlaybackAssessment.noPlaybackEligible,false,'Recent Free-server playback must prevent inactivity even when older account history exists');
-const strandedHeldFreeAccount={inactivity_policy:{},account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),last_activity_at:new Date(now-10*day),last_playback_at:null,playback_seconds:0,already_held:true,automation_protected:false,currently_playing:false};
+const importedAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),allocation_start_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:new Date(now-10*day),playback_seconds:0},usagePolicy,now);
+assert.strictEqual(importedAssessment.noPlaybackEligible,false,'Historical pre-allocation Jellyfin activity must not make a recently allocated Free mapping eligible');
+assert.strictEqual(importedAssessment.lastPlaybackAt,null,'Historical playback before the current allocation must be ignored');
+assert.strictEqual(importedAssessment.observationStartedAt.getTime(),now-5*day,'The current allocation boundary must own the Free observation window');
+assert.strictEqual(importedAssessment.referenceAt.getTime(),now-5*day,'Without playback in this allocation, the no-playback clock must start at allocation time');
+const expiredAllocationAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),allocation_start_at:new Date(now-10*day),last_activity_at:new Date(now-1*day),last_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(expiredAllocationAssessment.noPlaybackEligible,true,'A current Free allocation beyond the threshold with no playback must become eligible');
+assert.strictEqual(expiredAllocationAssessment.referenceAt.getTime(),now-10*day,'Generic Jellyfin activity must not extend a playback requirement');
+const newAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),allocation_start_at:new Date(now-5*day),last_activity_at:null,last_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(newAssessment.noPlaybackEligible,false,'A genuinely new Free allocation must retain the full observation grace period');
+const recentPlaybackAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),allocation_start_at:new Date(now-10*day),last_activity_at:new Date(now-1*day),last_playback_at:new Date(now-2*day),playback_seconds:60},usagePolicy,now);
+assert.strictEqual(recentPlaybackAssessment.noPlaybackEligible,false,'Recent Free-server playback in the current allocation must prevent inactivity');
+const strandedHeldFreeAccount={inactivity_policy:{},account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),allocation_start_at:new Date(now-10*day),last_activity_at:new Date(now-1*day),last_playback_at:null,playback_seconds:0,already_held:true,automation_protected:false,currently_playing:false};
 const strandedPolicy=planPolicyRuntime.effectiveForFreePlan(strandedHeldFreeAccount.inactivity_policy,{enabled:true,dryRun:false,freeNoPlaybackDays:7});
 const strandedAssessment=inactivityRuntime.assessUsage(strandedHeldFreeAccount,strandedPolicy,now);
 const strandedEligible=strandedPolicy.enabled&&!strandedHeldFreeAccount.automation_protected&&!strandedHeldFreeAccount.currently_playing&&(strandedAssessment.noPlaybackEligible||strandedAssessment.usageEligible);
