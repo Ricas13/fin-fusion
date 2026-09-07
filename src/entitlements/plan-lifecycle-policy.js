@@ -10,12 +10,15 @@ function own(value,key){return Boolean(value)&&Object.prototype.hasOwnProperty.c
 function unset(value,key){return !own(value,key)||value[key]===null||value[key]===undefined||String(value[key]).trim()==='';}
 function normalize(value={}){return{enabled:bool(value.enabled),dryRun:value.dryRun===undefined?true:bool(value.dryRun),firstPlaybackGraceDays:optionalInt(value.firstPlaybackGraceDays,1,3650),noPlaybackDays:optionalInt(value.noPlaybackDays,1,3650),minimumPlaybackMinutes:optionalInt(value.minimumPlaybackMinutes,1,1000000),playbackWindowDays:int(value.playbackWindowDays,1,365,DEFAULTS.playbackWindowDays),minimumObservationHours:int(value.minimumObservationHours,1,24*90,DEFAULTS.minimumObservationHours),action:'remove_jellyfin'};}
 function effectiveForFreePlan(value={},global={}){
- const local=normalize(value),inheritEnabled=!own(value,'enabled'),inheritDryRun=!own(value,'dryRun'),inheritFirstPlayback=unset(value,'firstPlaybackGraceDays'),inheritNoPlayback=unset(value,'noPlaybackDays'),inheritMinimumPlayback=unset(value,'minimumPlaybackMinutes'),inheritPlaybackWindow=unset(value,'playbackWindowDays');
- // Production callers pass jellyfin-lifecycle-policy.get(), which is fully normalized
- // and therefore carries the 3/7/30 Free defaults. Keep partial legacy callers
- // backward-compatible by not inventing newly introduced fields they did not supply.
+ const local=normalize(value),inheritFirstPlayback=unset(value,'firstPlaybackGraceDays'),inheritNoPlayback=unset(value,'noPlaybackDays'),inheritMinimumPlayback=unset(value,'minimumPlaybackMinutes'),inheritPlaybackWindow=unset(value,'playbackWindowDays');
+ // Execution mode is intentionally global: the current Free plan editor exposes
+ // thresholds only, so stale historical enabled:false/dryRun:true plan JSON must
+ // never silently neutralise the platform lifecycle switch. Production callers
+ // pass jellyfin-lifecycle-policy.get(), which is fully normalized and carries
+ // the 3/7/30 defaults. Partial legacy callers remain backward-compatible by not
+ // inventing newly introduced threshold fields they did not provide.
  const globalFirstPlayback=optionalInt(global.freeFirstPlaybackGraceDays,1,3650),globalNoPlayback=optionalInt(global.freeNoPlaybackDays,1,3650)??7,globalMinimumPlayback=optionalInt(global.freeMinimumPlaybackMinutes,1,1000000),globalPlaybackWindow=optionalInt(global.freePlaybackWindowDays,1,365)??7;
- return{...local,enabled:bool(global.enabled)&&(inheritEnabled?true:local.enabled),dryRun:bool(global.dryRun)||(inheritDryRun?false:local.dryRun),firstPlaybackGraceDays:inheritFirstPlayback?globalFirstPlayback:local.firstPlaybackGraceDays,noPlaybackDays:inheritNoPlayback?globalNoPlayback:local.noPlaybackDays,minimumPlaybackMinutes:inheritMinimumPlayback?globalMinimumPlayback:local.minimumPlaybackMinutes,playbackWindowDays:inheritPlaybackWindow?globalPlaybackWindow:local.playbackWindowDays,inherited:{enabled:inheritEnabled,dryRun:inheritDryRun,firstPlaybackGraceDays:inheritFirstPlayback,noPlaybackDays:inheritNoPlayback,minimumPlaybackMinutes:inheritMinimumPlayback,playbackWindowDays:inheritPlaybackWindow}};
+ return{...local,enabled:bool(global.enabled),dryRun:bool(global.dryRun),firstPlaybackGraceDays:inheritFirstPlayback?globalFirstPlayback:local.firstPlaybackGraceDays,noPlaybackDays:inheritNoPlayback?globalNoPlayback:local.noPlaybackDays,minimumPlaybackMinutes:inheritMinimumPlayback?globalMinimumPlayback:local.minimumPlaybackMinutes,playbackWindowDays:inheritPlaybackWindow?globalPlaybackWindow:local.playbackWindowDays,inherited:{enabled:true,dryRun:true,firstPlaybackGraceDays:inheritFirstPlayback,noPlaybackDays:inheritNoPlayback,minimumPlaybackMinutes:inheritMinimumPlayback,playbackWindowDays:inheritPlaybackWindow}};
 }
 function hasUsageTrigger(value){return Boolean(value?.enabled&&(value.firstPlaybackGraceDays!=null||value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null));}
 function noPlaybackBoundaryCrossedToday(assessment,policy,now=Date.now()){
