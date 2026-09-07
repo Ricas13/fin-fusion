@@ -61,9 +61,12 @@ const originalRequest = registry.request;
         `, [`Free lifecycle ${suffix}`, `free-lifecycle-${suffix}`]);
         serverId = server.rows[0].id;
         await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days')`, [customerId, planId]);
+        // This scenario is specifically testing failed-removal retry, so make the
+        // CURRENT allocation old enough to breach the policy. Historical
+        // last_activity_at alone must no longer make a newly allocated user stale.
         const account = await query(`
-            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,is_primary)
-            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',$5,TRUE) RETURNING id
+            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,is_primary,created_at)
+            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',$5,TRUE,NOW()-INTERVAL '30 days') RETURNING id
         `, [customerId, serverId, remoteUserId, `Free_${suffix}`, staleActivity]);
         accountId = account.rows[0].id;
 

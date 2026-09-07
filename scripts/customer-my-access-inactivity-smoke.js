@@ -5,6 +5,7 @@ const fs=require('fs');
 const path=require('path');
 const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const {freeAccessHealth}=require('../src/platform/customer-jellyfin');
 
 const route=read('src/platform/customer-jellyfin.js');
 const view=read('views/customer/jellyfin.ejs');
@@ -31,6 +32,33 @@ assert.match(view,/hasPendingMediaAccess=activeSubscriptions\.some/,'removed Fre
 assert.match(view,/class="freeWatchLabel">Watch status</,'Free Server access must keep the compact watch-status treatment');
 assert.match(view,/Meeting usage rules/,'Free Server watch status must explain whether usage rules are being met');
 assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current playback window');
+assert.match(route,/const observation=asDate\(status\.observationStartedAt\),inactiveReference=asDate\(status\.inactiveReferenceAt\)/,'My Access deadlines must consume the exact observation/reference boundaries returned by the enforcement evaluator');
+const reentryHealth=freeAccessHealth({
+  applies:true,
+  policy:{noPlaybackDays:4,minimumPlaybackMinutes:null,playbackWindowDays:7,minimumObservationHours:24},
+  observationStartedAt:'2026-09-05T12:00:00.000Z',
+  inactiveReferenceAt:'2026-09-05T12:00:00.000Z',
+  playbackMinutes:0,
+  currentlyPlaying:false,
+  automationProtected:false,
+  enforcementReady:true,
+  eligible:false
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.equal(reentryHealth.removalAt.toISOString(),'2026-09-09T12:00:00.000Z','My Access must show the first-play deadline from the current allocation rather than historical account age');
+assert.equal(reentryHealth.tone,'warn','the existing My Access traffic-light must turn amber as the current allocation approaches its configured deadline');
+const freshHealth=freeAccessHealth({
+  applies:true,
+  policy:{noPlaybackDays:4,minimumPlaybackMinutes:null,playbackWindowDays:7,minimumObservationHours:24},
+  observationStartedAt:'2026-09-06T12:00:00.000Z',
+  inactiveReferenceAt:'2026-09-06T12:00:00.000Z',
+  playbackMinutes:0,
+  currentlyPlaying:false,
+  automationProtected:false,
+  enforcementReady:true,
+  eligible:false
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.equal(freshHealth.tone,'good','a newly allocated Free place must remain green while comfortably inside its first-play window');
+
 assert.match(view,/accounts\.forEach\(function\(account\)/,'each Jellyfin or Emby server account must remain independently renderable instead of using a single server selector');
 assert.match(view,/hasStremioAccess/,'My Access must render Stremio independently from Jellyfin account cards');
 assert.match(view,/id="stremio-access"/,'Stremio access must have its own card below media-server access');
