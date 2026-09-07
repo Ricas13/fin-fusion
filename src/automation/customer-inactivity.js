@@ -23,9 +23,11 @@ function assessUsage(row,policy,now=Date.now()){
   const activationAgeHours=allocationStartAt?Math.max(0,(now-allocationStartAt.getTime())/3600000):0;
   const ageHours=observationStartedAt?Math.max(0,(now-observationStartedAt.getTime())/3600000):0;
   const seconds=Number(row.playback_seconds||0);
-  const firstPlaybackEligible=!hasPlayback&&policy.firstPlaybackGraceDays!=null&&activationAgeHours>=Math.max(policy.minimumObservationHours,policy.firstPlaybackGraceDays*24);
-  const noPlaybackEligible=hasPlayback&&policy.noPlaybackDays!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.noPlaybackDays*24)&&lastPlaybackAt&&lastPlaybackAt.getTime()<=now-policy.noPlaybackDays*86400000;
-  const usageEligible=hasPlayback&&policy.minimumPlaybackMinutes!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.playbackWindowDays*24)&&seconds<policy.minimumPlaybackMinutes*60;
+  const phasedActivation=policy.firstPlaybackGraceDays!=null;
+  const retentionReady=hasPlayback||!phasedActivation;
+  const firstPlaybackEligible=!hasPlayback&&phasedActivation&&activationAgeHours>=Math.max(policy.minimumObservationHours,policy.firstPlaybackGraceDays*24);
+  const noPlaybackEligible=retentionReady&&policy.noPlaybackDays!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.noPlaybackDays*24)&&referenceAt&&referenceAt.getTime()<=now-policy.noPlaybackDays*86400000;
+  const usageEligible=retentionReady&&policy.minimumPlaybackMinutes!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.playbackWindowDays*24)&&seconds<policy.minimumPlaybackMinutes*60;
   return{allocationStartAt,firstPlaybackAt,lastPlaybackAt,hasPlayback,referenceAt,observationStartedAt,activationAgeHours,ageHours,seconds,firstPlaybackEligible,noPlaybackEligible,usageEligible};
 }
 
