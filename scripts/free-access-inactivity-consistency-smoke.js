@@ -25,6 +25,8 @@ assert.equal(inherited.firstPlaybackGraceDays,3,'Free plans must inherit the thr
 assert.equal(inherited.noPlaybackDays,7,'Free plans must inherit the seven-day recent-playback window');
 assert.equal(inherited.minimumPlaybackMinutes,30,'Free plans must inherit the thirty-minute playback minimum');
 assert.equal(inherited.playbackWindowDays,7,'Free plans must inherit the rolling seven-day playback window');
+assert.equal(policy.effectiveForFreePlan({enabled:false,dryRun:true},globalPolicy).enabled,true,'legacy per-plan disabled flags must not override the global Free lifecycle switch');
+assert.equal(policy.effectiveForFreePlan({enabled:false,dryRun:true},globalPolicy).dryRun,false,'legacy per-plan dry-run flags must not override the global Free lifecycle mode');
 assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).firstPlaybackGraceDays,3,'legacy explicit nulls must inherit the new Free defaults');
 assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).minimumPlaybackMinutes,30,'legacy explicit null minimums must inherit the thirty-minute default');
 assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:2,noPlaybackDays:5,minimumPlaybackMinutes:45,playbackWindowDays:5},globalPolicy).firstPlaybackGraceDays,2,'a Free plan must be able to override its first-play grace');
