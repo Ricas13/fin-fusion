@@ -7,6 +7,7 @@ const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const policy=require('../src/entitlements/plan-lifecycle-policy');
 const inactivity=require('../src/automation/customer-inactivity');
+const restorationGrace=require('../src/entitlements/jellyfin-inactivity-grace');
 
 const retentionPolicy={firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24};
 assert.equal(policy.usageTriggered({hasPlayback:false,firstPlaybackEligible:false},retentionPolicy),false,'a fresh Free allocation must remain inside its first-play grace');
@@ -24,7 +25,10 @@ assert.equal(inherited.firstPlaybackGraceDays,3,'Free plans must inherit the thr
 assert.equal(inherited.noPlaybackDays,7,'Free plans must inherit the seven-day recent-playback window');
 assert.equal(inherited.minimumPlaybackMinutes,30,'Free plans must inherit the thirty-minute playback minimum');
 assert.equal(inherited.playbackWindowDays,7,'Free plans must inherit the rolling seven-day playback window');
+assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).firstPlaybackGraceDays,3,'legacy explicit nulls must inherit the new Free defaults');
+assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).minimumPlaybackMinutes,30,'legacy explicit null minimums must inherit the thirty-minute default');
 assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:2,noPlaybackDays:5,minimumPlaybackMinutes:45,playbackWindowDays:5},globalPolicy).firstPlaybackGraceDays,2,'a Free plan must be able to override its first-play grace');
+assert.equal(policy.effectiveForFreePlan({}, {enabled:true,dryRun:false,freeNoPlaybackDays:7}).firstPlaybackGraceDays,null,'partial legacy global-policy callers must not have a new activation field invented for them');
 
 const now=Date.parse('2026-09-07T12:00:00.000Z');
 const restored=inactivity.assessUsage({
@@ -43,11 +47,16 @@ assert.equal(restored.observationStartedAt.toISOString(),'2026-09-05T12:00:00.00
 assert.equal(restored.firstPlaybackEligible,false,'a returning user must receive the full three-day first-play grace');
 assert.equal(restored.noPlaybackEligible,false,'ongoing inactivity must not be evaluated before the first playback');
 assert.equal(restored.usageEligible,false,'minimum-minute retention must not be evaluated before the first playback');
+assert.equal(restorationGrace.graceHours({policy:retentionPolicy,has_playback:false}),72,'an explicit restore before first playback must use the three-day activation grace, not the seven-day retention window');
+assert.equal(restorationGrace.graceHours({policy:retentionPolicy,has_playback:true}),168,'after activation a restoration observation window may use the full seven-day retention window');
 
 const expiredFirstPlay=inactivity.assessUsage({allocation_start_at:'2026-09-04T11:00:00.000Z',last_playback_at:null,last_activity_at:'2026-09-07T11:00:00.000Z',playback_seconds:0},retentionPolicy,now);
 assert.equal(expiredFirstPlay.referenceAt.toISOString(),'2026-09-04T11:00:00.000Z','non-playback Jellyfin activity must not extend the first-play deadline');
 assert.equal(expiredFirstPlay.firstPlaybackEligible,true,'the independent first-play rule must become eligible after three days');
 assert.equal(expiredFirstPlay.noPlaybackEligible,false,'the seven-day retention clock must not substitute for the first-play rule');
+
+const legacyNoPlaybackPolicy={firstPlaybackGraceDays:null,noPlaybackDays:7,minimumPlaybackMinutes:null,playbackWindowDays:7,minimumObservationHours:24};
+assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-25T12:00:00.000Z',last_playback_at:null,playback_seconds:0},legacyNoPlaybackPolicy,now).noPlaybackEligible,true,'legacy policies without an activation phase must retain their historical no-playback semantics');
 
 const currentPlayback=inactivity.assessUsage({
   allocation_start_at:'2026-09-01T12:00:00.000Z',
@@ -68,6 +77,8 @@ assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-20T12:00:00.00
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-20T12:00:00.000Z',first_playback_at:'2026-08-30T12:00:00.000Z',last_playback_at:'2026-09-01T12:00:00.000Z',playback_seconds:31*60},minimumPolicy,now).usageEligible,false,'an activated allocation meeting its configured playback minimum must remain safe');
 
 const base=read('src/automation/customer-inactivity.js');
+const scoped=read('src/automation/customer-inactivity-scoped.js');
+const grace=read('src/entitlements/jellyfin-inactivity-grace.js');
 const status=read('src/automation/customer-inactivity-status.js');
 const adminPolicy=read('src/platform/admin-request-plan-policy.js');
 const bulkOperations=read('src/platform/bulk-operations.js');
@@ -78,10 +89,14 @@ assert.match(base,/GREATEST\(fa\.starts_at,ja\.created_at,lifecycle\.restored_at
 assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) first_playback_at/,'first playback must be scoped to the current Free allocation');
 assert.match(base,/FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) last_playback_at/,'last playback must ignore sessions from previous Free allocations');
 assert.match(base,/ph\.started_at>=GREATEST\(allocation\.allocation_start_at,NOW\(\)-/,'minimum-playback totals must be clipped to the current allocation as well as the rolling window');
-assert.match(base,/firstPlaybackEligible=!hasPlayback&&policy\.firstPlaybackGraceDays!=null/,'the activation phase must be an explicit independent first-play check');
-assert.match(base,/const noPlaybackEligible=hasPlayback&&policy\.noPlaybackDays!=null/,'ongoing inactivity must only start after activation');
-assert.match(base,/const usageEligible=hasPlayback&&policy\.minimumPlaybackMinutes!=null/,'minimum playback must only start after activation');
+assert.match(base,/firstPlaybackEligible=!hasPlayback&&phasedActivation/,'the activation phase must be an explicit independent first-play check');
+assert.match(base,/const retentionReady=hasPlayback\|\|!phasedActivation/,'ongoing retention must require activation for phased Free policies while keeping legacy policy compatibility');
+assert.match(base,/const noPlaybackEligible=retentionReady&&policy\.noPlaybackDays!=null/,'ongoing inactivity must use the phase gate');
+assert.match(base,/const usageEligible=retentionReady&&policy\.minimumPlaybackMinutes!=null/,'minimum playback must use the phase gate');
 assert.match(base,/planPolicy\.usageTriggered\(assessment,policy\)/,'candidate eligibility must use the shared phase-aware policy');
+assert.match(scoped,/\(\$4::timestamptz IS NULL OR started_at >= \$4::timestamptz\)/,'the last-second usage safety check must ignore playback before the current allocation');
+assert.match(scoped,/row\.allocation_start_at \|\| null/,'the final safety query must receive the current allocation boundary');
+assert.match(grace,/if \(!row\?\.has_playback && firstPlaybackGraceDays != null && firstPlaybackGraceDays > 0\)/,'restored allocations awaiting first playback must use the activation grace');
 assert.match(status,/firstPlaybackAt:row\.first_playback_at\|\|null/,'customer status must expose first-play activation evidence to My Access');
 assert.match(status,/allocationStartAt:row\.allocation_start_at\|\|null/,'customer status must expose the current allocation boundary to My Access');
 assert.match(adminPolicy,/Free Server activity rules/,'the Free plan editor must expose the activity policy');
