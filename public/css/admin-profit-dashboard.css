@@ -13,9 +13,9 @@
 
 .profitHeroGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
 .profitHeroCard{display:grid;align-content:start;gap:6px;min-height:106px;padding:13px 14px;border:1px solid #2d3a48;border-radius:11px;background:#131b24;text-decoration:none;color:#eaf0f5}
-.profitHeroCard>span{font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:#97a5b5}
+.profitHeroCard>span{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:#97a5b5}
 .profitHeroCard>strong{font-size:23px;line-height:1.05;color:#fff}
-.profitHeroCard>small{color:#9aa8b7;font-size:10px;line-height:1.3}
+.profitHeroCard>small{color:#9aa8b7;font-size:11px;line-height:1.35}
 .profitHeroCard.good{border-color:rgba(57,217,138,.3);background:linear-gradient(145deg,rgba(57,217,138,.08),#131b24 72%)}
 .profitHeroCard.bad{border-color:rgba(255,97,116,.38);background:linear-gradient(145deg,rgba(255,97,116,.10),#131b24 72%)}
 .profitHeroCard.info{border-color:rgba(76,201,240,.3);background:linear-gradient(145deg,rgba(76,201,240,.075),#131b24 72%)}
@@ -24,22 +24,22 @@
 .profitMetricPair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .profitMetricPair>div{display:grid;align-content:start;gap:4px;min-width:0}
 .profitMetricPair>div+div{padding-left:10px;border-left:1px solid rgba(255,255,255,.08)}
-.profitMetricPair small{font-size:9px;font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#8291a2}
+.profitMetricPair small{font-size:11px;font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#8291a2}
 .profitMetricPair strong{font-size:20px;line-height:1.05;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.profitMetricPair em{font-size:9px;line-height:1.3;color:#8998a8;font-style:normal}
+.profitMetricPair em{font-size:11px;line-height:1.35;color:#8998a8;font-style:normal}
 .profitDelta{font-weight:800}
 .profitDelta.good{color:var(--status-good)}
 .profitDelta.bad{color:var(--status-bad)}
 .profitGauge{height:6px;border-radius:999px;background:#25313d;overflow:hidden;margin-top:1px}
 .profitGauge>i{display:block;height:100%;border-radius:inherit;background:var(--status-info)}
-.profitBasisText{margin:0;font-size:9px;line-height:1.35;color:#6f7e8f}
+.profitBasisText{margin:0;font-size:11px;line-height:1.4;color:#6f7e8f}
 
 .profitBars{display:grid;gap:7px}
-.profitBarRow{display:grid;grid-template-columns:52px minmax(0,1fr);gap:8px;align-items:center}
-.profitBarRow>strong{font-size:9px;color:#9aa8b7}
+.profitBarRow{display:grid;grid-template-columns:56px minmax(0,1fr);gap:8px;align-items:center}
+.profitBarRow>strong{font-size:11px;color:#9aa8b7}
 .profitBarTracks{display:grid;gap:4px}
-.profitBarTracks>div{display:grid;grid-template-columns:46px minmax(0,1fr) 66px;gap:6px;align-items:center}
-.profitBarTracks span,.profitBarTracks em{font-size:9px;color:#8997a7;font-style:normal}
+.profitBarTracks>div{display:grid;grid-template-columns:50px minmax(0,1fr) 72px;gap:6px;align-items:center}
+.profitBarTracks span,.profitBarTracks em{font-size:10px;color:#8997a7;font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profitBarTracks em{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .profitBar{display:block;height:7px;min-width:2px;border-radius:999px}
 .profitBar--receipts{background:var(--status-good)}
@@ -47,9 +47,9 @@
 
 .serviceMixBlocks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
 .serviceMixBlock{display:grid;align-content:start;gap:3px;min-height:78px;padding:10px;border:1px solid #304050;border-radius:9px;text-decoration:none;background:#101820}
-.serviceMixBlock span{font-size:9px;font-weight:850;text-transform:uppercase;letter-spacing:.05em}
+.serviceMixBlock span{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.05em}
 .serviceMixBlock strong{font-size:22px;line-height:1;color:#fff}
-.serviceMixBlock small{color:#8f9dad;font-size:8px;line-height:1.25}
+.serviceMixBlock small{color:#8f9dad;font-size:10px;line-height:1.3}
 .serviceMixBlock--jellyfin{border-color:rgba(76,201,240,.32);background:rgba(76,201,240,.05)}
 .serviceMixBlock--jellyfin span{color:#7ddcf8}
 .serviceMixBlock--stremio{border-color:rgba(182,156,255,.32);background:rgba(182,156,255,.05)}
@@ -74,5 +74,5 @@
   .profitMetricPair>div+div{padding:7px 0 0;border-left:0;border-top:1px solid rgba(255,255,255,.08)}
   .serviceMixBlocks{grid-template-columns:1fr}
   .profitBarRow{grid-template-columns:1fr}
-  .profitBarTracks>div{grid-template-columns:44px minmax(0,1fr) 64px}
+  .profitBarTracks>div{grid-template-columns:48px minmax(0,1fr) 70px}
 }
