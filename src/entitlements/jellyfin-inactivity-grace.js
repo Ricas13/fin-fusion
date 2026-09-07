@@ -9,8 +9,15 @@ function finite(value) {
 
 function graceHours(row) {
     const policy = row?.policy || {};
-    const windows = [];
     const minimumObservationHours = finite(policy.minimumObservationHours);
+    const firstPlaybackGraceDays = finite(policy.firstPlaybackGraceDays);
+    // A restored Free allocation that has not played yet is in the activation
+    // phase, so its explicit restoration grace must match the first-play rule
+    // rather than accidentally expanding to the longer retention window.
+    if (!row?.has_playback && firstPlaybackGraceDays != null && firstPlaybackGraceDays > 0) {
+        return Math.max(minimumObservationHours != null && minimumObservationHours > 0 ? minimumObservationHours : 0, firstPlaybackGraceDays * 24);
+    }
+    const windows = [];
     const noPlaybackDays = finite(policy.noPlaybackDays);
     const playbackWindowDays = finite(policy.playbackWindowDays);
     const minimumPlaybackMinutes = finite(policy.minimumPlaybackMinutes);
