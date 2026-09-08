@@ -15,6 +15,7 @@ const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
 const paymentEventRetry = read('src/payments/payment-event-retry.js');
+const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
 
@@ -53,6 +54,10 @@ assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','f
 
 assert(lifecycle.includes("await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan')"),
     'Free plan acquisition must attempt immediate canonical reconciliation');
+assert(planChange.includes("const provisioning=require('../jellyfin/resilient-provisioning')")
+    && planChange.includes('await provisioning.reconcileCustomer(change.customer_id)')
+    && planChange.indexOf('await provisioning.reconcileCustomer(change.customer_id)') < planChange.indexOf("SET state='applied',provider_schedule_state='applied'"),
+    'scheduled Stripe plan changes must reconcile target access before marking the change applied');
 
 assert(deploymentVerify.includes("require('../src/automation/critical-jobs')")
     && deploymentVerify.includes("'Free Server recovery job'"),
