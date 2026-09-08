@@ -7,13 +7,11 @@ const referrals=require('../referrals');
 const planCapacity=require('../entitlements/plan-capacity');
 
 const LOCK_SEED=761931;
-// Must be >= the pending-registration TTL (60 minutes, see the /account/register
-// route's ttlMinutes:60) so the free-access hold never expires before the email
-// verification link it is meant to protect does. A shorter hold here silently
-// strands every applicant whose inbox delivery takes longer than the hold,
-// which cycles a scarce single-digit free-place pool through applicant after
-// applicant without anyone ever actually landing a place.
-const FREE_HOLD_MINUTES=60;
+// Keep the anonymous/pre-form reservation short so abandoned browser sessions
+// do not monopolise scarce Free places. Once begin() successfully creates a
+// pending registration, the same reservation is extended to that pending
+// registration's exact verification expiry.
+const FREE_HOLD_MINUTES=10;
 function cleanEmail(value){const email=String(value||'').trim().toLowerCase();if(!email||!email.includes('@')||email.length>254||/[\r\n<>]/.test(email))throw new Error('A valid email address is required');return email;}
 function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');return username;}
 async function validatePassword(password){return customers.validateNewPassword(password);}
@@ -107,7 +105,7 @@ async function begin({email,username,password,referralCode=null,communicationPre
         await client.query(`DELETE FROM pending_registrations WHERE consumed_at IS NULL AND (expires_at<=NOW() OR lower(email)=lower($1) OR lower(username)=lower($2))`,[email,username]);
         const created=await client.query(`INSERT INTO pending_registrations(email,username,password_hash,referral_code,token_hash,expires_at,communication_preferences,free_access_requested) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) RETURNING id,email,username,expires_at,created_at,free_access_requested`,[email,username,passwordHash,ref,hash,expiresAt,JSON.stringify(prefs),Boolean(freeAccess)]);
         if(freeReservation){
-            freeReservation=(await client.query(`UPDATE free_access_registration_reservations SET pending_registration_id=$2,normalized_email=$3,updated_at=NOW() WHERE id=$1 RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email`,[freeReservation.id,created.rows[0].id,email])).rows[0];
+            freeReservation=(await client.query(`UPDATE free_access_registration_reservations SET pending_registration_id=$2,normalized_email=$3,expires_at=$4,updated_at=NOW() WHERE id=$1 RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email`,[freeReservation.id,created.rows[0].id,email,expiresAt])).rows[0];
         }
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.pending','pending_registration',$1,$2::jsonb)`,[created.rows[0].id,JSON.stringify({email,username,expiresAt,referral:Boolean(ref),freeAccess:Boolean(freeAccess),freeHoldExpiresAt:freeReservation?.expires_at||null,freeReservationId:freeReservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
         return{...created.rows[0],freeReservation};
