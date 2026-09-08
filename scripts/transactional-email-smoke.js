@@ -125,6 +125,13 @@ function startFakeSmtp() {
         assert.strictEqual(connectionTest.ok, true);
         assert(connectionTest.latencyMs >= 0);
 
+        // check:db runs many scripts against one shared database, so the
+        // outbox may already carry pending transactional email left over from
+        // an earlier script (e.g. a registration welcome email) -- drain
+        // those now, before this test enqueues anything of its own, so later
+        // delivery-count assertions aren't polluted by them.
+        await outbox.deliverDue({ limit: 50 });
+
         const secretUrl = 'https://store.example.test/account/verify-email?token=VERY_SECRET_TOKEN';
         const queued = await outbox.enqueue({
             type: 'email_verification',
@@ -140,8 +147,8 @@ function startFakeSmtp() {
         assert(!rawQueued.payload_encrypted.includes('Verify your account'), 'email body leaked into plaintext outbox storage');
 
         const delivered = await outbox.deliverDue({ limit: 5 });
-        assert.strictEqual(delivered.sent, 1);
-        assert.strictEqual(delivered.failed, 0);
+        const deliveredOwn = delivered.items.find(item => item.id === queued.id);
+        assert(deliveredOwn?.ok, `the queued verification email was not delivered: ${JSON.stringify(delivered)}`);
         const sentRow = (await query('SELECT status,sent_at,last_error,attempts FROM notification_outbox WHERE id=$1', [queued.id])).rows[0];
         assert.strictEqual(sentRow.status, 'sent');
         assert(sentRow.sent_at);
@@ -170,6 +177,39 @@ function startFakeSmtp() {
         }});
         assert.strictEqual(retried.sent, 1);
         assert.strictEqual((await query('SELECT status FROM notification_outbox WHERE id=$1', [failed.id])).rows[0].status, 'sent');
+
+        // A permanently-undeliverable address (hard bounce, typo domain) must
+        // eventually stop retrying instead of polling SMTP forever every 24h
+        // with no operator visibility -- matching the existing 'dead' handling
+        // already used by notification-outbox.js for Discord/Telegram.
+        const doomed = await outbox.enqueue({
+            type: 'password_reset',
+            to: 'doomed@example.test',
+            subject: 'Reset password',
+            text: 'Reset link body',
+            dedupeKey: 'email-test-permanent-failure'
+        });
+        for (let attempt = 1; attempt <= 8; attempt += 1) {
+            await query(`UPDATE notification_outbox SET next_attempt_at=NOW() WHERE id=$1`, [doomed.id]);
+            const run = await outbox.deliverDue({ limit: 1, sender: async () => { throw new Error('mailbox does not exist'); } });
+            assert.strictEqual(run.failed, 1, `attempt ${attempt} should have been claimed and failed`);
+            const row = (await query('SELECT status,attempts FROM notification_outbox WHERE id=$1', [doomed.id])).rows[0];
+            assert.strictEqual(Number(row.attempts), attempt);
+            if (attempt < 8) assert.strictEqual(row.status, 'failed', `attempt ${attempt} must stay retryable, not give up early`);
+            else assert.strictEqual(row.status, 'dead', 'the 8th consecutive failure must stop auto-retrying');
+        }
+        const stillDueAfterDeath = await outbox.deliverDue({ limit: 5 });
+        assert(!stillDueAfterDeath.items.some(item => item.id === doomed.id), 'a dead email must not be picked up by the normal delivery run any more');
+        const deadCounts = await outbox.counts();
+        assert(Number(deadCounts.dead) >= 1, 'counts() must surface dead emails for the admin dead-letter view');
+
+        // An operator can still manually revive it (e.g. after fixing the
+        // address or an SMTP misconfiguration).
+        await outbox.retry(doomed.id);
+        assert.strictEqual((await query('SELECT status FROM notification_outbox WHERE id=$1', [doomed.id])).rows[0].status, 'pending');
+        const revived = await outbox.deliverDue({ limit: 1, sender: async () => true });
+        assert.strictEqual(revived.sent, 1);
+        assert.strictEqual((await query('SELECT status FROM notification_outbox WHERE id=$1', [doomed.id])).rows[0].status, 'sent');
 
         const passwordHash = await bcrypt.hash('Original-Portal-Password-2026!', 12);
         const user = (await query(`
