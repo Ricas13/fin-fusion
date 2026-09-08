@@ -7,7 +7,7 @@ async function requestRoleRetry() {
     return jobHealth.requestRun('discord_roles');
 }
 
-async function reconcileCustomerDiscordRoles(customerId, { requestRetryOnError = false } = {}) {
+async function reconcileCustomerDiscordRoles(customerId, { requestRetryOnError = true } = {}) {
     const provisioning = require('../jellyfin/resilient-provisioning');
     try {
         const result = await provisioning.reconcileDiscordRoles(customerId);
@@ -39,8 +39,9 @@ function compactFailure(error) {
         .slice(0, 300);
 }
 
-async function reconcileLinkedCustomers({ queryFn = query, reconcileFn = reconcileCustomerDiscordRoles } = {}) {
+async function reconcileLinkedCustomers({ queryFn = query, reconcileFn = null } = {}) {
     const customerIds = await linkedCustomerIds(queryFn);
+    const runReconcile = reconcileFn || (customerId => reconcileCustomerDiscordRoles(customerId, { requestRetryOnError: false }));
     const summary = {
         total: customerIds.length,
         processed: 0,
@@ -52,7 +53,7 @@ async function reconcileLinkedCustomers({ queryFn = query, reconcileFn = reconci
 
     for (const customerId of customerIds) {
         try {
-            const result = await reconcileFn(customerId);
+            const result = await runReconcile(customerId);
             summary.processed += 1;
             const roleErrors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : [];
             if (roleErrors.length) {
