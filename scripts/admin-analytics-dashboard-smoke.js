@@ -48,7 +48,11 @@ async function seed() {
         INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processed_at,created_at)
         VALUES('stripe',$1,'checkout.session.completed',$2::jsonb,NOW(),NOW()-INTERVAL '1 day')
     `, [`evt-${suffix}`, JSON.stringify({ data: { object: { mode: 'payment', payment_status: 'paid', amount_total: 600, currency: 'usd', customer_details: { email: `dashboard-${suffix}@example.invalid` } } } })]);
-    await query(`INSERT INTO customer_provisioning_state(customer_id,status,last_error) VALUES($1,'blocked','smoke')`, [customer.id]);
+    await query(`
+        INSERT INTO customer_provisioning_state(customer_id,status,last_error)
+        VALUES($1,'blocked','smoke')
+        ON CONFLICT (customer_id) DO UPDATE SET status='blocked',last_error='smoke'
+    `, [customer.id]);
     await query(`INSERT INTO request_user_sync(customer_id,status,last_error) VALUES($1,'failed','smoke')`, [customer.id]);
     const referral = (await query(`INSERT INTO referral_codes(customer_id,code) VALUES($1,$2) RETURNING id`, [customer.id, `REF${suffix}`])).rows[0];
     await query(`INSERT INTO referral_redemptions(referral_code_id,referred_customer_id,status,rewarded_at) VALUES($1,$2,'rewarded',NOW())`, [referral.id, referred.id]);

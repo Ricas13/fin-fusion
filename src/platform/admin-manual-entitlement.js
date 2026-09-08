@@ -59,6 +59,7 @@ function effectivePrimarySql() {
         AND s.starts_at<=NOW()
         AND (
             (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+            OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
             OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
             OR (
                 COALESCE(s.service_extension_days,0)>0

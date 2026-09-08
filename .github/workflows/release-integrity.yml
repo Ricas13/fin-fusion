@@ -48,6 +48,9 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Provisioning recovery invariants
+        run: node scripts/provisioning-recovery-invariants-smoke.js
+
       - name: Supply-chain pinning policy
         run: node scripts/supply-chain-integrity-smoke.js
 
@@ -73,6 +76,9 @@ jobs:
 
       - name: Apply schema on production PostgreSQL major
         run: npm run db:migrate
+
+      - name: Entitlement reconciliation wakeup database contract
+        run: node scripts/entitlement-reconciliation-wakeup-db-smoke.js
 
       - name: Database release checks
         run: npm run check:db
