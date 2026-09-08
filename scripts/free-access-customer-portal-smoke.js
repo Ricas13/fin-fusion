@@ -54,7 +54,8 @@ assert(routinePatchGuard,'routine capacity changes must PATCH the canonical mess
 if(/deleteDiscordMessage/.test(freePlaces)){
   assert(/stored\.messageId&&availabilityRestored/.test(freePlaces)&&/await remove\(\{channelId,messageId:stored\.messageId\}\)/.test(freePlaces),'reopened Free availability must retire the stale full message before posting the fresh notification');
 }
-assert(/No free places currently available/.test(freePlaces)&&/60 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
+assert(/No free places currently available/.test(freePlaces)&&/\$\{FREE_HOLD_MINUTES\} minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
+assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live hold-duration constant instead of hardcoding it separately');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
 assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');

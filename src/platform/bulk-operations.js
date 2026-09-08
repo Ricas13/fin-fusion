@@ -23,7 +23,14 @@ function registerHandler(jobType, fn) { bulkWorker.registerHandler(jobType, fn);
 async function currentSubscription(customerId) {
     const effective=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
     if(effective)return effective;
-    const result=await query(`SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle') ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1`,[customerId]);
+    // Falls back to the customer's most recent Jellyfin/bundle subscription row
+    // so an admin can still act on (e.g. reactivate via set_expiry/plan_change)
+    // a customer whose access has simply lapsed. It must never surface a
+    // subscription that was terminated for a confirmed refund/chargeback --
+    // "money confirmed lost" is meant to be irreversible (see incidents.js),
+    // and extend_entitlement below would otherwise resurrect access on that
+    // exact subscription by giving it a positive service_extension_days again.
+    const result=await query(`SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle') AND NOT EXISTS(SELECT 1 FROM audit_log terminal_audit WHERE terminal_audit.entity_type='subscription' AND terminal_audit.entity_id=s.id::text AND terminal_audit.action='billing.subscription.terminate_for_refund') ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1`,[customerId]);
     return result.rows[0]||null;
 }
 async function completedEndReference(customerId,reference){const result=await query(`SELECT entity_id FROM audit_log WHERE action='billing.subscription.terminate_local' AND metadata->>'customerId'=$1 AND metadata->>'reference'=$2 ORDER BY created_at DESC LIMIT 1`,[String(customerId),String(reference)]);return result.rows[0]||null;}

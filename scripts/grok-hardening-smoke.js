@@ -37,5 +37,7 @@ assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/s
 assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/subscription/renewal',{action:'resume'})), 'spending', 'resuming renewal must remain blocked while impersonating');
 assert.strictEqual(restrictedImpersonationAction(impersonated('GET')), null, 'customer browsing must remain available while impersonating');
 assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/impersonation/exit')), null, 'explicit impersonation exit must remain available');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/affiliate/redeem')), 'spending', 'redeeming affiliate/referral credit spends a real balance and activates a subscription -- must fail closed while impersonating');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/stripe/portal')), 'spending', 'the Stripe customer portal lets a customer change payment methods and recurring billing directly with the provider -- must fail closed while impersonating');
 
 console.log('Grok auth hardening behavior smoke: OK');

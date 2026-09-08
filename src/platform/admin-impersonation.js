@@ -64,6 +64,15 @@ function restrictedImpersonationAction(req) {
         return String(req.body?.action || '').trim().toLowerCase() === 'resume' ? 'spending' : null;
     }
 
+    // Redeeming affiliate/referral credit spends a real ledger balance and
+    // activates a live subscription -- economically identical to a purchase.
+    if (path === '/account/affiliate/redeem') return 'spending';
+
+    // The Stripe customer portal lets the customer change payment methods and
+    // recurring subscriptions directly with the provider, entirely outside
+    // this guard's reach once they land there.
+    if (path === '/account/stripe/portal') return 'spending';
+
     // Future payment-instrument/purchase mutations should fail safe even if a
     // new UI reaches them before this policy is extended with a more specific
     // exception. Read-only GET billing/history pages are already allowed above.

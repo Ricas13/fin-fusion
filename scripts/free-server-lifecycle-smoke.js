@@ -65,8 +65,8 @@ const originalRequest = registry.request;
         // CURRENT allocation old enough to breach the policy. Historical
         // last_activity_at alone must no longer make a newly allocated user stale.
         const account = await query(`
-            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,is_primary,created_at)
-            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',$5,TRUE,NOW()-INTERVAL '30 days') RETURNING id
+            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,is_primary,created_at,access_lane_changed_at)
+            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',$5,TRUE,NOW()-INTERVAL '30 days',NOW()-INTERVAL '30 days') RETURNING id
         `, [customerId, serverId, remoteUserId, `Free_${suffix}`, staleActivity]);
         accountId = account.rows[0].id;
 
