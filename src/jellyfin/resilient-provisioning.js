@@ -275,8 +275,7 @@ async function createLaneAccount(customerId, entitlement, lane, makePrimary) {
         throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.contract_plan_code || entitlement.code}`);
     }
     const effective = await libraryPolicy.effectiveForAccount(customerId, entitlement, { id: null, server_id: server.id });
-    const account = await base.createJellyfinAccount(customerId, server, effective, { makePrimary });
-    await query(`UPDATE jellyfin_accounts SET access_lane=$2,updated_at=NOW() WHERE id=$1`, [account.id, lane]);
+    const account = await base.createJellyfinAccount(customerId, server, effective, { makePrimary, accessLane: lane });
     account.access_lane = lane;
     account.server_name = server.name;
     account.public_url = server.public_url;
@@ -519,57 +518,25 @@ async function renameJellyfinAccount(customerId, accountId, newUsername, options
         WHERE id=$1 AND customer_id=$2
     `, [accountId, customerId]);
     if (account.rows[0]?.account_purpose === 'stremio_internal') {
-        throw new Error('Internal Stremio Jellyfin credentials cannot be renamed through customer controls.');
+        throw new Error('Internal Stremio Jellyfin username cannot be changed through customer profile controls.');
     }
     return base.renameJellyfinAccount(customerId, accountId, newUsername, options);
 }
 
-async function maybeAutoDowngrade(customerId) {
-    const lifecycle = require('../payments/lifecycle');
-    try {
-        return await lifecycle.autoDowngradeEligibleCustomer(customerId);
-    } catch (error) {
-        console.error('Automatic free-tier downgrade failed.', {
-            customerId,
-            error: error.message
-        });
-        throw error;
-    }
-}
-
-async function expireSubscriptionsAndReconcile() {
-    return subscriptionExpiry.expireAndReconcile({
-        reconcileCustomer,
-        autoDowngrade: maybeAutoDowngrade,
-        onReconcileError: (customerId, error) => console.error('Entitlement reconcile failed.', {
-            customerId,
-            error: error.message
-        }),
-        detail: true
-    });
+async function subscriptionExpiryState(customerId) {
+    return subscriptionExpiry.stateForCustomer(customerId);
 }
 
 module.exports = {
-    ...base,
-    currentEntitlementTruth,
     reconcileCustomer,
     reconcileDiscordRoles,
-    activeDiscordPlanIds,
     reconcileAccount,
     holdAccess,
     releaseAccess,
     setJellyfinPassword,
     renameJellyfinAccount,
-    expireSubscriptionsAndReconcile,
-    normalAccounts,
-    applyPolicyIfChanged,
-    reconcileLane,
-    adoptExistingFreeAccount,
-    control,
+    subscriptionExpiryState,
     libraryPolicyForAccount,
     setLibrarySelectionForAccount,
-    reconciliationLock,
-    assertDiscordSyncResult,
-    assertLanePostcondition,
-    accountMatchesEntitlementPlacement
+    assertDiscordSyncResult
 };
