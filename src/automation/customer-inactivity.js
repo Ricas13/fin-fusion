@@ -42,7 +42,8 @@ async function candidates(globalCfg=null,{customerId=null}={}){
   const result=await query(`
     WITH free_access AS (
       SELECT DISTINCT ON (s.customer_id)
-        s.customer_id,s.id subscription_id,s.plan_id,s.starts_at,s.current_period_end,p.code plan_code,p.name plan_name,p.inactivity_policy
+        s.customer_id,s.id subscription_id,s.plan_id,s.starts_at,s.current_period_end,s.source subscription_source,
+        p.code plan_code,p.name plan_name,p.inactivity_policy
       FROM subscriptions s JOIN plans p ON p.id=s.plan_id
       WHERE s.superseded_by IS NULL AND s.status IN('active','trialing','past_due','paused')
         AND s.starts_at<=NOW() AND s.current_period_end>NOW()
@@ -67,7 +68,17 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       WHERE jal.customer_id=fa.customer_id AND jal.category='free' AND jal.restored_at IS NOT NULL
     ) lifecycle ON TRUE
     LEFT JOIN LATERAL (
-      SELECT GREATEST(fa.starts_at,ja.created_at,lifecycle.restored_at) allocation_start_at
+      SELECT MIN(ph.started_at) historical_first_playback_at
+      FROM playback_history ph
+      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
+    ) historical ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT CASE
+        WHEN lifecycle.restored_at IS NOT NULL THEN GREATEST(fa.starts_at,ja.created_at,lifecycle.restored_at)
+        WHEN fa.subscription_source='migration' AND historical.historical_first_playback_at IS NOT NULL
+          THEN LEAST(fa.starts_at,ja.created_at,historical.historical_first_playback_at)
+        ELSE GREATEST(fa.starts_at,ja.created_at)
+      END allocation_start_at
     ) allocation ON TRUE
     LEFT JOIN LATERAL (
       SELECT MIN(ph.started_at) FILTER(WHERE ph.started_at>=allocation.allocation_start_at) first_playback_at,
