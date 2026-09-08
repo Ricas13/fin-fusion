@@ -16,6 +16,9 @@ async function reconcileCustomerDiscordRoles(customerId, { requestRetryOnError =
     const provisioning = require('../jellyfin/resilient-provisioning');
     try {
         const result = await provisioning.reconcileDiscordRoles(customerId);
+        // Discord API failures can be transient, so wake the repair worker.
+        // Missing/ambiguous plan configuration is not transient and is surfaced
+        // by the regular sweep instead of creating an immediate retry loop.
         if (requestRetryOnError && Array.isArray(result?.errors) && result.errors.length) {
             await requestRoleRetry().catch(() => null);
         }
@@ -61,9 +64,13 @@ async function reconcileLinkedCustomers({ queryFn = query, reconcileFn = null } 
             const result = await runReconcile(customerId);
             summary.processed += 1;
             const roleErrors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : [];
-            if (roleErrors.length) {
+            const configurationErrors = Array.isArray(result?.configurationErrors)
+                ? result.configurationErrors.filter(Boolean)
+                : [];
+            const failures = [...roleErrors, ...configurationErrors];
+            if (failures.length) {
                 summary.failed += 1;
-                const failure = { customerId, error: compactFailure(roleErrors.join('; ')) };
+                const failure = { customerId, error: compactFailure(failures.join('; ')) };
                 summary.failures.push(failure);
                 if (!summary.warning) summary.warning = failure.error;
                 console.warn('Discord role safety sweep customer degraded.', failure);

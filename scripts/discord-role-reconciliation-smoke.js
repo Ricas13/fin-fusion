@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const reconciliation = require('../src/integrations/discord-role-reconciliation');
+const discordRoles = require('../src/integrations/discord-roles');
 
 async function main() {
     const source = fs.readFileSync('src/integrations/discord-role-reconciliation.js', 'utf8');
@@ -26,17 +27,24 @@ async function main() {
     assert.match(source, /require\('\.\.\/jellyfin\/resilient-provisioning'\)/,
         'Discord event/sweep reconciliation must reuse the authoritative provisioning reconciler');
     assert.match(source, /requestRoleRetry\(\)/,
-        'immediate Discord role failures must wake the persistent reconciliation worker');
+        'immediate Discord API failures must wake the persistent reconciliation worker');
+    assert.match(source, /configurationErrors/,
+        'missing or ambiguous plan role configuration must be visible to the safety sweep');
     assert.match(provisioning, /deriveCustomerAccessDesiredState\([\s\S]*?\)\.activePlanIds/,
         'Discord desired roles must come from current effective multi-service access');
-    assert.match(roles, /SELECT DISTINCT discord_role_id FROM plans WHERE id=ANY\(\$1::uuid\[\]\)/,
-        'Discord role selection must come directly from role IDs configured on active plans');
-    assert.match(roles, /const toRemove=\[\.\.\.managed\]\.filter\(id=>current\.has\(id\)&&!desired\.has\(id\)\)/,
-        'stale plan-managed roles must be removed when no longer desired');
-    assert.match(roles, /const toAdd=\[\.\.\.desired\]\.filter\(id=>!current\.has\(id\)\)/,
-        'all desired roles for multiple active plans must be added idempotently');
-    assert.doesNotMatch(roles, /current[^\n]*filter[^\n]*toRemove/,
-        'role removal must be based on configured managed roles, not arbitrary member roles');
+
+    assert.match(roles, /async function planRoleMappings\(/,
+        'Discord role resolution must inspect the active plan mappings as a first-class operation');
+    assert.match(roles, /function roleFamily\(/,
+        'legacy fallback must compare only equivalent plan families');
+    assert.match(roles, /familyRoles\.length === 1/,
+        'a missing legacy mapping may only fall back when comparable configured plans unanimously identify one role');
+    assert.match(roles, /inferredMappings/,
+        'fallback role resolution must remain observable rather than silently pretending to be a direct mapping');
+    assert.match(roles, /const toAdd = \[\.\.\.desired\]\.filter\(id => !current\.has\(id\)\)/,
+        'all resolved desired roles must be added idempotently');
+    assert.match(roles, /const toRemove = mappings\.configurationErrors\.length[\s\S]*?\[\.\.\.managed\]\.filter\(id => current\.has\(id\) && !desired\.has\(id\)\)/,
+        'stale roles may be removed only when every active plan role is unambiguous');
 
     assert.match(channelLinks, /UPDATE customers SET discord_user_id=\$2,discord_username=\$3/,
         'verified Discord OAuth identity must keep legacy customer fields synchronized for compatibility');
@@ -66,20 +74,114 @@ async function main() {
     assert.match(worker, /discord_roles:43200/,
         'Discord role repair sweep must default to every 12 hours');
 
+    const legacyPlanId = '11111111-1111-4111-8111-111111111111';
+    const paidJellyfinRole = '1488947904461799494';
+    const otherPaidJellyfinRole = '1503480465389260994';
+    const legacyPlan = {
+        id: legacyPlanId,
+        name: 'Legacy Yearly - 3 Streams',
+        code: 'legacy_3_streams_yearly_40',
+        discord_role_id: null,
+        service_type: 'jellyfin',
+        is_free_tier: false,
+        billing_interval: 'year'
+    };
+
+    const unanimousQuery = async sql => {
+        if (sql.includes('id=ANY')) return { rows: [legacyPlan] };
+        if (sql.includes('archived_at IS NULL')) return { rows: [
+            {
+                id: '22222222-2222-4222-8222-222222222222',
+                name: 'Monthly',
+                code: 'monthly',
+                discord_role_id: paidJellyfinRole,
+                service_type: 'jellyfin',
+                is_free_tier: false,
+                billing_interval: 'month'
+            },
+            {
+                id: '33333333-3333-4333-8333-333333333333',
+                name: 'Yearly',
+                code: 'yearly',
+                discord_role_id: paidJellyfinRole,
+                service_type: 'jellyfin',
+                is_free_tier: false,
+                billing_interval: 'year'
+            }
+        ] };
+        throw new Error(`Unexpected role-mapping query: ${sql}`);
+    };
+
+    const inferred = await discordRoles.planRoleMappings([legacyPlanId], { queryFn: unanimousQuery });
+    assert.deepStrictEqual([...inferred.desiredRoleIds], [paidJellyfinRole],
+        'a legacy plan with no direct mapping must inherit the unanimous role configured on comparable paid Jellyfin plans');
+    assert.strictEqual(inferred.inferredMappings.length, 1);
+    assert.strictEqual(inferred.inferredMappings[0].planName, 'Legacy Yearly - 3 Streams');
+    assert.deepStrictEqual(inferred.configurationErrors, []);
+
+    const ambiguousQuery = async sql => {
+        if (sql.includes('id=ANY')) return { rows: [legacyPlan] };
+        if (sql.includes('archived_at IS NULL')) return { rows: [
+            {
+                id: '22222222-2222-4222-8222-222222222222',
+                discord_role_id: paidJellyfinRole,
+                service_type: 'jellyfin',
+                is_free_tier: false,
+                billing_interval: 'month'
+            },
+            {
+                id: '44444444-4444-4444-8444-444444444444',
+                discord_role_id: otherPaidJellyfinRole,
+                service_type: 'jellyfin',
+                is_free_tier: false,
+                billing_interval: 'year'
+            }
+        ] };
+        throw new Error(`Unexpected role-mapping query: ${sql}`);
+    };
+
+    const ambiguous = await discordRoles.planRoleMappings([legacyPlanId], { queryFn: ambiguousQuery });
+    assert.deepStrictEqual([...ambiguous.desiredRoleIds], [],
+        'an ambiguous plan family must never guess which Discord role to assign');
+    assert.strictEqual(ambiguous.configurationErrors.length, 1);
+    assert.match(ambiguous.configurationErrors[0], /multiple Discord roles/);
+
+    const directRoleId = '1544281036915998770';
+    const directQuery = async sql => {
+        if (!sql.includes('id=ANY')) throw new Error('Direct mappings must not need a family fallback query.');
+        return { rows: [{
+            ...legacyPlan,
+            discord_role_id: directRoleId
+        }] };
+    };
+    const direct = await discordRoles.planRoleMappings([legacyPlanId], { queryFn: directQuery });
+    assert.deepStrictEqual([...direct.desiredRoleIds], [directRoleId],
+        'an explicit role configured on the active plan must always beat fallback inference');
+    assert.strictEqual(direct.directMappings.length, 1);
+    assert.strictEqual(direct.inferredMappings.length, 0);
+
     const calls = [];
     const fakeQuery = async () => ({ rows: [
         { customer_id: 'customer-a' },
         { customer_id: 'customer-b' },
         { customer_id: 'customer-c' },
-        { customer_id: 'customer-d' }
+        { customer_id: 'customer-d' },
+        { customer_id: 'customer-e' }
     ] });
     const fakeReconcile = async customerId => {
         calls.push(customerId);
         if (customerId === 'customer-b') throw new Error('simulated Discord API failure');
         if (customerId === 'customer-c') return { skipped: 'not_guild_member' };
         if (customerId === 'customer-d') return { added: [], removed: [], errors: ['add role-2: HTTP 403'] };
-        return { added: ['role-1'], removed: [], errors: [] };
+        if (customerId === 'customer-e') return {
+            added: [],
+            removed: [],
+            errors: [],
+            configurationErrors: ['Discord role mapping missing for active plan Legacy Yearly - 3 Streams.']
+        };
+        return { added: ['role-1'], removed: [], errors: [], configurationErrors: [] };
     };
+
     const originalWarn = console.warn;
     console.warn = () => {};
     let summary;
@@ -88,15 +190,17 @@ async function main() {
     } finally {
         console.warn = originalWarn;
     }
-    assert.deepStrictEqual(calls, ['customer-a', 'customer-b', 'customer-c', 'customer-d'],
+
+    assert.deepStrictEqual(calls, ['customer-a', 'customer-b', 'customer-c', 'customer-d', 'customer-e'],
         'one customer failure must not stop the rest of the safety sweep');
-    assert.strictEqual(summary.total, 4);
-    assert.strictEqual(summary.processed, 4);
+    assert.strictEqual(summary.total, 5);
+    assert.strictEqual(summary.processed, 5);
     assert.strictEqual(summary.synced, 1);
     assert.strictEqual(summary.skipped, 1);
-    assert.strictEqual(summary.failed, 2);
+    assert.strictEqual(summary.failed, 3);
     assert.strictEqual(summary.failures[0].customerId, 'customer-b');
     assert.strictEqual(summary.failures[1].customerId, 'customer-d');
+    assert.strictEqual(summary.failures[2].customerId, 'customer-e');
     assert.match(summary.warning, /simulated Discord API failure/,
         'degraded worker runs must expose a useful warning so job health retries them');
 
