@@ -11,17 +11,24 @@ const HOLD_TYPE='inactivity_policy';
 function asDate(value){if(!value)return null;const date=new Date(value);return Number.isFinite(date.getTime())?date:null;}
 function assessUsage(row,policy,now=Date.now()){
   const startsAt=asDate(row.starts_at),accountCreatedAt=asDate(row.account_created_at),allocationStartAt=asDate(row.allocation_start_at)||accountCreatedAt||startsAt;
-  const rawLastPlaybackAt=asDate(row.last_playback_at);
+  const rawFirstPlaybackAt=asDate(row.first_playback_at),rawLastPlaybackAt=asDate(row.last_playback_at);
+  let firstPlaybackAt=rawFirstPlaybackAt&&(!allocationStartAt||rawFirstPlaybackAt.getTime()>=allocationStartAt.getTime())?rawFirstPlaybackAt:null;
   const lastPlaybackAt=rawLastPlaybackAt&&(!allocationStartAt||rawLastPlaybackAt.getTime()>=allocationStartAt.getTime())?rawLastPlaybackAt:null;
-  // A no-playback rule is intentionally driven only by actual playback. Browsing,
-  // login activity, or a stale Jellyfin last_activity_at must not reset it.
+  if(!firstPlaybackAt&&lastPlaybackAt)firstPlaybackAt=lastPlaybackAt;
+  const hasPlayback=Boolean(firstPlaybackAt||lastPlaybackAt);
+  // The first-play clock is allocation-scoped. Browsing, login activity and
+  // playback from a previous Free allocation must never satisfy or extend it.
   const referenceAt=lastPlaybackAt||allocationStartAt;
-  const observationStartedAt=allocationStartAt||referenceAt;
+  const observationStartedAt=hasPlayback?(firstPlaybackAt||lastPlaybackAt):allocationStartAt;
+  const activationAgeHours=allocationStartAt?Math.max(0,(now-allocationStartAt.getTime())/3600000):0;
   const ageHours=observationStartedAt?Math.max(0,(now-observationStartedAt.getTime())/3600000):0;
   const seconds=Number(row.playback_seconds||0);
-  const noPlaybackEligible=policy.noPlaybackDays!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.noPlaybackDays*24)&&referenceAt&&referenceAt.getTime()<=now-policy.noPlaybackDays*86400000;
-  const usageEligible=policy.minimumPlaybackMinutes!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.playbackWindowDays*24)&&seconds<policy.minimumPlaybackMinutes*60;
-  return{allocationStartAt,lastPlaybackAt,referenceAt,observationStartedAt,ageHours,seconds,noPlaybackEligible,usageEligible};
+  const phasedActivation=policy.firstPlaybackGraceDays!=null;
+  const retentionReady=hasPlayback||!phasedActivation;
+  const firstPlaybackEligible=!hasPlayback&&phasedActivation&&activationAgeHours>=Math.max(policy.minimumObservationHours,policy.firstPlaybackGraceDays*24);
+  const noPlaybackEligible=retentionReady&&policy.noPlaybackDays!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.noPlaybackDays*24)&&referenceAt&&referenceAt.getTime()<=now-policy.noPlaybackDays*86400000;
+  const usageEligible=retentionReady&&policy.minimumPlaybackMinutes!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.playbackWindowDays*24)&&seconds<policy.minimumPlaybackMinutes*60;
+  return{allocationStartAt,firstPlaybackAt,lastPlaybackAt,hasPlayback,referenceAt,observationStartedAt,activationAgeHours,ageHours,seconds,firstPlaybackEligible,noPlaybackEligible,usageEligible};
 }
 
 async function candidates(globalCfg=null,{customerId=null}={}){
@@ -42,7 +49,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
     SELECT fa.*,ja.id account_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,ja.created_at account_created_at,
       allocation.allocation_start_at,ja.last_activity_at,js.name server_name,
       COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,c.automation_protected,
-      us.last_playback_at,COALESCE(us.playback_seconds,0)::bigint playback_seconds,
+      us.first_playback_at,us.last_playback_at,COALESCE(us.playback_seconds,0)::bigint playback_seconds,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=fa.customer_id AND aps.server_id=ja.server_id) currently_playing,
       EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=fa.customer_id AND h.hold_type=$1 AND h.source_key=('plan:'||fa.plan_id::text) AND h.released_at IS NULL) already_held
     FROM free_access fa
@@ -58,21 +65,22 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       SELECT GREATEST(fa.starts_at,ja.created_at,lifecycle.restored_at) allocation_start_at
     ) allocation ON TRUE
     LEFT JOIN LATERAL (
-      SELECT MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at))
-               FILTER(WHERE ph.started_at>=allocation.allocation_start_at) last_playback_at,
+      SELECT MIN(ph.started_at) FILTER(WHERE ph.started_at>=allocation.allocation_start_at) first_playback_at,
+             MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER(WHERE ph.started_at>=allocation.allocation_start_at) last_playback_at,
              COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ph.ended_at,ph.last_seen_at)-ph.started_at))))
-               FILTER(WHERE ph.started_at>=GREATEST(allocation.allocation_start_at,NOW()-(COALESCE(NULLIF(fa.inactivity_policy->>'playbackWindowDays','')::int,7)||' days')::interval)),0)::bigint playback_seconds
+               FILTER(WHERE ph.started_at>=GREATEST(allocation.allocation_start_at,NOW()-(COALESCE(NULLIF(fa.inactivity_policy->>'playbackWindowDays','')::int,$3)||' days')::interval)),0)::bigint playback_seconds
       FROM playback_history ph
       WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
     ) us ON TRUE
     WHERE NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=fa.customer_id AND b.revoked_at IS NULL AND b.blocks_service_access=TRUE)
     ORDER BY COALESCE(us.last_playback_at,allocation.allocation_start_at),customer_name
-  `,[HOLD_TYPE,customerId||null]);
+  `,[HOLD_TYPE,customerId||null,globalCfg.freePlaybackWindowDays||7]);
   return result.rows.map(row=>{
     const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg),assessment=assessUsage(row,policy),usageTriggered=planPolicy.usageTriggered(assessment,policy),eligible=policy.enabled&&!row.automation_protected&&!row.currently_playing&&usageTriggered,triggers=[];
+    if(assessment.firstPlaybackEligible)triggers.push(`no first Free Server playback within ${policy.firstPlaybackGraceDays} day(s) of this allocation`);
     if(assessment.noPlaybackEligible)triggers.push(`no Free Server playback for ${policy.noPlaybackDays} day(s)`);
     if(assessment.usageEligible)triggers.push(`${Math.round(assessment.seconds/60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`);
-    return{...row,policy,last_playback_at:assessment.lastPlaybackAt,allocation_start_at:assessment.allocationStartAt,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?'Free Server removal requires all configured usage rules to be met':null].filter(Boolean)};
+    return{...row,policy,first_playback_at:assessment.firstPlaybackAt,last_playback_at:assessment.lastPlaybackAt,allocation_start_at:assessment.allocationStartAt,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,has_playback:assessment.hasPlayback,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?(assessment.hasPlayback?'Free Server removal requires all configured retention rules to be breached':'first-play grace period has not expired'):null].filter(Boolean)};
   }).filter(row=>planPolicy.hasUsageTrigger(row.policy));
 }
 

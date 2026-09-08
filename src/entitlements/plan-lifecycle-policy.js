@@ -2,14 +2,29 @@
 
 const {query,transaction}=require('../db');
 
-const DEFAULTS=Object.freeze({enabled:false,dryRun:true,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:7,minimumObservationHours:24,action:'remove_jellyfin'});
+const DEFAULTS=Object.freeze({enabled:false,dryRun:true,firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:7,minimumObservationHours:24,action:'remove_jellyfin'});
 function bool(value){return value===true||['true','1','on','yes'].includes(String(value||'').toLowerCase());}
 function optionalInt(value,min,max){if(value===undefined||value===null||String(value).trim()==='')return null;const n=Number.parseInt(value,10);return Number.isInteger(n)&&n>=min&&n<=max?n:null;}
 function int(value,min,max,fallback){const n=optionalInt(value,min,max);return n==null?fallback:n;}
 function own(value,key){return Boolean(value)&&Object.prototype.hasOwnProperty.call(value,key);}
-function normalize(value={}){return{enabled:bool(value.enabled),dryRun:value.dryRun===undefined?true:bool(value.dryRun),noPlaybackDays:optionalInt(value.noPlaybackDays,1,3650),minimumPlaybackMinutes:optionalInt(value.minimumPlaybackMinutes,1,1000000),playbackWindowDays:int(value.playbackWindowDays,1,365,DEFAULTS.playbackWindowDays),minimumObservationHours:int(value.minimumObservationHours,1,24*90,DEFAULTS.minimumObservationHours),action:'remove_jellyfin'};}
-function effectiveForFreePlan(value={},global={}){const local=normalize(value),inheritEnabled=!own(value,'enabled'),inheritDryRun=!own(value,'dryRun'),inheritNoPlayback=!own(value,'noPlaybackDays'),globalNoPlayback=optionalInt(global.freeNoPlaybackDays,1,3650);return{...local,enabled:bool(global.enabled)&&(inheritEnabled?true:local.enabled),dryRun:bool(global.dryRun)||(inheritDryRun?false:local.dryRun),noPlaybackDays:inheritNoPlayback?globalNoPlayback:local.noPlaybackDays,inherited:{enabled:inheritEnabled,dryRun:inheritDryRun,noPlaybackDays:inheritNoPlayback}};}
-function hasUsageTrigger(value){return Boolean(value?.enabled&&(value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null));}
+function unset(value,key){return !own(value,key)||value[key]===null||value[key]===undefined||String(value[key]).trim()==='';}
+function normalize(value={}){return{enabled:bool(value.enabled),dryRun:value.dryRun===undefined?true:bool(value.dryRun),firstPlaybackGraceDays:optionalInt(value.firstPlaybackGraceDays,1,3650),noPlaybackDays:optionalInt(value.noPlaybackDays,1,3650),minimumPlaybackMinutes:optionalInt(value.minimumPlaybackMinutes,1,1000000),playbackWindowDays:int(value.playbackWindowDays,1,365,DEFAULTS.playbackWindowDays),minimumObservationHours:int(value.minimumObservationHours,1,24*90,DEFAULTS.minimumObservationHours),action:'remove_jellyfin'};}
+function effectiveForFreePlan(value={},global={}){
+ const local=normalize(value),inheritFirstPlayback=unset(value,'firstPlaybackGraceDays'),inheritNoPlayback=unset(value,'noPlaybackDays'),inheritMinimumPlayback=unset(value,'minimumPlaybackMinutes'),inheritPlaybackWindow=unset(value,'playbackWindowDays');
+ // Execution mode is intentionally global: the current Free plan editor exposes
+ // thresholds only, so stale historical enabled:false/dryRun:true plan JSON must
+ // never silently neutralise the platform lifecycle switch. Production callers
+ // pass jellyfin-lifecycle-policy.get(), which is fully normalized and carries
+ // the 3/7/30 defaults. Partial legacy callers remain backward-compatible by not
+ // inventing newly introduced threshold fields they did not provide.
+ const globalFirstPlayback=optionalInt(global.freeFirstPlaybackGraceDays,1,3650),globalNoPlayback=optionalInt(global.freeNoPlaybackDays,1,3650)??7,globalMinimumPlayback=optionalInt(global.freeMinimumPlaybackMinutes,1,1000000),globalPlaybackWindow=optionalInt(global.freePlaybackWindowDays,1,365)??7;
+ return{...local,enabled:bool(global.enabled),dryRun:bool(global.dryRun),firstPlaybackGraceDays:inheritFirstPlayback?globalFirstPlayback:local.firstPlaybackGraceDays,noPlaybackDays:inheritNoPlayback?globalNoPlayback:local.noPlaybackDays,minimumPlaybackMinutes:inheritMinimumPlayback?globalMinimumPlayback:local.minimumPlaybackMinutes,playbackWindowDays:inheritPlaybackWindow?globalPlaybackWindow:local.playbackWindowDays,inherited:{enabled:true,dryRun:true,firstPlaybackGraceDays:inheritFirstPlayback,noPlaybackDays:inheritNoPlayback,minimumPlaybackMinutes:inheritMinimumPlayback,playbackWindowDays:inheritPlaybackWindow}};
+}
+// This answers whether a usage policy is configured, not whether execution is
+// currently enabled. Keeping those concepts separate means pausing global
+// lifecycle automation cannot make existing inactivity holds look obsolete and
+// silently recreate users who were already removed.
+function hasUsageTrigger(value){return Boolean(value&&(value.firstPlaybackGraceDays!=null||value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null));}
 function noPlaybackBoundaryCrossedToday(assessment,policy,now=Date.now()){
  if(!assessment?.noPlaybackEligible||policy?.noPlaybackDays==null||!assessment?.referenceAt)return false;
  const reference=new Date(assessment.referenceAt),start=new Date(now);
@@ -17,7 +32,13 @@ function noPlaybackBoundaryCrossedToday(assessment,policy,now=Date.now()){
  start.setUTCHours(0,0,0,0);
  return reference.getTime()>start.getTime()-Number(policy.noPlaybackDays)*86400000;
 }
-function usageTriggered(assessment,policy){const checks=[];if(policy?.noPlaybackDays!=null)checks.push(Boolean(assessment?.noPlaybackEligible)&&!noPlaybackBoundaryCrossedToday(assessment,policy));if(policy?.minimumPlaybackMinutes!=null)checks.push(Boolean(assessment?.usageEligible));return checks.length>0&&checks.every(Boolean);}
+function usageTriggered(assessment,policy){
+ if(!assessment?.hasPlayback&&policy?.firstPlaybackGraceDays!=null)return Boolean(assessment?.firstPlaybackEligible);
+ const checks=[];
+ if(policy?.noPlaybackDays!=null)checks.push(Boolean(assessment?.noPlaybackEligible)&&!noPlaybackBoundaryCrossedToday(assessment,policy));
+ if(policy?.minimumPlaybackMinutes!=null)checks.push(Boolean(assessment?.usageEligible));
+ return checks.length>0&&checks.every(Boolean);
+}
 function validateForPlan(plan,input){
  const value=normalize(input),serviceType=String(plan?.service_type||'jellyfin');
  if(!['jellyfin','bundle'].includes(serviceType)){
@@ -25,7 +46,7 @@ function validateForPlan(plan,input){
    // products do not have a Jellyfin user whose lifecycle can be managed here.
    // Accept the inert/default policy emitted by shared creation forms while
    // rejecting any attempt to configure an actual Jellyfin inactivity rule.
-   const configured=value.enabled||value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null;
+   const configured=value.enabled||value.firstPlaybackGraceDays!=null||value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null;
    if(configured)throw new Error('Jellyfin inactivity rules apply only to Jellyfin or bundle plans.');
    return{...DEFAULTS};
  }

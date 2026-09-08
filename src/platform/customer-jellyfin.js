@@ -75,29 +75,48 @@ function hoursUntil(date,now=Date.now()){const parsed=asDate(date);return parsed
 function addHours(date,hours){const parsed=asDate(date);return parsed&&Number.isFinite(hours)?new Date(parsed.getTime()+hours*3600000):null;}
 function freeAccessHealth(status,{now=Date.now()}={}){
   if(!status?.applies)return null;
-  const policy=status.policy||{},minimumObservationHours=Math.max(0,Number(policy.minimumObservationHours)||0),deadlines=[];
-  const noPlaybackDays=Number(policy.noPlaybackDays),playbackWindowDays=Number(policy.playbackWindowDays),minimumPlaybackMinutes=Number(policy.minimumPlaybackMinutes);
-  const observation=asDate(status.observationStartedAt),inactiveReference=asDate(status.inactiveReferenceAt);
-  if(Number.isFinite(noPlaybackDays)&&noPlaybackDays>0){
-    const inactivityDeadline=addHours(inactiveReference,noPlaybackDays*24),observationDeadline=addHours(observation,Math.max(minimumObservationHours,noPlaybackDays*24));
+  const policy=status.policy||{},minimumObservationHours=Math.max(0,Number(policy.minimumObservationHours)||0);
+  const firstPlaybackGraceDays=Number(policy.firstPlaybackGraceDays),noPlaybackDays=Number(policy.noPlaybackDays),playbackWindowDays=Number(policy.playbackWindowDays),minimumPlaybackMinutes=Number(policy.minimumPlaybackMinutes);
+  const allocationStart=asDate(status.allocationStartAt),firstPlayback=asDate(status.firstPlaybackAt),lastPlayback=asDate(status.lastPlaybackAt),observation=asDate(status.observationStartedAt),inactiveReference=asDate(status.inactiveReferenceAt);
+  const activated=Boolean(firstPlayback||status.hasPlayback||status.currentlyPlaying);
+  const playbackMinutes=Math.max(0,Number(status.playbackMinutes)||0);
+  const firstRule=Number.isFinite(firstPlaybackGraceDays)&&firstPlaybackGraceDays>0?`play your first stream within ${firstPlaybackGraceDays} day${firstPlaybackGraceDays===1?'':'s'} of receiving a place`:null;
+  const activityRule=Number.isFinite(noPlaybackDays)&&noPlaybackDays>0?`have playback within every ${noPlaybackDays}-day period`:null;
+  const minutesRule=Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0?`watch at least ${minimumPlaybackMinutes} minutes in each ${playbackWindowDays}-day window`:null;
+  const rules=[firstRule,activityRule,minutesRule].filter(Boolean);
+  const rulesText=rules.length?`Free Server rules: ${rules.join(', ')}.`:'Keep using the Free Server regularly to retain your place.';
+  const enforcementNote=status.automationProtected?'Automatic removal is disabled for this protected account.':!status.enforcementReady?'Automatic removal is temporarily paused while activity telemetry is unavailable.':null;
+
+  if(!activated){
+    const removalAt=Number.isFinite(firstPlaybackGraceDays)&&firstPlaybackGraceDays>0?addHours(allocationStart,Math.max(minimumObservationHours,firstPlaybackGraceDays*24)):null;
+    const remainingHours=removalAt?hoursUntil(removalAt,now):null;
+    let detail=remainingHours==null?'Play something on the Free Server to activate this place.':remainingHours<=0?'The first-play deadline has been reached. Play something now if the place has not yet been removed.':`Play something within about ${Math.max(1,Math.ceil(remainingHours))} hours to activate this place.`;
+    if(enforcementNote)detail+=` ${enforcementNote}`;
+    return{tone:'bad',label:'Play something to activate',detail,rulesText,removalAt,remainingHours,activated:false,firstPlaybackMet:false,activityMet:false,minimumMet:false,playbackMinutes,firstPlaybackGraceDays,noPlaybackDays,minimumPlaybackMinutes,playbackWindowDays,enforcementNote};
+  }
+
+  const activityConfigured=Number.isFinite(noPlaybackDays)&&noPlaybackDays>0;
+  const minutesConfigured=Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0;
+  const activityMet=!activityConfigured||Boolean(status.currentlyPlaying)||(lastPlayback&&lastPlayback.getTime()>=now-noPlaybackDays*86400000);
+  const minimumMet=!minutesConfigured||playbackMinutes>=minimumPlaybackMinutes;
+  const configuredCount=Number(activityConfigured)+Number(minutesConfigured),metCount=Number(activityConfigured&&activityMet)+Number(minutesConfigured&&minimumMet);
+  const allMet=configuredCount===0||metCount===configuredCount;
+  const tone=allMet?'good':metCount>0?'warn':'bad';
+  const label=allMet?"You're good":metCount>0?'Almost there':'Needs activity';
+  let detail=allMet?'You meet both ongoing Free Server activity requirements.':metCount>0?`You currently meet ${metCount} of ${configuredCount} ongoing requirements.`:'Neither ongoing Free Server activity requirement is currently met.';
+  if(status.currentlyPlaying&&!allMet)detail+=' You are currently playing, so the recent-activity requirement is covered.';
+  if(status.eligible)detail+=' Access can be removed on the next eligible automation run.';
+  if(enforcementNote)detail+=` ${enforcementNote}`;
+
+  const deadlines=[];
+  if(activityConfigured){
+    const inactivityDeadline=addHours(inactiveReference||lastPlayback,noPlaybackDays*24),observationDeadline=addHours(observation,Math.max(minimumObservationHours,noPlaybackDays*24));
     if(inactivityDeadline)deadlines.push(inactivityDeadline);if(observationDeadline)deadlines.push(observationDeadline);
   }
-  if(Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0){
-    const usageDeadline=addHours(observation,Math.max(minimumObservationHours,playbackWindowDays*24));if(usageDeadline)deadlines.push(usageDeadline);
-  }
+  if(minutesConfigured){const usageDeadline=addHours(observation,Math.max(minimumObservationHours,playbackWindowDays*24));if(usageDeadline)deadlines.push(usageDeadline);}
   const removalAt=deadlines.length?new Date(Math.max(...deadlines.map(date=>date.getTime()))):null;
   const remainingHours=removalAt?hoursUntil(removalAt,now):null;
-  const rules=[];
-  if(Number.isFinite(noPlaybackDays)&&noPlaybackDays>0)rules.push(`do not go ${noPlaybackDays} day${noPlaybackDays===1?'':'s'} without playback`);
-  if(Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0)rules.push(`watch at least ${minimumPlaybackMinutes} minutes in each ${playbackWindowDays}-day window`);
-  const rulesText=rules.length?`To keep Free Server access, ${rules.join(' and ')}.`:'Keep using the Free Server regularly to retain your place.';
-  if(status.automationProtected)return{tone:'good',label:'Protected',detail:'This account is protected from automatic inactivity removal.',rulesText,removalAt:null,remainingHours:null,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
-  if(status.currentlyPlaying)return{tone:'good',label:"You're good",detail:'You are currently playing something on the Free Server.',rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
-  if(!status.enforcementReady)return{tone:'good',label:"You're good",detail:'Automatic inactivity removal is currently paused while activity telemetry is unavailable.',rulesText,removalAt:null,remainingHours:null,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
-  if(Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&status.playbackMinutes>=minimumPlaybackMinutes)return{tone:'good',label:"You're good",detail:`You have ${status.playbackMinutes} minutes of playback in the current ${playbackWindowDays}-day window.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
-  if(status.eligible||remainingHours!=null&&remainingHours<=12)return{tone:'bad',label:'Removal risk',detail:status.eligible?'The activity threshold has been reached. Access can be removed on the next automation run.':`Less than ${Math.max(1,Math.ceil(remainingHours))} hours remain before the inactivity threshold is reached.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
-  if(remainingHours!=null&&remainingHours<=48)return{tone:'warn',label:'48-hour warning',detail:`About ${Math.max(1,Math.ceil(remainingHours))} hours remain before the inactivity threshold is reached.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
-  return{tone:'good',label:"You're good",detail:remainingHours==null?'Your Free Server activity is currently within the allowed limits.':`About ${Math.max(1,Math.ceil(remainingHours))} hours remain before inactivity could qualify for removal.`,rulesText,removalAt,remainingHours,playbackMinutes:status.playbackMinutes,minimumPlaybackMinutes,playbackWindowDays};
+  return{tone,label,detail,rulesText,removalAt,remainingHours,activated:true,firstPlaybackMet:true,activityMet,minimumMet,playbackMinutes,firstPlaybackGraceDays,noPlaybackDays,minimumPlaybackMinutes,playbackWindowDays,enforcementNote};
 }
 async function inactiveAccessHistory(customerId,portal,returnStatus){
   const holdResult=await query(`SELECT hold_type,source_key,reason,created_at FROM customer_access_holds WHERE customer_id=$1 AND released_at IS NULL ORDER BY created_at DESC`,[customerId]).catch(()=>({rows:[]}));

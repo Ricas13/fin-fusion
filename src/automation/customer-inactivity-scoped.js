@@ -93,7 +93,8 @@ async function usageSatisfiedEarlierToday(row) {
         FROM playback_history
         WHERE customer_id=$1 AND server_id=$2
           AND started_at >= date_trunc('day',NOW()) - ($3::int * INTERVAL '1 day')
-    `, [row.customer_id,row.server_id,windowDays]);
+          AND ($4::timestamptz IS NULL OR started_at >= $4::timestamptz)
+    `, [row.customer_id,row.server_id,windowDays,row.allocation_start_at || null]);
     return Number(result.rows[0]?.playback_seconds || 0) >= minimumMinutes * 60;
 }
 
@@ -183,6 +184,8 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
             accessLane: 'free',
             accountId: row.account_id,
             serverId: row.server_id,
+            allocationStartAt: row.allocation_start_at || null,
+            firstPlaybackAt: row.first_playback_at || null,
             lastPlaybackAt: row.last_playback_at || null,
             inactiveReferenceAt: row.inactive_reference_at,
             observationStartedAt: row.observation_started_at,
