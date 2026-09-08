@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { query, transaction } = require('../db');
 const client = require('./source-client');
 const operationLock = require('./operation-lock');
@@ -13,6 +14,11 @@ function ttlHours(value = process.env.STREMIO_EXTERNAL_RAW_TOKEN_TTL_HOURS) {
 
 function compactError(error) {
   return String(error?.message || error || 'Unknown error').replace(/[\r\n\t\u2028\u2029]+/g, ' ').slice(0, 1000);
+}
+
+function deviceIdFor(sourceId, entitlementId) {
+  const digest = crypto.createHash('sha256').update(`${String(sourceId)}:${String(entitlementId)}`, 'utf8').digest('hex').slice(0, 32);
+  return `captainfin-raw-${digest}`;
 }
 
 async function entitlementActive(entitlementId, db = query) {
@@ -84,7 +90,17 @@ async function tokenFor(source, entitlement) {
     }
 
     const password = client.decryptPassword(source.password_encrypted);
-    const auth = await client.authenticate(source.base_url, source.jellyfin_username, password, source.media_server_type || null);
+    const auth = await client.authenticate(
+      source.base_url,
+      source.jellyfin_username,
+      password,
+      source.media_server_type || null,
+      {
+        deviceId: deviceIdFor(source.id, entitlement.id),
+        device: 'CAPTAiNFiN Raw Stremio',
+        client: 'CAPTAiNFiN Stremio'
+      }
+    );
     if (source.jellyfin_user_id && String(auth.jellyfinUserId) !== String(source.jellyfin_user_id)) {
       await client.logoutToken(auth.baseUrl, auth.accessToken, source.name || source.jellyfin_username || 'Media server', auth.mediaServerType).catch(() => {});
       const error = new Error('External source authentication returned a different media-server user. Reconnect this source.');
@@ -166,4 +182,4 @@ async function revokeDue({ limit = 100 } = {}) {
   return { total: rows.length, revoked, failed };
 }
 
-module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, entitlementActive, current, tokenFor, revokeRow, revokeDue };
+module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeDue };
