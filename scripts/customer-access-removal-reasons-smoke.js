@@ -45,13 +45,15 @@ const inactivity=read('src/automation/customer-inactivity.js');
 const view=read('views/customer/access-ended.ejs');
 const client=read('public/js/customer-jellyfin.js');
 assert(router.indexOf('createCustomerAccessEndedRouter()')<router.indexOf('createCustomerJellyfinRouter()'),'access-ended router must run before the existing My Access router so ended paid users are not redirected away');
-assert.match(source,/router\.get\('\/account\/access-history\.json'/,'customer access history JSON must be exposed from the canonical reason layer');
+assert.match(source,/router\.get\('\/account\/access-ended-history\.json'/,'customer access-ended history JSON must use its own canonical endpoint');
+assert.match(source,/router\.use\('\/account\/access'/,'ended-state inspection must be middleware in front of the canonical My Access GET owner');
+assert.match(source,/if\(req\.method!=='GET'\)return next\(\)/,'ended-state middleware must not claim non-GET My Access mutations');
 assert.match(source,/if\(liveMediaSubscriptions\(portal\)\.length\)return next\(\)/,'active customers must continue into the normal My Access router');
 assert.match(source,/return res\.render\('customer\/access-ended'/,'customers with no live streaming service but recorded history must see a reason page');
 assert.match(inactivity,/Math\.floor\(assessment\.seconds\/60\).*below/,'stored inactivity trigger evidence must use completed playback minutes rather than rounding up');
 assert.match(view,/Why your access ended/,'ended-access page must explain why access ended');
 assert.match(view,/portal account available even when streaming access has ended/,'ended-access page must make clear that the portal account remains available');
-assert.match(client,/fetch\('\/account\/access-history\.json'/,'normal My Access must fetch access-ended history');
+assert.match(client,/fetch\('\/account\/access-ended-history\.json'/,'normal My Access must fetch access-ended history');
 assert.match(client,/Free Server access removed/,'normal My Access must replace the old generic inactivity heading');
 assert.match(client,/Why previous access ended/,'normal My Access must show reason history when other services remain active');
 
