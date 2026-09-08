@@ -73,13 +73,14 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       SELECT MIN(ph.started_at) historical_first_playback_at
       FROM playback_history ph
       WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id AND ph.jellyfin_account_id=ja.id
+        AND ph.started_at>=ja.access_lane_changed_at
     ) historical ON TRUE
     LEFT JOIN LATERAL (
       SELECT CASE
-        WHEN lifecycle.restored_at IS NOT NULL THEN GREATEST(fa.starts_at,ja.created_at,lifecycle.restored_at)
+        WHEN lifecycle.restored_at IS NOT NULL THEN GREATEST(fa.starts_at,ja.access_lane_changed_at,lifecycle.restored_at)
         WHEN historical.historical_first_playback_at IS NOT NULL
-          THEN LEAST(fa.starts_at,ja.created_at,historical.historical_first_playback_at)
-        ELSE GREATEST(fa.starts_at,ja.created_at)
+          THEN LEAST(fa.starts_at,ja.access_lane_changed_at,historical.historical_first_playback_at)
+        ELSE GREATEST(fa.starts_at,ja.access_lane_changed_at)
       END allocation_start_at
     ) allocation ON TRUE
     LEFT JOIN LATERAL (

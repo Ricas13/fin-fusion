@@ -260,6 +260,7 @@ async function adoptExistingFreeAccount(customerId, accounts, freeEntitlement, p
         UPDATE jellyfin_accounts
         SET access_lane='free',
             is_primary=CASE WHEN $2::boolean THEN FALSE ELSE is_primary END,
+            access_lane_changed_at=NOW(),
             updated_at=NOW()
         WHERE id=$1
     `, [candidate.id, Boolean(primaryEntitlement)]);
