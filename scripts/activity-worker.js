@@ -4,6 +4,17 @@ require('dotenv').config();
 const crypto = require('crypto');
 const fs = require('fs');
 const pkg = require('../package.json');
+
+// Playback analytics is intended to provide a long-lived operational history.
+// Keep a full ten years of playback telemetry so annual/YTD reporting remains
+// useful as the installation matures. The collector already caps retention at
+// 3650 days, so older deployment values are promoted to that supported maximum.
+const MIN_PLAYBACK_RETENTION_DAYS = 3650;
+const configuredPlaybackRetention = Number.parseInt(process.env.ACTIVITY_RETENTION_DAYS || '', 10);
+if (!Number.isFinite(configuredPlaybackRetention) || configuredPlaybackRetention < MIN_PLAYBACK_RETENTION_DAYS) {
+  process.env.ACTIVITY_RETENTION_DAYS = String(MIN_PLAYBACK_RETENTION_DAYS);
+}
+
 if (!process.env.ACTIVITY_DATABASE_URL) throw new Error('ACTIVITY_DATABASE_URL is required');
 if (!process.env.JELLYFIN_ENCRYPTION_KEY) throw new Error('JELLYFIN_ENCRYPTION_KEY is required');
 if (!process.env.ACTIVITY_ENCRYPTION_KEY) throw new Error('ACTIVITY_ENCRYPTION_KEY is required');

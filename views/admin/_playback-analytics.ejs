@@ -1,0 +1,200 @@
+<%
+  const playback = analytics || { days:30, rangeLabel:'Last 30 days', metrics:{}, comparisons:{}, topUsersWatchTime:[], topUsersMovies:[], topUsersEpisodes:[], topDevices:[], topPlatforms:[], topContent:[], topConcurrentUsers:[], trends:[], methods:[], sessionLengths:[], dataUsageAvailable:false };
+  const metrics = playback.metrics || {};
+  const comparisons = playback.comparisons || {};
+  const fmtNumber = (value) => Number(value || 0).toLocaleString();
+  const fmtPercent = (value) => `${Number(value || 0).toFixed(Number(value || 0) >= 10 ? 0 : 1)}%`;
+  const fmtDuration = (seconds) => {
+    const total = Math.max(0, Math.round(Number(seconds || 0)));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours >= 100) return `${hours.toLocaleString()} hours`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+  };
+  const trendText = (delta) => {
+    if (!delta || delta.direction === 'flat') return '— No change';
+    if (delta.percent == null) return `${delta.direction === 'up' ? '↑' : '↓'} New`;
+    return `${delta.direction === 'up' ? '↑' : '↓'} ${delta.percent}%`;
+  };
+  const trendTone = (delta) => delta?.tone || 'neutral';
+  const trends = Array.isArray(playback.trends) ? playback.trends : [];
+  const maxTrendPlays = Math.max(1, ...trends.map(row => Number(row.plays || 0)));
+  const maxTrendWatch = Math.max(1, ...trends.map(row => Number(row.watch_seconds || 0)));
+  const sessionLengths = Array.isArray(playback.sessionLengths) ? playback.sessionLengths : [];
+  const maxSessionBucket = Math.max(1, ...sessionLengths.map(row => Number(row.sessions || 0)));
+  const methodName = (method) => ({directplay:'Direct play',directstream:'Direct stream',transcode:'Transcode',unknown:'Unknown'})[String(method||'').toLowerCase()] || method || 'Unknown';
+%>
+
+<section class="playbackAnalytics" id="playback-analytics" data-playback-analytics>
+  <div class="playbackAnalyticsHeader">
+    <div class="playbackAnalyticsTitle">
+      <span class="playbackAnalyticsIcon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/><path d="m8.5 8.5-2-2M17.5 17.5l-2-2M15.5 8.5l2-2M6.5 17.5l2-2"/></svg>
+      </span>
+      <div>
+        <h2>Playback Analytics</h2>
+        <p>Top users, devices, content and stream statistics. Based on the selected time range.</p>
+      </div>
+    </div>
+    <form class="playbackRangeForm" action="/admin/activity" method="get">
+      <label class="srOnly" for="playback-range">Playback analytics range</label>
+      <select class="playbackRangeSelect" id="playback-range" name="range" onchange="this.form.submit()">
+        <option value="7" <%= playback.days===7?'selected':'' %>>Last 7 days</option>
+        <option value="30" <%= playback.days===30?'selected':'' %>>Last 30 days</option>
+        <option value="90" <%= playback.days===90?'selected':'' %>>Last 90 days</option>
+      </select>
+    </form>
+  </div>
+
+  <div class="playbackKpis">
+    <article class="playbackKpi">
+      <div class="playbackKpiTop"><span class="playbackKpiGlyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="m17 10 4-2v8l-4-2z"/></svg></span><span>Total Plays</span></div>
+      <div class="playbackKpiValue"><%= fmtNumber(metrics.totalPlays) %></div>
+      <div class="playbackKpiDelta <%= trendTone(comparisons.totalPlays) %>"><%= trendText(comparisons.totalPlays) %></div><span class="playbackKpiCompare">vs previous period</span>
+    </article>
+    <article class="playbackKpi">
+      <div class="playbackKpiTop"><span class="playbackKpiGlyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19v-2.5A4.5 4.5 0 0 1 8 12h2a4.5 4.5 0 0 1 4.5 4.5V19M16 7.5a2.5 2.5 0 0 1 0 5M17 13.5a4 4 0 0 1 3.5 4V19"/></svg></span><span>Unique Users</span></div>
+      <div class="playbackKpiValue"><%= fmtNumber(metrics.uniqueUsers) %></div>
+      <div class="playbackKpiDelta <%= trendTone(comparisons.uniqueUsers) %>"><%= trendText(comparisons.uniqueUsers) %></div><span class="playbackKpiCompare">vs previous period</span>
+    </article>
+    <article class="playbackKpi">
+      <div class="playbackKpiTop"><span class="playbackKpiGlyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span>Total Watch Time</span></div>
+      <div class="playbackKpiValue"><%= fmtDuration(metrics.totalWatchSeconds) %></div>
+      <div class="playbackKpiDelta <%= trendTone(comparisons.totalWatchSeconds) %>"><%= trendText(comparisons.totalWatchSeconds) %></div><span class="playbackKpiCompare">vs previous period</span>
+    </article>
+    <article class="playbackKpi">
+      <div class="playbackKpiTop"><span class="playbackKpiGlyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 16a4 4 0 0 1 .6-7.95A6.5 6.5 0 0 1 18.4 9 3.5 3.5 0 0 1 18 16H5Z"/><path d="m9 13 2-2 2 2 2-2"/></svg></span><span>Peak Concurrent Streams</span></div>
+      <div class="playbackKpiValue"><%= fmtNumber(metrics.peakConcurrentStreams) %></div>
+      <div class="playbackKpiDelta <%= trendTone(comparisons.peakConcurrentStreams) %>"><%= trendText(comparisons.peakConcurrentStreams) %></div><span class="playbackKpiCompare">vs previous period</span>
+    </article>
+    <article class="playbackKpi">
+      <div class="playbackKpiTop"><span class="playbackKpiGlyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg></span><span>Transcode Rate</span></div>
+      <div class="playbackKpiValue"><%= fmtPercent(metrics.transcodeRate) %></div>
+      <div class="playbackKpiDelta <%= trendTone(comparisons.transcodeRate) %>"><%= trendText(comparisons.transcodeRate) %></div><span class="playbackKpiCompare">vs previous period</span>
+    </article>
+    <article class="playbackKpi">
+      <div class="playbackKpiTop"><span class="playbackKpiGlyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5h4"/></svg></span><span>Average Session Length</span></div>
+      <div class="playbackKpiValue"><%= fmtDuration(metrics.averageSessionSeconds) %></div>
+      <div class="playbackKpiDelta <%= trendTone(comparisons.averageSessionSeconds) %>"><%= trendText(comparisons.averageSessionSeconds) %></div><span class="playbackKpiCompare">vs previous period</span>
+    </article>
+  </div>
+
+  <div class="playbackAnalyticsTabs" role="tablist" aria-label="Playback analytics views">
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="true" data-analytics-tab="top">Top lists</button>
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="false" data-analytics-tab="trends" tabindex="-1">Usage trends</button>
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="false" data-analytics-tab="measurements" tabindex="-1">Playback measurements</button>
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="false" data-analytics-tab="concurrency" tabindex="-1">Concurrence</button>
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="false" data-analytics-tab="transcoding" tabindex="-1">Transcoding</button>
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="false" data-analytics-tab="content" tabindex="-1">Content</button>
+    <button class="playbackAnalyticsTab" type="button" role="tab" aria-selected="false" data-analytics-tab="devices" tabindex="-1">Devices &amp; platforms</button>
+  </div>
+
+  <div class="playbackAnalyticsPanel" role="tabpanel" data-analytics-panel="top">
+    <div class="playbackRankGrid">
+      <article class="playbackRankCard" data-rank-card>
+        <div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">♟</span><h3>Top 20 Users (by watch time)</h3></div><span class="playbackTopBadge">Top 20</span></div>
+        <% if(!playback.topUsersWatchTime.length){ %><div class="playbackRankEmpty">No playback recorded in this range.</div><% } else { %>
+        <table class="playbackRankTable"><thead><tr><th>#</th><th>User</th><th>Watch time</th></tr></thead><tbody>
+          <% playback.topUsersWatchTime.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.customer_name %></td><td><%= fmtDuration(row.watch_seconds) %></td></tr><% }) %>
+        </tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all users →">View all users →</button></div><% } %>
+      </article>
+
+      <article class="playbackRankCard" data-rank-card>
+        <div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">●</span><h3>Top 20 Users (by movies)</h3></div><span class="playbackTopBadge">Top 20</span></div>
+        <% if(!playback.topUsersMovies.length){ %><div class="playbackRankEmpty">No movie playback recorded in this range.</div><% } else { %>
+        <table class="playbackRankTable"><thead><tr><th>#</th><th>User</th><th>Movies</th></tr></thead><tbody>
+          <% playback.topUsersMovies.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.customer_name %></td><td><%= fmtNumber(row.item_count) %></td></tr><% }) %>
+        </tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all users →">View all users →</button></div><% } %>
+      </article>
+
+      <article class="playbackRankCard" data-rank-card>
+        <div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">▶</span><h3>Top 20 Users (by series episodes)</h3></div><span class="playbackTopBadge">Top 20</span></div>
+        <% if(!playback.topUsersEpisodes.length){ %><div class="playbackRankEmpty">No episode playback recorded in this range.</div><% } else { %>
+        <table class="playbackRankTable"><thead><tr><th>#</th><th>User</th><th>Episodes</th></tr></thead><tbody>
+          <% playback.topUsersEpisodes.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.customer_name %></td><td><%= fmtNumber(row.item_count) %></td></tr><% }) %>
+        </tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all users →">View all users →</button></div><% } %>
+      </article>
+
+      <article class="playbackRankCard" data-rank-card>
+        <div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">▣</span><h3>Top 20 Devices</h3></div><span class="playbackTopBadge">Top 20</span></div>
+        <% if(!playback.topDevices.length){ %><div class="playbackRankEmpty">No devices recorded in this range.</div><% } else { %>
+        <table class="playbackRankTable"><thead><tr><th>#</th><th>Device</th><th>Plays</th></tr></thead><tbody>
+          <% playback.topDevices.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.name %></td><td><%= fmtNumber(row.plays) %></td></tr><% }) %>
+        </tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all devices →">View all devices →</button></div><% } %>
+      </article>
+
+      <article class="playbackRankCard" data-rank-card>
+        <div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">◎</span><h3>Top 20 Platforms (Clients)</h3></div><span class="playbackTopBadge">Top 20</span></div>
+        <% if(!playback.topPlatforms.length){ %><div class="playbackRankEmpty">No clients recorded in this range.</div><% } else { %>
+        <table class="playbackRankTable"><thead><tr><th>#</th><th>Platform</th><th>Plays</th></tr></thead><tbody>
+          <% playback.topPlatforms.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.name %></td><td><%= fmtNumber(row.plays) %></td></tr><% }) %>
+        </tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all platforms →">View all platforms →</button></div><% } %>
+      </article>
+
+      <article class="playbackRankCard" data-rank-card>
+        <div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">▤</span><h3>Top 20 Content (by watch time)</h3></div><span class="playbackTopBadge">Top 20</span></div>
+        <% if(!playback.topContent.length){ %><div class="playbackRankEmpty">No content recorded in this range.</div><% } else { %>
+        <table class="playbackRankTable"><thead><tr><th>#</th><th>Title</th><th>Watch time</th></tr></thead><tbody>
+          <% playback.topContent.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.title %><div class="subText"><%= row.item_type %></div></td><td><%= fmtDuration(row.watch_seconds) %></td></tr><% }) %>
+        </tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all content →">View all content →</button></div><% } %>
+      </article>
+    </div>
+  </div>
+
+  <div class="playbackAnalyticsPanel playbackInsightPanel" role="tabpanel" data-analytics-panel="trends" hidden>
+    <div class="playbackChartGrid">
+      <article class="playbackChartCard"><h3>Plays per day</h3><p>Playback sessions started on each day in the selected range.</p><div class="playbackBars" aria-label="Plays per day chart"><% trends.forEach(function(row){ %><span class="playbackBarColumn" title="<%= new Date(row.day).toLocaleDateString() %>: <%= row.plays %> plays"><span class="playbackBar" style="height:<%= Math.max(2,(Number(row.plays||0)/maxTrendPlays)*100) %>%"></span></span><% }) %></div><div class="playbackChartLegend"><span><%= trends.length?new Date(trends[0].day).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—' %></span><span>Peak <%= fmtNumber(maxTrendPlays) %> plays</span><span><%= trends.length?new Date(trends[trends.length-1].day).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—' %></span></div></article>
+      <article class="playbackChartCard"><h3>Watch time over time</h3><p>Watch time attributed to sessions started on each day.</p><div class="playbackBars" aria-label="Watch time per day chart"><% trends.forEach(function(row){ %><span class="playbackBarColumn" title="<%= new Date(row.day).toLocaleDateString() %>: <%= fmtDuration(row.watch_seconds) %>"><span class="playbackBar" style="height:<%= Math.max(2,(Number(row.watch_seconds||0)/maxTrendWatch)*100) %>%"></span></span><% }) %></div><div class="playbackChartLegend"><span><%= trends.length?new Date(trends[0].day).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—' %></span><span>Peak <%= fmtDuration(maxTrendWatch) %></span><span><%= trends.length?new Date(trends[trends.length-1].day).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—' %></span></div></article>
+    </div>
+  </div>
+
+  <div class="playbackAnalyticsPanel playbackInsightPanel" role="tabpanel" data-analytics-panel="measurements" hidden>
+    <article class="playbackMeasureCard"><h3>Playback measurements</h3><p>Fleet-wide measurements for <%= playback.rangeLabel.toLowerCase() %>.</p><div class="playbackMeasureGrid">
+      <div class="playbackMeasureItem"><span>Playback sessions</span><strong><%= fmtNumber(metrics.totalPlays) %></strong><small>Sessions that started in the selected range.</small></div>
+      <div class="playbackMeasureItem"><span>Watch time</span><strong><%= fmtDuration(metrics.totalWatchSeconds) %></strong><small>Observed time across playback sessions.</small></div>
+      <div class="playbackMeasureItem"><span>Average session</span><strong><%= fmtDuration(metrics.averageSessionSeconds) %></strong><small>Average observed duration per started session.</small></div>
+      <div class="playbackMeasureItem"><span>Unique users</span><strong><%= fmtNumber(metrics.uniqueUsers) %></strong><small>Distinct managed customers with playback.</small></div>
+      <div class="playbackMeasureItem"><span>Peak concurrency</span><strong><%= fmtNumber(metrics.peakConcurrentStreams) %></strong><small>Maximum overlapping playback sessions.</small></div>
+      <div class="playbackMeasureItem"><span>Transcode rate</span><strong><%= fmtPercent(metrics.transcodeRate) %></strong><small>Share of playback sessions that required transcoding.</small></div>
+    </div></article>
+    <article class="playbackMeasureCard"><h3>Session length distribution</h3><p>How long observed playback sessions lasted.</p><div class="playbackSessionBuckets"><% if(!sessionLengths.length){ %><div class="playbackDataUnavailable">No completed or observed sessions are available for this range.</div><% } %><% sessionLengths.forEach(function(row){ %><div class="playbackBucketRow"><span><%= row.bucket %></span><div class="playbackProgress"><span style="width:<%= (Number(row.sessions||0)/maxSessionBucket)*100 %>%"></span></div><span class="playbackMethodValue"><%= fmtNumber(row.sessions) %> sessions</span></div><% }) %></div></article>
+    <div class="playbackDataUnavailable"><strong>Estimated data usage</strong><br>Playback history currently does not retain bitrate or transferred-byte measurements, so CAPTAiNFiN will not invent a bandwidth estimate. This area is ready to populate when that telemetry is added.</div>
+  </div>
+
+  <div class="playbackAnalyticsPanel playbackInsightPanel" role="tabpanel" data-analytics-panel="concurrency" hidden>
+    <div class="playbackConcurrencyGrid">
+      <article class="playbackPeakCard"><div><span class="peakLabel">Fleet peak concurrent streams</span><strong><%= fmtNumber(metrics.peakConcurrentStreams) %></strong><small><%= playback.rangeLabel %> · overlapping observed sessions</small></div></article>
+      <article class="playbackRankCard" data-rank-card><div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">⇶</span><h3>Top 20 Users (by peak concurrency)</h3></div><span class="playbackTopBadge">Top 20</span></div><% if(!playback.topConcurrentUsers.length){ %><div class="playbackRankEmpty">No concurrency history recorded in this range.</div><% } else { %><table class="playbackRankTable"><thead><tr><th>#</th><th>User</th><th>Peak streams</th></tr></thead><tbody><% playback.topConcurrentUsers.forEach(function(row,index){ %><tr class="<%= index>=5?'rankExtra':'' %>" <%= index>=5?'hidden':'' %>><td><%= index+1 %></td><td><%= row.customer_name %></td><td><%= fmtNumber(row.peak_concurrent) %></td></tr><% }) %></tbody></table><div class="playbackRankFooter"><button type="button" class="playbackRankToggle" data-rank-toggle data-more-label="View all users →">View all users →</button></div><% } %></article>
+    </div>
+  </div>
+
+  <div class="playbackAnalyticsPanel playbackInsightPanel" role="tabpanel" data-analytics-panel="transcoding" hidden>
+    <article class="playbackMeasureCard"><h3>Transcode vs direct play</h3><p>Playback method share across sessions started in the selected range.</p><div class="playbackMethodList"><% if(!playback.methods.length){ %><div class="playbackDataUnavailable">No playback methods recorded in this range.</div><% } %><% playback.methods.forEach(function(row){ %><div class="playbackMethodRow"><span><%= methodName(row.method) %></span><div class="playbackProgress"><span style="width:<%= Math.max(0,Math.min(100,Number(row.percent||0))) %>%"></span></div><span class="playbackMethodValue"><%= fmtNumber(row.plays) %> · <%= fmtPercent(row.percent) %></span></div><% }) %></div></article>
+  </div>
+
+  <div class="playbackAnalyticsPanel playbackInsightPanel" role="tabpanel" data-analytics-panel="content" hidden>
+    <article class="playbackRankCard" data-rank-card><div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">▤</span><h3>Top 20 Content (by watch time)</h3></div><span class="playbackTopBadge">Top 20</span></div><% if(!playback.topContent.length){ %><div class="playbackRankEmpty">No content recorded in this range.</div><% } else { %><table class="playbackRankTable"><thead><tr><th>#</th><th>Title</th><th>Watch time</th></tr></thead><tbody><% playback.topContent.forEach(function(row,index){ %><tr><td><%= index+1 %></td><td><%= row.title %><div class="subText"><%= row.item_type %></div></td><td><%= fmtDuration(row.watch_seconds) %></td></tr><% }) %></tbody></table><% } %></article>
+  </div>
+
+  <div class="playbackAnalyticsPanel playbackInsightPanel" role="tabpanel" data-analytics-panel="devices" hidden>
+    <div class="playbackChartGrid">
+      <article class="playbackRankCard"><div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">▣</span><h3>Top 20 Devices</h3></div><span class="playbackTopBadge">Top 20</span></div><% if(!playback.topDevices.length){ %><div class="playbackRankEmpty">No devices recorded.</div><% } else { %><table class="playbackRankTable"><thead><tr><th>#</th><th>Device</th><th>Plays</th></tr></thead><tbody><% playback.topDevices.forEach(function(row,index){ %><tr><td><%= index+1 %></td><td><%= row.name %></td><td><%= fmtNumber(row.plays) %></td></tr><% }) %></tbody></table><% } %></article>
+      <article class="playbackRankCard"><div class="playbackRankHead"><div class="playbackRankTitle"><span class="playbackRankDot">◎</span><h3>Top 20 Platforms (Clients)</h3></div><span class="playbackTopBadge">Top 20</span></div><% if(!playback.topPlatforms.length){ %><div class="playbackRankEmpty">No clients recorded.</div><% } else { %><table class="playbackRankTable"><thead><tr><th>#</th><th>Platform</th><th>Plays</th></tr></thead><tbody><% playback.topPlatforms.forEach(function(row,index){ %><tr><td><%= index+1 %></td><td><%= row.name %></td><td><%= fmtNumber(row.plays) %></td></tr><% }) %></tbody></table><% } %></article>
+    </div>
+  </div>
+
+  <div class="playbackAdditional">
+    <div class="playbackAdditionalHead"><span class="playbackAnalyticsIcon" aria-hidden="true">⌁</span><div><strong>Additional playback insights</strong><span>Detailed charts and measurements about your server's playback performance.</span></div></div>
+    <div class="playbackAdditionalActions">
+      <button class="playbackInsightButton" type="button" data-analytics-target="trends">Watch time over time</button>
+      <button class="playbackInsightButton" type="button" data-analytics-target="trends">Plays per day</button>
+      <button class="playbackInsightButton" type="button" data-analytics-target="concurrency">Concurrent streams</button>
+      <button class="playbackInsightButton" type="button" data-analytics-target="transcoding">Transcode vs direct play</button>
+      <button class="playbackInsightButton" type="button" data-analytics-target="measurements">Session length distribution</button>
+      <button class="playbackInsightButton" type="button" data-analytics-target="measurements">Data usage (estimated)</button>
+    </div>
+  </div>
+</section>
