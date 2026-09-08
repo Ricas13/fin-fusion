@@ -7,6 +7,7 @@ const registry = require('./registry');
 
 const ENFORCEMENT_ACK = 'I_UNDERSTAND_THIS_STOPS_PLAYBACK';
 const ADVISORY_LOCK_ID = 637441013;
+const sessionMotion = new Map();
 
 function intEnv(name, fallback, min, max) {
     const value = Number.parseInt(process.env[name] || '', 10);
@@ -47,6 +48,29 @@ function playbackKey(serverId, session) {
         .createHash('sha256')
         .update(`${serverId}|${session.Id}|${playSessionId}|${itemId}`)
         .digest('hex');
+}
+
+function motionKey(serverId, session) {
+    return `${serverId}|${String(session?.Id || '')}|${String(session?.NowPlayingItem?.Id || '')}`;
+}
+
+function positionMoved(serverId, session) {
+    const key = motionKey(serverId, session);
+    const rawTicks = Number(session?.PlayState?.PositionTicks);
+    const positionTicks = Number.isFinite(rawTicks) ? rawTicks : null;
+    const previous = sessionMotion.get(key) || null;
+    sessionMotion.set(key, { positionTicks, observedAt: Date.now() });
+    return positionTicks !== null
+        && previous?.positionTicks !== null
+        && previous?.positionTicks !== undefined
+        && Number(previous.positionTicks) !== positionTicks;
+}
+
+function pruneMotion(serverId, seenKeys) {
+    const prefix = `${serverId}|`;
+    for (const key of sessionMotion.keys()) {
+        if (key.startsWith(prefix) && !seenKeys.has(key)) sessionMotion.delete(key);
+    }
 }
 
 function effectiveStreamLimit(entitlement) {
@@ -129,9 +153,30 @@ async function managedAccountsByServer() {
     return byServer;
 }
 
+async function upsertHistorySession(s, seenAt = new Date()) {
+    const observedAt = seenAt instanceof Date && Number.isFinite(seenAt.getTime()) ? seenAt : new Date();
+    await query(`
+        INSERT INTO playback_history(
+            server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
+            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13)
+        ON CONFLICT(server_id,playback_key) DO UPDATE SET
+            customer_id=EXCLUDED.customer_id,
+            jellyfin_account_id=EXCLUDED.jellyfin_account_id,
+            last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
+            playback_method=EXCLUDED.playback_method,
+            transcode_reasons=EXCLUDED.transcode_reasons,
+            ended_at=NULL,
+            ended_reason=NULL
+    `, [
+        s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
+        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt
+    ]);
+}
+
 async function upsertObservedSession(s) {
     const prior = await query(`
-        SELECT playback_key,first_seen_at,position_ticks,last_activity_at
+        SELECT playback_key,first_seen_at
         FROM active_playback_sessions
         WHERE server_id=$1 AND jellyfin_session_id=$2
     `, [s.serverId, s.sessionId]);
@@ -142,18 +187,6 @@ async function upsertObservedSession(s) {
             SET ended_at=COALESCE(ended_at,NOW()),ended_reason=COALESCE(ended_reason,'item_changed'),last_seen_at=NOW()
             WHERE server_id=$1 AND playback_key=$2
         `, [s.serverId, prior.rows[0].playback_key]);
-    }
-
-    const priorRow = prior.rows[0] || null;
-    const samePlayback = priorRow && priorRow.playback_key === s.playbackKey;
-    if (samePlayback
-        && s.positionTicks !== null
-        && priorRow.position_ticks !== null
-        && Number(s.positionTicks) !== Number(priorRow.position_ticks)) {
-        // Some clients keep LastActivityDate stale while playback is genuinely
-        // progressing. Position movement is direct evidence that the session is
-        // alive, so refresh policy activity without relying on the client clock.
-        s.lastActivityAt = new Date();
     }
 
     const resetFirstSeen = !prior.rowCount || prior.rows[0].playback_key !== s.playbackKey;
@@ -196,41 +229,39 @@ async function upsertObservedSession(s) {
         s.lastActivityAt,s.streamLimit
     ]);
 
-    await query(`
-        INSERT INTO playback_history(
-            server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,NOW(),NOW())
-        ON CONFLICT(server_id,playback_key) DO UPDATE SET
-            customer_id=EXCLUDED.customer_id,
-            jellyfin_account_id=EXCLUDED.jellyfin_account_id,
-            last_seen_at=NOW(),
-            playback_method=EXCLUDED.playback_method,
-            transcode_reasons=EXCLUDED.transcode_reasons,
-            ended_at=NULL,
-            ended_reason=NULL
-    `, [
-        s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
-        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons)
-    ]);
+    await upsertHistorySession(s, new Date());
 
     s.firstSeenAt = resetFirstSeen ? new Date() : new Date(active.rows[0].first_seen_at);
     s.confirmations = Number(active.rows[0].over_limit_confirmations || 0);
     return s;
 }
 
-async function closeMissingSessions(serverId, seenSessionIds) {
-    const existing = await query(`
-        SELECT jellyfin_session_id,playback_key
-        FROM active_playback_sessions WHERE server_id=$1
-    `, [serverId]);
-    for (const row of existing.rows) {
-        if (seenSessionIds.has(row.jellyfin_session_id)) continue;
+async function closeMissingSessions(serverId, accountIds, seenPlaybackKeys, seenActiveSessionIds) {
+    if (accountIds.length) {
+        const params = [serverId, accountIds];
+        let seenClause = '';
+        if (seenPlaybackKeys.length) {
+            params.push(seenPlaybackKeys);
+            seenClause = 'AND NOT (playback_key=ANY($3::text[]))';
+        }
         await query(`
             UPDATE playback_history
             SET ended_at=COALESCE(ended_at,NOW()),ended_reason=COALESCE(ended_reason,'not_seen'),last_seen_at=NOW()
-            WHERE server_id=$1 AND playback_key=$2
-        `, [serverId, row.playback_key]);
+            WHERE server_id=$1
+              AND jellyfin_account_id=ANY($2::uuid[])
+              AND ended_at IS NULL
+              ${seenClause}
+        `, params);
+    }
+
+    const existing = await query(`
+        SELECT jellyfin_session_id
+        FROM active_playback_sessions
+        WHERE server_id=$1
+          AND jellyfin_account_id=ANY($2::uuid[])
+    `, [serverId, accountIds]);
+    for (const row of existing.rows) {
+        if (seenActiveSessionIds.has(row.jellyfin_session_id)) continue;
         await query(`
             DELETE FROM active_playback_sessions
             WHERE server_id=$1 AND jellyfin_session_id=$2
@@ -239,14 +270,22 @@ async function closeMissingSessions(serverId, seenSessionIds) {
 }
 
 async function pollServer(serverId, accounts, entitlements, cfg) {
-    // Do not use Jellyfin's activeWithinSeconds filter for telemetry collection.
-    // Several clients keep NowPlayingItem/PositionTicks current while leaving
-    // LastActivityDate stale, which previously made real playback disappear.
-    const sessions = await registry.request(serverId, '/Sessions');
-    if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
+    const activeEndpoint = `/Sessions?activeWithinSeconds=${encodeURIComponent(cfg.activeWindowSeconds)}`;
+    const [sessions, activeSessions] = await Promise.all([
+        registry.request(serverId, '/Sessions'),
+        registry.request(serverId, activeEndpoint)
+    ]);
+    if (!Array.isArray(sessions) || !Array.isArray(activeSessions)) {
+        throw new Error('Jellyfin sessions response was not an array');
+    }
 
+    const activeIds = new Set(activeSessions
+        .filter(session => session?.Id && session?.NowPlayingItem)
+        .map(session => String(session.Id)));
     const accountByUser = new Map(accounts.map(a => [String(a.jellyfin_user_id).toLowerCase(), a]));
-    const seen = new Set();
+    const seenPlaybackKeys = [];
+    const seenActive = new Set();
+    const seenMotionKeys = new Set();
     const managed = [];
 
     for (const session of sessions) {
@@ -255,11 +294,31 @@ async function pollServer(serverId, accounts, entitlements, cfg) {
         if (!account) continue;
         const entitlement = entitlements.get(account.customer_id) || null;
         const normalized = normalizeSession(serverId, account, entitlement, session);
-        seen.add(normalized.sessionId);
-        managed.push(await upsertObservedSession(normalized));
+        const key = motionKey(serverId, session);
+        seenMotionKeys.add(key);
+        const moved = positionMoved(serverId, session);
+        const policyFresh = activeIds.has(normalized.sessionId) || moved;
+        if (moved) normalized.lastActivityAt = new Date();
+        seenPlaybackKeys.push(normalized.playbackKey);
+
+        if (policyFresh) {
+            seenActive.add(normalized.sessionId);
+            managed.push(await upsertObservedSession(normalized));
+        } else {
+            const pausedAt = normalized.isPaused && normalized.lastActivityAt instanceof Date && Number.isFinite(normalized.lastActivityAt.getTime())
+                ? normalized.lastActivityAt
+                : new Date();
+            await upsertHistorySession(normalized, pausedAt);
+        }
     }
 
-    await closeMissingSessions(serverId, seen);
+    await closeMissingSessions(
+        serverId,
+        accounts.map(account => account.id),
+        seenPlaybackKeys,
+        seenActive
+    );
+    pruneMotion(serverId, seenMotionKeys);
     return managed;
 }
 
@@ -534,15 +593,7 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
 
 async function evaluatePolicies(sessions, pollsReliable, cfg) {
     const groups = new Map();
-    const now = Date.now();
     for (const session of sessions) {
-        if (session.lastActivityAt) {
-            const activityAt = new Date(session.lastActivityAt);
-            if (Number.isFinite(activityAt.getTime())
-                && now - activityAt.getTime() > cfg.activeWindowSeconds * 1000) {
-                continue;
-            }
-        }
         if (!session.customerId || !Number.isInteger(Number(session.streamLimit)) || Number(session.streamLimit) < 1) continue;
         if (!groups.has(session.customerId)) groups.set(session.customerId, []);
         groups.get(session.customerId).push(session);
