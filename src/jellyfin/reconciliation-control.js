@@ -204,14 +204,13 @@ async function markAccountSuccess(accountId, customerId, desiredHash, { verified
 }
 
 async function markAccountVerified(accountId, customerId, desiredHash) {
-    const result = await query(`
+    await query(`
         UPDATE jellyfin_policy_reconciliation
         SET status='successful',customer_id=$2,last_verified_at=NOW(),last_success_at=NOW(),
             desired_policy_hash=$3,applied_policy_hash=$3,consecutive_failures=0,
             next_retry_at=NULL,last_error=NULL,updated_at=NOW()
         WHERE jellyfin_account_id=$1
     `, [accountId, customerId, desiredHash]);
-    return result.rowCount;
 }
 
 async function markAccountDrift(accountId, customerId, desiredHash) {
