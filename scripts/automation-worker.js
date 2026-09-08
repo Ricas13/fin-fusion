@@ -10,6 +10,7 @@ const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock'
 const reconciliationLock = require('../src/jellyfin/reconciliation-lock');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
+const criticalJobs = require('../src/automation/critical-jobs');
 const providerSettings = require('../src/payments/provider-settings');
 const requestSettings = require('../src/integrations/request-service-settings');
 const emailSettings = require('../src/integrations/email-settings');
@@ -24,12 +25,19 @@ const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATIO
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = buildInfo.gitSha;
 const DEFAULT_JOB_INTERVALS=Object.freeze({free_capacity_backfill:30,free_places_digest:30,data_retention:3600,stremio_external_tokens:300,stremio_media_index:10800});
-const CRITICAL_JOB_KEYS=Object.freeze(['entitlements','free_capacity_backfill','customer_inactivity','billing','plan_changes']);
+const CRITICAL_JOB_KEYS=Object.freeze(criticalJobs.names());
 let stopping = false;
 let running = new Set();
 let heartbeatTimer = null;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function safeLog(value, max = 500) {
+    return String(value == null ? '' : value)
+        .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, max);
+}
 
 function assertCriticalJobRegistry() {
     const missing = CRITICAL_JOB_KEYS.filter(jobKey => typeof jobRegistry.jobs[jobKey] !== 'function');
@@ -108,13 +116,14 @@ async function runOne(row) {
         const processed = Number(value.processed ?? value.total ?? value.attempted ?? 0);
         const metrics = resultMetrics(jobKey, value);
         if (result?.degraded) {
-            console.warn(`automation ${jobKey}: outcome=degraded processed=${processed} failed=${failed}${metrics} retrySeconds=${result.retrySeconds}`);
+            const warning = safeLog(value.warning || value.message || value.error || value.lastError, 700);
+            console.warn(`automation ${jobKey}: outcome=degraded processed=${processed} failed=${failed}${metrics} retrySeconds=${result.retrySeconds}${warning ? ` warning=${warning}` : ''}`);
         } else if (processed || failed || metrics) {
             console.log(`automation ${jobKey}: outcome=success processed=${processed} failed=${failed}${metrics}`);
         }
     } catch (error) {
         const retry = Number(error.automationRetrySeconds || 0);
-        console.error(`automation ${jobKey} failed${retry ? `; retry in ${retry}s` : ''}:`, error.message);
+        console.error(`automation ${jobKey} failed${retry ? `; retry in ${retry}s` : ''}:`, safeLog(error.message || error, 1000));
     }
 }
 
@@ -137,13 +146,13 @@ async function loop() {
     await Promise.all([
         providerSettings.ensureLoaded(),
         requestSettings.ensureLoaded().catch(error => {
-            console.warn('Automation request-service settings refresh failed during startup:', error.message);
+            console.warn('Automation request-service settings refresh failed during startup:', safeLog(error.message || error));
         }),
         emailSettings.ensureLoaded?.() || Promise.resolve()
     ]);
     await ensureRows();
     await heartbeat();
-    heartbeatTimer = setInterval(() => heartbeat({ draining: stopping }).catch(error => console.error('Automation heartbeat failed:', error.message)), HEARTBEAT_MS);
+    heartbeatTimer = setInterval(() => heartbeat({ draining: stopping }).catch(error => console.error('Automation heartbeat failed:', safeLog(error.message || error))), HEARTBEAT_MS);
     heartbeatTimer.unref?.();
     console.log(
         `CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms `
@@ -158,7 +167,7 @@ async function loop() {
             const due = await dueJobs();
             if (due.length) await runBatch(due);
         } catch (error) {
-            console.error('Automation scheduler iteration failed:', error.message);
+            console.error('Automation scheduler iteration failed:', safeLog(error.message || error, 1000));
         }
         if (!stopping) await sleep(POLL_MS);
     }
@@ -170,14 +179,14 @@ async function shutdown(signal) {
     console.log(`Automation worker draining (${signal}); active=${running.size}`);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     await heartbeat({ draining: true }).catch(error => {
-        console.warn('Unable to publish final automation draining heartbeat:', error.message);
+        console.warn('Unable to publish final automation draining heartbeat:', safeLog(error.message || error));
     });
     if (running.size) await Promise.allSettled([...running]);
     await query(`UPDATE operational_worker_state SET last_heartbeat_at=NOW(),draining_at=COALESCE(draining_at,NOW()),updated_at=NOW() WHERE worker_key='automation' AND instance_id=$1`, [INSTANCE_ID]).catch(error => {
-        console.warn('Unable to persist final automation draining state:', error.message);
+        console.warn('Unable to persist final automation draining state:', safeLog(error.message || error));
     });
     try { await getPool().end(); } catch (error) {
-        console.warn('Automation database pool close failed:', error.message);
+        console.warn('Automation database pool close failed:', safeLog(error.message || error));
     }
 }
 
