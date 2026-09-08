@@ -56,7 +56,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       allocation.allocation_start_at,ja.last_activity_at,js.name server_name,
       COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,c.automation_protected,
       us.first_playback_at,us.last_playback_at,COALESCE(us.playback_seconds,0)::bigint playback_seconds,
-      EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=fa.customer_id AND aps.server_id=ja.server_id) currently_playing,
+      EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.jellyfin_account_id=ja.id) currently_playing,
       EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=fa.customer_id AND h.hold_type=$1 AND h.source_key=('plan:'||fa.plan_id::text) AND h.released_at IS NULL) already_held
     FROM free_access fa
     JOIN customers c ON c.id=fa.customer_id LEFT JOIN app_users u ON u.id=c.user_id
@@ -66,16 +66,18 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       SELECT MAX(jal.restored_at) FILTER(WHERE jal.restored_at<=NOW()) restored_at
       FROM jellyfin_account_lifecycle jal
       WHERE jal.customer_id=fa.customer_id AND jal.category='free' AND jal.restored_at IS NOT NULL
+        AND jal.metadata->>'restoredReason'='admin_reenable'
+        AND jal.metadata->>'explicitRestore'='true'
     ) lifecycle ON TRUE
     LEFT JOIN LATERAL (
       SELECT MIN(ph.started_at) historical_first_playback_at
       FROM playback_history ph
-      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
+      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id AND ph.jellyfin_account_id=ja.id
     ) historical ON TRUE
     LEFT JOIN LATERAL (
       SELECT CASE
         WHEN lifecycle.restored_at IS NOT NULL THEN GREATEST(fa.starts_at,ja.created_at,lifecycle.restored_at)
-        WHEN fa.subscription_source='migration' AND historical.historical_first_playback_at IS NOT NULL
+        WHEN historical.historical_first_playback_at IS NOT NULL
           THEN LEAST(fa.starts_at,ja.created_at,historical.historical_first_playback_at)
         ELSE GREATEST(fa.starts_at,ja.created_at)
       END allocation_start_at
@@ -86,7 +88,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
              COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ph.ended_at,ph.last_seen_at)-ph.started_at))))
                FILTER(WHERE ph.started_at>=GREATEST(allocation.allocation_start_at,NOW()-(COALESCE(NULLIF(fa.inactivity_policy->>'playbackWindowDays','')::int,$3)||' days')::interval)),0)::bigint playback_seconds
       FROM playback_history ph
-      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
+      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id AND ph.jellyfin_account_id=ja.id
     ) us ON TRUE
     WHERE NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=fa.customer_id AND b.revoked_at IS NULL AND b.blocks_service_access=TRUE)
     ORDER BY COALESCE(us.last_playback_at,allocation.allocation_start_at),customer_name
