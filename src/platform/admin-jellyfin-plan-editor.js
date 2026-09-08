@@ -140,7 +140,19 @@ function availabilityCard(data, req) {
   const remaining = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const status = remaining == null ? 'No limit' : remaining > 0 ? `${remaining} open` : 'Closed';
   const tone = remaining == null || remaining > 0 ? 'good' : 'warn';
-  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}<div class="planConfigFacts"><div class="planConfigFact"><span>Used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Limit</span><strong>${limit == null ? '—' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div><div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit ?? 0)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved. In-progress Free registrations reserve a slot until completed or released.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
+  const facts = `<div class="planConfigFacts"><div class="planConfigFact"><span>Used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Limit</span><strong>${limit == null ? '—' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div>`;
+  // Every Jellyfin/bundle plan (fleet_users capacity model) draws its real,
+  // enforced availability from the eligible servers' user capacity (Server
+  // config -> Customer capacity / max_users), never from plans.capacity_limit
+  // -- that column is a no-op for this plan type. An editable "slots" field
+  // here would silently do nothing while looking authoritative, which is
+  // exactly what let a Free plan oversell: an admin set this to 1 expecting
+  // it to cap acquisition, while the real limit (server max_users) stayed at
+  // whatever it already was.
+  if (capacity.capacityModel(p) === 'fleet_users') {
+    return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><div class="planConfigBody">${facts}<div class="planFreeStatement"><strong>Server-controlled capacity.</strong><span>Jellyfin plan availability is the eligible server's customer capacity, not a plan-level slot count. Change it under <a href="/admin/servers">Servers</a> -> the server's Customer capacity (max_users).</span></div></div></section>`;
+  }
+  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}<div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit ?? 0)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved. In-progress Free registrations reserve a slot until completed or released.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
 }
 
 function deliveryCard(data, req) {
@@ -225,6 +237,7 @@ async function saveAccess(req, plan, data) {
   if (data.affected) await queuePlanReconciliation(plan.id, req.session.authUserId);
 }
 async function saveAvailability(req, plan) {
+  if (capacity.capacityModel(plan) === 'fleet_users') throw new Error('Jellyfin plan availability is controlled by the eligible server\'s customer capacity, not a plan-level slot count. Change it under Servers -> Customer capacity.');
   const limit = int(req.body.capacityLimit, 0, 1000000, 'Availability limit');
   await transaction(async client => {
     await client.query('UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1', [plan.id, limit]);

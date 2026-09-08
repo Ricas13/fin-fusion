@@ -44,7 +44,7 @@ stub('src/db.js',db);
 stub('src/auth/csrf.js',{token:()=> 'csrf-test',verify:()=>true});
 stub('src/security/route-rate-limit.js',{middleware:()=>((_req,_res,next)=>next())});
 stub('src/platform/runtime-settings.js',{ensureLoaded:async()=>{},siteName:()=> 'CAPTAiNFiN'});
-stub('src/entitlements/plan-capacity.js',{usage:async()=>({used:1,reserved:0,limit:80,remaining:79})});
+stub('src/entitlements/plan-capacity.js',{capacityModel:()=> 'fleet_users',usage:async()=>({used:1,reserved:0,limit:80,remaining:79})});
 stub('src/platform/admin-plan-access.js',{
   subscriberCount:async()=>1,
   values:()=>({accessModel:'concurrent_streams',streams:1,jellyfinHouseholdNetworkLimit:1,jellyfinHouseholdLeaseMinutes:60,allowDownloads:false,allowVideoTranscoding:true,allowAudioTranscoding:true,allowRemuxing:true,allowLiveTv:false,allowLiveTvManagement:false,allowRemoteAccess:true,allow4k:true,allowSubtitleEditing:false}),
