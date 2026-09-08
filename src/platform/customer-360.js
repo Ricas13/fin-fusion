@@ -25,13 +25,22 @@ async function customer360(customerId){
     const base=await query(`
         SELECT c.*,u.username AS login_username,u.email AS login_email,u.active AS login_active,
                u.created_at AS registered_at,u.updated_at AS login_updated_at,u.email_verified_at,u.last_login_at,
-               u.password_changed_at,u.failed_login_count,u.locked_until,u.totp_enabled,u.id AS app_user_id
+               u.password_changed_at,u.failed_login_count,u.locked_until,u.totp_enabled,u.id AS app_user_id,
+               prefs.discord_user_id AS linked_discord_user_id,
+               prefs.discord_handle AS linked_discord_username,
+               prefs.discord_linked_at
         FROM customers c
         LEFT JOIN app_users u ON u.id=c.user_id
+        LEFT JOIN customer_communication_preferences prefs ON prefs.customer_id=c.id
         WHERE c.id=$1
     `,[customerId]);
     if(!base.rowCount)return null;
     const customer=base.rows[0];
+    // OAuth-backed communication preferences are the source of truth. These
+    // compatibility aliases keep older admin views working without allowing
+    // the legacy customer columns to override a verified Discord connection.
+    customer.discord_user_id=customer.linked_discord_user_id||null;
+    customer.discord_username=customer.linked_discord_username||null;
     const userId=customer.app_user_id;
 
     const [subscriptions,primaryEntitlement,holds,paymentIncidents,accounts,provisioningState,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([

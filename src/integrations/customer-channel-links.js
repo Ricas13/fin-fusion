@@ -38,13 +38,20 @@ async function linkTelegram(raw,{chatId,username=null}){
 }
 async function linkDiscord(raw,{userId,handle=null}){
   const id=String(userId||'').trim();if(!/^\d{15,24}$/.test(id))throw new Error('Discord user identity is invalid');
+  const linkedHandle=handle?String(handle).slice(0,100):null;
   return consume(raw,'discord',async(client,customerId)=>{
-    await client.query(`INSERT INTO customer_communication_preferences(customer_id,discord_user_id,discord_handle,discord_opt_in,discord_linked_at) VALUES($1,$2,$3,TRUE,NOW()) ON CONFLICT(customer_id) DO UPDATE SET discord_user_id=EXCLUDED.discord_user_id,discord_handle=COALESCE(EXCLUDED.discord_handle,customer_communication_preferences.discord_handle),discord_opt_in=TRUE,discord_linked_at=NOW(),updated_at=NOW()`,[customerId,id,handle?String(handle).slice(0,100):null]);
+    await client.query(`INSERT INTO customer_communication_preferences(customer_id,discord_user_id,discord_handle,discord_opt_in,discord_linked_at) VALUES($1,$2,$3,TRUE,NOW()) ON CONFLICT(customer_id) DO UPDATE SET discord_user_id=EXCLUDED.discord_user_id,discord_handle=COALESCE(EXCLUDED.discord_handle,customer_communication_preferences.discord_handle),discord_opt_in=TRUE,discord_linked_at=NOW(),updated_at=NOW()`,[customerId,id,linkedHandle]);
+    // Keep the old customer columns as a compatibility mirror only. OAuth is
+    // authoritative and all new code reads customer_communication_preferences.
+    await client.query(`UPDATE customers SET discord_user_id=$2,discord_username=$3,updated_at=NOW() WHERE id=$1`,[customerId,id,linkedHandle]);
   });
 }
 async function unlink(customerId,channel){
   channel=cleanChannel(channel);
   if(channel==='telegram')await query(`UPDATE customer_communication_preferences SET telegram_chat_id=NULL,telegram_linked_at=NULL,telegram_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
-  else await query(`UPDATE customer_communication_preferences SET discord_user_id=NULL,discord_linked_at=NULL,discord_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
+  else await transaction(async client=>{
+    await client.query(`UPDATE customer_communication_preferences SET discord_user_id=NULL,discord_handle=NULL,discord_linked_at=NULL,discord_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
+    await client.query(`UPDATE customers SET discord_user_id=NULL,discord_username=NULL,updated_at=NOW() WHERE id=$1`,[customerId]);
+  });
 }
 module.exports={issue,inspect,consume,linkTelegram,linkDiscord,unlink,hash};
