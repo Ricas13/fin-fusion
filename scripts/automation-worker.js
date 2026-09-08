@@ -24,11 +24,19 @@ const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATIO
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = buildInfo.gitSha;
 const DEFAULT_JOB_INTERVALS=Object.freeze({free_capacity_backfill:30,free_places_digest:30,data_retention:3600,stremio_external_tokens:300,stremio_media_index:10800});
+const CRITICAL_JOB_KEYS=Object.freeze(['entitlements','free_capacity_backfill','customer_inactivity','billing','plan_changes']);
 let stopping = false;
 let running = new Set();
 let heartbeatTimer = null;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function assertCriticalJobRegistry() {
+    const missing = CRITICAL_JOB_KEYS.filter(jobKey => typeof jobRegistry.jobs[jobKey] !== 'function');
+    if (missing.length) {
+        throw new Error(`Automation critical job registry incomplete: ${missing.join(', ')}`);
+    }
+}
 
 function resultMetrics(jobKey, value = {}) {
     if (jobKey !== 'free_capacity_backfill') return '';
@@ -61,6 +69,7 @@ async function heartbeat({ draining = false } = {}) {
         dbPoolSize: DB_POOL_SIZE,
         dbControlHeadroom: DB_CONTROL_HEADROOM,
         registeredJobs: jobRegistry.names(),
+        criticalJobs: CRITICAL_JOB_KEYS,
         dbConnectionBudget: {
             roleLimit: CONNECTION_BUDGET.roleLimit,
             primaryPoolMax: CONNECTION_BUDGET.primaryPoolMax,
@@ -124,6 +133,7 @@ async function runBatch(rows) {
 }
 
 async function loop() {
+    assertCriticalJobRegistry();
     await Promise.all([
         providerSettings.ensureLoaded(),
         requestSettings.ensureLoaded().catch(error => {
