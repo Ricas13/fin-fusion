@@ -131,7 +131,7 @@ function liveMediaSubscriptions(portal){
 }
 function createCustomerAccessEndedRouter(){
   const router=express.Router();
-  router.get('/account/access-history.json',requireCustomer,async(req,res)=>{
+  router.get('/account/access-ended-history.json',requireCustomer,async(req,res)=>{
     try{
       const portal=await customers.getCustomerPortal(req.session.customerId);
       res.setHeader('Cache-Control','no-store, private, max-age=0');
@@ -141,7 +141,8 @@ function createCustomerAccessEndedRouter(){
       return res.status(503).json({items:[]});
     }
   });
-  router.get('/account/access',requireCustomer,async(req,res,next)=>{
+  router.use('/account/access',requireCustomer,async(req,res,next)=>{
+    if(req.method!=='GET')return next();
     try{
       const portal=await customers.getCustomerPortal(req.session.customerId);
       if(liveMediaSubscriptions(portal).length)return next();
