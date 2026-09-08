@@ -18,6 +18,7 @@ const paymentEventRetry=require('../payments/payment-event-retry');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
 const customerInactivity=require('./customer-inactivity-scoped');
+const freeCapacityBackfill=require('./free-capacity-backfill');
 const notificationLifecycle=require('./notification-lifecycle');
 const serviceEndEmails=require('./service-end-emails');
 const adminActivityNotifications=require('./admin-activity-notifications');
@@ -36,6 +37,7 @@ async function notificationLifecycleSafeRun(){const checkpoint=await notificatio
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0);return{...active,expired:expiredCount,expiryFailed,downgradeRetries,warnings,serviceEndEmails:serviceEnd,processed:Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(active.blocked||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
+ async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
