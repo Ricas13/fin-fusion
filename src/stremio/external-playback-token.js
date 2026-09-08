@@ -146,6 +146,22 @@ async function tokenFor(source, entitlement) {
   });
 }
 
+async function revokeEntitlement(entitlementId) {
+  if (!entitlementId) return { total: 0, revoked: 0 };
+  const rows = (await query(`SELECT * FROM stremio_external_playback_tokens
+    WHERE entitlement_id=$1 ORDER BY id`, [entitlementId])).rows;
+  let revoked = 0;
+  for (const row of rows) {
+    await operationLock.withLock(`external-playback:${row.source_id}:${entitlementId}`, async () => {
+      const currentRow = await current(row.source_id, entitlementId);
+      if (!currentRow) return;
+      await revokeRow(currentRow);
+      revoked += 1;
+    });
+  }
+  return { total: rows.length, revoked };
+}
+
 async function revokeDue({ limit = 100 } = {}) {
   const rows = (await query(`SELECT t.*
     FROM stremio_external_playback_tokens t
@@ -182,4 +198,4 @@ async function revokeDue({ limit = 100 } = {}) {
   return { total: rows.length, revoked, failed };
 }
 
-module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeDue };
+module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeEntitlement, revokeDue };
