@@ -29,6 +29,7 @@ async function customerStatus(customerId){
   if(!globalCfg.enabled)reasons.push('Free Server usage enforcement is paused by the administrator.');
   if(!worker.ready)reasons.push('Free Server usage enforcement is paused because the activity worker heartbeat is stale.');
   else if(!server?.ready)reasons.push(`Free Server usage enforcement is paused because this server does not have a trustworthy recent playback sample${server?.reason?` (${server.reason})`:''}.`);
+  const playbackSeconds=Math.max(0,Number(row.playback_seconds||0));
   return{
     applies:true,
     telemetry,
@@ -40,7 +41,10 @@ async function customerStatus(customerId){
     inactiveReferenceAt:row.inactive_reference_at||null,
     observationStartedAt:row.observation_started_at||null,
     hasPlayback:Boolean(row.has_playback),
-    playbackMinutes:Math.max(0,Math.round(Number(row.playback_seconds||0)/60)),
+    playbackSeconds,
+    // Display only completed minutes so 29m31s can never look like the 30-minute
+    // retention requirement has already been satisfied.
+    playbackMinutes:Math.floor(playbackSeconds/60),
     currentlyPlaying:Boolean(row.currently_playing),
     automationProtected:Boolean(row.automation_protected),
     alreadyHeld:Boolean(row.already_held),
