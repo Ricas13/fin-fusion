@@ -91,6 +91,19 @@ assert.equal(recentJellyfinActivity.noPlaybackEligible,false,'recent Jellyfin ac
 assert.equal(recentJellyfinActivity.usageEligible,true,'recent account activity must not fabricate playback minutes');
 assert.equal(policy.usageTriggered(recentJellyfinActivity,retentionPolicy),false,'an active customer below the playback minimum must not be removed until both retention conditions are breached');
 
+const importedExisting=inactivity.assessUsage({
+  allocation_start_at:'2026-08-20T12:00:00.000Z',
+  first_playback_at:'2026-08-27T12:00:00.000Z',
+  last_playback_at:'2026-08-28T12:00:00.000Z',
+  last_activity_at:'2026-09-07T11:00:00.000Z',
+  playback_seconds:0
+},retentionPolicy,now);
+assert.equal(importedExisting.hasPlayback,true,'an imported existing Jellyfin user with historical playback must already be activated');
+assert.equal(importedExisting.firstPlaybackEligible,false,'historical imported playback must prevent a false first-play warning');
+assert.equal(importedExisting.noPlaybackEligible,false,'recent Jellyfin activity must keep an imported activated user out of the inactivity breach');
+assert.equal(importedExisting.usageEligible,true,'historical import activation must not fabricate current rolling watch minutes');
+assert.equal(policy.usageTriggered(importedExisting,retentionPolicy),false,'an imported active user with recent activity must not be removed merely because current watch minutes are low');
+
 const minimumPolicy={firstPlaybackGraceDays:3,noPlaybackDays:null,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24};
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-30T12:00:00.000Z',first_playback_at:'2026-09-05T12:00:00.000Z',last_playback_at:'2026-09-05T12:00:00.000Z',playback_seconds:29*60},minimumPolicy,now).usageEligible,false,'the playback-minimum clock must start only after the first stream');
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-20T12:00:00.000Z',first_playback_at:'2026-08-30T12:00:00.000Z',last_playback_at:'2026-09-01T12:00:00.000Z',playback_seconds:29*60},minimumPolicy,now).usageEligible,true,'an activated allocation below its configured playback minimum must become eligible after the full window');
@@ -102,13 +115,20 @@ const grace=read('src/entitlements/jellyfin-inactivity-grace.js');
 const status=read('src/automation/customer-inactivity-status.js');
 const adminPolicy=read('src/platform/admin-request-plan-policy.js');
 const bulkOperations=read('src/platform/bulk-operations.js');
+const importer=read('src/jellyfin/user-import.js');
 assert.match(base,/async function candidates\(globalCfg=null,\{customerId=null\}=\{\}\)/,'candidate discovery must support customer-scoped evaluation');
 assert.match(base,/\(\$2::uuid IS NULL OR s\.customer_id=\$2::uuid\)/,'customer-scoped evaluation must be enforced in SQL instead of filtering a fleet-wide result');
 assert.match(base,/MAX\(jal\.restored_at\).*restored_at/,'current allocation discovery must include explicit Free Server restoration time');
-assert.match(base,/GREATEST\(fa\.starts_at,ja\.created_at,lifecycle\.restored_at\) allocation_start_at/,'allocation start must use the newest subscription/account/restoration boundary');
-assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) first_playback_at/,'first playback must be scoped to the current Free allocation');
-assert.match(base,/FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) last_playback_at/,'last playback must ignore sessions from previous Free allocations');
-assert.match(base,/ph\.started_at>=GREATEST\(allocation\.allocation_start_at,NOW\(\)-/,'minimum-playback totals must be clipped to the current allocation as well as the rolling window');
+assert.match(base,/s\.source subscription_source/,'candidate discovery must retain acquisition source so imports can preserve established playback history');
+assert.match(base,/SELECT MIN\(ph\.started_at\) historical_first_playback_at/,'candidate discovery must find established playback evidence for imported Jellyfin users');
+assert.match(base,/WHEN lifecycle\.restored_at IS NOT NULL THEN GREATEST\(fa\.starts_at,ja\.created_at,lifecycle\.restored_at\)/,'explicit restoration must remain the newest allocation boundary and discard old playback');
+assert.match(base,/WHEN fa\.subscription_source='migration' AND historical\.historical_first_playback_at IS NOT NULL/,'migration imports with real historical playback must use import-aware allocation semantics');
+assert.match(base,/THEN LEAST\(fa\.starts_at,ja\.created_at,historical\.historical_first_playback_at\)/,'imported playback must be allowed to prove that an existing Jellyfin identity was already activated');
+assert.match(base,/ELSE GREATEST\(fa\.starts_at,ja\.created_at\)/,'genuinely new Free allocations must still begin at the newest subscription/account boundary');
+assert.match(importer,/VALUES\(\$1,\$2,\$3,'migration',NOW\(\),\$4\)/,'existing Jellyfin customer imports must remain explicitly marked as migration acquisitions');
+assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) first_playback_at/,'first playback must be scoped to the effective Free allocation');
+assert.match(base,/FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) last_playback_at/,'last playback must ignore sessions from previous restored Free allocations');
+assert.match(base,/ph\.started_at>=GREATEST\(allocation\.allocation_start_at,NOW\(\)-/,'minimum-playback totals must be clipped to the effective allocation as well as the rolling window');
 assert.match(base,/rawLastActivityAt=asDate\(row\.last_activity_at\)/,'retention assessment must consume the Jellyfin activity timestamp that fleet telemetry persists');
 assert.match(base,/const lastActivityAt=rawLastActivityAt&&\(!allocationStartAt/,'Jellyfin activity must be scoped to the current Free allocation');
 assert.match(base,/const playbackOrActivityAt=lastActivityAt&&lastPlaybackAt/,'recent activity must use the newest trustworthy Jellyfin activity or playback signal');
