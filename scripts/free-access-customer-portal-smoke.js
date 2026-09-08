@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 require('./free-access-inactivity-consistency-smoke');
 require('./customer-my-access-inactivity-smoke');
+require('./customer-access-removal-reasons-smoke');
 require('./free-places-discord-notification-smoke');
 
 const provision = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
