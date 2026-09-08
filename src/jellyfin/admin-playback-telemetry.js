@@ -127,7 +127,7 @@ async function pollServer(server) {
   const serverId = String(server.id);
   const [users, sessions, managed] = await Promise.all([
     registry.request(serverId, '/Users', { timeoutMs: 10000, cacheTtlMs: 300000 }),
-    registry.request(serverId, '/Sessions?activeWithinSeconds=120', { timeoutMs: 10000, cacheTtlMs: 5000 }),
+    registry.request(serverId, '/Sessions', { timeoutMs: 10000, cacheTtlMs: 5000 }),
     managedUserIds(serverId)
   ]);
   if (!Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
