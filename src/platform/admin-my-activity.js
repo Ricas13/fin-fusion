@@ -89,7 +89,15 @@ function identityScope(identities, alias = 'ph') {
     params.push(identity.serverId, identity.userId);
     const serverIndex = params.length - 1;
     const userIndex = params.length;
-    return `(${alias}.server_id=$${serverIndex}::uuid AND LOWER(${alias}.jellyfin_user_id)=LOWER($${userIndex}::text))`;
+    return `(${alias}.server_id=$${serverIndex}::uuid AND (
+      LOWER(${alias}.jellyfin_user_id)=LOWER($${userIndex}::text)
+      OR EXISTS (
+        SELECT 1
+        FROM jellyfin_accounts ja_identity
+        WHERE ja_identity.id=${alias}.jellyfin_account_id
+          AND LOWER(ja_identity.jellyfin_user_id)=LOWER($${userIndex}::text)
+      )
+    ))`;
   });
   return { sql: clauses.length ? `(${clauses.join(' OR ')})` : 'FALSE', params };
 }
@@ -137,7 +145,7 @@ async function liveAdminSessions(identities) {
   const failures = [];
   await Promise.all(identities.map(async identity => {
     try {
-      const rows = await registry.request(identity.serverId, '/Sessions?activeWithinSeconds=120', { timeoutMs: 7000, cacheTtlMs: 5000 });
+      const rows = await registry.request(identity.serverId, '/Sessions', { timeoutMs: 7000, cacheTtlMs: 5000 });
       if (!Array.isArray(rows)) throw new Error('Jellyfin sessions response was not an array');
       for (const session of rows) {
         if (!session?.Id || !session?.NowPlayingItem) continue;
@@ -310,13 +318,15 @@ async function activityData(username, rawRange) {
     scopedQuery(identities, summarySql, [since, null]),
     previous.start ? scopedQuery(identities, summarySql, [previousStart, previousEnd]) : Promise.resolve({ rows: [{}] }),
     scopedQuery(identities, (scope, count) => `
-      SELECT ph.server_id,ph.jellyfin_user_id,ph.item_id,ph.item_name,ph.item_type,js.public_url,
+      SELECT ph.server_id,COALESCE(ph.jellyfin_user_id,ja.jellyfin_user_id) jellyfin_user_id,
+             ph.item_id,ph.item_name,ph.item_type,js.public_url,
              COUNT(*)::int plays,COALESCE(SUM(${duration}),0) seconds
       FROM playback_history ph
       JOIN jellyfin_servers js ON js.id=ph.server_id
+      LEFT JOIN jellyfin_accounts ja ON ja.id=ph.jellyfin_account_id
       WHERE ${scope}
         AND ($${count + 1}::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$${count + 1}::timestamptz)
-      GROUP BY ph.server_id,ph.jellyfin_user_id,ph.item_id,ph.item_name,ph.item_type,js.public_url
+      GROUP BY ph.server_id,COALESCE(ph.jellyfin_user_id,ja.jellyfin_user_id),ph.item_id,ph.item_name,ph.item_type,js.public_url
       ORDER BY seconds DESC,plays DESC LIMIT 24
     `, [since]),
     scopedQuery(identities, (scope, count) => `
@@ -343,10 +353,12 @@ async function activityData(username, rawRange) {
     scopedQuery(identities, (scope, count) => `
       SELECT * FROM (
         SELECT DISTINCT ON (ph.server_id,COALESCE(NULLIF(ph.item_id,''),ph.playback_key))
-               ph.server_id,ph.jellyfin_user_id,ph.item_id,ph.item_name,ph.item_type,ph.started_at,ph.last_seen_at,ph.ended_at,
+               ph.server_id,COALESCE(ph.jellyfin_user_id,ja.jellyfin_user_id) jellyfin_user_id,
+               ph.item_id,ph.item_name,ph.item_type,ph.started_at,ph.last_seen_at,ph.ended_at,
                ${duration} duration_seconds,js.public_url
         FROM playback_history ph
         JOIN jellyfin_servers js ON js.id=ph.server_id
+        LEFT JOIN jellyfin_accounts ja ON ja.id=ph.jellyfin_account_id
         WHERE ${scope}
           AND ($${count + 1}::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$${count + 1}::timestamptz)
         ORDER BY ph.server_id,COALESCE(NULLIF(ph.item_id,''),ph.playback_key),COALESCE(ph.last_seen_at,ph.started_at) DESC
