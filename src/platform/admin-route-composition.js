@@ -68,6 +68,7 @@ const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminMyActivityRouter } = require('./admin-my-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
 const { createAdminCustomerAccessHoldsRouter } = require('./admin-customer-access-holds');
+const { createAdminDiscordIdentityGuardRouter } = require('./admin-discord-identity-guard');
 const { createAdminCustomerManagementRouter } = require('./admin-customer-management');
 const { createAdminSubscriptionRevokeRouter } = require('./admin-subscription-revoke');
 const { createAdminCustomerOperatorRouter } = require('./admin-customer-operator');
@@ -179,6 +180,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminLibrariesRouter());
   app.use(createAdminJellyfinReenableRouter());
   app.use(createAdminCustomerAccessHoldsRouter());
+  app.use(createAdminDiscordIdentityGuardRouter());
   app.use(createAdminCustomerManagementRouter());
   app.use(createAdminSubscriptionRevokeRouter());
   app.use(createAdminManualEntitlementRouter());
