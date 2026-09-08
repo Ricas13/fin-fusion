@@ -77,6 +77,9 @@ jobs:
       - name: Apply schema on production PostgreSQL major
         run: npm run db:migrate
 
+      - name: Entitlement reconciliation wakeup database contract
+        run: node scripts/entitlement-reconciliation-wakeup-db-smoke.js
+
       - name: Database release checks
         run: npm run check:db
 
