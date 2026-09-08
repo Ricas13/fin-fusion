@@ -151,6 +151,7 @@ async function startFreeTrial(customerId, planCode) {
               AND s.superseded_by IS NULL AND s.starts_at<=NOW()
               AND (
                 (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
                 OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
                 OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end + ((s.service_extension_days || ' days')::interval))>NOW())
               )
@@ -199,10 +200,20 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
             SELECT s.id,s.plan_id
             FROM subscriptions s
             JOIN plans p ON p.id=s.plan_id
+            LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
             WHERE s.customer_id=$1 AND s.source='free_claim' AND p.is_free_tier=TRUE
               AND COALESCE(p.is_addon,FALSE)=FALSE AND s.superseded_by IS NULL
-              AND s.starts_at<=NOW() AND s.status IN('active','trialing','past_due','paused')
-              AND s.current_period_end>NOW()
+              AND s.starts_at<=NOW()
+              AND (
+                (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+                OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+                OR (
+                  COALESCE(s.service_extension_days,0)>0
+                  AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+                  AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW()
+                )
+              )
             FOR UPDATE OF s
         `,[customerId]);
         if(liveFree.rows.some(row=>String(row.plan_id)===String(plan.id)))throw new Error('You already have free access on this plan.');
