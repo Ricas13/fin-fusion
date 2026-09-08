@@ -7,6 +7,9 @@ const supportNotifications=require('../support/notifications');
 const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const customerNav=require('./customer-nav-html');
+const routeRateLimit=require('../security/route-rate-limit');
+
+const supportWriteLimit=routeRateLimit.middleware({scope:'customer-support-write',max:20,windowSeconds:3600});
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/support'));}
 function message(req){return{message:req.query.message||null,error:req.query.error||null};}
@@ -23,7 +26,7 @@ function createCustomerSupportRouter(){
   const router=express.Router();
   router.use('/account/support',requireCustomer);
   router.get('/account/support',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const [rows,navOptions]=await Promise.all([tickets.listForCustomer(req.session.customerId),customerNav.optionsForCustomer(req.session.customerId)]);return res.render('customer/support',{siteName:runtimeSettings.siteName(),tickets:rows,navOptions,csrfToken:csrf.token(req),...message(req)});}catch(error){next(error)}});
-  router.post('/account/support',async(req,res)=>{
+  router.post('/account/support',supportWriteLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.redirect('/account/support?error='+encodeURIComponent('Invalid or expired security token.'));
     try{
       const ticket=await tickets.create({customerId:req.session.customerId,customerUserId:req.session.customerUserId,subject:req.body.subject,category:req.body.category,message:req.body.message});
@@ -32,7 +35,7 @@ function createCustomerSupportRouter(){
     }catch(error){return res.redirect('/account/support?error='+encodeURIComponent(error.message));}
   });
   router.get('/account/support/:id',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const [data,navOptions]=await Promise.all([tickets.getForCustomer(req.params.id,req.session.customerId),customerNav.optionsForCustomer(req.session.customerId)]);if(!data)return res.redirect('/account/support?error='+encodeURIComponent('This support ticket does not exist or is not linked to your account.'));return res.render('customer/support-thread',{siteName:runtimeSettings.siteName(),navOptions,csrfToken:csrf.token(req),...data,...message(req)});}catch(error){next(error)}});
-  router.post('/account/support/:id/reply',async(req,res)=>{
+  router.post('/account/support/:id/reply',supportWriteLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.redirect(`/account/support/${encodeURIComponent(req.params.id)}?error=${encodeURIComponent('Invalid or expired security token.')}`);
     try{
       const reply=await tickets.replyCustomer({ticketId:req.params.id,customerId:req.session.customerId,customerUserId:req.session.customerUserId,message:req.body.message});

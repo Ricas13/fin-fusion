@@ -55,26 +55,37 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   let effectIdentity=incident.scope==='unresolved'&&resolvedIdentity.scope!=='unresolved'
     ? resolvedIdentity
     : {scope:incident.scope||resolvedIdentity.scope||'unresolved',customerId:incident.customer_id||resolvedIdentity.customerId||null};
-  // "REFUND = REMOVE PLAN": a confirmed full refund removes the associated
-  // paid plan so normal NOT-PAID=REMOVE reconciliation deprovisions the
-  // service, exactly like an expiry or cancellation would. This is separate
-  // from (and no longer coupled to) any access-hold mechanism above, and it
-  // never touches admin authority - an active admin_present directive keeps
-  // the service eligible regardless of the subscription row's status.
+  // "MONEY CONFIRMED LOST = REMOVE PLAN": a confirmed full refund OR a
+  // chargeback/dispute the merchant lost both mean the same thing commercially
+  // - the payment provider has forcibly and finally taken the money back with
+  // no further merchant recourse - so both remove the associated paid plan,
+  // exactly like an expiry or cancellation would, via normal
+  // NOT-PAID=REMOVE reconciliation. This is separate from (and no longer
+  // coupled to) any access-hold mechanism above, and it never touches admin
+  // authority - an active admin_present directive keeps the service eligible
+  // regardless of the subscription row's status.
+  //
+  // A dispute/chargeback that is still open (kind='dispute', not yet lost)
+  // deliberately does NOT terminate access here: the outcome isn't final yet,
+  // and an admin can still act explicitly via service-admin-control if they
+  // want to remove access while it's under review.
   //
   // The termination itself is idempotent, so duplicate webhook deliveries
   // intentionally retry it. This matters when the incident row was recorded
   // successfully but the first termination attempt hit a transient failure.
   // We also fail the incident-processing call when termination fails so the
   // payment provider has a reason to redeliver instead of silently accepting
-  // a confirmed refund while leaving the paid plan active.
+  // confirmed lost money while leaving the paid plan active.
   const confirmedFullRefund=kind==='refund'&&(metadata?.fullRefund===true||incident.metadata?.fullRefund===true);
-  if(confirmedFullRefund&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
+  const confirmedLostChargeback=kind==='chargeback'&&(status==='lost'||incident.incident_status==='lost');
+  const moneyConfirmedLost=confirmedFullRefund||confirmedLostChargeback;
+  if(moneyConfirmedLost&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
       const matched=await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND customer_id=$3 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`,[provider,subscriptionRef,effectIdentity.customerId]);
       if(matched.rowCount){
-        const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`Confirmed full refund (${provider} ${kind} ${incident.id})`,reference:incident.id});
+        const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
+        const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
         if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
       }
     }

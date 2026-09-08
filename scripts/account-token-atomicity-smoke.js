@@ -47,7 +47,7 @@ async function userRow(userId){
 
 async function main(){
   try{
-    const passwordHash=await bcrypt.hash(originalPassword,4);
+    const passwordHash=await bcrypt.hash(originalPassword,12);
     const user=(await query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',NULL) RETURNING id,session_version`,[email,username,passwordHash])).rows[0];
     await query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3)`,[user.id,username,email]);
 
