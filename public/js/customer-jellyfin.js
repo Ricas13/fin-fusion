@@ -1,6 +1,47 @@
 'use strict';
 
 (()=>{
+  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function formatEndedAt(value){
+    if(!value)return'';
+    const date=new Date(value);
+    return Number.isNaN(date.getTime())?'':date.toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  }
+  function renderAccessHistory(data){
+    const items=Array.isArray(data?.items)?data.items:[];
+    if(!items.length)return;
+
+    const removedPanel=document.querySelector('[aria-labelledby="removed-subscriptions-heading"]');
+    const freeRemoval=items.find(item=>item?.reasonCode==='inactivity_policy'&&item?.kind==='Free Server');
+    if(removedPanel&&freeRemoval){
+      const heading=removedPanel.querySelector('#removed-subscriptions-heading');
+      const intro=heading?.parentElement?.querySelector('p');
+      if(heading)heading.textContent='Free Server access removed';
+      if(intro)intro.textContent=`${freeRemoval.reason}${formatEndedAt(freeRemoval.endedAt)?` Removed ${formatEndedAt(freeRemoval.endedAt)}.`:''}`;
+      const detail=removedPanel.querySelector('.jellyfinCredential small');
+      if(detail)detail.textContent=freeRemoval.reason;
+    }
+
+    let history=document.getElementById('access-ended-history');
+    if(history)history.remove();
+    history=document.createElement('section');
+    history.id='access-ended-history';
+    history.className='panel';
+    history.setAttribute('aria-labelledby','access-ended-history-heading');
+    const cards=items.map(item=>{
+      const ended=formatEndedAt(item?.endedAt);
+      return `<article class="jellyfinCredential"><span>${esc(item?.kind||'Streaming access')} · Access ended${ended?` · ${esc(ended)}`:''}</span><strong>${esc(item?.planName||'Streaming access')}</strong><small>${esc(item?.reason||'This access is no longer active.')}</small></article>`;
+    }).join('');
+    history.innerHTML=`<div class="jellyfinSubhead"><div><span class="eyebrow">Access history</span><h2 id="access-ended-history-heading">Why previous access ended</h2><p>Each ended service keeps its recorded reason so you can see whether access stopped because of activity rules, payment, cancellation, refund or expiry.</p></div><span class="jellyfinLibraryCount">${items.length} record${items.length===1?'':'s'}</span></div><div class="jellyfinCredentialGrid">${cards}</div>`;
+    const anchor=removedPanel||document.querySelector('.jellyfinHubHero');
+    if(anchor)anchor.insertAdjacentElement('afterend',history);
+  }
+
+  fetch('/account/access-history.json',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'})
+    .then(async response=>{const data=await response.json().catch(()=>({items:[]}));if(!response.ok)throw new Error('Access history unavailable.');return data;})
+    .then(renderAccessHistory)
+    .catch(()=>{});
+
   for(const form of document.querySelectorAll('[data-library-form]')){
     const boxes=()=>[...form.querySelectorAll('input[type="checkbox"][name="library"]')];
     const setAll=checked=>{for(const box of boxes())box.checked=checked;};
@@ -13,7 +54,6 @@
   const csrfToken=stremio.querySelector('input[name="_csrf"]')?.value||document.querySelector('input[name="_csrf"]')?.value||'';
   const planLine=stremio.querySelector('.jellyfinPlanLine')?.textContent?.trim()||'Private Stremio access';
 
-  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function form(action,label,buttonClass='secondary'){
     return `<form class="plainForm" method="post" action="${esc(action)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="returnTo" value="access"><button class="button ${esc(buttonClass)}" type="submit">${esc(label)}</button></form>`;
   }
