@@ -11,6 +11,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const worker = read('scripts/automation-worker.js');
 const jobs = read('src/automation/jobs.js');
 const entitlementJobs = read('src/jellyfin/jobs.js');
+const reconciliationControl = read('src/jellyfin/reconciliation-control.js');
 const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
@@ -18,6 +19,7 @@ const paymentEventRetry = read('src/payments/payment-event-retry.js');
 const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
+const entitlementWakeup = read('db/migrations/20260908073500_entitlement_reconciliation_wakeup.sql');
 
 for (const jobKey of ['health','entitlements','free_capacity_backfill','customer_inactivity','billing','provider_operation_recovery','payment_events','plan_changes','stremio_managed_accounts','stremio_external_tokens']) {
     assert(criticalJobs.isCritical(jobKey), `${jobKey} must remain customer-access critical automation`);
@@ -58,6 +60,18 @@ assert(planChange.includes("const provisioning=require('../jellyfin/resilient-pr
     && planChange.includes('await provisioning.reconcileCustomer(change.customer_id)')
     && planChange.indexOf('await provisioning.reconcileCustomer(change.customer_id)') < planChange.indexOf("SET state='applied',provider_schedule_state='applied'"),
     'scheduled Stripe plan changes must reconcile target access before marking the change applied');
+
+for (const triggerTarget of ['subscriptions','customer_entitlement_overrides','customer_access_holds','customer_service_admin_control']) {
+    assert(entitlementWakeup.includes(`ON ${triggerTarget}`),
+        `${triggerTarget} entitlement mutations must durably queue customer reconciliation`);
+}
+assert(entitlementWakeup.includes('reconcile_requested_at')
+    && entitlementWakeup.includes("customer_provisioning_state.status='running'"),
+    'database wakeups must preserve an in-flight reconciliation while recording a newer entitlement change');
+assert(reconciliationControl.includes('reconcile_requested_at=NULL')
+    && reconciliationControl.includes('requeueIfRequestedDuringRun(customerId)')
+    && (reconciliationControl.match(/await requeueIfRequestedDuringRun\(customerId\)/g) || []).length >= 2,
+    'reconciliation completion must requeue an entitlement change that arrived during an in-flight run');
 
 assert(deploymentVerify.includes("require('../src/automation/critical-jobs')")
     && deploymentVerify.includes("'Free Server recovery job'"),
