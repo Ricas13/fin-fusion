@@ -41,12 +41,14 @@ assert.equal(
 
 const router=read('src/platform/router.js');
 const source=read('src/platform/customer-access-ended.js');
+const inactivity=read('src/automation/customer-inactivity.js');
 const view=read('views/customer/access-ended.ejs');
 const client=read('public/js/customer-jellyfin.js');
 assert(router.indexOf('createCustomerAccessEndedRouter()')<router.indexOf('createCustomerJellyfinRouter()'),'access-ended router must run before the existing My Access router so ended paid users are not redirected away');
 assert.match(source,/router\.get\('\/account\/access-history\.json'/,'customer access history JSON must be exposed from the canonical reason layer');
 assert.match(source,/if\(liveMediaSubscriptions\(portal\)\.length\)return next\(\)/,'active customers must continue into the normal My Access router');
 assert.match(source,/return res\.render\('customer\/access-ended'/,'customers with no live streaming service but recorded history must see a reason page');
+assert.match(inactivity,/Math\.floor\(assessment\.seconds\/60\).*below/,'stored inactivity trigger evidence must use completed playback minutes rather than rounding up');
 assert.match(view,/Why your access ended/,'ended-access page must explain why access ended');
 assert.match(view,/portal account available even when streaming access has ended/,'ended-access page must make clear that the portal account remains available');
 assert.match(client,/fetch\('\/account\/access-history\.json'/,'normal My Access must fetch access-ended history');
