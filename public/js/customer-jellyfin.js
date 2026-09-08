@@ -37,7 +37,7 @@
     if(anchor)anchor.insertAdjacentElement('afterend',history);
   }
 
-  fetch('/account/access-history.json',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'})
+  fetch('/account/access-ended-history.json',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'})
     .then(async response=>{const data=await response.json().catch(()=>({items:[]}));if(!response.ok)throw new Error('Access history unavailable.');return data;})
     .then(renderAccessHistory)
     .catch(()=>{});
