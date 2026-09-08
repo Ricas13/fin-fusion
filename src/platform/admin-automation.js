@@ -11,6 +11,7 @@ const ui = require('./admin-ui');
 const LABELS = {
     health: ['Jellyfin health', 'Checks configured servers and updates health status.'],
     entitlements: ['Entitlements', 'Expires due subscriptions and reconciles active customer access.'],
+    free_capacity_backfill: ['Free Server capacity recovery', 'Assigns waiting Free Server entitlements as soon as eligible Jellyfin user capacity becomes available.'],
     policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTAiNFiN policy with live managed Jellyfin users.'],
     customer_inactivity: ['Customer inactivity', 'Applies configured Jellyfin inactivity and cleanup rules.'],
     bulk_jobs: ['Bulk operations', 'Processes queued bulk customer actions.'],
@@ -27,9 +28,9 @@ const LABELS = {
     stremio_media_index: ['Stremio media index', 'Refreshes managed and external Stremio catalogue indexes.'],
     notification_lifecycle: ['Admin notification scanner', 'Scans subscription, payment and operational events to raise admin-facing notifications.']
 };
-const CORE_JOBS=new Set(['health','entitlements','billing','plan_changes','stale_reclaim']);
+const CORE_JOBS=new Set(['health','entitlements','free_capacity_backfill','customer_inactivity','billing','plan_changes','stale_reclaim']);
 const GROUPS=[
-    ['Access & servers','Core jobs that keep customer access, Jellyfin health and policy reconciliation moving.',new Set(['health','entitlements','policy_drift','customer_inactivity','stremio_media_index'])],
+    ['Access & servers','Core jobs that keep customer access, Jellyfin health and policy reconciliation moving.',new Set(['health','entitlements','free_capacity_backfill','policy_drift','customer_inactivity','stremio_media_index'])],
     ['Commerce','Billing, plan transitions and affiliate-credit background work.',new Set(['billing','plan_changes','referral_rewards','marketing_campaigns'])],
     ['Messaging & onboarding','Activation cleanup, public registration cleanup, transactional email, notifications and request-service sync.',new Set(['activation_cleanup','pending_registration_cleanup','email_outbox','notification_outbox','request_users','notification_lifecycle'])],
     ['Operations','Bulk work queues and stale-job recovery.',new Set(['bulk_jobs','stale_reclaim'])]
@@ -46,7 +47,7 @@ function statePill(state){const cls=state==='healthy'?'good':state==='failed'||s
 function scheduleOptions(value){const current=Number(value||0),values=[...new Set([...PRESETS,current].filter(n=>n>=30&&n<=86400))].sort((a,b)=>a-b);return values.map(n=>`<option value="${n}" ${n===current?'selected':''}>Every ${esc(intervalLabel(n))}</option>`).join('')}
 function groupFor(jobKey){return GROUPS.find(([, ,keys])=>keys.has(jobKey))||['Other','Less common background work.',new Set()]}
 
-async function workerState(){const result=await query(`SELECT *,EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state WHERE worker_key='automation'`);return result.rows[0]||null}
+async function workerState(){const result=await query(`SELECT *,EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state WHERE worker_key='automation' ORDER BY last_heartbeat_at DESC LIMIT 1`);return result.rows[0]||null}
 
 function jobCard(req, job) {
     const [name,description] = LABELS[job.job_key] || [job.job_key,'Background platform task'];
