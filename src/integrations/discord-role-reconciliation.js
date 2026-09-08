@@ -2,9 +2,14 @@
 
 const { query } = require('../db');
 
-async function requestRoleRetry() {
-    const jobHealth = require('../automation/job-health');
-    return jobHealth.requestRun('discord_roles');
+async function requestRoleRetry(queryFn = query) {
+    const result = await queryFn(`
+        UPDATE automation_job_state
+        SET next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()
+        WHERE job_key='discord_roles' AND enabled=TRUE
+        RETURNING *
+    `);
+    return result.rows[0] || null;
 }
 
 async function reconcileCustomerDiscordRoles(customerId, { requestRetryOnError = true } = {}) {
