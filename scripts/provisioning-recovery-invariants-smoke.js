@@ -13,6 +13,7 @@ const entitlementJobs = read('src/jellyfin/jobs.js');
 const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
+const adminAutomation = read('src/platform/admin-automation.js');
 
 assert(worker.includes("const buildInfo = require('../src/build-info')") && worker.includes('const COMMIT_SHA = buildInfo.gitSha'),
     'automation worker must report the same CAPTAINFIN_BUILD_SHA identity embedded in the release image');
@@ -47,5 +48,13 @@ assert(deploymentVerify.includes("'automation worker release'")
 assert(deploymentVerify.includes("'automation worker registry'")
     && deploymentVerify.includes("registeredJobs.includes('free_capacity_backfill')"),
     'deployment verification must prove the running worker binary actually registered Free Server recovery');
+
+assert(adminAutomation.includes("free_capacity_backfill: ['Free Server capacity recovery'")
+    && adminAutomation.includes("'free_capacity_backfill','customer_inactivity'"),
+    'Free Server recovery and lifecycle jobs must be visibly classified as core automation');
+assert(adminAutomation.includes("CORE_JOBS.has(req.params.job)") && adminAutomation.includes("Type DISABLE"),
+    'core recovery jobs must require explicit confirmation before an operator can disable them');
+assert(adminAutomation.includes("ORDER BY last_heartbeat_at DESC LIMIT 1"),
+    'automation control room must display the newest worker instance rather than an arbitrary stale heartbeat row');
 
 console.log('provisioning recovery invariants smoke: ok');
