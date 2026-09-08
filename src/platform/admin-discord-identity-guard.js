@@ -30,15 +30,26 @@ async function applyCanonicalDiscordIdentity(req, _res, next) {
     }
 }
 
+function isProtectedCustomerWrite(req) {
+    if (req.method !== 'POST') return false;
+    // Express strips the /admin/users/:customerId prefix while this middleware
+    // is running. Keep the canonical route owners intact; this is only a
+    // pre-write invariant guard, not a second route implementation.
+    return req.path === '/profile' || req.path === '/manage/account';
+}
+
 function createAdminDiscordIdentityGuardRouter() {
     const router = express.Router();
-    router.post('/admin/users/:customerId/profile', applyCanonicalDiscordIdentity);
-    router.post('/admin/users/:customerId/manage/account', applyCanonicalDiscordIdentity);
+    router.use('/admin/users/:customerId', (req, res, next) => {
+        if (!isProtectedCustomerWrite(req)) return next();
+        return applyCanonicalDiscordIdentity(req, res, next);
+    });
     return router;
 }
 
 module.exports = {
     canonicalDiscordIdentity,
     applyCanonicalDiscordIdentity,
+    isProtectedCustomerWrite,
     createAdminDiscordIdentityGuardRouter
 };
