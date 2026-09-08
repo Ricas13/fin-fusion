@@ -2,9 +2,23 @@
 
 const { query } = require('../db');
 
-async function reconcileCustomerDiscordRoles(customerId) {
+async function requestRoleRetry() {
+    const jobHealth = require('../automation/job-health');
+    return jobHealth.requestRun('discord_roles');
+}
+
+async function reconcileCustomerDiscordRoles(customerId, { requestRetryOnError = false } = {}) {
     const provisioning = require('../jellyfin/resilient-provisioning');
-    return provisioning.reconcileDiscordRoles(customerId);
+    try {
+        const result = await provisioning.reconcileDiscordRoles(customerId);
+        if (requestRetryOnError && Array.isArray(result?.errors) && result.errors.length) {
+            await requestRoleRetry().catch(() => null);
+        }
+        return result;
+    } catch (error) {
+        if (requestRetryOnError) await requestRoleRetry().catch(() => null);
+        throw error;
+    }
 }
 
 async function linkedCustomerIds(queryFn = query) {
@@ -69,5 +83,6 @@ module.exports = {
     reconcileCustomerDiscordRoles,
     linkedCustomerIds,
     reconcileLinkedCustomers,
+    requestRoleRetry,
     compactFailure
 };
