@@ -269,7 +269,7 @@ async function usageTrend(range) {
       SELECT generate_series(date_trunc('${grain.trunc}',$1::timestamptz),date_trunc('${grain.trunc}',$2::timestamptz - INTERVAL '1 microsecond'),INTERVAL '${grain.step}') AS bucket
     ), started AS (
       SELECT date_trunc('${grain.trunc}',started_at) AS bucket,COUNT(*)::int AS plays,
-             COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM(LEAST(COALESCE(ended_at,last_seen_at,$2::timestamptz),$2::timestamptz)-started_at))),0)::bigint AS watch_seconds
+             COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM(LEAST(COALESCE(ended_at,last_seen_at,$2::timestamptz),$2::timestamptz)-started_at)))),0)::bigint AS watch_seconds
       FROM playback_history WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz GROUP BY 1)
     SELECT b.bucket AS day,COALESCE(s.plays,0)::int AS plays,COALESCE(s.watch_seconds,0)::bigint AS watch_seconds
     FROM buckets b LEFT JOIN started s ON s.bucket=b.bucket ORDER BY b.bucket ASC
