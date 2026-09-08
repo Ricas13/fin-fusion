@@ -248,6 +248,7 @@ async function rollbackUnsafeRemote(intent, customerId, created, stage, original
 }
 
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
+  const accessLane = options.accessLane === 'free' ? 'free' : 'primary';
   const preferred = String(options.preferredUsername || await preferredUsername(customerId)).slice(0, 40);
   let intent = await prepareIntent(customerId, server.id, preferred, Boolean(options.requireExactUsername));
   let created = await recoverIntent(intent);
@@ -292,25 +293,38 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
   try {
     account = await transaction(async client => {
       const stored = await client.query(`
-        INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync,is_primary)
-        VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE)
+        INSERT INTO jellyfin_accounts(
+          customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync,is_primary,
+          access_lane,access_lane_changed_at
+        )
+        VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE,$5,NOW())
         ON CONFLICT(server_id,jellyfin_user_id) DO UPDATE SET
           customer_id=EXCLUDED.customer_id,
           jellyfin_username=EXCLUDED.jellyfin_username,
           disabled=FALSE,
           last_policy_sync=NOW(),
+          access_lane_changed_at=CASE
+            WHEN jellyfin_accounts.access_lane IS DISTINCT FROM EXCLUDED.access_lane THEN NOW()
+            ELSE jellyfin_accounts.access_lane_changed_at
+          END,
+          access_lane=EXCLUDED.access_lane,
           updated_at=NOW()
         WHERE jellyfin_accounts.customer_id=EXCLUDED.customer_id
         RETURNING *
-      `, [customerId, server.id, created.Id, intent.username]);
+      `, [customerId, server.id, created.Id, intent.username, accessLane]);
       if (!stored.rowCount) throw new Error('Remote Jellyfin account is already owned by another customer');
       await client.query('DELETE FROM jellyfin_account_creation_intents WHERE id=$1', [intent.id]);
+      if (options.placementLeaseId) {
+        await client.query(`DELETE FROM jellyfin_server_placement_leases
+          WHERE id=$1 AND customer_id=$2 AND server_id=$3`, [options.placementLeaseId, customerId, server.id]);
+      }
       return stored.rows[0];
     });
   } catch (error) {
     // The remote account already has the desired policy. Keep it and its
     // durable intent so a database/network recovery can attach it later
-    // instead of creating a duplicate remote user.
+    // instead of creating a duplicate remote user. The placement lease is also
+    // intentionally retained until success/expiry so capacity stays reserved.
     await setIntent(intent.id, { status: 'remote_created', remoteUserId: String(created.Id), lastError: error }).catch(() => {});
     const wrapped = new Error('Jellyfin account was created safely but could not yet be persisted locally. Automatic reconciliation will retry without creating a duplicate remote user.');
     wrapped.code = 'JELLYFIN_ACCOUNT_PERSIST_RETRYABLE';
