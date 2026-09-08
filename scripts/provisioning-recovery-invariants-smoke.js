@@ -36,6 +36,8 @@ assert(entitlementJobs.includes(canonicalAdminPresent),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 assert(adminManualEntitlement.includes(canonicalAdminPresent),
     'manual grant conflict detection must not ignore administrator-present Jellyfin access');
+assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jellyfin',s\.id\)/g)||[]).length >= 2,
+    'Free and trial acquisition transaction guards must both honor administrator-present Jellyfin access');
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
     'generic reconciliation must retry persisted provisioning problems independently of acquisition flows');
 
