@@ -44,6 +44,7 @@ const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter, issueCustomerInstallation } = require('./customer-stremio');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerLibrarySelectionRouter } = require('./customer-library-selection');
+const { createCustomerAccessEndedRouter } = require('./customer-access-ended');
 const { createCustomerJellyfinRouter } = require('./customer-jellyfin');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerSupportRouter } = require('./customer-support');
@@ -90,6 +91,7 @@ function createRouter() {
     router.use(createCustomerStremioRouter());
     router.use(createCustomerAffiliateRouter());
     router.use(createCustomerLibrarySelectionRouter());
+    router.use(createCustomerAccessEndedRouter());
     router.use(createCustomerJellyfinRouter());
     router.use(createCustomerDashboardRouter());
     router.use(createCustomerSupportRouter());
