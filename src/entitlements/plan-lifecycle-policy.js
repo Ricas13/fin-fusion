@@ -20,7 +20,11 @@ function effectiveForFreePlan(value={},global={}){
  const globalFirstPlayback=optionalInt(global.freeFirstPlaybackGraceDays,1,3650),globalNoPlayback=optionalInt(global.freeNoPlaybackDays,1,3650)??7,globalMinimumPlayback=optionalInt(global.freeMinimumPlaybackMinutes,1,1000000),globalPlaybackWindow=optionalInt(global.freePlaybackWindowDays,1,365)??7;
  return{...local,enabled:bool(global.enabled),dryRun:bool(global.dryRun),firstPlaybackGraceDays:inheritFirstPlayback?globalFirstPlayback:local.firstPlaybackGraceDays,noPlaybackDays:inheritNoPlayback?globalNoPlayback:local.noPlaybackDays,minimumPlaybackMinutes:inheritMinimumPlayback?globalMinimumPlayback:local.minimumPlaybackMinutes,playbackWindowDays:inheritPlaybackWindow?globalPlaybackWindow:local.playbackWindowDays,inherited:{enabled:true,dryRun:true,firstPlaybackGraceDays:inheritFirstPlayback,noPlaybackDays:inheritNoPlayback,minimumPlaybackMinutes:inheritMinimumPlayback,playbackWindowDays:inheritPlaybackWindow}};
 }
-function hasUsageTrigger(value){return Boolean(value?.enabled&&(value.firstPlaybackGraceDays!=null||value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null));}
+// This answers whether a usage policy is configured, not whether execution is
+// currently enabled. Keeping those concepts separate means pausing global
+// lifecycle automation cannot make existing inactivity holds look obsolete and
+// silently recreate users who were already removed.
+function hasUsageTrigger(value){return Boolean(value&&(value.firstPlaybackGraceDays!=null||value.noPlaybackDays!=null||value.minimumPlaybackMinutes!=null));}
 function noPlaybackBoundaryCrossedToday(assessment,policy,now=Date.now()){
  if(!assessment?.noPlaybackEligible||policy?.noPlaybackDays==null||!assessment?.referenceAt)return false;
  const reference=new Date(assessment.referenceAt),start=new Date(now);
