@@ -36,4 +36,5 @@ assert(!view.toLowerCase().includes('whatsapp'),'retired WhatsApp UI must not re
 assert(!source.toLowerCase().includes('whatsapp'),'retired WhatsApp routing must not reappear');
 assert(view.includes('channels.forEach(function(channel)'),'event columns must use the same visible-channel list as cards');
 
+require('./discord-role-reconciliation-smoke');
 console.log('customer communications page resilience smoke passed');

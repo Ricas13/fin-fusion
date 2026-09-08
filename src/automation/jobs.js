@@ -11,6 +11,7 @@ const requestServiceSettings=require('../integrations/request-service-settings')
 const emailSettings=require('../integrations/email-settings');
 const emailOutbox=require('../integrations/email-outbox');
 const notificationOutbox=require('../integrations/notification-outbox');
+const discordRoleReconciliation=require('../integrations/discord-role-reconciliation');
 const billingControl=require('../payments/billing-control');
 const providerOperationRecovery=require('../payments/provider-operation-recovery');
 const customerPlanChange=require('../payments/customer-plan-change');
@@ -49,6 +50,7 @@ const jobs={
  async stale_reclaim(){const reclaimed=await bulkWorker.reclaimStaleRunningItems();return{processed:Number(reclaimed||0),reclaimed:Number(reclaimed||0)}},
  async email_outbox(){const status=await emailSettings.status();if(!status.configured)return{processed:0,skipped:'email_not_configured'};return emailOutbox.deliverDue({limit:50})},
  async notification_outbox(){return notificationOutbox.deliverDue({limit:50})},
+ async discord_roles(){return discordRoleReconciliation.reconcileLinkedCustomers()},
  async request_users(){await requestServiceSettings.ensureLoaded();const config=await requestUserSync.configuration();if(!config.configured)return{processed:0,skipped:'request_service_not_configured'};const result=await requestUserSync.syncAll();return{...result,processed:Number(result.total||0)}},
  async billing(){return billingControl.syncDue({all:false,limit:100})},
  async provider_operation_recovery(){return providerOperationRecovery.run({limit:25})},
