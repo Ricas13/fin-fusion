@@ -77,11 +77,11 @@ function freeAccessHealth(status,{now=Date.now()}={}){
   if(!status?.applies)return null;
   const policy=status.policy||{},minimumObservationHours=Math.max(0,Number(policy.minimumObservationHours)||0);
   const firstPlaybackGraceDays=Number(policy.firstPlaybackGraceDays),noPlaybackDays=Number(policy.noPlaybackDays),playbackWindowDays=Number(policy.playbackWindowDays),minimumPlaybackMinutes=Number(policy.minimumPlaybackMinutes);
-  const allocationStart=asDate(status.allocationStartAt),firstPlayback=asDate(status.firstPlaybackAt),lastPlayback=asDate(status.lastPlaybackAt),observation=asDate(status.observationStartedAt),inactiveReference=asDate(status.inactiveReferenceAt);
+  const allocationStart=asDate(status.allocationStartAt),firstPlayback=asDate(status.firstPlaybackAt),lastPlayback=asDate(status.lastPlaybackAt),lastActivity=asDate(status.lastActivityAt),observation=asDate(status.observationStartedAt),inactiveReference=asDate(status.inactiveReferenceAt);
   const activated=Boolean(firstPlayback||status.hasPlayback||status.currentlyPlaying);
   const playbackMinutes=Math.max(0,Number(status.playbackMinutes)||0);
   const firstRule=Number.isFinite(firstPlaybackGraceDays)&&firstPlaybackGraceDays>0?`play your first stream within ${firstPlaybackGraceDays} day${firstPlaybackGraceDays===1?'':'s'} of receiving a place`:null;
-  const activityRule=Number.isFinite(noPlaybackDays)&&noPlaybackDays>0?`have playback within every ${noPlaybackDays}-day period`:null;
+  const activityRule=Number.isFinite(noPlaybackDays)&&noPlaybackDays>0?`use Jellyfin within every ${noPlaybackDays}-day period`:null;
   const minutesRule=Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0?`watch at least ${minimumPlaybackMinutes} minutes in each ${playbackWindowDays}-day window`:null;
   const rules=[firstRule,activityRule,minutesRule].filter(Boolean);
   const rulesText=rules.length?`Free Server rules: ${rules.join(', ')}.`:'Keep using the Free Server regularly to retain your place.';
@@ -97,7 +97,8 @@ function freeAccessHealth(status,{now=Date.now()}={}){
 
   const activityConfigured=Number.isFinite(noPlaybackDays)&&noPlaybackDays>0;
   const minutesConfigured=Number.isFinite(minimumPlaybackMinutes)&&minimumPlaybackMinutes>0&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0;
-  const activityMet=!activityConfigured||Boolean(status.currentlyPlaying)||(lastPlayback&&lastPlayback.getTime()>=now-noPlaybackDays*86400000);
+  const activityReference=inactiveReference||lastActivity||lastPlayback;
+  const activityMet=!activityConfigured||Boolean(status.currentlyPlaying)||(activityReference&&activityReference.getTime()>=now-noPlaybackDays*86400000);
   const minimumMet=!minutesConfigured||playbackMinutes>=minimumPlaybackMinutes;
   const configuredCount=Number(activityConfigured)+Number(minutesConfigured),metCount=Number(activityConfigured&&activityMet)+Number(minutesConfigured&&minimumMet);
   const allMet=configuredCount===0||metCount===configuredCount;
@@ -110,7 +111,7 @@ function freeAccessHealth(status,{now=Date.now()}={}){
 
   const deadlines=[];
   if(activityConfigured){
-    const inactivityDeadline=addHours(inactiveReference||lastPlayback,noPlaybackDays*24),observationDeadline=addHours(observation,Math.max(minimumObservationHours,noPlaybackDays*24));
+    const inactivityDeadline=addHours(activityReference,noPlaybackDays*24),observationDeadline=addHours(observation,Math.max(minimumObservationHours,noPlaybackDays*24));
     if(inactivityDeadline)deadlines.push(inactivityDeadline);if(observationDeadline)deadlines.push(observationDeadline);
   }
   if(minutesConfigured){const usageDeadline=addHours(observation,Math.max(minimumObservationHours,playbackWindowDays*24));if(usageDeadline)deadlines.push(usageDeadline);}
