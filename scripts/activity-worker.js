@@ -5,13 +5,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const pkg = require('../package.json');
 
-// Playback analytics includes long-range 6 month / 1 year / YTD views, so the
-// activity worker must never prune playback history on the old short-retention
-// defaults. 1827 days safely covers any five-calendar-year span, including
-// ranges containing two leap days. Deployments can still configure a longer
-// ACTIVITY_RETENTION_DAYS value (the activity collector currently caps it at
-// 3650 days), but values below this floor are promoted automatically.
-const MIN_PLAYBACK_RETENTION_DAYS = 1827;
+// Playback analytics is intended to provide a long-lived operational history.
+// Keep a full ten years of playback telemetry so annual/YTD reporting remains
+// useful as the installation matures. The collector already caps retention at
+// 3650 days, so older deployment values are promoted to that supported maximum.
+const MIN_PLAYBACK_RETENTION_DAYS = 3650;
 const configuredPlaybackRetention = Number.parseInt(process.env.ACTIVITY_RETENTION_DAYS || '', 10);
 if (!Number.isFinite(configuredPlaybackRetention) || configuredPlaybackRetention < MIN_PLAYBACK_RETENTION_DAYS) {
   process.env.ACTIVITY_RETENTION_DAYS = String(MIN_PLAYBACK_RETENTION_DAYS);
