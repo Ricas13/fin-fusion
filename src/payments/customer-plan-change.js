@@ -12,6 +12,7 @@ const entitlement=require('../entitlements/subscription-state');
 const serviceScope=require('../entitlements/service-scope');
 const providerOps=require('./provider-operations');
 const notificationDispatch=require('../integrations/notification-dispatch');
+const provisioning=require('../jellyfin/resilient-provisioning');
 
 function planChangeRefusal(message){const error=new Error(message);error.planChangeRefusal=true;return error;}
 function scheduleTargetPrice(schedule){let target=null;for(const phase of schedule?.phases||[])for(const item of phase?.items||[]){const price=typeof item?.price==='string'?item.price:item?.price?.id;if(price)target=price;}return target;}
@@ -145,7 +146,7 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
 async function scheduledStripeSubscription(change){const result=await query(`SELECT s.*,s.id AS subscription_id,COALESCE(s.price_minor_snapshot,p.price_minor) price_minor,COALESCE(s.currency_snapshot,p.currency) currency,COALESCE(s.billing_interval_snapshot,p.billing_interval) billing_interval,COALESCE(s.duration_days_snapshot,p.duration_days) duration_days,p.code,p.name FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.id=$1 AND s.customer_id=$2 AND s.superseded_by IS NULL AND s.source='stripe' AND s.status IN ('active','trialing','past_due','paused') LIMIT 1`,[change.current_subscription_id,change.customer_id]);const current=result.rows[0]||null;if(!current||!entitlement.recurringProvider(current))throw planChangeRefusal('Current subscription changed before scheduled plan change.');return current;}
 
 async function applyDueStripe(){
-    const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND pc.provider='stripe' AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,succeeded:0,failed:0,pending:0};
+    const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND pc.provider='stripe' AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,succeeded:0,failed:0,pending:0},failures=[];
     for(const change of due.rows){
         try{
             const current=await scheduledStripeSubscription(change),target=(await query('SELECT * FROM plans WHERE id=$1',[change.target_plan_id])).rows[0];if(!target)throw planChangeRefusal('Target plan no longer exists.');
@@ -153,15 +154,22 @@ async function applyDueStripe(){
             const mapping=await providerPricing.getProviderPlanByExternalId('stripe',targetPrice);if(!mapping||String(mapping.id)!==String(target.id)||mapping.checkout_mode!=='subscription')throw planChangeRefusal('Scheduled Stripe target mapping no longer matches the target plan/access option.');
             if(change.target_access_quantity&&mappingQuantity(target,mapping)!==Number(change.target_access_quantity))throw planChangeRefusal('Scheduled Stripe target mapping no longer matches the selected access allowance.');
             const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id,{expand:['items.data.price','schedule']}),remotePrice=typeof remote.items?.data?.[0]?.price==='string'?remote.items.data[0].price:remote.items?.data?.[0]?.price?.id;
-            if(remotePrice===targetPrice){const synced=await billingControl.syncSubscription(current.subscription_id,{expectedProviderPriceId:targetPrice});if(!synced.ok)throw new Error(`Target price observed, but canonical provider verification failed: ${synced.error}`);await transaction(async db=>{await applySnapshot(db,current.subscription_id,target,mapping);await db.query(`UPDATE customer_plan_changes SET state='applied',provider_schedule_state='applied',error=NULL,updated_at=NOW() WHERE id=$1 AND state='pending'`,[change.id]);});summary.succeeded++;continue;}
+            if(remotePrice===targetPrice){
+                const synced=await billingControl.syncSubscription(current.subscription_id,{expectedProviderPriceId:targetPrice});if(!synced.ok)throw new Error(`Target price observed, but canonical provider verification failed: ${synced.error}`);
+                await transaction(async db=>{await applySnapshot(db,current.subscription_id,target,mapping);});
+                await provisioning.reconcileCustomer(change.customer_id);
+                await query(`UPDATE customer_plan_changes SET state='applied',provider_schedule_state='applied',error=NULL,updated_at=NOW() WHERE id=$1 AND state='pending'`,[change.id]);
+                summary.succeeded++;continue;
+            }
             let schedule=remote.schedule||null;if(typeof schedule==='string'){try{schedule=await client.subscriptionSchedules.retrieve(schedule);}catch(error){if(billingControl.providerMissing(error))throw planChangeRefusal('Stripe schedule no longer exists and the target price was not applied. Manual review is required.');throw error;}}
             if(change.provider_schedule_id){if(schedule?.id&&String(schedule.id)!==String(change.provider_schedule_id))throw planChangeRefusal('Stripe subscription is attached to a different schedule than the local plan change. Manual review is required.');if(!schedule){try{schedule=await client.subscriptionSchedules.retrieve(change.provider_schedule_id);}catch(error){if(billingControl.providerMissing(error))throw planChangeRefusal('Recorded Stripe schedule no longer exists and the target price was not applied. Manual review is required.');throw error;}}}
             if(!schedule){await query(`UPDATE customer_plan_changes SET provider_schedule_state='waiting_provider',error=NULL,updated_at=NOW() WHERE id=$1`,[change.id]);summary.pending++;continue;}
             const owner=String(schedule.metadata?.internal_customer_id||''),scheduleChangeId=String(schedule.metadata?.captainfin_plan_change_id||'');if(owner&&owner!==String(change.customer_id))throw planChangeRefusal('Stripe schedule is owned by another customer. Manual review is required.');if(!scheduleChangeId)throw planChangeRefusal('Stripe schedule is not owned by a CAPTAiNFiN plan change. Manual review is required.');if(scheduleChangeId!==String(change.id))throw planChangeRefusal('Stripe schedule belongs to a different CAPTAiNFiN plan change. Manual review is required.');
             const scheduledTarget=scheduleTargetPrice(schedule);if(scheduledTarget&&scheduledTarget!==targetPrice)throw planChangeRefusal('Stripe schedule target no longer matches the intended plan price. Manual review is required.');if(['released','completed','canceled'].includes(String(schedule.status)))throw planChangeRefusal(`Stripe schedule ${schedule.status} without applying the target price.`);
             await query(`UPDATE customer_plan_changes SET provider_schedule_id=COALESCE(provider_schedule_id,$2),provider_schedule_state=$3,error=NULL,updated_at=NOW() WHERE id=$1`,[change.id,schedule.id,schedule.status||'waiting_provider']);summary.pending++;
-        }catch(error){if(error.planChangeRefusal)await query(`UPDATE customer_plan_changes SET state='failed',error=$2,updated_at=NOW() WHERE id=$1`,[change.id,String(error.message).slice(0,1000)]);else await query(`UPDATE customer_plan_changes SET error=$2,updated_at=NOW() WHERE id=$1 AND state='pending'`,[change.id,String(error.message).slice(0,1000)]);summary.failed++;}
+        }catch(error){if(error.planChangeRefusal)await query(`UPDATE customer_plan_changes SET state='failed',error=$2,updated_at=NOW() WHERE id=$1`,[change.id,String(error.message).slice(0,1000)]);else await query(`UPDATE customer_plan_changes SET error=$2,updated_at=NOW() WHERE id=$1 AND state='pending'`,[change.id,String(error.message).slice(0,1000)]);summary.failed++;failures.push(String(error.message||error).replace(/[\r\n\t]+/g,' ').slice(0,300));}
     }
+    if(failures.length)summary.warning=`${summary.failed} Stripe plan change${summary.failed===1?'':'s'} failed: ${[...new Set(failures)].slice(0,2).join('; ')}`.slice(0,1000);
     return summary;
 }
 
