@@ -76,8 +76,8 @@ async function getCustomerState(customerId) {
 async function markCustomerRunning(customerId, entitlement = null) {
     await query(`
         INSERT INTO customer_provisioning_state(
-            customer_id,status,attempt_count,last_attempt_at,next_attempt_at,subscription_id,plan_id,updated_at
-        ) VALUES($1,'running',1,NOW(),NOW()+make_interval(mins=>$4),$2,$3,NOW())
+            customer_id,status,attempt_count,last_attempt_at,next_attempt_at,subscription_id,plan_id,reconcile_requested_at,updated_at
+        ) VALUES($1,'running',1,NOW(),NOW()+make_interval(mins=>$4),$2,$3,NULL,NOW())
         ON CONFLICT (customer_id) DO UPDATE SET
             status='running',
             attempt_count=customer_provisioning_state.attempt_count+1,
@@ -85,8 +85,21 @@ async function markCustomerRunning(customerId, entitlement = null) {
             next_attempt_at=NOW()+make_interval(mins=>$4),
             subscription_id=EXCLUDED.subscription_id,
             plan_id=EXCLUDED.plan_id,
+            reconcile_requested_at=NULL,
             updated_at=NOW()
     `, [customerId, entitlement?.subscription_id || null, entitlement?.plan_id || null, RUNNING_STALE_MINUTES]);
+}
+
+async function requeueIfRequestedDuringRun(customerId) {
+    const result = await query(`
+        UPDATE customer_provisioning_state
+        SET status='pending',next_attempt_at=NOW(),updated_at=NOW()
+        WHERE customer_id=$1
+          AND reconcile_requested_at IS NOT NULL
+          AND (last_attempt_at IS NULL OR reconcile_requested_at > last_attempt_at)
+        RETURNING customer_id
+    `, [customerId]);
+    return result.rowCount > 0;
 }
 
 async function markCustomerHealthy(customerId, detail = {}) {
@@ -108,6 +121,7 @@ async function markCustomerHealthy(customerId, detail = {}) {
         detail.subscriptionId || null,
         detail.planId || null
     ]);
+    await requeueIfRequestedDuringRun(customerId);
 }
 
 async function markCustomerProblem(customerId, status, error, detail = {}) {
@@ -136,6 +150,7 @@ async function markCustomerProblem(customerId, status, error, detail = {}) {
         JSON.stringify(detail.result || {}), detail.subscriptionId || null, detail.planId || null,
         detail.accountId || null, detail.serverId || null
     ]);
+    await requeueIfRequestedDuringRun(customerId);
 }
 
 async function forceCustomerDue(customerId) {
@@ -238,6 +253,7 @@ module.exports = {
     classifyError,
     getCustomerState,
     markCustomerRunning,
+    requeueIfRequestedDuringRun,
     markCustomerHealthy,
     markCustomerProblem,
     forceCustomerDue,

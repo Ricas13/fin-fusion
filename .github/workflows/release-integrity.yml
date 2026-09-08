@@ -48,6 +48,9 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Provisioning recovery invariants
+        run: node scripts/provisioning-recovery-invariants-smoke.js
+
       - name: Supply-chain pinning policy
         run: node scripts/supply-chain-integrity-smoke.js
 

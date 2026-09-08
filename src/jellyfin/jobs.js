@@ -28,9 +28,11 @@ function summarizeFailureReasons(reasons, failed) {
 //  2. a previous provisioning/deprovisioning attempt is pending/blocked/failed
 //     and is due. Catalogue visibility/active flags are deliberately not used
 //     here: once a subscription contract exists, retiring the plan from sale
-//     must not stop that customer's access from being reconciled. Permanent
-//     access and service extensions also remain live even after the original
-//     provider period has ended.
+//     must not stop that customer's access from being reconciled. Permanent,
+//     administrator-present and service-extension access remain live even after
+//     the original provider period has ended. Keep this population aligned with
+//     subscription-state's canonical entitlement truth so recovery cannot omit
+//     an access state that the customer-facing product considers entitled.
 async function dueCustomers(limit = 250) {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 250));
     const result = await query(`
@@ -44,7 +46,8 @@ async function dueCustomers(limit = 250) {
             WHERE s.superseded_by IS NULL
               AND s.starts_at <= NOW()
               AND (
-                (o.permanent_access=TRUE AND o.revoked_at IS NULL)
+                (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
                 OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end > NOW())
                 OR (
                   COALESCE(s.service_extension_days,0)>0
