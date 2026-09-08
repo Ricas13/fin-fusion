@@ -82,7 +82,7 @@ assert(/createTableIfMissing:\s*false/.test(application),'web session store must
 assert(!/createTableIfMissing:\s*true/.test(application),'web runtime must never regain session-table DDL fallback');
 
 // Stremio ownership: household access remains a control-plane contract while
-// the stream resource hands Stremio the dedicated restricted media-server user's
+// the stream resource hands Stremio an isolated media-server session's
 // static/original media URL directly. No CAPTAiNFiN media relay or provider
 // playback-session lifecycle is allowed in that path.
 const external=read('src/stremio/external-direct-runtime.js');
@@ -91,7 +91,7 @@ const stremioEntitlements=read('src/stremio/entitlements.js');
 const managedEntitlements=read('src/stremio/managed-entitlements.js');
 const stremioRuntime=read('src/stremio/runtime.js');
 const jellyfinActivity=read('src/jellyfin/activity.js');
-assert(!external.includes('controlPlaybackUrl')&&external.includes('directPlaybackUrl(')&&/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(external)&&external.includes("url.searchParams.set('api_key',client.sourceToken(source))")&&external.includes('source.media_server_type'),'external playback must return its dedicated media-server user raw-file URL directly through the stored provider');
+assert(!external.includes('controlPlaybackUrl')&&external.includes('directPlaybackUrl(')&&/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(external)&&external.includes("url.searchParams.set('api_key',token)")&&external.includes('externalPlaybackToken.tokenFor(source,entitlement)')&&!external.includes('client.sourceToken(source)')&&external.includes('source.media_server_type'),'external playback must return its raw-file URL directly through the stored provider using an isolated per-entitlement media-server session, never the durable source token');
 assert(managed.includes("url.searchParams.set('Static','true')")&&managed.includes("url.searchParams.set('api_key',token)"),'managed playback must return its restricted hidden media-server user raw-file URL directly');
 assert(!managed.includes('/PlaybackInfo')&&!stremioRuntime.includes("require('./managed-playback-lifecycle')"),'managed Stremio delivery must not negotiate or report a media-server playback session');
 assert(stremioRuntime.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'direct stream results must claim household access before authenticated media-server URLs leave CAPTAiNFiN');
