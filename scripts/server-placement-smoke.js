@@ -60,15 +60,19 @@ assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), 
 
 const capacitySource=fs.readFileSync('src/entitlements/plan-capacity.js','utf8');
 const provisioningSource=fs.readFileSync('src/jellyfin/provisioning-helpers.js','utf8');
+const durableSource=fs.readFileSync('src/jellyfin/durable-account-creation.js','utf8');
 const userCapacitySource=fs.readFileSync('src/jellyfin/user-capacity.js','utf8');
 const pendingRegistrationSource=fs.readFileSync('src/security/pending-registration.js','utf8');
+const hardeningMigration=fs.readFileSync('db/migrations/20260908221500_post_681_runtime_hardening.sql','utf8');
 const acquisition=capacity.acquisitionSql('p');
 assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'fleet capacity must be expressed as customer users, pending owed users and reservations');
 assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'Jellyfin fleet capacity must not depend on stream entitlements or raw Jellyfin user metrics');
 assert(acquisition.includes("capacity_account.account_purpose='jellyfin'")&&acquisition.includes('COUNT(DISTINCT capacity_account.customer_id)')&&acquisition.includes('pending_subscription.customer_id'),'acquisition SQL must count one managed customer per server and reserve pending entitled customers');
 assert(!acquisition.includes("commercial_snapshot->'streams'")&&!acquisition.includes('occupancy_metric'),'acquisition SQL must not use stream weighting or Jellyfin total_users');
-assert(userCapacitySource.includes("COUNT(DISTINCT ja.customer_id)")&&userCapacitySource.includes("ja.account_purpose='jellyfin'")&&userCapacitySource.includes('ja.disabled=FALSE'),'server capacity truth must count enabled managed customer users exactly once');
-assert(provisioningSource.includes("require('./user-capacity')")&&provisioningSource.includes('userCapacity.decorateServers(available)'),'automatic placement must use the canonical managed-user counter');
+assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource.includes('jellyfin_account_creation_intents')&&userCapacitySource.includes('jellyfin_server_placement_leases')&&userCapacitySource.includes('COUNT(DISTINCT customer_id)'),'server capacity truth must count durable users, creation intents and active leases exactly once per customer/server');
+assert(provisioningSource.includes('async function reservePlacement')&&provisioningSource.includes('FOR UPDATE')&&provisioningSource.includes("error.code = 'JELLYFIN_SERVER_CAPACITY_CHANGED'")&&provisioningSource.includes('placementLeaseId: reservedServer.placement_lease_id'),'remote user creation must be preceded by a serialized server-capacity lease');
+assert(durableSource.includes('access_lane,access_lane_changed_at')&&durableSource.includes('access_lane=EXCLUDED.access_lane')&&durableSource.includes('jellyfin_server_placement_leases'),'account lane and placement-lease consumption must persist in the same local transaction');
+assert(hardeningMigration.includes('CREATE TABLE IF NOT EXISTS jellyfin_server_placement_leases')&&hardeningMigration.includes('UNIQUE(customer_id,server_id)'),'placement leases must be durable and unique per customer/server');
 assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a plan capacity_limit');
 assert(pendingRegistrationSource.includes('async function reserveFreeAccess')&&pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,plan.id')&&pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),'Free Access reservation must consume one fleet user place even when plans.capacity_limit is null');
 assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'free'}),'fleet_users');
