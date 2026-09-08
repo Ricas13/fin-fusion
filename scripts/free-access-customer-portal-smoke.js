@@ -34,7 +34,8 @@ assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jell
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');
 
-assert(/const FREE_HOLD_MINUTES=60;/.test(pendingRegistration),'Free Server reservation must last exactly 60 minutes, matching the registration verification link TTL');
+assert(/const FREE_HOLD_MINUTES=10;/.test(pendingRegistration),'Free Server pre-registration reservation must stay at 10 minutes before the form is submitted');
+assert(/expires_at=\$4/.test(pendingRegistration)&&/freeReservation\.id,created\.rows\[0\]\.id,email,expiresAt/.test(pendingRegistration),'submitted Free Server registration must extend its reservation to the verification expiry');
 assert(/async function reserveFreeAccess/.test(pendingRegistration)&&/holder_session_hash/.test(pendingRegistration),'Free Server must have a session-bound pre-registration hold');
 assert(/FREE_ACCESS_CAPACITY_EXHAUSTED/.test(pendingRegistration)&&/No free places currently available/.test(pendingRegistration),'last-place loser must receive the canonical no-capacity result');
 assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server hold must be created only by the explicit registration POST');
