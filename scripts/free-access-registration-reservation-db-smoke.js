@@ -12,7 +12,7 @@ const {encryptWithEnv}=require('../src/security/purpose-crypto');
 async function main(){
   const free=(await query(`SELECT id,code,capacity_limit FROM plans WHERE is_free_tier=TRUE LIMIT 1`)).rows[0];
   assert(free,'canonical Free Access plan is missing');
-  assert.equal(pending.FREE_HOLD_MINUTES,60,'Free Access hold must match the 60-minute registration verification window');
+  assert.equal(pending.FREE_HOLD_MINUTES,10,'anonymous Free Access hold must stay short before registration is submitted');
   const originalLimit=free.capacity_limit;
   const tag=`hold-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const reservationIds=[];
@@ -89,7 +89,7 @@ async function main(){
     reservationIds.push(firstHold.id);
     assert(firstHold?.id,'explicit Free Access reservation did not create a hold');
     const holdMs=new Date(firstHold.expires_at).getTime()-Date.now();
-    assert(holdMs>59*60000&&holdMs<=60*60000+5000,'Free Access reservation does not expire in the 60-minute window');
+    assert(holdMs>9*60000&&holdMs<=10*60000+5000,'anonymous Free Access reservation does not expire in the 10-minute window');
 
     const idempotent=await pending.reserveFreeAccess({sessionId:firstSession});
     assert.equal(String(idempotent.id),String(firstHold.id),'same browser session created a second Free Access hold');
@@ -109,7 +109,10 @@ async function main(){
 
     first=await pending.begin({email:`${tag}-a@example.test`,username:`${tag}-a`.slice(0,40),password:'ReservationSmoke!2026',freeAccess:true,ttlMinutes:60,freeReservationId:firstHold.id,freeReservationSessionId:firstSession});
     assert.equal(String(first.freeReservation?.id),String(firstHold.id),'registration did not attach the pre-existing hold');
-    assert.equal(new Date(first.freeReservation.expires_at).getTime(),new Date(firstHold.expires_at).getTime(),'registration incorrectly extended the original hold');
+    const pendingExpiryMs=new Date(first.expires_at).getTime();
+    const extendedHoldMs=new Date(first.freeReservation.expires_at).getTime();
+    assert.equal(extendedHoldMs,pendingExpiryMs,'submitted Free Access reservation must expire at the exact verification-token expiry');
+    assert(extendedHoldMs>new Date(firstHold.expires_at).getTime()+45*60000,'submitted registration did not extend the short anonymous hold to the verification window');
 
     created=await pending.consume(first.token);
     assert(created?.freeAccessRequested,'verified registration lost Free Access intent');
@@ -148,6 +151,7 @@ async function main(){
     reservationIds.push(terminalHold.id);
     terminal=await pending.begin({email:`${tag}-terminal@example.test`,username:`${tag}-terminal`.slice(0,40),password:'ReservationSmoke!2026',freeAccess:true,ttlMinutes:60,freeReservationId:terminalHold.id,freeReservationSessionId:terminalSession});
     assert.equal(String(terminal.freeReservation?.id),String(terminalHold.id),'terminal registration did not retain its pre-hold');
+    assert.equal(new Date(terminal.freeReservation.expires_at).getTime(),new Date(terminal.expires_at).getTime(),'terminal registration hold was not aligned to its verification expiry');
     const terminalHeld=await capacity.usage(free.id);
     assert.equal(terminalHeld.reservedUsers,Number(after.reservedUsers||0)+1,'terminal registration reservation was not counted as one place');
 
