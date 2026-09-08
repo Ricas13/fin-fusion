@@ -3,6 +3,7 @@
 const {query,transaction}=require('../db');
 const client=require('./source-client');
 const operationLock=require('./operation-lock');
+const externalPlaybackToken=require('./external-playback-token');
 
 const DEFAULT_ROTATION_HOURS=4;
 const TOKEN_GRACE_HOURS=1;
@@ -106,10 +107,11 @@ async function revokeRetiredTokens({limit=100,sourceId=null,force=false}={}){
   return{total:rows.length,revoked,failed};
 }
 
-async function maintain({rotateLimit=25,revokeLimit=100}={}){
+async function maintain({rotateLimit=25,revokeLimit=100,playbackRevokeLimit=100}={}){
+  const playbackRevocation=await externalPlaybackToken.revokeDue({limit:playbackRevokeLimit});
   const revocation=await revokeRetiredTokens({limit:revokeLimit});
   const rotation=await rotateDueTokens({limit:rotateLimit});
-  return{total:Number(revocation.total||0)+Number(rotation.total||0),processed:Number(revocation.revoked||0)+Number(rotation.rotated||0),failed:Number(revocation.failed||0)+Number(rotation.failed||0),rotation,revocation};
+  return{total:Number(playbackRevocation.total||0)+Number(revocation.total||0)+Number(rotation.total||0),processed:Number(playbackRevocation.revoked||0)+Number(revocation.revoked||0)+Number(rotation.rotated||0),failed:Number(playbackRevocation.failed||0)+Number(revocation.failed||0)+Number(rotation.failed||0),playbackRevocation,rotation,revocation};
 }
 
 module.exports={DEFAULT_ROTATION_HOURS,TOKEN_GRACE_HOURS,rotationHours,graceHours,cleanupIssuedAuth,retireEncryptedTokenTx,retireEncryptedToken,rotateSourceToken,rotateDueTokens,revokeRetiredTokens,maintain};
