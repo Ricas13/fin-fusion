@@ -21,10 +21,19 @@ const householdOverrides = require('../entitlements/household-overrides');
 
 function registerHandler(jobType, fn) { bulkWorker.registerHandler(jobType, fn); }
 async function currentSubscription(customerId) {
+    // A confirmed refund/chargeback on the newest primary contract is a
+    // terminal boundary. Check that boundary before asking effectiveSubscription
+    // for an older still-live row; otherwise an old subscription can be selected
+    // and mutated after the customer's newer contract was deliberately revoked.
+    const latestResult=await query(`SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval,EXISTS(SELECT 1 FROM audit_log terminal_audit WHERE terminal_audit.entity_type='subscription' AND terminal_audit.entity_id=s.id::text AND terminal_audit.action='billing.subscription.terminate_for_refund') AS refund_terminated FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle') AND s.superseded_by IS NULL ORDER BY s.created_at DESC LIMIT 1`,[customerId]);
+    const latest=latestResult.rows[0]||null;
+    if(latest?.refund_terminated)return null;
     const effective=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
     if(effective)return effective;
-    const result=await query(`SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle') ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1`,[customerId]);
-    return result.rows[0]||null;
+    // When there is no live entitlement, the newest ordinary (non-refund)
+    // primary row remains intentionally editable so admins can reactivate a
+    // legitimately lapsed/local-ended customer via extend/set-expiry/plan-change.
+    return latest;
 }
 async function completedEndReference(customerId,reference){const result=await query(`SELECT entity_id FROM audit_log WHERE action='billing.subscription.terminate_local' AND metadata->>'customerId'=$1 AND metadata->>'reference'=$2 ORDER BY created_at DESC LIMIT 1`,[String(customerId),String(reference)]);return result.rows[0]||null;}
 async function auditItem(action,customerId,metadata){await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'customer',$2,$3::jsonb)`,[action,customerId,JSON.stringify(metadata||{})]);}

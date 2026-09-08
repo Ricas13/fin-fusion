@@ -5,6 +5,7 @@ const {query}=require('../db');
 const activity=require('../jellyfin/activity');
 const policyEvents=require('../jellyfin/activity-policy-events');
 const streamPolicy=require('../jellyfin/stream-policy-settings');
+const playbackAnalytics=require('./playback-analytics');
 const runtimeSettings=require('./runtime-settings');
 const csrf=require('../auth/csrf');
 const ui=require('./admin-ui');
@@ -87,9 +88,10 @@ function createAdminActivityRouter(){
   router.use('/admin/activity',requireAdminSession,noStore);
   router.get('/admin/activity',async(req,res,next)=>{try{
     await runtimeSettings.ensureLoaded();
-    const policy=await streamPolicy.get(),cfg={...activity.config(),countPaused:policy.countPaused},data=await dashboardData(cfg),state=playbackState(data);
-    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.activity.view','admin_dashboard','activity',$2::jsonb)`,[req.session.authUserId,JSON.stringify({mode:policy.mode})]);
-    return res.render('admin/activity',{siteName:runtimeSettings.siteName(),cfg,policy,csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null,heroHtml:playbackHero(data,policy,state),issueHtml:issueCards(state),state,recentDecisions:state.recentDecisions.map(decorateEvent),events:data.events.map(decorateEvent),summary:data.summary,streams:data.streams,servers:data.servers,history:data.history});
+    const policy=await streamPolicy.get(),cfg={...activity.config(),countPaused:policy.countPaused},analyticsDays=playbackAnalytics.normalizeDays(req.query.range);
+    const[data,analytics]=await Promise.all([dashboardData(cfg),playbackAnalytics.load(analyticsDays)]),state=playbackState(data);
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.activity.view','admin_dashboard','activity',$2::jsonb)`,[req.session.authUserId,JSON.stringify({mode:policy.mode,analyticsRangeDays:analytics.days})]);
+    return res.render('admin/activity',{siteName:runtimeSettings.siteName(),cfg,policy,analytics,csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null,heroHtml:playbackHero(data,policy,state),issueHtml:issueCards(state),state,recentDecisions:state.recentDecisions.map(decorateEvent),events:data.events.map(decorateEvent),summary:data.summary,streams:data.streams,servers:data.servers,history:data.history});
   }catch(error){return next(error);}});
   router.post('/admin/activity/policy',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await streamPolicy.save(req.body,req.session.authUserId);return res.redirect('/admin/activity?message='+encodeURIComponent('Stream policy saved. The activity worker will pick it up automatically.'));}catch(error){return res.redirect('/admin/activity?error='+encodeURIComponent(error.message));}});
   return router;

@@ -5,6 +5,7 @@ const capacity=require('../entitlements/plan-capacity');
 const notificationSettings=require('../integrations/notification-settings');
 const discordMessage=require('../integrations/discord-message');
 const operations=require('../platform/operations-settings');
+const {FREE_HOLD_MINUTES}=require('../security/pending-registration');
 
 const STATE_KEY='discord_free_places_status_v1';
 const LOCK_SEED=927341;
@@ -33,9 +34,9 @@ function digestText(remaining,publicBaseUrl){
 }
 function persistentText(remaining,publicBaseUrl){
   const count=Math.max(0,Math.floor(Number(remaining)||0)),base=String(publicBaseUrl||'').replace(/\/+$/,''),reserveUrl=freeRegistrationUrl(base);
-  if(count<=0)return `🔴 **Free Server availability**\nNo free places currently available.\n${base}\n\nA place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after 10 minutes.`;
+  if(count<=0)return `🔴 **Free Server availability**\nNo free places currently available.\n${base}\n\nA place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after ${FREE_HOLD_MINUTES} minutes.`;
   const noun=count===1?'place':'places';
-  return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nReserve / Create Free Account: ${reserveUrl}\n\nPressing Reserve holds one place exclusively for 10 minutes while registration and email verification are completed.`;
+  return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nReserve / Create Free Account: ${reserveUrl}\n\nPressing Reserve holds one place exclusively for ${FREE_HOLD_MINUTES} minutes while registration and email verification are completed.`;
 }
 function persistentMessage(remaining,publicBaseUrl){
   const count=Math.max(0,Math.floor(Number(remaining)||0));
@@ -52,8 +53,8 @@ function persistentMessage(remaining,publicBaseUrl){
     fields:[{
       name:'How reservations work',
       value:open
-        ? 'Pressing Reserve holds one place exclusively for 10 minutes while you complete registration and email verification.'
-        : 'A place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after 10 minutes.',
+        ? `Pressing Reserve holds one place exclusively for ${FREE_HOLD_MINUTES} minutes while you complete registration and email verification.`
+        : `A place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after ${FREE_HOLD_MINUTES} minutes.`,
       inline:false
     }],
     url:open?reserveUrl:base,
