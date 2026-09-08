@@ -3,6 +3,8 @@
 <head>
   <title>Playback Operations · <%= siteName %></title>
   <%- include('_head') %>
+  <link rel="stylesheet" href="/css/playback-analytics.css">
+  <script src="/js/playback-analytics.js" defer></script>
 </head>
 <body class="page-playback">
 <div class="appShell">
@@ -22,6 +24,12 @@
       <% if(error){ %><div class="notice error"><%= error %></div><% } %>
 
       <%- heroHtml %>
+
+      <nav class="playbackJumpTabs" aria-label="Playback navigation">
+        <a class="button secondary" href="#active-streams">Active streams</a>
+        <a class="button secondary analyticsActive" href="#playback-analytics">Playback analytics</a>
+        <a class="button secondary" href="#playback-policy">Policy settings</a>
+      </nav>
 
       <% if(issueHtml){ %>
       <section class="section" id="playback-issues">
@@ -68,6 +76,8 @@
         <% } %>
         <div class="securityNote">Network endpoints and raw Jellyfin device identifiers are intentionally not exposed.</div>
       </section>
+
+      <%- include('_playback-analytics',{analytics}) %>
 
       <% if(recentDecisions.length){ %>
       <section class="section" id="policy-decisions">
