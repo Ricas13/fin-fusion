@@ -14,6 +14,7 @@ const entitlementJobs = read('src/jellyfin/jobs.js');
 const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
+const paymentEventRetry = read('src/payments/payment-event-retry.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
 
@@ -31,6 +32,8 @@ assert(worker.includes('assigned=${assigned} waiting=${waiting} skipped=${skippe
     'Free Server backfill logs must distinguish successful assignment from waiting/skipped applicants');
 assert(worker.includes('warning=${warning}'),
     'degraded automation logs must expose the safe stored failure reason instead of counts alone');
+assert(paymentEventRetry.includes('failureWarning(summary, failureReasons)') && paymentEventRetry.includes('warning ? { ...summary, warning } : summary'),
+    'payment-event retries must return an aggregated failure reason to automation health');
 
 assert(jobs.includes("freeCapacityBackfill=require('./free-capacity-backfill')")
     && jobs.includes('async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})}'),
