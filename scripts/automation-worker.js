@@ -3,6 +3,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
 const pkg = require('../package.json');
+const buildInfo = require('../src/build-info');
 const { query, getPool } = require('../src/db');
 const { automationConnectionBudget } = require('../src/security/database-connection-budget');
 const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock');
@@ -21,13 +22,22 @@ const MAX_CONCURRENCY = Math.max(1, Math.min(REQUESTED_CONCURRENCY, DB_POOL_SIZE
 const CONNECTION_BUDGET = automationConnectionBudget();
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS || 15000)));
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
-const COMMIT_SHA = String(process.env.COMMIT_SHA || process.env.GITHUB_SHA || '').slice(0, 80) || null;
+const COMMIT_SHA = buildInfo.gitSha;
 const DEFAULT_JOB_INTERVALS=Object.freeze({free_capacity_backfill:30,free_places_digest:30,data_retention:3600,stremio_external_tokens:300,stremio_media_index:10800});
 let stopping = false;
 let running = new Set();
 let heartbeatTimer = null;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function resultMetrics(jobKey, value = {}) {
+    if (jobKey !== 'free_capacity_backfill') return '';
+    const assigned = Number(value.assigned || 0);
+    const waiting = Number(value.waiting || 0);
+    const skipped = Number(value.skipped || 0);
+    if (!assigned && !waiting && !skipped) return '';
+    return ` assigned=${assigned} waiting=${waiting} skipped=${skipped}`;
+}
 
 async function ensureRows() {
     for (const jobKey of jobRegistry.names()) {
@@ -50,6 +60,7 @@ async function heartbeat({ draining = false } = {}) {
         requestedConcurrency: REQUESTED_CONCURRENCY,
         dbPoolSize: DB_POOL_SIZE,
         dbControlHeadroom: DB_CONTROL_HEADROOM,
+        registeredJobs: jobRegistry.names(),
         dbConnectionBudget: {
             roleLimit: CONNECTION_BUDGET.roleLimit,
             primaryPoolMax: CONNECTION_BUDGET.primaryPoolMax,
@@ -86,10 +97,11 @@ async function runOne(row) {
         const value = result?.value || {};
         const failed = Number(value.failed || value.failures || value.errors || 0);
         const processed = Number(value.processed ?? value.total ?? value.attempted ?? 0);
+        const metrics = resultMetrics(jobKey, value);
         if (result?.degraded) {
-            console.warn(`automation ${jobKey}: outcome=degraded processed=${processed} failed=${failed} retrySeconds=${result.retrySeconds}`);
-        } else if (processed || failed) {
-            console.log(`automation ${jobKey}: outcome=success processed=${processed} failed=${failed}`);
+            console.warn(`automation ${jobKey}: outcome=degraded processed=${processed} failed=${failed}${metrics} retrySeconds=${result.retrySeconds}`);
+        } else if (processed || failed || metrics) {
+            console.log(`automation ${jobKey}: outcome=success processed=${processed} failed=${failed}${metrics}`);
         }
     } catch (error) {
         const retry = Number(error.automationRetrySeconds || 0);
@@ -127,6 +139,7 @@ async function loop() {
         `CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms `
         + `concurrency=${MAX_CONCURRENCY}/${REQUESTED_CONCURRENCY} dbPool=${DB_POOL_SIZE} `
         + `dbBudget=${CONNECTION_BUDGET.totalReserved}/${CONNECTION_BUDGET.roleLimit} `
+        + `commit=${COMMIT_SHA ? COMMIT_SHA.slice(0, 8) : 'unknown'} `
         + `(maintenance=${CONNECTION_BUDGET.maintenanceLockPoolMax}, reconcile=${CONNECTION_BUDGET.reconciliationMax})`
     );
     while (!stopping) {
