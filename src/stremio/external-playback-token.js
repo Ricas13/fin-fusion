@@ -47,6 +47,14 @@ async function extend(row) {
   return result.rows[0] || row;
 }
 
+async function revokeRow(row) {
+  const token = client.decryptToken(row.token_encrypted);
+  const ok = await client.logoutToken(row.base_url, token, row.source_name || 'Media server', row.media_server_type || 'jellyfin');
+  if (!ok) throw new Error('Media server did not confirm external playback-token logout.');
+  await query('DELETE FROM stremio_external_playback_tokens WHERE id=$1', [row.id]);
+  return true;
+}
+
 async function tokenFor(source, entitlement) {
   if (!source?.id || !entitlement?.id) throw new Error('External raw playback requires a source and current Stremio entitlement.');
   return operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
@@ -60,6 +68,13 @@ async function tokenFor(source, entitlement) {
     if (existing && new Date(existing.expires_at).getTime() > Date.now()) {
       const refreshed = await extend(existing);
       return client.decryptToken(refreshed.token_encrypted);
+    }
+    if (existing) {
+      // Jellyfin/Emby access tokens are server sessions rather than true TTL
+      // bearer tokens. Removing our DB row is not enough: explicitly logout
+      // the expired session before replacing it, otherwise an old copied raw
+      // URL could remain usable directly against the external server.
+      await revokeRow(existing);
     }
 
     if (!source.password_encrypted) {
@@ -115,31 +130,10 @@ async function tokenFor(source, entitlement) {
   });
 }
 
-async function revokeRow(row) {
-  const token = client.decryptToken(row.token_encrypted);
-  const ok = await client.logoutToken(row.base_url, token, row.source_name || 'Media server', row.media_server_type || 'jellyfin');
-  if (!ok) throw new Error('Media server did not confirm external playback-token logout.');
-  await query('DELETE FROM stremio_external_playback_tokens WHERE id=$1', [row.id]);
-  return true;
-}
-
 async function revokeDue({ limit = 100 } = {}) {
-  const rows = (await query(`SELECT t.*,
-      EXISTS(
-        WITH effective AS (
-          SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
-          UNION ALL
-          SELECT a.customer_id,a.subscription_id,a.access_expires_at,
-                 public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
-          FROM effective_customer_addons a JOIN subscriptions s ON s.id=a.subscription_id
-        )
-        SELECT 1 FROM stremio_entitlements e
-        JOIN effective ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
-        WHERE e.id=t.entitlement_id AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW()
-      ) AS entitlement_active
+  const rows = (await query(`SELECT t.*
     FROM stremio_external_playback_tokens t
     WHERE t.expires_at<=NOW()
-       OR NOT EXISTS(SELECT 1 FROM stremio_entitlements e WHERE e.id=t.entitlement_id AND e.status='active')
        OR NOT EXISTS(
          WITH effective AS (
            SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
