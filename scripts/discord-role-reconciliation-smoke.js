@@ -48,6 +48,12 @@ async function main() {
         'admin profile posts must not be able to override the verified Discord user ID');
     assert.match(identityGuard, /req\.body\.discordUsername = identity\.username \|\| ''/,
         'admin profile posts must not be able to override the verified Discord username');
+    assert.match(identityGuard, /router\.use\('\/admin\/users\/:customerId'/,
+        'the Discord invariant guard must run as pre-write middleware rather than owning customer mutation routes');
+    assert.doesNotMatch(identityGuard, /router\.post\('/,
+        'the Discord identity guard must never duplicate canonical admin POST route ownership');
+    assert.match(identityGuard, /req\.path === '\/profile' \|\| req\.path === '\/manage\/account'/,
+        'the pre-write guard must be limited to the two legacy customer identity writers');
     assert.match(composition, /createAdminDiscordIdentityGuardRouter\(\)/,
         'the Discord identity guard must be mounted before customer profile writers');
     assert.match(identityUi, /input\.readOnly = true/,
