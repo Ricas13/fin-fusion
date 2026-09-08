@@ -5,6 +5,7 @@ const core = require('./router-core');
 const { query } = require('../db');
 const placement = require('../jellyfin/placement');
 const lifecycle = require('../payments/lifecycle');
+const freeClaimProvisioning = require('../jellyfin/free-claim-provisioning');
 const publicAbuseProtection = require('../security/public-abuse-protection');
 const routeRateLimit = require('../security/route-rate-limit');
 const publicError = require('./public-error');
@@ -143,7 +144,11 @@ function createRouter() {
     router.post('/account/claim-free/:planCode', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
             await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Access is being prepared; each service will show as ready as soon as setup finishes.'));
+            const provisioning=await freeClaimProvisioning.ensureFreeClaimProvisioned(req.session.customerId,{attempts:2});
+            const message=provisioning.ready
+                ? 'Free Access claimed. Your Jellyfin account is ready.'
+                : 'Free Access claimed. Your place is reserved and Jellyfin setup is retrying automatically now.';
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free plan claim failed', fallback: 'Free Access could not be claimed.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));
