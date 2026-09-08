@@ -11,12 +11,25 @@ async function countsForServers(serverIds, db = query) {
   const ids = [...new Set((serverIds || []).map(String).filter(Boolean))];
   if (!ids.length) return new Map();
   const result = await db(`
-    SELECT ja.server_id,COUNT(DISTINCT ja.customer_id)::int AS users
-    FROM jellyfin_accounts ja
-    WHERE ja.server_id=ANY($1::uuid[])
-      AND ja.disabled=FALSE
-      AND ja.account_purpose='jellyfin'
-    GROUP BY ja.server_id
+    WITH capacity_users AS (
+      SELECT ja.server_id,ja.customer_id
+      FROM jellyfin_accounts ja
+      WHERE ja.server_id=ANY($1::uuid[])
+        AND ja.disabled=FALSE
+        AND ja.account_purpose='jellyfin'
+      UNION
+      SELECT intent.server_id,intent.customer_id
+      FROM jellyfin_account_creation_intents intent
+      WHERE intent.server_id=ANY($1::uuid[])
+      UNION
+      SELECT lease.server_id,lease.customer_id
+      FROM jellyfin_server_placement_leases lease
+      WHERE lease.server_id=ANY($1::uuid[])
+        AND lease.expires_at>NOW()
+    )
+    SELECT server_id,COUNT(DISTINCT customer_id)::int AS users
+    FROM capacity_users
+    GROUP BY server_id
   `, [ids]);
   return new Map(result.rows.map(row => [String(row.server_id), Number(row.users || 0)]));
 }
