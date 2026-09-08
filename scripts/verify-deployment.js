@@ -4,6 +4,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { query, getPool } = require('../src/db');
+const buildInfo = require('../src/build-info');
 const runtimeSettings = require('../src/platform/runtime-settings');
 const jobHealth = require('../src/automation/job-health');
 
@@ -33,7 +34,7 @@ async function main() {
             }
 
             const workers = await query(`
-                SELECT worker_key,instance_id,last_heartbeat_at,
+                SELECT worker_key,instance_id,commit_sha,metadata,last_heartbeat_at,
                        EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int AS age
                 FROM operational_worker_state WHERE worker_key IN ('automation','activity')
             `);
@@ -41,9 +42,22 @@ async function main() {
             const automationWorker = byKey.get('automation');
             add('automation worker', automationWorker && Number(automationWorker.age) < 90,
                 automationWorker ? `instance=${automationWorker.instance_id} heartbeat_age=${automationWorker.age}s` : 'no heartbeat');
+            const expectedSha = buildInfo.gitSha;
+            const automationShaMatches = !expectedSha || String(automationWorker?.commit_sha || '') === String(expectedSha);
+            add('automation worker release', automationShaMatches,
+                `worker=${automationWorker?.commit_sha || 'unknown'} app=${expectedSha || 'unknown'}`);
+            const registeredJobs = Array.isArray(automationWorker?.metadata?.registeredJobs)
+                ? automationWorker.metadata.registeredJobs.map(String)
+                : [];
+            add('automation worker registry', registeredJobs.includes('free_capacity_backfill'),
+                registeredJobs.length ? `${registeredJobs.length} jobs registered` : 'registered job manifest missing');
+
             const activityWorker = byKey.get('activity');
             add('activity worker', activityWorker && Number(activityWorker.age) < 120,
                 activityWorker ? `instance=${activityWorker.instance_id} heartbeat_age=${activityWorker.age}s` : 'no heartbeat');
+            const activityShaMatches = !expectedSha || String(activityWorker?.commit_sha || '') === String(expectedSha);
+            add('activity worker release', activityShaMatches,
+                `worker=${activityWorker?.commit_sha || 'unknown'} app=${expectedSha || 'unknown'}`);
 
             const backupWorker = (await query(`
                 SELECT instance_id,last_heartbeat_at,last_success_at,last_error,next_run_at,
@@ -59,10 +73,19 @@ async function main() {
                     : 'no heartbeat');
 
             const jobs = await jobHealth.list();
-            const critical = new Set(['billing', 'entitlements', 'plan_changes', 'customer_inactivity']);
+            const critical = new Set(['billing', 'entitlements', 'plan_changes', 'customer_inactivity', 'free_capacity_backfill']);
             const bad = jobs.filter(job => critical.has(job.job_key) && ['failed', 'stale', 'missing'].includes(jobHealth.healthState(job)));
             const inactivityJob = jobs.find(job => job.job_key === 'customer_inactivity');
             add('Free Server lifecycle job', Boolean(inactivityJob?.enabled), inactivityJob ? `state=${jobHealth.healthState(inactivityJob)} next=${inactivityJob.next_run_at || 'pending'}` : 'job row missing');
+            const freeBackfillJob = jobs.find(job => job.job_key === 'free_capacity_backfill');
+            const freeBackfillState = freeBackfillJob ? jobHealth.healthState(freeBackfillJob) : 'missing';
+            add('Free Server recovery job', Boolean(freeBackfillJob?.enabled) && !['failed','stale','missing','degraded'].includes(freeBackfillState),
+                freeBackfillJob
+                    ? `state=${freeBackfillState} interval=${freeBackfillJob.interval_seconds}s next=${freeBackfillJob.next_run_at || 'pending'}${freeBackfillJob.last_warning ? ` warning=${freeBackfillJob.last_warning}` : ''}`
+                    : 'job row missing');
+            const missingCritical = [...critical].filter(jobKey => !jobs.some(job => job.job_key === jobKey && job.enabled !== false));
+            add('critical automation job registry', missingCritical.length === 0,
+                missingCritical.length ? `missing/disabled=${missingCritical.join(',')}` : `${critical.size} required jobs present`);
             add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${jobHealth.healthState(job)}`).join(', '));
 
             const lifecycleTable = (await query(`SELECT to_regclass('public.jellyfin_account_lifecycle') AS table_name`)).rows[0]?.table_name;
