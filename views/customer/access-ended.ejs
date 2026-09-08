@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>My Access · <%= siteName %></title>
+  <link rel="icon" href="/branding/favicon">
+  <link rel="stylesheet" href="/css/customer-portal.css">
+  <link rel="stylesheet" href="/css/customer-navigation.css">
+  <link rel="stylesheet" href="/css/customer-jellyfin.css">
+</head>
+<%
+  function validDate(value){if(!value)return null;const date=new Date(value);return Number.isNaN(date.getTime())?null:date;}
+  function formatDateTime(value){const date=validDate(value);return date?date.toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):null;}
+%>
+<body><div class="portalShell">
+<header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
+<main class="customerPortalPage jellyfinHub">
+  <%- include('_nav',{active:'access',navOptions:navOptions}) %>
+
+  <section class="jellyfinHubHero">
+    <div><span class="eyebrow">Streaming access</span><h1>My Access</h1><p>You do not currently have active streaming access. The reason is shown below.</p></div>
+    <div class="jellyfinHeroActions"><a class="button primary" href="/account#plans">View available plans</a><a class="button secondary" href="/account/payments">Payments</a></div>
+  </section>
+
+  <section class="panel" aria-labelledby="access-ended-heading">
+    <div class="jellyfinSubhead"><div><span class="eyebrow">Access ended</span><h2 id="access-ended-heading">Why your access ended</h2><p>CAPTAiNFiN keeps your portal account available even when streaming access has ended.</p></div><span class="jellyfinLibraryCount"><%= history.length %> record<%= history.length===1?'':'s' %></span></div>
+    <div class="jellyfinCredentialGrid">
+      <% history.forEach(function(item){ %>
+      <article class="jellyfinCredential">
+        <span><%= item.kind %> · Access ended<% if(formatDateTime(item.endedAt)){ %> · <%= formatDateTime(item.endedAt) %><% } %></span>
+        <strong><%= item.planName %></strong>
+        <small><%= item.reason %></small>
+        <% if(item.canRestoreFree){ %><small>Free Server access can be restored from My Access when a place is available; restoration starts a fresh activity window.</small><% } %>
+      </article>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="panel jellyfinSetupNotice"><div><strong>Want access again?</strong><span>Choose a currently available plan. If a Free Server place was removed for inactivity, restoration creates a fresh Jellyfin profile and a fresh first-play window.</span></div><a class="button primary" href="/account#plans">View plans</a></section>
+</main>
+</div></body>
+</html>
