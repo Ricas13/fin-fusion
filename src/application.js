@@ -20,6 +20,7 @@ const { consumeLoginAttempt, pruneLoginRateLimits } = require('./security/login-
 const customerRateLimit = require('./security/customer-rate-limit');
 const publicAbuseProtection = require('./security/public-abuse-protection');
 const { requestMaintenanceGuard } = require('./security/maintenance-lock');
+const { keyFromEnv } = require('./security/purpose-crypto');
 
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 const PORT = Number(process.env.PORT || 3030);
@@ -43,6 +44,34 @@ function validateEnvironment() {
   }
   if (String(process.env.ADMIN_PASSWORD || '') === 'admin123') {
     fail('The legacy admin123 password is not permitted.');
+  }
+  // These purpose-specific keys encrypt Jellyfin/Stremio credentials and TOTP
+  // secrets at rest and are required for core request handling (registering a
+  // customer, adding a Jellyfin server, enabling 2FA). A deployment that
+  // starts the app directly with one missing or malformed would otherwise
+  // boot and serve traffic normally, only failing later (as a 500) the first
+  // time a feature actually needs to encrypt/decrypt with it. Fail loudly
+  // here instead, at the same point SESSION_SECRET is checked.
+  //
+  // BACKUP_ENCRYPTION_KEY is deliberately not included here: it is only used
+  // by the opt-in backup feature (src/backup/encrypted-stream.js), not by any
+  // core request path, and scripts/production-readiness.js already treats it
+  // as critical for anyone actually relying on backups.
+  const corePurposeKeys = ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY'];
+  for (const name of corePurposeKeys) {
+    const raw = String(process.env[name] || '');
+    if (/change[-_ ]?(me|this)|example|placeholder|your[-_]/i.test(raw)) {
+      fail(`${name} looks like a placeholder value. Set a unique random 32-byte key.`);
+    }
+    try {
+      keyFromEnv(name);
+    } catch (error) {
+      fail(`${name} is invalid: ${error.message}`);
+    }
+  }
+  const encryptionKeys = corePurposeKeys.map(name => String(process.env[name] || ''));
+  if (new Set(encryptionKeys).size !== encryptionKeys.length) {
+    fail('Purpose-specific encryption keys must not reuse the same value.');
   }
 }
 

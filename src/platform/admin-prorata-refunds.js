@@ -3,6 +3,7 @@
 const express = require('express');
 const csrf = require('../auth/csrf');
 const { query } = require('../db');
+const { requireOwner } = require('../auth/owner-guard');
 const refunds = require('../payments/prorata-refunds');
 const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
@@ -103,7 +104,7 @@ async function previewPage(req, subscriptionId) {
 
 function createAdminProrataRefundsRouter() {
   const router = express.Router();
-  router.use('/admin/refunds', refundRouteLimit, gate, noStore);
+  router.use('/admin/refunds', refundRouteLimit, gate, requireOwner, noStore);
   router.get('/admin/refunds', async (req,res,next) => { try { return res.send(await listPage(req)); } catch (error) { return next(error); } });
   router.get('/admin/refunds/:subscriptionId', async (req,res,next) => { try { return res.send(await previewPage(req, req.params.subscriptionId)); } catch (error) { return next(error); } });
   router.post('/admin/refunds/:subscriptionId', csrf.requireCsrf, async (req,res,next) => {

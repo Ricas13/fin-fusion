@@ -10,9 +10,12 @@ const MUTATION_PATTERNS=[
  /^\/admin\/customers\/bulk\//,
  // Every per-customer admin mutation is high-impact. Keep this broad so new
  // customer-management child routes cannot silently bypass step-up merely
- // because their action name was not added to a fixed allow-list.
+ // because their action name was not added to a fixed allow-list. This also
+ // has to cover hyphenated child routes like /admin/customer-jellyfin-password/
+ // that start with "customer"/"customers" but aren't literally followed by a
+ // slash, since those are exactly as high-impact as the rest of this group.
  /^\/admin\/users\/[^/]+(?:\/|$)/,
- /^\/admin\/customer(?:s)?\/[^/]+\//,
+ /^\/admin\/customer(?:s)?(?:-[a-z-]+)?\/[^/]+\//,
  /^\/admin\/plans(?:\/|$)/,
  /^\/admin\/discounts(?:\/|$)/,
  /^\/admin\/referrals(?:\/|$)/,
@@ -21,6 +24,9 @@ const MUTATION_PATTERNS=[
  /^\/admin\/servers(?:\/|$)/,
  /^\/admin\/provider-mappings(?:\/|$)/,
  /^\/admin\/payments(?:\/|$)/,
+ /^\/admin\/refunds\//,
+ /^\/admin\/billing(?:\/|$)/,
+ /^\/admin\/settings\/integrations\/payments\//,
  /^\/admin\/commerce\/(?:policy|risk-policy|reconciliation\/|incidents\/[^/]+\/(?:resolve|reopen))/,
  /^\/admin\/backups\/(?:restore|run|verify)/,
  /^\/admin\/settings\/(?:registration|abuse-protection|stremio)(?:\/|$)/,
