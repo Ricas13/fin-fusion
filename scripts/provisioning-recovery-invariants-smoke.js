@@ -14,6 +14,7 @@ const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
 const adminAutomation = read('src/platform/admin-automation.js');
+const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
 
 assert(worker.includes("const buildInfo = require('../src/build-info')") && worker.includes('const COMMIT_SHA = buildInfo.gitSha'),
     'automation worker must report the same CAPTAINFIN_BUILD_SHA identity embedded in the release image');
@@ -33,6 +34,8 @@ assert(subscriptionState.includes(canonicalAdminPresent),
     'canonical Jellyfin entitlement truth must include administrator-present access');
 assert(entitlementJobs.includes(canonicalAdminPresent),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
+assert(adminManualEntitlement.includes(canonicalAdminPresent),
+    'manual grant conflict detection must not ignore administrator-present Jellyfin access');
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
     'generic reconciliation must retry persisted provisioning problems independently of acquisition flows');
 
