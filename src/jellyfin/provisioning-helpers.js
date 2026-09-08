@@ -92,6 +92,29 @@ function requestedAccessLane(plan) {
     : 'primary';
 }
 
+async function reservedServerForCustomer(customerId, available, lane) {
+  const ids = (available || []).map(server => server.id).filter(Boolean);
+  if (!customerId || !ids.length) return null;
+  const found = await query(`
+    WITH reservations AS (
+      SELECT server_id,0 AS kind_rank,updated_at
+      FROM jellyfin_account_creation_intents
+      WHERE customer_id=$1 AND server_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT server_id,1 AS kind_rank,updated_at
+      FROM jellyfin_server_placement_leases
+      WHERE customer_id=$1 AND server_id=ANY($2::uuid[]) AND expires_at>NOW()
+    )
+    SELECT server_id
+    FROM reservations
+    ORDER BY kind_rank ASC,updated_at DESC
+    LIMIT 1
+  `, [customerId, ids]);
+  if (!found.rowCount) return null;
+  const server = available.find(candidate => String(candidate.id) === String(found.rows[0].server_id));
+  return server ? { ...server, requested_access_lane: lane, placement_recovery: true } : null;
+}
+
 async function selectServerForPlan(plan) {
   // An explicit admin pin is an imperative command, not a placement hint.
   // Return the exact configured Jellyfin target before evaluating public
@@ -113,6 +136,12 @@ async function selectServerForPlan(plan) {
         ? Boolean(server.paid_enabled)
         : true);
   if (!available.length) return null;
+
+  // If this customer's earlier attempt already reserved a server or created a
+  // durable creation intent there, retry that server first. Re-running load
+  // balancing here could otherwise create a second remote account elsewhere.
+  const recovery = await reservedServerForCustomer(plan?.customer_id || null, available, lane);
+  if (recovery) return recovery;
 
   // Server capacity includes durable accounts plus short-lived placement leases
   // and creation intents. A concurrent reconciler therefore sees a slot as used
@@ -173,6 +202,24 @@ async function reservePlacement(customerId, server) {
   });
 }
 
+async function releaseDefinitivePlacementFailure(customerId, serverId, leaseId) {
+  if (!leaseId) return;
+  try {
+    const intent = await query(`SELECT 1 FROM jellyfin_account_creation_intents
+      WHERE customer_id=$1 AND server_id=$2 LIMIT 1`, [customerId, serverId]);
+    if (!intent.rowCount) {
+      await query(`DELETE FROM jellyfin_server_placement_leases
+        WHERE id=$1 AND customer_id=$2 AND server_id=$3`, [leaseId, customerId, serverId]);
+    }
+  } catch (cleanupError) {
+    console.warn('Unable to release failed Jellyfin placement lease.', {
+      customerId: safeLog(customerId, 100),
+      serverId: safeLog(serverId, 100),
+      error: safeLog(cleanupError?.message || cleanupError)
+    });
+  }
+}
+
 async function notifyNewJellyfinAccess(customerId, account) {
   try {
     const notifications = require('../integrations/notification-dispatch');
@@ -230,11 +277,17 @@ async function notifyNewJellyfinAccess(customerId, account) {
 
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
   const reservedServer = await reservePlacement(customerId, server);
-  const account = await durableCreation.createJellyfinAccount(customerId, reservedServer, effective, {
-    ...options,
-    placementLeaseId: reservedServer.placement_lease_id,
-    accessLane: options.accessLane || reservedServer.requested_access_lane || requestedAccessLane(effective)
-  });
+  let account;
+  try {
+    account = await durableCreation.createJellyfinAccount(customerId, reservedServer, effective, {
+      ...options,
+      placementLeaseId: reservedServer.placement_lease_id,
+      accessLane: options.accessLane || reservedServer.requested_access_lane || requestedAccessLane(effective)
+    });
+  } catch (error) {
+    await releaseDefinitivePlacementFailure(customerId, reservedServer.id, reservedServer.placement_lease_id);
+    throw error;
+  }
   if (options.passwordSetupRequired !== false) {
     await markPasswordSetupRequired(account.id);
     account.password_setup_required = true;
@@ -280,8 +333,10 @@ module.exports = {
   renameJellyfinAccount,
   currentEntitlement,
   requestedAccessLane,
+  reservedServerForCustomer,
   selectServerForPlan,
   reservePlacement,
+  releaseDefinitivePlacementFailure,
   notifyNewJellyfinAccess,
   createJellyfinAccount,
   setJellyfinPassword
