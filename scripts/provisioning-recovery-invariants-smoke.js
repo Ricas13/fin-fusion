@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const criticalJobs = require('../src/automation/critical-jobs');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -16,14 +17,20 @@ const lifecycle = read('src/payments/lifecycle.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
 
+for (const jobKey of ['health','entitlements','free_capacity_backfill','customer_inactivity','billing','provider_operation_recovery','payment_events','plan_changes','stremio_managed_accounts','stremio_external_tokens']) {
+    assert(criticalJobs.isCritical(jobKey), `${jobKey} must remain customer-access critical automation`);
+}
+
 assert(worker.includes("const buildInfo = require('../src/build-info')") && worker.includes('const COMMIT_SHA = buildInfo.gitSha'),
     'automation worker must report the same CAPTAINFIN_BUILD_SHA identity embedded in the release image');
-assert(worker.includes("'free_capacity_backfill'") && worker.includes('assertCriticalJobRegistry()'),
-    'automation worker must fail startup if the Free Server recovery job is not registered');
+assert(worker.includes("require('../src/automation/critical-jobs')") && worker.includes('assertCriticalJobRegistry()'),
+    'automation worker must use the canonical critical-job registry and fail startup when registration is incomplete');
 assert(worker.includes('registeredJobs: jobRegistry.names()') && worker.includes('criticalJobs: CRITICAL_JOB_KEYS'),
     'automation heartbeat must expose registered and critical job manifests for deployment diagnostics');
 assert(worker.includes('assigned=${assigned} waiting=${waiting} skipped=${skipped}'),
     'Free Server backfill logs must distinguish successful assignment from waiting/skipped applicants');
+assert(worker.includes('warning=${warning}'),
+    'degraded automation logs must expose the safe stored failure reason instead of counts alone');
 
 assert(jobs.includes("freeCapacityBackfill=require('./free-capacity-backfill')")
     && jobs.includes('async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})}'),
@@ -44,19 +51,18 @@ assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','f
 assert(lifecycle.includes("await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan')"),
     'Free plan acquisition must attempt immediate canonical reconciliation');
 
-assert(deploymentVerify.includes("'free_capacity_backfill'")
+assert(deploymentVerify.includes("require('../src/automation/critical-jobs')")
     && deploymentVerify.includes("'Free Server recovery job'"),
-    'deployment verification must fail when the Free Server recovery job is absent, disabled or unhealthy');
+    'deployment verification must consume the canonical critical registry and explicitly verify Free Server recovery');
 assert(deploymentVerify.includes("'automation worker release'")
     && deploymentVerify.includes('automationWorker?.commit_sha'),
     'deployment verification must compare the running automation release to the application release');
-assert(deploymentVerify.includes("'automation worker registry'")
-    && deploymentVerify.includes("registeredJobs.includes('free_capacity_backfill')"),
-    'deployment verification must prove the running worker binary actually registered Free Server recovery');
+assert(deploymentVerify.includes('missingRegisteredJobs') && deploymentVerify.includes('requiredJobs = criticalJobs.names()'),
+    'deployment verification must prove the running worker registered every access-critical job');
 
-assert(adminAutomation.includes("free_capacity_backfill: ['Free Server capacity recovery'")
-    && adminAutomation.includes("'free_capacity_backfill','customer_inactivity'"),
-    'Free Server recovery and lifecycle jobs must be visibly classified as core automation');
+assert(adminAutomation.includes("require('../automation/critical-jobs')")
+    && adminAutomation.includes('const CORE_JOBS=new Set(criticalJobs.names())'),
+    'operator controls must use the same canonical critical-job list as worker and deployment verification');
 assert(adminAutomation.includes("CORE_JOBS.has(req.params.job)") && adminAutomation.includes("Type DISABLE"),
     'core recovery jobs must require explicit confirmation before an operator can disable them');
 assert(adminAutomation.includes("ORDER BY last_heartbeat_at DESC LIMIT 1"),
