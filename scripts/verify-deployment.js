@@ -34,9 +34,12 @@ async function main() {
             }
 
             const workers = await query(`
-                SELECT worker_key,instance_id,commit_sha,metadata,last_heartbeat_at,
+                SELECT DISTINCT ON (worker_key)
+                       worker_key,instance_id,commit_sha,metadata,last_heartbeat_at,
                        EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int AS age
-                FROM operational_worker_state WHERE worker_key IN ('automation','activity')
+                FROM operational_worker_state
+                WHERE worker_key IN ('automation','activity')
+                ORDER BY worker_key,last_heartbeat_at DESC
             `);
             const byKey = new Map(workers.rows.map(row => [row.worker_key, row]));
             const automationWorker = byKey.get('automation');
