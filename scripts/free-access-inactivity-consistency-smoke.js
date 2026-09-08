@@ -31,6 +31,9 @@ assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlayback
 assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).minimumPlaybackMinutes,30,'legacy explicit null minimums must inherit the thirty-minute default');
 assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:2,noPlaybackDays:5,minimumPlaybackMinutes:45,playbackWindowDays:5},globalPolicy).firstPlaybackGraceDays,2,'a Free plan must be able to override its first-play grace');
 assert.equal(policy.effectiveForFreePlan({}, {enabled:true,dryRun:false,freeNoPlaybackDays:7}).firstPlaybackGraceDays,null,'partial legacy global-policy callers must not have a new activation field invented for them');
+const pausedPolicy=policy.effectiveForFreePlan({}, {...globalPolicy,enabled:false});
+assert.equal(pausedPolicy.enabled,false,'the global lifecycle switch must still pause enforcement');
+assert.equal(policy.hasUsageTrigger(pausedPolicy),true,'pausing lifecycle automation must keep the configured Free usage policy recognisable so existing inactivity holds are not released as obsolete');
 
 const now=Date.parse('2026-09-07T12:00:00.000Z');
 const restored=inactivity.assessUsage({
