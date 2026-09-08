@@ -8,6 +8,7 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const {freeAccessHealth}=require('../src/platform/customer-jellyfin');
 
 const route=read('src/platform/customer-jellyfin.js');
+const status=read('src/automation/customer-inactivity-status.js');
 const view=read('views/customer/jellyfin.ejs');
 const stremioRoute=read('src/platform/customer-stremio.js');
 const client=read('public/js/customer-jellyfin.js');
@@ -35,6 +36,9 @@ assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-
 assert.match(route,/const activated=Boolean\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)/,'My Access must derive activation from allocation-scoped playback evidence');
 assert.match(route,/return\{tone:'bad',label:'Play something to activate'/,'My Access must stay red before the first stream');
 assert.match(route,/const tone=allMet\?'good':metCount>0\?'warn':'bad'/,'post-activation health must be green for both checks, yellow for one and red for neither');
+assert.match(status,/const discoveryCfg=globalCfg\.enabled\?globalCfg:\{\.\.\.globalCfg,enabled:true\}/,'My Access health must remain discoverable when lifecycle enforcement is globally paused');
+assert.match(status,/eligible:Boolean\(row\.eligible&&globalCfg\.enabled&&enforcementReady\)/,'a paused global lifecycle must never be presented as removal-eligible');
+assert.match(status,/playbackMinutes:Math\.floor\(playbackSeconds\/60\)/,'My Access must count only completed playback minutes so it cannot show 30 minutes before the backend threshold is actually met');
 
 const preFirst=freeAccessHealth({
   applies:true,
