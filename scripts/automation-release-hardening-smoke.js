@@ -53,6 +53,26 @@ assert(worker.includes('dbConnectionBudget') && worker.includes('CONNECTION_BUDG
     'Automation heartbeat metadata must expose the complete database connection budget');
 assert(worker.includes('Automation request-service settings refresh failed during startup'),
     'Best-effort automation settings refresh failures must remain visible to operators');
+assert(worker.includes('free_capacity_backfill:30'),
+    'Free Server vacancy backfill must run on a short 30-second cadence');
+
+const automationJobs = read('src/automation/jobs.js');
+const freeBackfill = read('src/automation/free-capacity-backfill.js');
+const compactFreeBackfill = compact(freeBackfill);
+assert(automationJobs.includes("freeCapacityBackfill=require('./free-capacity-backfill')")
+    && automationJobs.includes('async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})}'),
+    'Free Server capacity backfill must be registered as a first-class automation job');
+assert(compactFreeBackfill.includes("p.is_free_tier=TRUE")
+    && compactFreeBackfill.includes("ja.access_lane='free'")
+    && compactFreeBackfill.includes('ja.disabled=FALSE'),
+    'Free Server backfill must select live Free entitlements that do not already have an enabled Free-lane account');
+assert(compactFreeBackfill.includes('ORDERBYcreated_atASC,customer_idASC'),
+    'Free Server backfill must allocate waiting entitlements oldest-first');
+assert(compactFreeBackfill.includes('awaitprovisioning.reconcileCustomer(row.customer_id)'),
+    'Free Server backfill must reuse the canonical resilient customer reconciler');
+assert(compactFreeBackfill.includes('if(!entitlement||entitlement.blocked)')
+    && compactFreeBackfill.includes('exhaustedPlans.add(planKey)'),
+    'Free Server backfill must skip blocked entitlements and stop hammering a plan after real capacity is exhausted');
 
 const compose = read('docker-compose.yml');
 const envExample = read('.env.example');
