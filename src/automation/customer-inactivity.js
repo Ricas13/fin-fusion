@@ -11,24 +11,29 @@ const HOLD_TYPE='inactivity_policy';
 function asDate(value){if(!value)return null;const date=new Date(value);return Number.isFinite(date.getTime())?date:null;}
 function assessUsage(row,policy,now=Date.now()){
   const startsAt=asDate(row.starts_at),accountCreatedAt=asDate(row.account_created_at),allocationStartAt=asDate(row.allocation_start_at)||accountCreatedAt||startsAt;
-  const rawFirstPlaybackAt=asDate(row.first_playback_at),rawLastPlaybackAt=asDate(row.last_playback_at);
+  const rawFirstPlaybackAt=asDate(row.first_playback_at),rawLastPlaybackAt=asDate(row.last_playback_at),rawLastActivityAt=asDate(row.last_activity_at);
   let firstPlaybackAt=rawFirstPlaybackAt&&(!allocationStartAt||rawFirstPlaybackAt.getTime()>=allocationStartAt.getTime())?rawFirstPlaybackAt:null;
   const lastPlaybackAt=rawLastPlaybackAt&&(!allocationStartAt||rawLastPlaybackAt.getTime()>=allocationStartAt.getTime())?rawLastPlaybackAt:null;
+  const lastActivityAt=rawLastActivityAt&&(!allocationStartAt||rawLastActivityAt.getTime()>=allocationStartAt.getTime())?rawLastActivityAt:null;
   if(!firstPlaybackAt&&lastPlaybackAt)firstPlaybackAt=lastPlaybackAt;
   const hasPlayback=Boolean(firstPlaybackAt||lastPlaybackAt);
-  // The first-play clock is allocation-scoped. Browsing, login activity and
-  // playback from a previous Free allocation must never satisfy or extend it.
-  const referenceAt=lastPlaybackAt||allocationStartAt;
+  const phasedActivation=policy.firstPlaybackGraceDays!=null;
+  // The modern phased Free policy separates activation, activity and watch time:
+  // first activation remains playback-only; after activation recency follows
+  // Jellyfin LastActivityDate/LastLoginDate with playback as a safe fallback.
+  // Legacy policies without a first-play phase retain their historical literal
+  // no-playback semantics so compatibility callers do not silently change meaning.
+  const playbackOrActivityAt=lastActivityAt&&lastPlaybackAt?(lastActivityAt.getTime()>=lastPlaybackAt.getTime()?lastActivityAt:lastPlaybackAt):lastActivityAt||lastPlaybackAt;
+  const referenceAt=(phasedActivation?playbackOrActivityAt:lastPlaybackAt)||allocationStartAt;
   const observationStartedAt=hasPlayback?(firstPlaybackAt||lastPlaybackAt):allocationStartAt;
   const activationAgeHours=allocationStartAt?Math.max(0,(now-allocationStartAt.getTime())/3600000):0;
   const ageHours=observationStartedAt?Math.max(0,(now-observationStartedAt.getTime())/3600000):0;
   const seconds=Number(row.playback_seconds||0);
-  const phasedActivation=policy.firstPlaybackGraceDays!=null;
   const retentionReady=hasPlayback||!phasedActivation;
   const firstPlaybackEligible=!hasPlayback&&phasedActivation&&activationAgeHours>=Math.max(policy.minimumObservationHours,policy.firstPlaybackGraceDays*24);
   const noPlaybackEligible=retentionReady&&policy.noPlaybackDays!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.noPlaybackDays*24)&&referenceAt&&referenceAt.getTime()<=now-policy.noPlaybackDays*86400000;
   const usageEligible=retentionReady&&policy.minimumPlaybackMinutes!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.playbackWindowDays*24)&&seconds<policy.minimumPlaybackMinutes*60;
-  return{allocationStartAt,firstPlaybackAt,lastPlaybackAt,hasPlayback,referenceAt,observationStartedAt,activationAgeHours,ageHours,seconds,firstPlaybackEligible,noPlaybackEligible,usageEligible};
+  return{allocationStartAt,firstPlaybackAt,lastPlaybackAt,lastActivityAt,hasPlayback,referenceAt,observationStartedAt,activationAgeHours,ageHours,seconds,firstPlaybackEligible,noPlaybackEligible,usageEligible};
 }
 
 async function candidates(globalCfg=null,{customerId=null}={}){
@@ -78,9 +83,9 @@ async function candidates(globalCfg=null,{customerId=null}={}){
   return result.rows.map(row=>{
     const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg),assessment=assessUsage(row,policy),usageTriggered=planPolicy.usageTriggered(assessment,policy),eligible=policy.enabled&&!row.automation_protected&&!row.currently_playing&&usageTriggered,triggers=[];
     if(assessment.firstPlaybackEligible)triggers.push(`no first Free Server playback within ${policy.firstPlaybackGraceDays} day(s) of this allocation`);
-    if(assessment.noPlaybackEligible)triggers.push(`no Free Server playback for ${policy.noPlaybackDays} day(s)`);
+    if(assessment.noPlaybackEligible)triggers.push(`${policy.firstPlaybackGraceDays!=null?'no Free Server activity':'no Free Server playback'} for ${policy.noPlaybackDays} day(s)`);
     if(assessment.usageEligible)triggers.push(`${Math.round(assessment.seconds/60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`);
-    return{...row,policy,first_playback_at:assessment.firstPlaybackAt,last_playback_at:assessment.lastPlaybackAt,allocation_start_at:assessment.allocationStartAt,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,has_playback:assessment.hasPlayback,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?(assessment.hasPlayback?'Free Server removal requires all configured retention rules to be breached':'first-play grace period has not expired'):null].filter(Boolean)};
+    return{...row,policy,first_playback_at:assessment.firstPlaybackAt,last_playback_at:assessment.lastPlaybackAt,last_activity_at:assessment.lastActivityAt,allocation_start_at:assessment.allocationStartAt,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,has_playback:assessment.hasPlayback,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?(assessment.hasPlayback?'Free Server removal requires all configured retention rules to be breached':'first-play grace period has not expired'):null].filter(Boolean)};
   }).filter(row=>planPolicy.hasUsageTrigger(row.policy));
 }
 

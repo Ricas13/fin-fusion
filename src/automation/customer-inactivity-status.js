@@ -38,6 +38,7 @@ async function customerStatus(customerId){
     allocationStartAt:row.allocation_start_at||null,
     firstPlaybackAt:row.first_playback_at||null,
     lastPlaybackAt:row.last_playback_at||null,
+    lastActivityAt:row.last_activity_at||null,
     inactiveReferenceAt:row.inactive_reference_at||null,
     observationStartedAt:row.observation_started_at||null,
     hasPlayback:Boolean(row.has_playback),

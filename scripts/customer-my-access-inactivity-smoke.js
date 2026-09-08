@@ -33,10 +33,12 @@ assert.match(view,/hasPendingMediaAccess=activeSubscriptions\.some/,'removed Fre
 assert.match(view,/class="freeWatchLabel">Watch status</,'Free Server access must keep the compact watch-status treatment');
 assert.match(view,/freeAccessHealth--<%= freeHealth\.tone %>/,'My Access traffic-light styling must be driven by the shared Free Server health state');
 assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current playback window');
-assert.match(route,/const activated=Boolean\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)/,'My Access must derive activation from allocation-scoped playback evidence');
+assert.match(route,/const activated=Boolean\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)/,'My Access must derive activation from allocation-scoped playback evidence, not login or browse activity');
 assert.match(route,/return\{tone:'bad',label:'Play something to activate'/,'My Access must stay red before the first stream');
+assert.match(route,/const activityReference=inactiveReference\|\|lastActivity\|\|lastPlayback/,'My Access must evaluate recent activity using the canonical activity reference');
 assert.match(route,/const tone=allMet\?'good':metCount>0\?'warn':'bad'/,'post-activation health must be green for both checks, yellow for one and red for neither');
 assert.match(status,/const discoveryCfg=globalCfg\.enabled\?globalCfg:\{\.\.\.globalCfg,enabled:true\}/,'My Access health must remain discoverable when lifecycle enforcement is globally paused');
+assert.match(status,/lastActivityAt:row\.last_activity_at\|\|null/,'My Access status must expose refreshed Jellyfin account activity');
 assert.match(status,/eligible:Boolean\(row\.eligible&&globalCfg\.enabled&&enforcementReady\)/,'a paused global lifecycle must never be presented as removal-eligible');
 assert.match(status,/playbackMinutes:Math\.floor\(playbackSeconds\/60\)/,'My Access must count only completed playback minutes so it cannot show 30 minutes before the backend threshold is actually met');
 
@@ -46,8 +48,9 @@ const preFirst=freeAccessHealth({
   allocationStartAt:'2026-09-05T12:00:00.000Z',
   firstPlaybackAt:null,
   lastPlaybackAt:null,
+  lastActivityAt:'2026-09-07T11:00:00.000Z',
   observationStartedAt:'2026-09-05T12:00:00.000Z',
-  inactiveReferenceAt:'2026-09-05T12:00:00.000Z',
+  inactiveReferenceAt:'2026-09-07T11:00:00.000Z',
   hasPlayback:false,
   playbackMinutes:0,
   currentlyPlaying:false,
@@ -55,17 +58,18 @@ const preFirst=freeAccessHealth({
   enforcementReady:true,
   eligible:false
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(preFirst.tone,'bad','a Free place must be red until the customer plays something');
-assert.equal(preFirst.activated,false,'a restored or new allocation with no current-allocation playback must remain unactivated');
+assert.equal(preFirst.tone,'bad','a Free place must stay red until the customer actually plays something, even if Jellyfin login activity is recent');
+assert.equal(preFirst.activated,false,'non-playback activity must not activate a restored or new allocation');
 assert.equal(preFirst.removalAt.toISOString(),'2026-09-08T12:00:00.000Z','My Access must show the independent three-day first-play deadline from the current allocation');
 
 const yellow=freeAccessHealth({
   applies:true,
   policy:{firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
-  allocationStartAt:'2026-09-01T12:00:00.000Z',
-  firstPlaybackAt:'2026-09-02T12:00:00.000Z',
-  lastPlaybackAt:'2026-09-06T12:00:00.000Z',
-  observationStartedAt:'2026-09-02T12:00:00.000Z',
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
+  lastPlaybackAt:'2026-08-29T12:00:00.000Z',
+  lastActivityAt:'2026-09-06T12:00:00.000Z',
+  observationStartedAt:'2026-08-16T12:00:00.000Z',
   inactiveReferenceAt:'2026-09-06T12:00:00.000Z',
   hasPlayback:true,
   playbackMinutes:12,
@@ -74,8 +78,8 @@ const yellow=freeAccessHealth({
   enforcementReady:true,
   eligible:false
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(yellow.tone,'warn','an activated Free place meeting only the recent-activity check must be yellow');
-assert.equal(yellow.activityMet,true,'recent playback must satisfy the seven-day activity condition');
+assert.equal(yellow.tone,'warn','an activated Free place with recent Jellyfin activity but insufficient watch minutes must be yellow');
+assert.equal(yellow.activityMet,true,'recent Jellyfin activity must satisfy the seven-day activity condition even when playback itself is old');
 assert.equal(yellow.minimumMet,false,'twelve minutes must not satisfy the thirty-minute condition');
 
 const green=freeAccessHealth({
@@ -84,8 +88,9 @@ const green=freeAccessHealth({
   allocationStartAt:'2026-09-01T12:00:00.000Z',
   firstPlaybackAt:'2026-09-02T12:00:00.000Z',
   lastPlaybackAt:'2026-09-06T12:00:00.000Z',
+  lastActivityAt:'2026-09-06T18:00:00.000Z',
   observationStartedAt:'2026-09-02T12:00:00.000Z',
-  inactiveReferenceAt:'2026-09-06T12:00:00.000Z',
+  inactiveReferenceAt:'2026-09-06T18:00:00.000Z',
   hasPlayback:true,
   playbackMinutes:35,
   currentlyPlaying:false,
@@ -103,8 +108,9 @@ const postActivationRed=freeAccessHealth({
   allocationStartAt:'2026-08-20T12:00:00.000Z',
   firstPlaybackAt:'2026-08-21T12:00:00.000Z',
   lastPlaybackAt:'2026-08-30T12:00:00.000Z',
+  lastActivityAt:'2026-08-30T18:00:00.000Z',
   observationStartedAt:'2026-08-21T12:00:00.000Z',
-  inactiveReferenceAt:'2026-08-30T12:00:00.000Z',
+  inactiveReferenceAt:'2026-08-30T18:00:00.000Z',
   hasPlayback:true,
   playbackMinutes:0,
   currentlyPlaying:false,
