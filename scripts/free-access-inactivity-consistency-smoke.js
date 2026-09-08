@@ -91,18 +91,18 @@ assert.equal(recentJellyfinActivity.noPlaybackEligible,false,'recent Jellyfin ac
 assert.equal(recentJellyfinActivity.usageEligible,true,'recent account activity must not fabricate playback minutes');
 assert.equal(policy.usageTriggered(recentJellyfinActivity,retentionPolicy),false,'an active customer below the playback minimum must not be removed until both retention conditions are breached');
 
-const importedExisting=inactivity.assessUsage({
+const existingManagedAccount=inactivity.assessUsage({
   allocation_start_at:'2026-08-20T12:00:00.000Z',
   first_playback_at:'2026-08-27T12:00:00.000Z',
   last_playback_at:'2026-08-28T12:00:00.000Z',
   last_activity_at:'2026-09-07T11:00:00.000Z',
   playback_seconds:0
 },retentionPolicy,now);
-assert.equal(importedExisting.hasPlayback,true,'an imported existing Jellyfin user with historical playback must already be activated');
-assert.equal(importedExisting.firstPlaybackEligible,false,'historical imported playback must prevent a false first-play warning');
-assert.equal(importedExisting.noPlaybackEligible,false,'recent Jellyfin activity must keep an imported activated user out of the inactivity breach');
-assert.equal(importedExisting.usageEligible,true,'historical import activation must not fabricate current rolling watch minutes');
-assert.equal(policy.usageTriggered(importedExisting,retentionPolicy),false,'an imported active user with recent activity must not be removed merely because current watch minutes are low');
+assert.equal(existingManagedAccount.hasPlayback,true,'an already-managed Jellyfin account with established playback must already be activated');
+assert.equal(existingManagedAccount.firstPlaybackEligible,false,'established playback for the same managed identity must prevent a false first-play warning');
+assert.equal(existingManagedAccount.noPlaybackEligible,false,'recent Jellyfin activity must keep an activated managed account out of the inactivity breach');
+assert.equal(existingManagedAccount.usageEligible,true,'historical activation evidence must not fabricate current rolling watch minutes');
+assert.equal(policy.usageTriggered(existingManagedAccount,retentionPolicy),false,'an activated account with recent activity must not be removed merely because current watch minutes are low');
 
 const minimumPolicy={firstPlaybackGraceDays:3,noPlaybackDays:null,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24};
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-30T12:00:00.000Z',first_playback_at:'2026-09-05T12:00:00.000Z',last_playback_at:'2026-09-05T12:00:00.000Z',playback_seconds:29*60},minimumPolicy,now).usageEligible,false,'the playback-minimum clock must start only after the first stream');
@@ -119,13 +119,17 @@ const importer=read('src/jellyfin/user-import.js');
 assert.match(base,/async function candidates\(globalCfg=null,\{customerId=null\}=\{\}\)/,'candidate discovery must support customer-scoped evaluation');
 assert.match(base,/\(\$2::uuid IS NULL OR s\.customer_id=\$2::uuid\)/,'customer-scoped evaluation must be enforced in SQL instead of filtering a fleet-wide result');
 assert.match(base,/MAX\(jal\.restored_at\).*restored_at/,'current allocation discovery must include explicit Free Server restoration time');
-assert.match(base,/s\.source subscription_source/,'candidate discovery must retain acquisition source so imports can preserve established playback history');
-assert.match(base,/SELECT MIN\(ph\.started_at\) historical_first_playback_at/,'candidate discovery must find established playback evidence for imported Jellyfin users');
+assert.match(base,/metadata->>'restoredReason'='admin_reenable'/,'only a real administrator re-enable may reset established account playback history');
+assert.match(base,/metadata->>'explicitRestore'='true'/,'generic legacy lifecycle rows must not reset the customer-facing Free allocation');
+assert.match(base,/SELECT MIN\(ph\.started_at\) historical_first_playback_at/,'candidate discovery must find established playback evidence for the current managed Jellyfin account');
+assert((base.match(/ph\.jellyfin_account_id=ja\.id/g)||[]).length>=2,'both historical activation evidence and rolling usage must be scoped to the exact current Jellyfin account ID');
 assert.match(base,/WHEN lifecycle\.restored_at IS NOT NULL THEN GREATEST\(fa\.starts_at,ja\.created_at,lifecycle\.restored_at\)/,'explicit restoration must remain the newest allocation boundary and discard old playback');
-assert.match(base,/WHEN fa\.subscription_source='migration' AND historical\.historical_first_playback_at IS NOT NULL/,'migration imports with real historical playback must use import-aware allocation semantics');
-assert.match(base,/THEN LEAST\(fa\.starts_at,ja\.created_at,historical\.historical_first_playback_at\)/,'imported playback must be allowed to prove that an existing Jellyfin identity was already activated');
-assert.match(base,/ELSE GREATEST\(fa\.starts_at,ja\.created_at\)/,'genuinely new Free allocations must still begin at the newest subscription/account boundary');
-assert.match(importer,/VALUES\(\$1,\$2,\$3,'migration',NOW\(\),\$4\)/,'existing Jellyfin customer imports must remain explicitly marked as migration acquisitions');
+assert.match(base,/WHEN historical\.historical_first_playback_at IS NOT NULL/,'established playback for the exact current Jellyfin identity must activate it regardless of subscription acquisition source');
+assert(!base.includes("WHEN fa.subscription_source='migration'"),'activation evidence must not depend on a migration subscription label');
+assert.match(base,/THEN LEAST\(fa\.starts_at,ja\.created_at,historical\.historical_first_playback_at\)/,'established account playback must be allowed to prove that the current Jellyfin identity was already activated');
+assert.match(base,/ELSE GREATEST\(fa\.starts_at,ja\.created_at\)/,'a genuinely new account with no playback history must still begin at the newest subscription/account boundary');
+assert.match(importer,/VALUES\(\$1,\$2,\$3,'migration',NOW\(\),\$4\)/,'existing Jellyfin customer imports must remain explicitly marked as migration acquisitions even though activation no longer depends on that label');
+assert.match(base,/EXISTS\(SELECT 1 FROM active_playback_sessions aps WHERE aps\.jellyfin_account_id=ja\.id\)/,'currently-playing protection must be scoped to the exact Free Jellyfin account');
 assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) first_playback_at/,'first playback must be scoped to the effective Free allocation');
 assert.match(base,/FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) last_playback_at/,'last playback must ignore sessions from previous restored Free allocations');
 assert.match(base,/ph\.started_at>=GREATEST\(allocation\.allocation_start_at,NOW\(\)-/,'minimum-playback totals must be clipped to the effective allocation as well as the rolling window');
