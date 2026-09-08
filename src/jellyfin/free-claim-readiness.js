@@ -44,9 +44,14 @@ async function ensureFreeClaimReady(customerId, { attempts = 1 } = {}) {
     };
   }
 
-  const maxAttempts = Math.max(0, Math.min(2, Number(attempts) || 0));
+  // One extra request-path retry is enough. Anything still unresolved becomes
+  // immediately due for the dedicated vacancy backfill instead of making a
+  // registration/claim HTTP request sit through repeated Jellyfin timeouts.
+  const maxAttempts = Math.max(0, Math.min(1, Number(attempts) || 0));
+  let performed = 0;
   let lastError = priorState?.last_error ? new Error(priorState.last_error) : null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    performed = attempt;
     try {
       await provisioning.reconcileCustomer(customerId);
       if (await hasReadyFreeAccount(customerId)) {
@@ -64,7 +69,7 @@ async function ensureFreeClaimReady(customerId, { attempts = 1 } = {}) {
   // retry. Keep this newly claimed customer immediately due so the single
   // Free Server backfill worker can retry on its next 30-second pass.
   await control.forceCustomerDue(customerId).catch(() => {});
-  return { ready: false, attempts: maxAttempts, error: lastError };
+  return { ready: false, attempts: performed, error: lastError };
 }
 
 module.exports = { hasReadyFreeAccount, ensureFreeClaimReady, noCapacity };
