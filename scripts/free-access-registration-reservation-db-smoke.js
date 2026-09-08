@@ -12,7 +12,7 @@ const {encryptWithEnv}=require('../src/security/purpose-crypto');
 async function main(){
   const free=(await query(`SELECT id,code,capacity_limit FROM plans WHERE is_free_tier=TRUE LIMIT 1`)).rows[0];
   assert(free,'canonical Free Access plan is missing');
-  assert.equal(pending.FREE_HOLD_MINUTES,10,'Free Access hold must be exactly 10 minutes');
+  assert.equal(pending.FREE_HOLD_MINUTES,60,'Free Access hold must match the 60-minute registration verification window');
   const originalLimit=free.capacity_limit;
   const tag=`hold-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const reservationIds=[];
@@ -89,7 +89,7 @@ async function main(){
     reservationIds.push(firstHold.id);
     assert(firstHold?.id,'explicit Free Access reservation did not create a hold');
     const holdMs=new Date(firstHold.expires_at).getTime()-Date.now();
-    assert(holdMs>9*60000&&holdMs<=10*60000+5000,'Free Access reservation does not expire in the 10-minute window');
+    assert(holdMs>59*60000&&holdMs<=60*60000+5000,'Free Access reservation does not expire in the 60-minute window');
 
     const idempotent=await pending.reserveFreeAccess({sessionId:firstSession});
     assert.equal(String(idempotent.id),String(firstHold.id),'same browser session created a second Free Access hold');

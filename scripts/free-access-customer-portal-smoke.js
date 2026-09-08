@@ -34,7 +34,7 @@ assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jell
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');
 
-assert(/const FREE_HOLD_MINUTES=10;/.test(pendingRegistration),'Free Server reservation must last exactly 10 minutes');
+assert(/const FREE_HOLD_MINUTES=60;/.test(pendingRegistration),'Free Server reservation must last exactly 60 minutes, matching the registration verification link TTL');
 assert(/async function reserveFreeAccess/.test(pendingRegistration)&&/holder_session_hash/.test(pendingRegistration),'Free Server must have a session-bound pre-registration hold');
 assert(/FREE_ACCESS_CAPACITY_EXHAUSTED/.test(pendingRegistration)&&/No free places currently available/.test(pendingRegistration),'last-place loser must receive the canonical no-capacity result');
 assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server hold must be created only by the explicit registration POST');
@@ -54,7 +54,7 @@ assert(routinePatchGuard,'routine capacity changes must PATCH the canonical mess
 if(/deleteDiscordMessage/.test(freePlaces)){
   assert(/stored\.messageId&&availabilityRestored/.test(freePlaces)&&/await remove\(\{channelId,messageId:stored\.messageId\}\)/.test(freePlaces),'reopened Free availability must retire the stale full message before posting the fresh notification');
 }
-assert(/No free places currently available/.test(freePlaces)&&/10 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
+assert(/No free places currently available/.test(freePlaces)&&/60 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
 assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');

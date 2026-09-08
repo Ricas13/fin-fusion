@@ -7,7 +7,13 @@ const referrals=require('../referrals');
 const planCapacity=require('../entitlements/plan-capacity');
 
 const LOCK_SEED=761931;
-const FREE_HOLD_MINUTES=10;
+// Must be >= the pending-registration TTL (60 minutes, see the /account/register
+// route's ttlMinutes:60) so the free-access hold never expires before the email
+// verification link it is meant to protect does. A shorter hold here silently
+// strands every applicant whose inbox delivery takes longer than the hold,
+// which cycles a scarce single-digit free-place pool through applicant after
+// applicant without anyone ever actually landing a place.
+const FREE_HOLD_MINUTES=60;
 function cleanEmail(value){const email=String(value||'').trim().toLowerCase();if(!email||!email.includes('@')||email.length>254||/[\r\n<>]/.test(email))throw new Error('A valid email address is required');return email;}
 function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');return username;}
 async function validatePassword(password){return customers.validateNewPassword(password);}
