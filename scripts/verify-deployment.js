@@ -7,6 +7,7 @@ const { query, getPool } = require('../src/db');
 const buildInfo = require('../src/build-info');
 const runtimeSettings = require('../src/platform/runtime-settings');
 const jobHealth = require('../src/automation/job-health');
+const criticalJobs = require('../src/automation/critical-jobs');
 
 async function main() {
     const checks = [];
@@ -52,8 +53,12 @@ async function main() {
             const registeredJobs = Array.isArray(automationWorker?.metadata?.registeredJobs)
                 ? automationWorker.metadata.registeredJobs.map(String)
                 : [];
-            add('automation worker registry', registeredJobs.includes('free_capacity_backfill'),
-                registeredJobs.length ? `${registeredJobs.length} jobs registered` : 'registered job manifest missing');
+            const requiredJobs = criticalJobs.names();
+            const missingRegisteredJobs = requiredJobs.filter(jobKey => !registeredJobs.includes(jobKey));
+            add('automation worker registry', missingRegisteredJobs.length === 0,
+                missingRegisteredJobs.length
+                    ? `running worker missing=${missingRegisteredJobs.join(',')}`
+                    : `${registeredJobs.length} jobs registered; ${requiredJobs.length} access-critical jobs present`);
 
             const activityWorker = byKey.get('activity');
             add('activity worker', activityWorker && Number(activityWorker.age) < 120,
@@ -76,7 +81,7 @@ async function main() {
                     : 'no heartbeat');
 
             const jobs = await jobHealth.list();
-            const critical = new Set(['billing', 'entitlements', 'plan_changes', 'customer_inactivity', 'free_capacity_backfill']);
+            const critical = new Set(requiredJobs);
             const bad = jobs.filter(job => critical.has(job.job_key) && ['failed', 'stale', 'missing'].includes(jobHealth.healthState(job)));
             const inactivityJob = jobs.find(job => job.job_key === 'customer_inactivity');
             add('Free Server lifecycle job', Boolean(inactivityJob?.enabled), inactivityJob ? `state=${jobHealth.healthState(inactivityJob)} next=${inactivityJob.next_run_at || 'pending'}` : 'job row missing');
@@ -86,7 +91,7 @@ async function main() {
                 freeBackfillJob
                     ? `state=${freeBackfillState} interval=${freeBackfillJob.interval_seconds}s next=${freeBackfillJob.next_run_at || 'pending'}${freeBackfillJob.last_warning ? ` warning=${freeBackfillJob.last_warning}` : ''}`
                     : 'job row missing');
-            const missingCritical = [...critical].filter(jobKey => !jobs.some(job => job.job_key === jobKey && job.enabled !== false));
+            const missingCritical = requiredJobs.filter(jobKey => !jobs.some(job => job.job_key === jobKey && job.enabled !== false));
             add('critical automation job registry', missingCritical.length === 0,
                 missingCritical.length ? `missing/disabled=${missingCritical.join(',')}` : `${critical.size} required jobs present`);
             add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${jobHealth.healthState(job)}`).join(', '));
