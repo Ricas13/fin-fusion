@@ -60,6 +60,8 @@ const externalSource=read('src/stremio/external-direct-runtime.js');
 const mediaIndexSource=read('src/stremio/media-index.js');
 const runtimeSource=read('src/stremio/runtime.js');
 const restrictedSource=read('src/stremio/jellyfin-runtime.js');
+const entitlementSource=read('src/stremio/entitlements.js');
+const externalTokenSource=read('src/stremio/external-playback-token.js');
 
 assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call PlaybackInfo');
 assert(!managedSource.includes("searchParams.set('PlaySessionId'")&&!managedSource.includes("searchParams.set('DeviceId'"),'managed raw-file URLs must not attach playback-session state');
@@ -92,5 +94,9 @@ assert(!externalSource.includes('client.sourceToken(source)'),'external raw-file
 assert(externalSource.includes('externalPlaybackToken.tokenFor(source,entitlement)'),'external raw-file URLs must be issued with isolated per-entitlement playback sessions');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside playback-session reporting');
 assert(!externalSource.includes('/Sessions/Playing')&&!externalSource.includes('/Sessions/Playing/Progress')&&!externalSource.includes('/Sessions/Playing/Stopped'),'external fallback playback must not manufacture media-server playback reporting');
+
+assert(externalTokenSource.includes('async function revokeEntitlement(entitlementId)'),'isolated raw sessions must support synchronous per-entitlement revocation');
+assert((entitlementSource.match(/externalPlaybackToken\.revokeEntitlement\(row\.id\)/g)||[]).length>=2,'both Stremio suspension and explicit revocation must synchronously revoke isolated external playback sessions');
+assert(entitlementSource.includes("SET status=CASE WHEN status='revoked' THEN status ELSE 'suspended' END")&&entitlementSource.includes("SET status='suspended',token_hash=NULL"),'Stremio access must become non-active before external session cleanup so a racing stream request cannot mint a replacement token');
 
 console.log('stremio Jellyfin/Emby raw-file playback compatibility smoke: ok');
