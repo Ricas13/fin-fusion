@@ -102,21 +102,16 @@ function effectiveStreamLimit(row, entitlements, overrideMap) {
     return Number.isInteger(limit) && limit > 0 ? limit : 1;
 }
 
-async function observedSessionsWithLaneLimits(cfg = legacyActivity.config()) {
-    const activeWindowSeconds = Math.max(30, Number(cfg?.activeWindowSeconds) || 120);
+async function observedSessionsWithLaneLimits() {
     const result = await query(`
         SELECT aps.server_id,aps.jellyfin_session_id,aps.playback_key,aps.customer_id,
                aps.jellyfin_account_id,aps.jellyfin_user_id,aps.device_name,aps.is_paused,
-               aps.first_seen_at,aps.last_seen_at,aps.last_activity_at,aps.over_limit_confirmations,
+               aps.first_seen_at,aps.last_seen_at,aps.over_limit_confirmations,
                ja.access_lane,ja.disabled
         FROM active_playback_sessions aps
         JOIN jellyfin_accounts ja ON ja.id=aps.jellyfin_account_id
         WHERE ja.account_purpose='jellyfin'
-          AND (
-              aps.last_activity_at IS NULL
-              OR aps.last_activity_at >= NOW() - ($1::int * INTERVAL '1 second')
-          )
-    `, [activeWindowSeconds]);
+    `);
     const customerIds = result.rows.map(row => row.customer_id);
     const [entitlements, overrideMap] = await Promise.all([
         laneEntitlements(customerIds),
@@ -441,7 +436,7 @@ async function runActivityPolicyCycle() {
         await restoreLaneConfirmations(before);
         await removeLegacyDecisionEvents(startedAt);
 
-        const rows = await observedSessionsWithLaneLimits(cfg);
+        const rows = await observedSessionsWithLaneLimits();
         const failedServerIds = new Set((observed.serverFailures || []).map(item => String(item.serverId)));
         const lanePolicy = await evaluateLanePolicies(rows, failedServerIds, cfg);
         return {
