@@ -4,6 +4,19 @@ require('dotenv').config();
 const crypto = require('crypto');
 const fs = require('fs');
 const pkg = require('../package.json');
+
+// Playback analytics includes long-range 6 month / 1 year / YTD views, so the
+// activity worker must never prune playback history on the old short-retention
+// defaults. 1827 days safely covers any five-calendar-year span, including
+// ranges containing two leap days. Deployments can still configure a longer
+// ACTIVITY_RETENTION_DAYS value (the activity collector currently caps it at
+// 3650 days), but values below this floor are promoted automatically.
+const MIN_PLAYBACK_RETENTION_DAYS = 1827;
+const configuredPlaybackRetention = Number.parseInt(process.env.ACTIVITY_RETENTION_DAYS || '', 10);
+if (!Number.isFinite(configuredPlaybackRetention) || configuredPlaybackRetention < MIN_PLAYBACK_RETENTION_DAYS) {
+  process.env.ACTIVITY_RETENTION_DAYS = String(MIN_PLAYBACK_RETENTION_DAYS);
+}
+
 if (!process.env.ACTIVITY_DATABASE_URL) throw new Error('ACTIVITY_DATABASE_URL is required');
 if (!process.env.JELLYFIN_ENCRYPTION_KEY) throw new Error('JELLYFIN_ENCRYPTION_KEY is required');
 if (!process.env.ACTIVITY_ENCRYPTION_KEY) throw new Error('ACTIVITY_ENCRYPTION_KEY is required');
