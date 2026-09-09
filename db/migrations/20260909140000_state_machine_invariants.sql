@@ -181,16 +181,14 @@ EXECUTE FUNCTION public.enforce_single_live_recurring_service();
 -- two destructive reasons so routine Enable cannot release them.
 UPDATE public.customer_access_holds
 SET hold_type='administrative_ban',
-    source_key=CASE WHEN source_key='admin' THEN 'ban' ELSE source_key END,
-    updated_at=NOW()
+    source_key=CASE WHEN source_key='admin' THEN 'ban' ELSE source_key END
 WHERE released_at IS NULL
   AND hold_type='admin_hold'
   AND LOWER(COALESCE(reason,'')) LIKE '%ban%';
 
 UPDATE public.customer_access_holds
 SET hold_type='jellyfin_identity_removed',
-    source_key=CASE WHEN source_key='admin' THEN 'identity-removal' ELSE source_key END,
-    updated_at=NOW()
+    source_key=CASE WHEN source_key='admin' THEN 'identity-removal' ELSE source_key END
 WHERE released_at IS NULL
   AND hold_type='admin_hold'
   AND (
