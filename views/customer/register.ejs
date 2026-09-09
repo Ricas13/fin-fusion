@@ -10,10 +10,10 @@
   </style>
 </head>
 <body><main class="card">
-  <% const hasFreeReservation = Boolean(freeIntent && freeReservation && freeReservation.id); %>
+  <% const hasFreeSignupIntent = Boolean(freeIntent && freeReservation && freeReservation.id); %>
   <div class="eyebrow"><%= freeIntent ? 'Free Access signup' : 'Create your account' %></div>
   <h1><%= freeIntent ? 'Claim Free Access' : 'Get started with '+siteName %></h1>
-  <p class="lead"><%= freeIntent ? 'Reserve your place, create your account, then confirm your email.' : 'Three details now, one email confirmation, then you are signed in automatically.' %></p>
+  <p class="lead"><%= freeIntent ? 'Start signup, enter your account details, then confirm your email. A Free Access place is only reserved after valid account details are submitted.' : 'Three details now, one email confirmation, then you are signed in automatically.' %></p>
 
   <div class="steps" aria-label="Signup progress">
     <div class="step active"><strong>1 · Account</strong>Your details</div>
@@ -22,21 +22,21 @@
   </div>
 
   <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. If you already have an account, sign in below.</div><% } %>
-  <% if (registrationOpen && freeIntent && !hasFreeReservation) { %><div class="notice"><strong>Reserve your place first.</strong> We hold an available Free Access place for <%= freeHoldMinutes %> minutes while you create and verify your account.</div><% } %>
-  <% if (registrationOpen && freeIntent && hasFreeReservation) { %><div class="notice freeHold"><strong>Your place is reserved until <%= new Date(freeReservation.expires_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %>.</strong> Finish the details below and verify the email before the hold expires.</div><% } %>
+  <% if (registrationOpen && freeIntent && !hasFreeSignupIntent) { %><div class="notice"><strong>Start Free Access signup.</strong> This opens a <%= freeHoldMinutes %>-minute window to enter your details. It does not consume or reserve a Free place yet.</div><% } %>
+  <% if (registrationOpen && freeIntent && hasFreeSignupIntent) { %><div class="notice freeHold"><strong>Your signup window is open until <%= new Date(freeReservation.expires_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %>.</strong> Submit valid account details below. Capacity is checked atomically at submission and, if a place is still available, it is then reserved through email verification.</div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
 
-  <% if (registrationOpen && freeIntent && !hasFreeReservation) { %>
+  <% if (registrationOpen && freeIntent && !hasFreeSignupIntent) { %>
   <form method="post" action="/account/register">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="freeIntent" value="1">
     <input type="hidden" name="reserveFree" value="1">
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
-    <button type="submit">Reserve my Free Access place</button>
+    <button type="submit">Start Free Access signup</button>
   </form>
   <% } %>
 
-  <% if (registrationOpen && (!freeIntent || hasFreeReservation)) { %>
+  <% if (registrationOpen && (!freeIntent || hasFreeSignupIntent)) { %>
   <form method="post" action="/account/register">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="freeIntent" value="<%= freeIntent ? '1' : '0' %>">
@@ -46,7 +46,7 @@
     <div class="field"><label for="signup-password">Password <span>Minimum 8 characters</span></label><input id="signup-password" type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required></div>
     <% if (referralsEnabled) { %><div class="field"><label for="signup-referral">Referral code <span>Optional</span></label><input id="signup-referral" name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"></div><% } %>
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
-    <button type="submit"><%= freeIntent ? 'Create account & verify email' : 'Continue to email verification' %></button>
+    <button type="submit"><%= freeIntent ? 'Create account & reserve available place' : 'Continue to email verification' %></button>
     <p class="muted" style="text-align:center;margin:10px 0 0">After you verify the email, you are signed in automatically. No second login.</p>
   </form>
   <% } %>
