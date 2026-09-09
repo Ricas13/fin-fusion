@@ -147,8 +147,9 @@ assert(/\/account\/claim-free\/:planCode[\s\S]*welcome=1/.test(router),'Free Acc
 assert(paymentReturn.includes('/account?welcome=1'),'PayPal completion must enter welcome flow');
 assert(paymentReturn.includes("'/account/stripe/return'")&&paymentReturn.includes('stripe.confirmCheckout(sessionId,row)')&&paymentReturn.includes("completedRedirect(res,'Stripe payment confirmed."),'Stripe completion must enter welcome flow only after provider confirmation');
 assert(storefront.includes('/account/register?intent=free'),'public Free Access CTA must carry explicit free intent into registration');
-assert(pending.includes('FREE_HOLD_MINUTES=10')&&pending.includes('async function reserveFreeAccess')&&pending.includes('free_access_registration_reservations'),'explicit Free Access reservation must create a real 10-minute expiring capacity hold before registration details are entered');
-assert(capacity.includes('free_access_registration_reservations')&&capacity.includes('reserved'),'plan capacity must count live registration holds');
+assert(pending.includes('FREE_INTENT_MINUTES=10')&&pending.includes('free_access_registration_intents')&&pending.includes('return intent;'),'explicit Free Access start must create a short-lived registration intent without consuming scarce capacity');
+assert(pending.includes('planCapacity.lockAndAssert(client,freePlan.id')&&pending.includes('INSERT INTO free_access_registration_reservations')&&pending.includes('DELETE FROM free_access_registration_intents'),'validated Free Access registration must reserve scarce capacity atomically and consume its browser intent');
+assert(capacity.includes('free_access_registration_reservations')&&capacity.includes('reserved'),'plan capacity must count live validated-registration holds, not anonymous signup intents');
 assert(publicAuth.includes('await establish(req,created)')&&publicAuth.includes('activateRequestedFreeAccess(created)'),'verified registration must establish the customer session and continue onboarding automatically');
 assert(publicAuth.includes('reserved Free Access place expired before verification'),'expired Free Access reservations must preserve the new account and explain the next step without mislabeling the submitted reservation as a 10-minute hold');
 {

@@ -76,7 +76,6 @@ const methods=[
 const methodStrip=paymentMethodsStrip(methods);
 for(const expected of ['Payment methods accepted','Card payments','PayPal','Crypto','data-provider="stripe"','data-provider="paypal"','data-provider="plisio"'])assert.ok(methodStrip.includes(expected),`payment strip should include ${expected}`);
 assert.strictEqual(paymentMethodsStrip([]),'','payment strip must disappear when no payment providers are configured');
-
 const store = {
     copy: {
         heroTitle: 'Your entertainment. One simple subscription.',
@@ -102,18 +101,20 @@ const openPlans=plans.map(plan=>plan.is_free_tier?{...plan,capacity:{limit:20,us
 const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans:openPlans, store, registrationOpen: true, logged: false, paymentMethods:[methods[1]],csrfToken:'csrf-test' });
 assert.ok(openPage.includes('Create account'));
 assert.ok(openPage.includes('Free places are available now.'));
-assert.ok(openPage.includes('Reserve / Create Free Account'));
+assert.ok(openPage.includes('Start Free Access signup'));
+assert.ok(openPage.includes('This does not reserve a place yet'));
+assert.ok(openPage.includes('capacity is checked when you submit valid account details'));
 assert.ok(openPage.includes('method="post" action="/account/register"'));
 assert.ok(openPage.includes('name="reserveFree" value="1"'));
 assert.ok(openPage.includes('name="_csrf" value="csrf-test"'));
-assert.ok(!openPage.includes('href="/account/register?intent=free">Reserve / Create Free Account'), 'opening a GET must not reserve free capacity');
+assert.ok(!openPage.includes('href="/account/register?intent=free">Start Free Access signup'), 'opening a GET must not create a Free signup intent or reserve capacity');
 assert.ok(openPage.includes('PayPal'));
 assert.ok(!openPage.includes('Card payments'),'disabled/unconfigured methods must not be advertised when omitted by provider status');
 assert.ok(!openPage.includes('New customers can currently join by invitation.'));
 
 const captchaPage = renderStorefront({ site:'CAPTAiNFiN',plans:openPlans,store,registrationOpen:true,logged:false,turnstileEnabled:true,turnstileSiteKey:'site-key',turnstileAction:'customer_registration' });
-assert.ok(captchaPage.includes('https://challenges.cloudflare.com/turnstile/v0/api.js'),'Turnstile script should load on reservable storefront when enabled');
-assert.ok(captchaPage.includes('class="cf-turnstile"'),'Free Server reservation form should include Turnstile challenge');
+assert.ok(captchaPage.includes('https://challenges.cloudflare.com/turnstile/v0/api.js'),'Turnstile script should load on Free signup when enabled');
+assert.ok(captchaPage.includes('class="cf-turnstile"'),'Free Server signup-intent form should include Turnstile challenge');
 assert.ok(captchaPage.includes('data-sitekey="site-key"'));
 assert.ok(captchaPage.includes('data-action="customer_registration"'));
 
@@ -122,5 +123,4 @@ assert.ok(empty.includes('Blank Install'));
 assert.ok(empty.includes('Everything stays in your account.'));
 assert.ok(!empty.includes('paymentMethodsSection'),'blank/unconfigured storefront should not render an empty payment strip');
 assert.ok(!empty.includes('NaN'));
-
 console.log('storefront v2 smoke: ok');
