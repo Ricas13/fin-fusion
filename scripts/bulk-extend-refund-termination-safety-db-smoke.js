@@ -82,6 +82,29 @@ async function runExtend(customerId) {
     const olderSubAfter = (await query('SELECT service_extension_days FROM subscriptions WHERE id=$1', [olderSub.id])).rows[0];
     assert.strictEqual(Number(olderSubAfter.service_extension_days || 0), 0, 'older subscription must not be selected or extended behind a newer terminal refund');
 
+    // Case 1b: protect the actual write boundary too. A worker can select a
+    // subscription before a concurrent refund commits, then attempt its event
+    // insert afterwards. The DB trigger locks the subscription row and refuses
+    // that stale event once refund_terminated_at is visible, so the enclosing
+    // extension transaction cannot leave a phantom "extension applied" event.
+    let boundaryRejected = false;
+    const staleReference = `bulk-refund-boundary-${suffix}`;
+    try {
+        await query(`
+            INSERT INTO subscription_service_extension_events(
+                subscription_id,customer_id,source,days,reference_id,metadata
+            ) VALUES($1,$2,'admin_bulk',30,$3,$4::jsonb)
+        `, [refundSub.id, refundCustomerId, staleReference, JSON.stringify({ test: true, staleSelection: true })]);
+    } catch (error) {
+        boundaryRejected = /confirmed refund|subscription_service_extension_events_refund_terminal/i.test(String(error?.message || error));
+    }
+    assert.strictEqual(boundaryRejected, true, 'extension event creation must be rejected after the refund boundary commits');
+    const staleEvents = await query(
+        `SELECT COUNT(*)::int count FROM subscription_service_extension_events WHERE source='admin_bulk' AND reference_id=$1`,
+        [staleReference]
+    );
+    assert.strictEqual(Number(staleEvents.rows[0]?.count || 0), 0, 'rejected stale extension must not leave an event row behind');
+
     // Case 2: an ordinary administrative plan termination (not a refund) must
     // remain extendable -- this fix must not block the legitimate
     // reactivate-a-lapsed-customer workflow.
