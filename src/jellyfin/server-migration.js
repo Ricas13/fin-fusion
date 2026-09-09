@@ -4,6 +4,8 @@ const { query, transaction } = require('../db');
 const planServers = require('./plan-servers');
 const provisioning = require('./provisioning');
 
+const RUNNING_STALE_MINUTES = 45;
+
 class ServerMigrationError extends Error {
     constructor(code, message, stage = null) {
         super(message);
@@ -18,6 +20,7 @@ function accessKind(plan) {
     return Number(plan?.price_minor || 0) === 0 ? 'free' : 'paid';
 }
 function same(a, b) { return String(a || '') === String(b || ''); }
+function cleanError(error, max = 4000) { return String(error?.message || error || 'Migration failed').slice(0, max); }
 
 async function primaryAccount(customerId) {
     const result = await query(`
@@ -40,6 +43,34 @@ async function activeAccountCount(serverId) {
 async function targetServerForPlan(plan, targetServerId) {
     const candidates = await planServers.eligibleServersForPlan(plan, { enabledOnly: true });
     return candidates.find(server => same(server.id, targetServerId)) || null;
+}
+
+async function recoverStaleMigrations(customerId = null) {
+    const params = [RUNNING_STALE_MINUTES];
+    let customerFilter = '';
+    if (customerId) {
+        params.push(customerId);
+        customerFilter = 'AND customer_id=$2';
+    }
+    const result = await query(`
+        UPDATE customer_server_migrations
+        SET status='failed',
+            failure_stage='stale_running_recovered',
+            last_error=COALESCE(last_error,'Migration worker stopped while the migration was running. The stale operation was released for a safe retry.'),
+            detail=COALESCE(detail,'{}'::jsonb)||jsonb_build_object('staleRunningRecovered',TRUE,'recoveredAt',NOW()),
+            completed_at=COALESCE(completed_at,NOW()),
+            updated_at=NOW()
+        WHERE status='running'
+          AND updated_at<NOW()-make_interval(mins=>$1)
+          ${customerFilter}
+        RETURNING id,customer_id
+    `, params);
+    for (const row of result.rows) {
+        await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                     VALUES('admin.customer.server_migration.stale_recovered','customer',$1,$2::jsonb)`,
+        [row.customer_id, JSON.stringify({ migrationId: row.id, staleMinutes: RUNNING_STALE_MINUTES })]).catch(() => {});
+    }
+    return result.rows;
 }
 
 async function migrationForId(migrationId) {
@@ -95,7 +126,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     const alreadyRecorded = await query('SELECT id FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 LIMIT 1', [customerId, target.id]);
     if (alreadyRecorded.rowCount) throw new ServerMigrationError('TARGET_ACCOUNT_EXISTS', 'This customer already has a CAPTAiNFiN Jellyfin account on the target server.', 'preflight');
     if (!(await provisioning.usernameAvailable(target.id, source.jellyfin_username))) {
-        throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on the target Jellyfin server.`, 'preflight');
+        throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on target Jellyfin server.`, 'preflight');
     }
 
     const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement);
@@ -118,6 +149,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
 }
 
 async function createMigration(customerId, targetServerId, actorUserId, { allowOverCapacity = false } = {}) {
+    await recoverStaleMigrations(customerId);
     const check = await preflight(customerId, targetServerId, { allowOverCapacity });
     try {
         const result = await query(`
@@ -173,10 +205,10 @@ async function markFailed(migrationId, stage, error, cleanup) {
         SET status='failed',failure_stage=$2,last_error=$3,
             detail=detail || $4::jsonb,completed_at=NOW(),updated_at=NOW()
         WHERE id=$1
-    `, [migrationId, stage, String(error?.message || error || 'Migration failed').slice(0, 4000), JSON.stringify({ cleanup })]);
+    `, [migrationId, stage, cleanError(error), JSON.stringify({ cleanup })]);
 }
 
-async function executeMigration(migrationId) {
+async function executeMigrationUnlocked(migrationId) {
     const migration = await setRunning(migrationId);
     let stage = 'preflight';
     let targetAccount = null;
@@ -238,12 +270,20 @@ async function executeMigration(migrationId) {
         await markProvisioningDue(migration.customer_id, targetAccount.id, migration.target_server_id);
         return migrationForId(migrationId);
     } catch (error) {
-        const cleanup = { targetRemoved: false };
+        const cleanup = { targetRemoved: false, targetRemovalError: null };
         if (targetAccount) {
             try {
                 await provisioning.deleteJellyfinAccount(targetAccount, { reason: 'Failed server migration cleanup', actorUserId: migration.requested_by || null });
                 cleanup.targetRemoved = true;
-            } catch (_) {}
+            } catch (cleanupError) {
+                cleanup.targetRemovalError = cleanError(cleanupError, 1000);
+                console.error('Failed server migration cleanup left the target account for reconciliation.', {
+                    migrationId,
+                    customerId: migration.customer_id,
+                    accountId: targetAccount.id,
+                    error: cleanup.targetRemovalError
+                });
+            }
         }
         await markFailed(migrationId, stage, error, cleanup);
         const source = await primaryAccount(migration.customer_id);
@@ -252,7 +292,16 @@ async function executeMigration(migrationId) {
     }
 }
 
-async function rollbackMigration(migrationId, actorUserId) {
+async function executeMigration(migrationId) {
+    const migration = await migrationForId(migrationId);
+    if (!migration) throw new ServerMigrationError('MIGRATION_NOT_FOUND', 'Server migration not found.');
+    return provisioning.reconciliationLock.withCustomerReconciliationLock(
+        migration.customer_id,
+        () => executeMigrationUnlocked(migrationId)
+    );
+}
+
+async function rollbackMigrationUnlocked(migrationId, actorUserId) {
     const migration = await migrationForId(migrationId);
     if (!migration) throw new ServerMigrationError('MIGRATION_NOT_FOUND', 'Server migration not found.');
     if (migration.status !== 'succeeded') throw new ServerMigrationError('ROLLBACK_NOT_AVAILABLE', 'Only a successful migration can be rolled back.');
@@ -314,16 +363,37 @@ async function rollbackMigration(migrationId, actorUserId) {
         await markProvisioningDue(migration.customer_id, restoredSource.id, restoredSource.server_id);
         return migrationForId(migrationId);
     } catch (error) {
+        let cleanupErrorMessage = null;
         if (restoredSource) {
-            try { await provisioning.deleteJellyfinAccount(restoredSource, { reason: 'Failed migration rollback cleanup', actorUserId: actorUserId || null }); } catch (_) {}
+            try {
+                await provisioning.deleteJellyfinAccount(restoredSource, { reason: 'Failed migration rollback cleanup', actorUserId: actorUserId || null });
+            } catch (cleanupError) {
+                cleanupErrorMessage = cleanError(cleanupError, 1000);
+                console.error('Failed migration rollback cleanup left the restored source account for reconciliation.', {
+                    migrationId,
+                    customerId: migration.customer_id,
+                    accountId: restoredSource.id,
+                    error: cleanupErrorMessage
+                });
+            }
         }
         await query(`
             UPDATE customer_server_migrations
-            SET status='rollback_failed',failure_stage='rollback',last_error=$2,updated_at=NOW()
+            SET status='rollback_failed',failure_stage='rollback',last_error=$2,
+                detail=detail||$3::jsonb,updated_at=NOW()
             WHERE id=$1
-        `, [migrationId, String(error.message || error).slice(0, 4000)]);
+        `, [migrationId, cleanError(error), JSON.stringify({ rollbackCleanupError: cleanupErrorMessage })]);
         throw error;
     }
+}
+
+async function rollbackMigration(migrationId, actorUserId) {
+    const migration = await migrationForId(migrationId);
+    if (!migration) throw new ServerMigrationError('MIGRATION_NOT_FOUND', 'Server migration not found.');
+    return provisioning.reconciliationLock.withCustomerReconciliationLock(
+        migration.customer_id,
+        () => rollbackMigrationUnlocked(migrationId, actorUserId)
+    );
 }
 
 async function listMigrations(limit = 100) {
@@ -350,6 +420,7 @@ async function listMigrations(limit = 100) {
 }
 
 async function migrationCandidates(limit = 500) {
+    await recoverStaleMigrations();
     const n = Math.max(1, Math.min(1000, Number(limit) || 500));
     const result = await query(`
         WITH active AS (
@@ -396,12 +467,16 @@ async function enabledServers() {
 }
 
 module.exports = {
+    RUNNING_STALE_MINUTES,
     ServerMigrationError,
     primaryAccount,
     preflight,
     createMigration,
     executeMigration,
+    executeMigrationUnlocked,
     rollbackMigration,
+    rollbackMigrationUnlocked,
+    recoverStaleMigrations,
     listMigrations,
     migrationForId,
     migrationCandidates,

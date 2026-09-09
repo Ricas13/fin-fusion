@@ -118,7 +118,10 @@ async function hardRevokeRefundedStremio(customerId,result){
     if(remaining)return{...result,stremioRevoked:false,stremioPreservedBySubscription:true};
     await stremio.revoke(customerId);
     const managed=require('../stremio/managed-entitlements');
-    const managedCleanup=await managed.revokeInactiveMappings();
+    // Refund teardown must be isolated to this customer. A stale mapping owned
+    // by somebody else must never block the affected customer's Jellyfin/Emby/
+    // Discord reconciliation or make this payment event retry forever.
+    const managedCleanup=await managed.revokeCustomerInactiveMappings(customerId);
     if(Number(managedCleanup?.failed||0)>0){
         const error=new Error(managedCleanup.warning||'Some managed Stremio access could not be revoked after the refund.');
         error.code='STREMIO_REFUND_CLEANUP_INCOMPLETE';

@@ -38,7 +38,7 @@ assert(termination.includes('async function hardRevokeRefundedStremio'),'confirm
 assert(termination.includes("['stremio','bundle'].includes(String(result.serviceType||''))"),'refund hard cleanup must be scoped to Stremio-bearing purchases');
 assert(termination.includes('const remaining=await stremio.entitledSubscription(customerId)'),'refund cleanup must not revoke a different valid Stremio subscription');
 assert(termination.includes('await stremio.revoke(customerId)'),'a fully refunded last Stremio plan must invalidate the install credential');
-assert(termination.includes('await managed.revokeInactiveMappings()'),'a fully refunded last Stremio plan must retire managed Stremio mappings');
+assert(termination.includes('await managed.revokeCustomerInactiveMappings(customerId)'),'a fully refunded last Stremio plan must retire only that customer\'s inactive managed Stremio mappings');
 assert(termination.includes("reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType"),'duplicate refund delivery must retain enough service identity to retry Stremio cleanup');
 assert(termination.includes('return hardRevokeRefundedStremio(customerId,local)'),'refund termination must always pass through hard cleanup after local convergence');
 

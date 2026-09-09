@@ -262,6 +262,9 @@ async function planRoleMappings(planIds, { queryFn = query } = {}) {
 
 async function managedRoleIds({ queryFn = query } = {}) {
   const result = await queryFn(`
+    SELECT role_id AS discord_role_id
+    FROM discord_managed_role_history
+    UNION
     SELECT DISTINCT discord_role_id
     FROM plans
     WHERE discord_role_id IS NOT NULL

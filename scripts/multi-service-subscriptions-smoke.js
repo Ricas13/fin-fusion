@@ -35,12 +35,11 @@ function staticContracts(){
   assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("ja.access_lane='free'"),'Free entitlement blocking must recognize source-agnostic Free-lane inactivity and cleanup holds');
   // The dormant-free-account restore path now lives in jellyfin-cleanup-return.js
   // (customer-inactivity.js's own copy of restoreReturningCustomer was dead code -
-  // never wired to any route - and has been removed). It must independently
-  // re-verify a live Free-tier subscription still exists before restoring: a
-  // customer who upgraded to paid Jellyfin after their Free account was cleaned
-  // up must not have that abandoned Free account resurrected just because a
-  // stale cleanup hold remains.
-  assert(cleanupReturn.includes('liveFreeJellyfinSubscription')&&cleanupReturn.includes('canRestoreDeletedFree=Boolean(deletedLifecycle.rowCount&&freeEntitlement&&inactivityHold.rowCount)'),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
+  // never wired to any route - and has been removed). The retired lifecycle
+  // ledger is no longer authoritative: recovery requires a live Free-tier
+  // entitlement plus its matching active inactivity hold, so an unrelated paid
+  // Jellyfin visit cannot resurrect an abandoned Free account by itself.
+  assert(cleanupReturn.includes('liveFreeJellyfinSubscription')&&cleanupReturn.includes('canRestoreDeletedFree=Boolean(freeEntitlement&&inactivityHold.rowCount)'),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
   assert(provisioning.includes("'reconcile','started'")&&!provisioning.includes("'reconcile_multi_access','started'"),'multi-access provisioning runs must use a schema-valid action');
   assert(migration.includes("CHECK (access_lane IN ('primary','free'))")&&migration.includes("p_source='free_claim'"),'applied migration must remain unchanged while runtime supplements legacy-source Free blocking');
 }

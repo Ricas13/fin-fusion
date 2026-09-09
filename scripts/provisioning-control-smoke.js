@@ -91,7 +91,9 @@ assert(resilientProvisioning.includes("RECONCILIATION_POSTCONDITION_FAILED")&&/a
 assert(resilientProvisioning.includes('errorCode: error.code || null'),'failed provisioning runs must preserve stable machine-readable error codes for support diagnostics');
 assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy helper facade');
 
-assert(accessHolds.includes("hold_type IN ('admin_disabled','admin_suspended','admin_hold','legacy')"),'bulk admin release must clear every hold type that holdAccess can create, including generic admin_hold');
+assert(accessHolds.includes("hold_type IN ('admin_disabled','admin_suspended','legacy')"),'routine admin Enable must release only reversible disable/suspend/legacy holds');
+assert(!accessHolds.includes("hold_type IN ('admin_disabled','admin_suspended','admin_hold','legacy')"),'routine admin Enable must not blanket-release generic/destructive administrative authority');
+assert(accessHolds.includes('administrative_ban')&&accessHolds.includes('jellyfin_identity_removed'),'destructive ban and identity-removal authority must remain distinct from reversible admin disable state');
 assert(accessHolds.includes("'customer.access_hold.release_admin'"),'bulk admin hold release must remain auditable');
 
 const paidPriority=subscriptionState.indexOf("ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC");
