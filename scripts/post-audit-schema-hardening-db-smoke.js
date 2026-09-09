@@ -54,9 +54,9 @@ async function main() {
     )).rows[0];
 
     await client.query(
-      `INSERT INTO payment_incidents(provider,provider_case_id,incident_type,incident_status,customer_id,provider_subscription_id,metadata)
-       VALUES('stripe',$1,'chargeback','lost',$2,$3,$4::jsonb)`,
-      [`dp_lost_${suffix}`, customer.id, `sub_lost_${suffix}`, JSON.stringify({ lost: true })]
+      `INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,customer_id,provider_subscription_id,metadata)
+       VALUES('stripe',$1,$2,'chargeback','lost',$3,$4,$5::jsonb)`,
+      [`evt_lost_${suffix}`, `dp_lost_${suffix}`, customer.id, `sub_lost_${suffix}`, JSON.stringify({ lost: true })]
     );
     await client.query(
       `UPDATE subscriptions SET status='active',current_period_end=NOW()+INTERVAL '30 days' WHERE id=$1`,
