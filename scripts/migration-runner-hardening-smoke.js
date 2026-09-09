@@ -60,6 +60,17 @@ async function main() {
     row = (await client.query('SELECT checksum FROM schema_migrations WHERE filename=$1',[filename])).rows[0];
     assert.strictEqual(row.checksum, 'new-checksum', 'explicit recovery must update only the reviewed checksum');
 
+    const audit = (await client.query(
+      `SELECT metadata FROM audit_log
+       WHERE action='migration.checksum_drift_accepted' AND entity_type='migration' AND entity_id=$1
+       ORDER BY created_at DESC LIMIT 1`,
+      [filename]
+    )).rows[0];
+    assert(audit, 'accepted checksum drift must have durable audit evidence in the same transaction');
+    assert.strictEqual(audit.metadata?.oldChecksum, 'old-checksum');
+    assert.strictEqual(audit.metadata?.newChecksum, 'new-checksum');
+    assert.strictEqual(audit.metadata?.explicitOperatorConfirmation, true);
+
     await client.query('ROLLBACK');
     console.log('migration runner hardening smoke: ok');
   } catch (error) {
