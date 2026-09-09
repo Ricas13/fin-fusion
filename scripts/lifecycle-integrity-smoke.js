@@ -2,7 +2,6 @@
 require('dotenv').config();
 const assert=require('assert');
 const crypto=require('crypto');
-const path=require('path');
 const {execFileSync}=require('child_process');
 const {getPool}=require('../src/db');
 const state=require('../src/entitlements/subscription-state');
@@ -20,9 +19,11 @@ async function main(){
  assertIso(lifecycle.addPlanDuration({billing_interval:'custom',duration_days:30},new Date('2026-02-01T00:00:00.000Z')),'2026-03-03T00:00:00.000Z','custom plans must keep exact day-duration arithmetic');
 
  // Keep the adversarial audit regressions inside the always-run DB contract
- // suite. Running them in a child process isolates their pool lifecycle from
- // this legacy smoke while still making any invariant failure block CI.
- execFileSync(process.execPath,[path.join(__dirname,'state-machine-invariants-db-smoke.js')],{
+ // suite. require.resolve gives the repository dependency audit a static edge
+ // without executing the smoke in this process; the child process keeps its
+ // pool lifecycle isolated from this legacy DB contract.
+ const stateMachineSmoke=require.resolve('./state-machine-invariants-db-smoke');
+ execFileSync(process.execPath,[stateMachineSmoke],{
   stdio:'inherit',
   env:process.env
  });
