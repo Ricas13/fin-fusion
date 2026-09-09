@@ -5,7 +5,7 @@ const capacity=require('../entitlements/plan-capacity');
 const notificationSettings=require('../integrations/notification-settings');
 const discordMessage=require('../integrations/discord-message');
 const operations=require('../platform/operations-settings');
-const {FREE_HOLD_MINUTES}=require('../security/pending-registration');
+const {FREE_INTENT_MINUTES}=require('../security/pending-registration');
 
 const STATE_KEY='discord_free_places_status_v1';
 const LOCK_SEED=927341;
@@ -32,16 +32,21 @@ function digestText(remaining,publicBaseUrl){
   const count=Math.max(0,Number(remaining)||0),noun=count===1?'place':'places',base=String(publicBaseUrl||'').replace(/\/+$/,'');
   return `Free Server — ${count} ${noun} open\n${count>0?freeRegistrationUrl(base):base}`;
 }
+function signupExplanation(open){
+  return open
+    ? `Starting signup opens a ${FREE_INTENT_MINUTES}-minute window to enter your details. It does not reserve a place. Capacity is checked atomically when valid account details are submitted.`
+    : `Starting signup does not reserve a place. When capacity reopens, a ${FREE_INTENT_MINUTES}-minute signup window lets you enter your details; a place is reserved only after a valid submission.`;
+}
 function persistentText(remaining,publicBaseUrl){
-  const count=Math.max(0,Math.floor(Number(remaining)||0)),base=String(publicBaseUrl||'').replace(/\/+$/,''),reserveUrl=freeRegistrationUrl(base);
-  if(count<=0)return `🔴 **Free Server availability**\nNo free places currently available.\n${base}\n\nA place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after ${FREE_HOLD_MINUTES} minutes.`;
+  const count=Math.max(0,Math.floor(Number(remaining)||0)),base=String(publicBaseUrl||'').replace(/\/+$/,''),signupUrl=freeRegistrationUrl(base);
+  if(count<=0)return `🔴 **Free Server availability**\nNo free places currently available.\n${base}\n\n${signupExplanation(false)}`;
   const noun=count===1?'place':'places';
-  return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nReserve / Create Free Account: ${reserveUrl}\n\nPressing Reserve holds one place exclusively for ${FREE_HOLD_MINUTES} minutes while registration and email verification are completed.`;
+  return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nStart Free Access signup: ${signupUrl}\n\n${signupExplanation(true)}`;
 }
 function persistentMessage(remaining,publicBaseUrl){
   const count=Math.max(0,Math.floor(Number(remaining)||0));
   const base=String(publicBaseUrl||'').replace(/\/+$/,'');
-  const reserveUrl=freeRegistrationUrl(base);
+  const signupUrl=freeRegistrationUrl(base);
   const open=count>0;
   const noun=count===1?'place':'places';
   return discordMessage.card({
@@ -51,16 +56,14 @@ function persistentMessage(remaining,publicBaseUrl){
       : 'No free places currently available.',
     tone:open?'success':'bad',
     fields:[{
-      name:'How reservations work',
-      value:open
-        ? `Pressing Reserve holds one place exclusively for ${FREE_HOLD_MINUTES} minutes while you complete registration and email verification.`
-        : `A place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after ${FREE_HOLD_MINUTES} minutes.`,
+      name:'How signup works',
+      value:signupExplanation(open),
       inline:false
     }],
-    url:open?reserveUrl:base,
+    url:open?signupUrl:base,
     footer:'CAPTAiN FiN • Live Free Server availability',
-    buttonLabel:open?'Reserve / Create Free Account':'View Free Server',
-    buttonUrl:open?reserveUrl:base
+    buttonLabel:open?'Start Free Access signup':'View Free Server',
+    buttonUrl:open?signupUrl:base
   });
 }
 function discordMissing(error){return /(?:HTTP|Discord)\s*404|unknown message/i.test(String(error?.message||error||''));}
@@ -144,4 +147,4 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
