@@ -227,11 +227,16 @@ BEGIN
     IF TG_OP<>'INSERT' AND OLD.discord_role_id IS NOT NULL AND OLD.discord_role_id<>''
        AND (TG_OP='DELETE' OR OLD.discord_role_id IS DISTINCT FROM NEW.discord_role_id) THEN
         INSERT INTO public.discord_managed_role_history(role_id,last_seen_at,retired_at,last_plan_id)
-        VALUES(OLD.discord_role_id,NOW(),NOW(),OLD.id)
+        VALUES(
+            OLD.discord_role_id,
+            NOW(),
+            NOW(),
+            CASE WHEN TG_OP='DELETE' THEN NULL ELSE OLD.id END
+        )
         ON CONFLICT(role_id) DO UPDATE SET
             last_seen_at=NOW(),
             retired_at=NOW(),
-            last_plan_id=OLD.id;
+            last_plan_id=CASE WHEN TG_OP='DELETE' THEN NULL ELSE OLD.id END;
     END IF;
 
     IF TG_OP<>'DELETE' AND NEW.discord_role_id IS NOT NULL AND NEW.discord_role_id<>'' THEN
