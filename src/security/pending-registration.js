@@ -12,6 +12,11 @@ const LOCK_SEED=761931;
 // pending registration, the same reservation is extended to that pending
 // registration's exact verification expiry.
 const FREE_HOLD_MINUTES=10;
+// Once the customer has verified their email, their reserved Free place becomes
+// a durable activation intent. Keep it alive long enough for the short-capacity
+// backfill job to retry a transient claim failure without asking the customer to
+// register again.
+const FREE_POST_VERIFY_RETRY_MINUTES=15;
 function cleanEmail(value){const email=String(value||'').trim().toLowerCase();if(!email||!email.includes('@')||email.length>254||/[\r\n<>]/.test(email))throw new Error('A valid email address is required');return email;}
 function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');return username;}
 async function validatePassword(password){return customers.validateNewPassword(password);}
@@ -119,7 +124,8 @@ async function consume(rawToken){
         const found=await client.query(`SELECT * FROM pending_registrations WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>NOW() FOR UPDATE`,[hash]);
         if(!found.rowCount)return null;
         const pending=found.rows[0],prefs=cleanCommunicationPreferences(pending.communication_preferences||{});
-        const reservation=(await client.query(`SELECT id,plan_id,expires_at,consumed_at,released_at FROM free_access_registration_reservations WHERE pending_registration_id=$1 FOR UPDATE`,[pending.id])).rows[0]||null;
+        let reservation=(await client.query(`SELECT id,plan_id,expires_at,consumed_at,released_at,customer_id,subscription_id FROM free_access_registration_reservations WHERE pending_registration_id=$1 FOR UPDATE`,[pending.id])).rows[0]||null;
+        if(pending.free_access_requested&&(!reservation||reservation.consumed_at||reservation.released_at||new Date(reservation.expires_at).getTime()<=Date.now()))return terminalize(client,pending.id,'Your reserved Free Access place is no longer available. Please reserve a new place and register again.');
         const banned=await client.query(`SELECT 1 FROM customer_bans WHERE revoked_at IS NULL AND blocks_registration=TRUE AND normalized_email=LOWER(BTRIM($1)) LIMIT 1`,[pending.email]);
         if(banned.rowCount)return terminalize(client,pending.id,'Registration is not available for this email address');
         const exists=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) OR lower(username)=lower($2) LIMIT 1`,[pending.email,pending.username]);
@@ -136,10 +142,14 @@ async function consume(rawToken){
         }else{
             customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
         }
+        if(pending.free_access_requested){
+            reservation=(await client.query(`UPDATE free_access_registration_reservations SET customer_id=$2,expires_at=GREATEST(expires_at,NOW()+($3::int*INTERVAL '1 minute')),updated_at=NOW() WHERE id=$1 AND pending_registration_id=$4 AND consumed_at IS NULL AND released_at IS NULL RETURNING id,plan_id,expires_at,consumed_at,released_at,customer_id,subscription_id`,[reservation.id,customer.id,FREE_POST_VERIFY_RETRY_MINUTES,pending.id])).rows[0]||null;
+            if(!reservation)throw new Error('Free Access reservation changed while registration was being verified');
+        }
         await client.query(`INSERT INTO customer_communication_preferences(customer_id,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,$4,$5) ON CONFLICT(customer_id) DO UPDATE SET telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
         let referralCodeId=null;if(pending.referral_code&&await referrals.attributionEnabled(client))referralCodeId=await referrals.attributeReferral(customer.id,pending.referral_code,client);
         await client.query(`UPDATE pending_registrations SET consumed_at=NOW(),updated_at=NOW() WHERE id=$1`,[pending.id]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,linkedExistingCustomer:Boolean(existingCustomer.customer),referralAttributed:Boolean(referralCodeId),freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,linkedExistingCustomer:Boolean(existingCustomer.customer),referralAttributed:Boolean(referralCodeId),freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,freeRetryUntil:reservation?.expires_at||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
         return{user,customer,referralCodeId,pendingRegistrationId:pending.id,freeAccessRequested:Boolean(pending.free_access_requested),freeReservation:reservation};
     });
     if(!created)return null;
@@ -156,4 +166,4 @@ async function cleanupExpired(limit=500){
 }
 async function recent(limit=50){const result=await query(`SELECT id,email,username,expires_at,consumed_at,free_access_requested,created_at FROM pending_registrations ORDER BY created_at DESC LIMIT $1`,[Math.max(1,Math.min(200,Number(limit)||50))]);return result.rows;}
 async function stats(){const result=await query(`SELECT COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at>NOW())::int pending,COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at<=NOW())::int expired FROM pending_registrations`);return result.rows[0]||{pending:0,expired:0};}
-module.exports={FREE_HOLD_MINUTES,begin,consume,reserveFreeAccess,reservationForSession,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,sessionHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername,lockExistingCustomerForRegistration,refreshFreePlacesStatus};
+module.exports={FREE_HOLD_MINUTES,FREE_POST_VERIFY_RETRY_MINUTES,begin,consume,reserveFreeAccess,reservationForSession,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,sessionHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername,lockExistingCustomerForRegistration,refreshFreePlacesStatus};
