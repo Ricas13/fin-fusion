@@ -4,6 +4,8 @@ require('dotenv').config();
 const assert = require('assert');
 const crypto = require('crypto');
 const { getPool } = require('../src/db');
+const planCapacity = require('../src/entitlements/plan-capacity');
+const pendingRegistrations = require('../src/security/pending-registration');
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -123,6 +125,50 @@ async function main() {
       [customer.id]
     );
     assert.strictEqual(legacyAdmin.rowCount, 0, 'clearing canonical Jellyfin admin authority must clear legacy compatibility state');
+
+    // Anonymous Free signup intent must never occupy scarce capacity. Use a
+    // manual-capacity service here so the contract is independent of Jellyfin
+    // fleet configuration while exercising the same reservation table counted
+    // by plan-capacity.js.
+    const intentPlan = (await client.query(`
+      INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams,service_type,is_free_tier,capacity_limit)
+      VALUES($1,$2,'direct','month',30,0,'GBP',FALSE,FALSE,'premium',1,'emby',TRUE,1)
+      RETURNING id
+    `,[`intent-${suffix}`,`Intent ${suffix}`])).rows[0];
+    const sessionA=`intent-session-a-${suffix}`;
+    const intent=(await client.query(`
+      INSERT INTO free_access_registration_intents(holder_session_hash,plan_id,expires_at)
+      VALUES($1,$2,NOW()+INTERVAL '10 minutes') RETURNING id
+    `,[pendingRegistrations.sessionHash(sessionA),intentPlan.id])).rows[0];
+
+    let capacity=await planCapacity.usage(intentPlan.id,(sql,params)=>client.query(sql,params));
+    assert.strictEqual(Number(capacity.reserved),0,'anonymous Free registration intent must not reserve plan capacity');
+    assert.strictEqual(capacity.soldOut,false,'anonymous Free registration intent must not make a one-place plan sold out');
+
+    const ownIntent=await pendingRegistrations.reservationForSession(intent.id,sessionA,(sql,params)=>client.query(sql,params));
+    assert(ownIntent,'the creating browser session must be able to recover its Free signup intent');
+    const stolenIntent=await pendingRegistrations.reservationForSession(intent.id,`intent-session-b-${suffix}`,(sql,params)=>client.query(sql,params));
+    assert.strictEqual(stolenIntent,null,'a Free signup intent must not be replayable from another browser session');
+
+    const pending=(await client.query(`
+      INSERT INTO pending_registrations(email,username,password_hash,token_hash,expires_at,free_access_requested)
+      VALUES($1,$2,'test-hash',$3,NOW()+INTERVAL '60 minutes',TRUE) RETURNING id
+    `,[`intent-${suffix}@example.invalid`,`intent_${suffix}`,crypto.createHash('sha256').update(`intent-${suffix}`).digest('hex')])).rows[0];
+    await client.query(`
+      INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at,holder_session_hash)
+      VALUES($1,$2,$3,NOW()+INTERVAL '60 minutes',$4)
+    `,[pending.id,intentPlan.id,`intent-${suffix}@example.invalid`,pendingRegistrations.sessionHash(sessionA)]);
+
+    capacity=await planCapacity.usage(intentPlan.id,(sql,params)=>client.query(sql,params));
+    assert.strictEqual(Number(capacity.reserved),1,'validated pending Free registration must reserve exactly one capacity place');
+    assert.strictEqual(capacity.soldOut,true,'a real reservation must close a one-place plan');
+
+    const expiredIntent=(await client.query(`
+      INSERT INTO free_access_registration_intents(holder_session_hash,plan_id,expires_at)
+      VALUES($1,$2,NOW()-INTERVAL '1 second') RETURNING id
+    `,[pendingRegistrations.sessionHash(`expired-${suffix}`),intentPlan.id])).rows[0];
+    const expiredLookup=await pendingRegistrations.reservationForSession(expiredIntent.id,`expired-${suffix}`,(sql,params)=>client.query(sql,params));
+    assert.strictEqual(expiredLookup,null,'expired Free signup intent must be unusable');
 
     await client.query('ROLLBACK');
     console.log('post-audit schema hardening database smoke: ok');
