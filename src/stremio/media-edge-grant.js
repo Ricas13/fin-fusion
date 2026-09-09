@@ -9,6 +9,7 @@ const GRANT_PARAM = 'cf_grant';
 const GRANT_PREFIX = 'cfedge1';
 const EDGE_SECRET_HEADER = 'x-captainfin-edge-secret';
 const TOKEN_HEADER = 'X-Emby-Token';
+const RAW_EXTERNAL_STREAM = '__captainfinRawExternal';
 const DEFAULT_TTL_SECONDS = 6 * 60 * 60;
 const MIN_TTL_SECONDS = 30 * 60;
 const MAX_TTL_SECONDS = 12 * 60 * 60;
@@ -125,13 +126,24 @@ function protectUrl(rawUrl, req, { entitlementId = null, nowMs = Date.now() } = 
   return url.toString();
 }
 
+function cleanStream(stream) {
+  const copy = { ...(stream || {}) };
+  delete copy[RAW_EXTERNAL_STREAM];
+  return copy;
+}
+
 function protectStreams(streams, req, entitlement) {
-  if (!enabled()) return Array.isArray(streams) ? streams.map(stream => ({ ...stream })) : [];
+  const rows = Array.isArray(streams) ? streams : [];
+  if (!enabled()) return rows.map(cleanStream);
   if (!entitlement?.id) throw new Error('Current Stremio entitlement is required for protected streams.');
-  return (Array.isArray(streams) ? streams : []).map(stream => ({
-    ...stream,
-    url: stream?.url ? protectUrl(stream.url, req, { entitlementId: entitlement.id }) : stream?.url
-  }));
+  return rows.map(stream => {
+    const rawExternal = stream?.[RAW_EXTERNAL_STREAM] === true;
+    const copy = cleanStream(stream);
+    return {
+      ...copy,
+      url: rawExternal || !copy.url ? copy.url : protectUrl(copy.url, req, { entitlementId: entitlement.id })
+    };
+  });
 }
 
 function firstHeader(req, name) {
@@ -253,7 +265,8 @@ function runtimeProtectionMiddleware(req, res, next) {
     const sendJson = res.json.bind(res);
     res.json = async body => {
       const uncachedBody = noCacheStreamResponse(body);
-      if (!uncachedBody || !Array.isArray(uncachedBody.streams) || !uncachedBody.streams.length || !enabled()) return sendJson(uncachedBody);
+      if (!uncachedBody || !Array.isArray(uncachedBody.streams) || !uncachedBody.streams.length) return sendJson(uncachedBody);
+      if (!enabled()) return sendJson({ ...uncachedBody, streams: protectStreams(uncachedBody.streams, req, null) });
       try {
         const entitlement = await requestEntitlement(req);
         if (!entitlement) return sendJson(noCacheStreamResponse({ streams: [] }));
@@ -270,6 +283,9 @@ function runtimeProtectionMiddleware(req, res, next) {
     res.redirect = async (statusOrUrl, maybeUrl) => {
       const hasStatus = typeof statusOrUrl === 'number';
       const target = hasStatus ? maybeUrl : statusOrUrl;
+      if (/^\/stremio\/[^/]+\/external-play\//.test(requestPath)) {
+        return hasStatus ? redirect(statusOrUrl, target) : redirect(target);
+      }
       try {
         const entitlement = await requestEntitlement(req);
         if (!entitlement) return res.status(403).end();
@@ -289,6 +305,7 @@ module.exports = {
   GRANT_PREFIX,
   EDGE_SECRET_HEADER,
   TOKEN_HEADER,
+  RAW_EXTERNAL_STREAM,
   DEFAULT_TTL_SECONDS,
   MIN_TTL_SECONDS,
   MAX_TTL_SECONDS,
@@ -300,6 +317,7 @@ module.exports = {
   openPayload,
   networkHashForRequest,
   protectUrl,
+  cleanStream,
   protectStreams,
   forwardedTarget,
   verifyGrant,

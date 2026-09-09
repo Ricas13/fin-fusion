@@ -41,24 +41,27 @@ const strmFallback=new URL(managed.directUrl(mapping,'strm-item','strm-source','
 assert.strictEqual(strmFallback.pathname,'/jellyfin/Videos/strm-item/stream.mkv','STRM items without MediaSource.Container must still expose a video extension to Stremio');
 
 assert.strictEqual(typeof external.directPlaybackUrl,'function','external sources must expose a direct raw-file URL builder');
-const externalJellyfin={media_server_type:'jellyfin',base_url:'https://fallback.example/jellyfin',access_token_encrypted:sourceClient.encryptToken('external-jellyfin-token')};
-const externalJellyfinUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'jf-item',mediaSourceId:'jf-media',container:'mkv',filename:'x.mkv'}));
+const externalJellyfin={media_server_type:'jellyfin',base_url:'https://fallback.example/jellyfin',access_token_encrypted:sourceClient.encryptToken('durable-source-token')};
+const externalJellyfinUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'jf-item',mediaSourceId:'jf-media',container:'mkv',filename:'x.mkv',accessToken:'isolated-jellyfin-token'}));
 assert.strictEqual(externalJellyfinUrl.pathname,'/jellyfin/Videos/jf-item/stream.mkv','external Jellyfin playback must preserve configured prefixes');
-assert.strictEqual(externalJellyfinUrl.searchParams.get('api_key'),'external-jellyfin-token');
-const externalStrmUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'strm-item',mediaSourceId:'',container:'',filename:'Movie.2026.1080p.mkv.strm'}));
+assert.strictEqual(externalJellyfinUrl.searchParams.get('api_key'),'isolated-jellyfin-token','external raw playback must use the explicitly isolated playback token');
+assert.notStrictEqual(externalJellyfinUrl.searchParams.get('api_key'),sourceClient.sourceToken(externalJellyfin),'external raw playback must never expose the durable source-maintenance token');
+const externalStrmUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'strm-item',mediaSourceId:'',container:'',filename:'Movie.2026.1080p.mkv.strm',accessToken:'isolated-jellyfin-token'}));
 assert.strictEqual(externalStrmUrl.pathname,'/jellyfin/Videos/strm-item/stream.mkv','external STRM playback must infer the underlying video container when MediaSource.Container is absent');
-const externalEmby={media_server_type:'emby',base_url:'https://fallback.example/proxy',access_token_encrypted:sourceClient.encryptToken('external-emby-token')};
-const externalEmbyUrl=new URL(external.directPlaybackUrl({source:externalEmby,itemId:'emby-item',mediaSourceId:'emby-media',container:'mkv',filename:'x.mkv'}));
+const externalEmby={media_server_type:'emby',base_url:'https://fallback.example/proxy',access_token_encrypted:sourceClient.encryptToken('durable-emby-source-token')};
+const externalEmbyUrl=new URL(external.directPlaybackUrl({source:externalEmby,itemId:'emby-item',mediaSourceId:'emby-media',container:'mkv',filename:'x.mkv',accessToken:'isolated-emby-token'}));
 assert.strictEqual(externalEmbyUrl.pathname,'/proxy/emby/Videos/emby-item/stream.mkv','external Emby playback must use the provider adapter and preserve reverse-proxy prefixes');
 assert.strictEqual(externalEmbyUrl.searchParams.get('Static'),'true');
 assert.strictEqual(externalEmbyUrl.searchParams.get('MediaSourceId'),'emby-media');
-assert.strictEqual(externalEmbyUrl.searchParams.get('api_key'),'external-emby-token');
+assert.strictEqual(externalEmbyUrl.searchParams.get('api_key'),'isolated-emby-token');
 
 const managedSource=read('src/stremio/managed-runtime.js');
 const externalSource=read('src/stremio/external-direct-runtime.js');
 const mediaIndexSource=read('src/stremio/media-index.js');
 const runtimeSource=read('src/stremio/runtime.js');
 const restrictedSource=read('src/stremio/jellyfin-runtime.js');
+const entitlementSource=read('src/stremio/entitlements.js');
+const externalTokenSource=read('src/stremio/external-playback-token.js');
 
 assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call PlaybackInfo');
 assert(!managedSource.includes("searchParams.set('PlaySessionId'")&&!managedSource.includes("searchParams.set('DeviceId'"),'managed raw-file URLs must not attach playback-session state');
@@ -87,6 +90,13 @@ assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includ
 assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
 assert(/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(externalSource),'external sources must return static/original-file URLs');
 assert(externalSource.includes('client.sourceUrl(source.base_url')&&externalSource.includes('source.media_server_type'),'external direct URLs must route through the stored provider type');
+assert(!externalSource.includes('client.sourceToken(source)'),'external raw-file URLs must never decrypt the durable source token for playback');
+assert(externalSource.includes('externalPlaybackToken.tokenFor(source,entitlement)'),'external raw-file URLs must be issued with isolated per-entitlement playback sessions');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside playback-session reporting');
+assert(!externalSource.includes('/Sessions/Playing')&&!externalSource.includes('/Sessions/Playing/Progress')&&!externalSource.includes('/Sessions/Playing/Stopped'),'external fallback playback must not manufacture media-server playback reporting');
+
+assert(externalTokenSource.includes('async function revokeEntitlement(entitlementId)'),'isolated raw sessions must support synchronous per-entitlement revocation');
+assert((entitlementSource.match(/externalPlaybackToken\.revokeEntitlement\(row\.id\)/g)||[]).length>=2,'both Stremio suspension and explicit revocation must synchronously revoke isolated external playback sessions');
+assert(entitlementSource.includes("SET status=CASE WHEN status='revoked' THEN status ELSE 'suspended' END")&&entitlementSource.includes("SET status='suspended',token_hash=NULL"),'Stremio access must become non-active before external session cleanup so a racing stream request cannot mint a replacement token');
 
 console.log('stremio Jellyfin/Emby raw-file playback compatibility smoke: ok');

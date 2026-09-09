@@ -41,7 +41,7 @@
     </div>
     <form class="playbackRangeForm" action="/admin/activity" method="get">
       <label class="srOnly" for="playback-range">Playback analytics range</label>
-      <select class="playbackRangeSelect" id="playback-range" name="range" onchange="this.form.submit()">
+      <select class="playbackRangeSelect" id="playback-range" name="range">
         <option value="7" <%= playback.days===7?'selected':'' %>>Last 7 days</option>
         <option value="30" <%= playback.days===30?'selected':'' %>>Last 30 days</option>
         <option value="90" <%= playback.days===90?'selected':'' %>>Last 90 days</option>

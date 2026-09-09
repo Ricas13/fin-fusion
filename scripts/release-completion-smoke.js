@@ -39,7 +39,7 @@ lacks(adminNav,"['customer-jellyfin-password','Jellyfin Passwords','/admin/custo
 
 const paymentReturn=read('src/platform/customer-payment-return.js');
 has(paymentReturn,"/account?welcome=1&message=",'successful payment returns must enter the access welcome flow');
-has(paymentReturn,"r.get('/account/stripe/return',paymentReturnLimit,requireCustomer,stripeReturnHandler)",'Stripe completion must use the authenticated confirmed-return handler');
+has(paymentReturn,"r.get('/account/stripe/return',paymentReturnLimit,requireCustomer,impersonationPaymentReturnGuard,stripeReturnHandler)",'Stripe completion must remain rate-limited, customer-authenticated, blocked during impersonation, and handled only by the confirmed-return handler');
 has(paymentReturn,"intents.verify({intentId,nonce:state,providerCheckoutId:sessionId,scope:'customer',provider:'stripe',ownerId:req.session.customerId})",'Stripe return must verify the exact local checkout intent, session and customer before reporting success');
 has(paymentReturn,"stripe.confirmCheckout(sessionId,row)",'Stripe return must confirm provider state before reporting payment success');
 const checkout=read('src/platform/flexible-checkout.js');

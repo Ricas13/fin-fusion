@@ -103,7 +103,7 @@ async function main() {
     expect(routeSource.includes("stateUrl(req,'/account/stripe/return',intent)"), 'Stripe success must return through the verified customer return route.');
     expect(routeSource.includes('session_id={CHECKOUT_SESSION_ID}'), 'Stripe success URL must bind the returned Checkout Session ID.');
     expect(!routeSource.includes('Payment%20received.%20Your%20access%20details%20are%20below.'), 'Stripe must not show optimistic success before provider confirmation.');
-    expect(returnSource.includes("r.get('/account/stripe/return',paymentReturnLimit,requireCustomer,stripeReturnHandler)"), 'Stripe return must require the authenticated customer and return rate limit.');
+    expect(/r\.get\('\/account\/stripe\/return',paymentReturnLimit,requireCustomer,impersonationPaymentReturnGuard,stripeReturnHandler\)/.test(returnSource), 'Stripe return must be rate limited, require the authenticated customer, and block spending during impersonation before confirmation.');
     expect(returnSource.includes("providerCheckoutId:sessionId")&&returnSource.includes("provider:'stripe'")&&returnSource.includes('ownerId:req.session.customerId'), 'Stripe return must verify intent, session and owner together.');
     expect(returnSource.includes('stripe.confirmCheckout(sessionId,row)'), 'Stripe return must ask the provider adapter to confirm payment state.');
     expect(stripeSource.includes('async function confirmCheckout(sessionId)')&&stripeSource.includes("case 'checkout.session.expired'"), 'Stripe adapter must own browser confirmation and expiration completion.');
