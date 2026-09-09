@@ -87,7 +87,11 @@ async function assertNoEffective(customerId, message) {
 
 async function testRefundBeforeActivation() {
   const customerId = await customer('refund-before');
-  const planId = await plan('refund-before');
+  // Use the Emby lane for payment-state tests so these fixtures exercise the
+  // subscription ledger without depending on a configured Jellyfin fleet.
+  // This also guards the Emby service_type_snapshot constraint repaired by the
+  // production-boundary migration.
+  const planId = await plan('refund-before', { serviceType: 'emby' });
   const ref = `pi_refund_before_${suffix}`;
   await fullRefundIncident(customerId, 'stripe', ref, 'before');
 
@@ -100,7 +104,7 @@ async function testRefundBeforeActivation() {
 
 async function testRefundThenStaleActivationReplay() {
   const customerId = await customer('refund-replay');
-  const planId = await plan('refund-replay');
+  const planId = await plan('refund-replay', { serviceType: 'emby' });
   const ref = `pi_refund_replay_${suffix}`;
 
   const first = await activate({ customerId, planId, providerRef: ref });
@@ -130,7 +134,7 @@ async function testRefundThenStaleActivationReplay() {
 
 async function testConcurrentRecurringSettlement() {
   const customerId = await customer('recurring-race');
-  const planId = await plan('recurring-race');
+  const planId = await plan('recurring-race', { serviceType: 'emby' });
   const calls = [
     activate({ customerId, planId, provider: 'stripe', providerRef: `sub_race_a_${suffix}`, mode: 'subscription' }),
     activate({ customerId, planId, provider: 'paypal', providerRef: `I-RACE-B-${suffix.toUpperCase()}`, mode: 'subscription' })
