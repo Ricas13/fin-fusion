@@ -6,6 +6,20 @@ const fs = require('fs');
 const path = require('path');
 const { getPool } = require('../src/db');
 
+const LEGACY_BRIDGE_COMMIT = 'b39ca004b4bd24ebc6dbdf4546d2bb6b4111b95b';
+const BASELINE_ANCHORS = ['app_users','customers','plans','jellyfin_servers','subscriptions'];
+// These objects were all present immediately before the 2026-08-18 schema
+// squash and are folded into 000_database_baseline.sql. An installation that
+// has only the older anchor tables is not safe to mark as having adopted that
+// baseline: later incremental migrations assume all of these objects exist.
+const BASELINE_SENTINELS = [
+    'customer_access_holds',
+    'payment_incidents',
+    'pending_registrations',
+    'stremio_source_media_index',
+    'free_access_registration_reservations'
+];
+
 function migrationChecksum(sql) {
     return crypto.createHash('sha256').update(sql, 'utf8').digest('hex');
 }
@@ -15,6 +29,34 @@ function unwrapTransaction(sql) {
     const commit = sql.match(/\s*COMMIT\s*;\s*$/i);
     if (!begin || !commit) return sql;
     return sql.slice(begin[0].length, sql.length - commit[0].length);
+}
+
+function parseArguments(argv = process.argv.slice(2)) {
+    let acceptDrift = null;
+    let confirmed = false;
+    for (let i = 0; i < argv.length; i += 1) {
+        const arg = argv[i];
+        if (arg === '--accept-drift') {
+            acceptDrift = String(argv[++i] || '').trim();
+            continue;
+        }
+        if (arg === '--confirm-accept-drift') {
+            confirmed = true;
+            continue;
+        }
+        throw new Error(`Unknown migration argument: ${arg}`);
+    }
+    if (acceptDrift) {
+        if (path.basename(acceptDrift) !== acceptDrift || !/^[A-Za-z0-9_.-]+\.sql$/.test(acceptDrift)) {
+            throw new Error('--accept-drift must name one migration filename, not a path.');
+        }
+        if (!confirmed) {
+            throw new Error('--accept-drift requires --confirm-accept-drift. Review the migration diff before accepting a new checksum.');
+        }
+    } else if (confirmed) {
+        throw new Error('--confirm-accept-drift requires --accept-drift <filename>.');
+    }
+    return { acceptDrift };
 }
 
 async function ensureMigrationLedger(pool) {
@@ -35,20 +77,44 @@ async function databaseShape(pool) {
           AND table_name <> 'schema_migrations'
     `);
     const names = new Set(result.rows.map(row => String(row.table_name)));
-    const anchors = ['app_users','customers','plans','jellyfin_servers','subscriptions'];
+    const recognizableInstall = BASELINE_ANCHORS.filter(name => names.has(name)).length >= 2;
+    const baselineCompatible = BASELINE_SENTINELS.every(name => names.has(name));
     return {
         empty: names.size === 0,
-        recognizableInstall: anchors.filter(name => names.has(name)).length >= 2,
+        recognizableInstall,
+        baselineCompatible,
+        legacyPreBaseline: recognizableInstall && !baselineCompatible,
+        missingBaselineSentinels: BASELINE_SENTINELS.filter(name => !names.has(name)),
         tables: names
     };
 }
 
-async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
+async function recordDriftAcceptance(pool, { filename, oldChecksum, newChecksum }) {
+    await pool.query(
+        'UPDATE public.schema_migrations SET checksum=$2 WHERE filename=$1',
+        [filename, newChecksum]
+    );
+    try {
+        const auditTable = await pool.query("SELECT to_regclass('public.audit_log') AS table_name");
+        if (auditTable.rows[0]?.table_name) {
+            await pool.query(
+                `INSERT INTO public.audit_log(action,entity_type,entity_id,metadata)
+                 VALUES('migration.checksum_drift_accepted','migration',$1,$2::jsonb)`,
+                [filename, JSON.stringify({ filename, oldChecksum, newChecksum, explicitOperatorConfirmation: true })]
+            );
+        }
+    } catch (error) {
+        console.warn(`Could not write migration checksum recovery audit row: ${error.message}`);
+    }
+    console.warn(`accepted migration checksum drift ${filename}: ${oldChecksum} -> ${newChecksum}`);
+}
+
+async function verifyOrBaselineAppliedMigration(pool, filename, checksum, options = {}) {
     const existing = await pool.query(
         'SELECT checksum FROM public.schema_migrations WHERE filename=$1',
         [filename]
     );
-    if (!existing.rowCount) return false;
+    if (!existing.rowCount) return { applied: false, repairedDrift: false };
 
     const recorded = existing.rows[0].checksum;
     if (!recorded) {
@@ -57,17 +123,22 @@ async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
             [filename, checksum]
         );
         console.warn(`baseline checksum ${filename}`);
-        return true;
+        return { applied: true, repairedDrift: false };
     }
 
     if (recorded !== checksum) {
+        if (options.acceptDrift === filename) {
+            await recordDriftAcceptance(pool, { filename, oldChecksum: recorded, newChecksum: checksum });
+            return { applied: true, repairedDrift: true };
+        }
         throw new Error(
             `Migration drift detected for ${filename}. ` +
-            'An already-applied migration file was modified; create a new migration instead.'
+            'An already-applied migration file was modified; create a new migration instead. ' +
+            `If an operator has independently reviewed this exact drift, run: node scripts/migrate-db.js --accept-drift ${filename} --confirm-accept-drift`
         );
     }
 
-    return true;
+    return { applied: true, repairedDrift: false };
 }
 
 async function adoptBaseline(pool, filename, checksum) {
@@ -107,25 +178,42 @@ async function applyMigration(pool, filename, sql, checksum, freshInstall) {
     }
 }
 
-async function main() {
+async function runMigrations({ argv = process.argv.slice(2), pool = getPool(), closePool = true } = {}) {
+    const options = parseArguments(argv);
     const dir = path.join(__dirname, '..', 'db', 'migrations');
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
-    const pool = getPool();
+    let repairedDrift = false;
 
     try {
-        await ensureMigrationLedger(pool);
+        // Inspect before creating/updating the current migration ledger. A
+        // pre-squash installation must stop without being falsely marked as
+        // baseline-compatible or partially applying the modern chain.
         const shape = await databaseShape(pool);
+        if (shape.legacyPreBaseline) {
+            throw new Error(
+                'This CAPTAiNFiN database predates the 2026-08-18 migration baseline squash and cannot be safely direct-upgraded. ' +
+                `Missing baseline objects: ${shape.missingBaselineSentinels.join(', ')}. ` +
+                `First run the migrations from compatibility commit ${LEGACY_BRIDGE_COMMIT}, then upgrade to the current release.`
+            );
+        }
+
+        await ensureMigrationLedger(pool);
         const freshInstall = shape.empty || !shape.recognizableInstall;
-        const adoptExistingBaseline = !shape.empty && shape.recognizableInstall;
+        const adoptExistingBaseline = !shape.empty && shape.recognizableInstall && shape.baselineCompatible;
         if (shape.empty) console.log('fresh database detected: applying clean-install baseline');
-        else if (adoptExistingBaseline) console.log('recognizable CAPTAiNFiN schema detected: adopting baseline before incremental migrations');
+        else if (adoptExistingBaseline) console.log('baseline-compatible CAPTAiNFiN schema detected: adopting baseline before incremental migrations');
         else console.log('non-CAPTAiNFiN public tables detected: applying baseline alongside existing data');
+
+        if (options.acceptDrift && !files.includes(options.acceptDrift)) {
+            throw new Error(`Unknown migration supplied to --accept-drift: ${options.acceptDrift}`);
+        }
 
         for (const filename of files) {
             const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
             const checksum = migrationChecksum(sql);
-
-            if (await verifyOrBaselineAppliedMigration(pool, filename, checksum)) {
+            const verification = await verifyOrBaselineAppliedMigration(pool, filename, checksum, options);
+            repairedDrift = repairedDrift || verification.repairedDrift;
+            if (verification.applied) {
                 console.log(`skip ${filename}`);
                 continue;
             }
@@ -137,12 +225,29 @@ async function main() {
 
             await applyMigration(pool, filename, sql, checksum, freshInstall);
         }
+
+        if (options.acceptDrift && !repairedDrift) {
+            throw new Error(`No checksum drift was found for ${options.acceptDrift}; no recovery change was made.`);
+        }
     } finally {
-        await pool.end();
+        if (closePool) await pool.end();
     }
 }
 
-main().catch(err => {
-    console.error(err);
-    process.exit(1);
-});
+if (require.main === module) {
+    runMigrations().catch(err => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
+module.exports = {
+    LEGACY_BRIDGE_COMMIT,
+    BASELINE_ANCHORS,
+    BASELINE_SENTINELS,
+    migrationChecksum,
+    parseArguments,
+    databaseShape,
+    verifyOrBaselineAppliedMigration,
+    runMigrations
+};
