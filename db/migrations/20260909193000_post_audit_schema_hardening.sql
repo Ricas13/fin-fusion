@@ -53,9 +53,14 @@ ON CONFLICT(customer_id) DO UPDATE SET
     updated_by=EXCLUDED.updated_by,
     updated_at=EXCLUDED.updated_at;
 
+-- These are compatibility mirrors, not a second authorization boundary. The
+-- restricted web role is intentionally not granted DELETE on every canonical
+-- and legacy table touched by the mirror. Run the trigger body as the migration
+-- owner instead of widening direct table privileges for the web process.
 CREATE OR REPLACE FUNCTION public.sync_primary_lane_policy_to_legacy()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path=public,pg_temp
 AS $$
 BEGIN
@@ -101,6 +106,7 @@ FOR EACH ROW EXECUTE FUNCTION public.sync_primary_lane_policy_to_legacy();
 CREATE OR REPLACE FUNCTION public.sync_legacy_policy_to_primary_lane()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path=public,pg_temp
 AS $$
 BEGIN
@@ -197,6 +203,10 @@ BEGIN
 END;
 $$;
 
+-- The helper is implementation detail for the trigger below. Do not expose a
+-- direct compatibility-table mutation primitive to runtime roles.
+REVOKE ALL ON FUNCTION public.refresh_legacy_jellyfin_admin_control(uuid) FROM PUBLIC;
+
 DO $$
 DECLARE r record;
 BEGIN
@@ -209,6 +219,7 @@ END $$;
 CREATE OR REPLACE FUNCTION public.sync_service_admin_control_legacy_jellyfin()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path=public,pg_temp
 AS $$
 BEGIN
@@ -228,6 +239,12 @@ DROP TRIGGER IF EXISTS customer_service_admin_control_sync_legacy_jellyfin ON pu
 CREATE TRIGGER customer_service_admin_control_sync_legacy_jellyfin
 AFTER INSERT OR UPDATE OR DELETE ON public.customer_service_admin_control
 FOR EACH ROW EXECUTE FUNCTION public.sync_service_admin_control_legacy_jellyfin();
+
+-- Trigger functions cannot be called as ordinary functions, but explicitly
+-- remove PUBLIC execution anyway so the compatibility layer stays trigger-only.
+REVOKE ALL ON FUNCTION public.sync_primary_lane_policy_to_legacy() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_legacy_policy_to_primary_lane() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_service_admin_control_legacy_jellyfin() FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- 4. Hot-path supporting indexes.
