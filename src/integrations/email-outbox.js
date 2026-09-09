@@ -78,13 +78,15 @@ async function deliverOne(row, sender = emailSettings.send) {
         `, [row.id]);
         return { id: row.id, ok: true };
     } catch (error) {
+        const attempts = Number(row.attempts || 0);
+        const dead = attempts >= 8;
         const next = new Date(Date.now() + retryDelayMs(row.attempts));
         await query(`
             UPDATE notification_outbox
-            SET status='failed',last_error=$2,next_attempt_at=$3,updated_at=NOW()
+            SET status=$2,last_error=$3,next_attempt_at=$4,updated_at=NOW()
             WHERE id=$1 AND channel='email'
-        `, [row.id, String(error?.message || error).slice(0, 1500), next]);
-        return { id: row.id, ok: false, error: error.message };
+        `, [row.id, dead ? 'dead' : 'failed', String(error?.message || error).slice(0, 1500), dead ? new Date() : next]);
+        return { id: row.id, ok: false, error: error.message, dead };
     }
 }
 
@@ -129,11 +131,12 @@ async function counts() {
         SELECT COUNT(*)::int AS total,
                COUNT(*) FILTER (WHERE status='pending')::int AS pending,
                COUNT(*) FILTER (WHERE status='failed')::int AS failed,
+               COUNT(*) FILTER (WHERE status='dead')::int AS dead,
                COUNT(*) FILTER (WHERE status='sent')::int AS sent
         FROM notification_outbox
         WHERE channel='email'
     `);
-    return result.rows[0] || { total: 0, pending: 0, failed: 0, sent: 0 };
+    return result.rows[0] || { total: 0, pending: 0, failed: 0, dead: 0, sent: 0 };
 }
 
 module.exports = { enqueue, deliverDue, deliverOne, retry, recent, counts, retryDelayMs, encryptPayload, decryptPayload, STALE_SENDING_MINUTES };
