@@ -74,7 +74,13 @@ assert(provisioningSource.includes('async function reservePlacement')&&provision
 assert(durableSource.includes('access_lane,access_lane_changed_at')&&durableSource.includes('access_lane=EXCLUDED.access_lane')&&durableSource.includes('jellyfin_server_placement_leases'),'account lane and placement-lease consumption must persist in the same local transaction');
 assert(hardeningMigration.includes('CREATE TABLE IF NOT EXISTS jellyfin_server_placement_leases')&&hardeningMigration.includes('UNIQUE(customer_id,server_id)'),'placement leases must be durable and unique per customer/server');
 assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a plan capacity_limit');
-assert(pendingRegistrationSource.includes('async function reserveFreeAccess')&&pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,plan.id')&&pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),'Free Access reservation must consume one fleet user place even when plans.capacity_limit is null');
+assert(
+    pendingRegistrationSource.includes('free_access_registration_intents')&&
+    pendingRegistrationSource.includes('await planCapacity.assertAvailable(plan.id')&&
+    pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,freePlan.id')&&
+    pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),
+    'anonymous Free signup must use a non-capacity intent, while validated account submission atomically reserves one fleet user place'
+);
 assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'free'}),'fleet_users');
 assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'premium'}),'fleet_users');
 
@@ -108,7 +114,7 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
         throw new Error(`Unexpected reservation query: ${sql.slice(0,120)}`);
     };
     const reserved=await capacity.usage('free-reserved',reservedDb);
-    assert.strictEqual(reserved.remaining,0,'one registration reservation consumes the final user place');
+    assert.strictEqual(reserved.remaining,0,'one validated pending-registration reservation consumes the final user place');
     assert.strictEqual(reserved.soldOut,true);
 
     const noServerDb=async sql=>{
