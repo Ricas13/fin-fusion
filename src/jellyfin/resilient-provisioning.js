@@ -112,6 +112,10 @@ function assertLanePostcondition(name, entitlement, result) {
     throw error;
 }
 
+function remoteUserMissing(error) {
+    return Number(error?.status || 0) === 404 || /\b404\b|not found/i.test(String(error?.message || ''));
+}
+
 async function currentEntitlementTruth(customerId) {
     return subscriptionState.effectiveSubscription(customerId, { includeBlocked: true });
 }
@@ -138,11 +142,17 @@ async function applyPolicyIfChanged(account, effective, disabled = false) {
     );
     const desired = base.policyBody(effective.technical, disabled, libraryAccess);
     const desiredHash = control.policyHash(desired);
-    const remote = await registry.request(
-        account.server_id,
-        `/Users/${encodeURIComponent(account.jellyfin_user_id)}`,
-        { method: 'GET', timeoutMs: 5000 }
-    );
+    let remote;
+    try {
+        remote = await registry.request(
+            account.server_id,
+            `/Users/${encodeURIComponent(account.jellyfin_user_id)}`,
+            { method: 'GET', timeoutMs: 5000 }
+        );
+    } catch (error) {
+        if (remoteUserMissing(error)) return { missing: [], unchanged: false, remoteMissing: true };
+        throw error;
+    }
 
     if (remote && typeof remote === 'object' && remote.Policy && control.policyMatches(remote, desired)) {
         if (libraryAccess.missing.length) {
@@ -284,6 +294,34 @@ async function createLaneAccount(customerId, entitlement, lane, makePrimary) {
     return { account, effective };
 }
 
+async function recoverMissingLaneAccount(customerId, entitlement, lane, staleAccount, makePrimary) {
+    const stale = {
+        id: staleAccount.id,
+        serverId: staleAccount.server_id,
+        jellyfinUserId: staleAccount.jellyfin_user_id,
+        username: staleAccount.jellyfin_username
+    };
+    await base.deleteJellyfinAccount(staleAccount, { reason: 'Remote Jellyfin account was already missing during reconciliation' });
+    staleAccount.disabled = true;
+    staleAccount.server_enabled = false;
+    const created = await createLaneAccount(customerId, entitlement, lane, makePrimary);
+    await query(`
+        INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+        VALUES('jellyfin.remote_missing.recreated','customer',$1,$2::jsonb)
+    `, [customerId, JSON.stringify({
+        lane,
+        oldAccountId: stale.id,
+        oldServerId: stale.serverId,
+        oldJellyfinUserId: stale.jellyfinUserId,
+        oldUsername: stale.username,
+        newAccountId: created.account.id,
+        newServerId: created.account.server_id,
+        newJellyfinUserId: created.account.jellyfin_user_id,
+        newUsername: created.account.jellyfin_username
+    })]);
+    return created;
+}
+
 async function reconcileLane(customerId, entitlement, lane, accounts, { makePrimary = false } = {}) {
     const laneAccounts = accounts.filter(account => account.access_lane === lane);
     if (!entitlement || entitlement.blocked) {
@@ -310,12 +348,19 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         accounts.push(account);
     } else {
         effective = await libraryPolicy.effectiveForAccount(customerId, entitlement, account);
-        await applyPolicyIfChanged(account, effective, false);
-        account.disabled = false;
-        if (makePrimary && !account.is_primary) {
-            await base.markPrimaryAccount(customerId, account.id);
-            for (const existing of accounts) existing.is_primary = existing.id === account.id;
-            account.is_primary = true;
+        const applied = await applyPolicyIfChanged(account, effective, false);
+        if (applied?.remoteMissing) {
+            const recovered = await recoverMissingLaneAccount(customerId, entitlement, lane, account, makePrimary);
+            account = recovered.account;
+            effective = recovered.effective;
+            accounts.push(account);
+        } else {
+            account.disabled = false;
+            if (makePrimary && !account.is_primary) {
+                await base.markPrimaryAccount(customerId, account.id);
+                for (const existing of accounts) existing.is_primary = existing.id === account.id;
+                account.is_primary = true;
+            }
         }
     }
 
@@ -565,6 +610,8 @@ module.exports = {
     applyPolicyIfChanged,
     reconcileLane,
     adoptExistingFreeAccount,
+    recoverMissingLaneAccount,
+    remoteUserMissing,
     control,
     libraryPolicyForAccount,
     setLibrarySelectionForAccount,

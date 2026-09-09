@@ -23,6 +23,39 @@ function holdSource(provider,caseId){return `${provider}:${String(caseId||'').sl
 async function applyHold(identity,provider,caseId,reason){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.addHold({customerId,type:'payment_risk',sourceKey,reason,metadata:{provider,caseId,scope:identity.scope}});await reconcileMany(ids);return ids.length}
 async function releaseHold(identity,provider,caseId){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.releaseHold({customerId,type:'payment_risk',sourceKey});await reconcileMany(ids);return ids.length}
 function policyAction(kind,cfg,metadata){if(kind==='checkout_completion')return'preserve';if(kind==='refund')return cfg.refundAction==='suspend_full_refund'&&metadata?.fullRefund===true?'suspend':'preserve';if(kind==='dispute')return cfg.disputeAction;if(kind==='chargeback')return cfg.chargebackAction;return cfg.failedRenewalAction}
+function parseProviderTimestamp(value){
+  if(value==null||value==='')return null;
+  if(typeof value==='number'&&Number.isFinite(value)){const d=new Date(value<1e12?value*1000:value);return Number.isNaN(d.getTime())?null:d;}
+  const d=new Date(value);return Number.isNaN(d.getTime())?null:d;
+}
+function webhookTransactionTime(provider,payload){
+  if(!payload||typeof payload!=='object')return null;
+  if(provider==='stripe')return parseProviderTimestamp(payload?.data?.object?.created);
+  if(provider==='paypal')return parseProviderTimestamp(payload?.resource?.create_time||payload?.resource?.createTime);
+  return null;
+}
+async function refundTerminatesMatchedSubscription(row,{provider,eventId,metadata={}}={}){
+  if(String(row?.billing_mode||'payment')!=='subscription')return{terminate:true,reason:'one_time_payment'};
+  if(metadata?.currentTermLoss===true)return{terminate:true,reason:'provider_verified_current_term'};
+  if(metadata?.currentTermLoss===false)return{terminate:false,reason:'provider_verified_historical_term'};
+
+  let transactionAt=parseProviderTimestamp(metadata?.transactionOccurredAt||metadata?.transactionOccurredAtUtc||null);
+  if(!transactionAt){
+    const event=await query(`SELECT payload FROM payment_events WHERE provider=$1 AND provider_event_id=$2 LIMIT 1`,[provider,String(eventId)]);
+    transactionAt=webhookTransactionTime(provider,event.rows[0]?.payload||null);
+  }
+  if(!transactionAt)return{terminate:false,reason:'recurring_refund_term_unverified'};
+
+  const end=parseProviderTimestamp(row.current_period_end);
+  if(!end)return{terminate:false,reason:'recurring_refund_current_period_unknown'};
+  const durationDays=Math.max(1,Math.min(3650,Number(row.duration_days_snapshot||30)||30));
+  // Allow a small boundary tolerance for provider/local period timestamp skew.
+  const toleranceMs=48*60*60*1000;
+  const start=new Date(end.getTime()-durationDays*24*60*60*1000-toleranceMs);
+  const finish=new Date(end.getTime()+toleranceMs);
+  const inCurrentTerm=transactionAt>=start&&transactionAt<=finish;
+  return{terminate:inCurrentTerm,reason:inCurrentTerm?'current_recurring_term':'historical_recurring_term',transactionAt:transactionAt.toISOString(),currentTermStartApprox:start.toISOString(),currentTermEnd:end.toISOString()};
+}
 async function record({provider,eventId,caseId=null,kind,status='open',identity=null,providerSubscriptionId=null,amountMinor=null,currency=null,metadata={}}){
   if(!['stripe','paypal','plisio'].includes(provider))throw new Error('Unsupported incident provider.');
   if(!['refund','dispute','chargeback','failed_renewal','checkout_completion'].includes(kind))throw new Error('Unsupported payment incident type.');
@@ -65,6 +98,13 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   // authority - an active admin_present directive keeps the service eligible
   // regardless of the subscription row's status.
   //
+  // A recurring agreement is special: a refund can target a historical renewal
+  // even while later renewal payments keep the current term legitimately paid.
+  // Only terminate a recurring contract when the durable provider event proves
+  // that the refunded transaction belongs to the current paid term. One-time
+  // payments remain exact because their provider_subscription_id is the payment
+  // transaction itself.
+  //
   // A dispute/chargeback that is still open (kind='dispute', not yet lost)
   // deliberately does NOT terminate access here: the outcome isn't final yet,
   // and an admin can still act explicitly via service-admin-control if they
@@ -73,20 +113,24 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   // The termination itself is idempotent, so duplicate webhook deliveries
   // intentionally retry it. This matters when the incident row was recorded
   // successfully but the first termination attempt hit a transient failure.
-  // We also fail the incident-processing call when termination fails so the
-  // payment provider has a reason to redeliver instead of silently accepting
-  // confirmed lost money while leaving the paid plan active.
   const confirmedFullRefund=kind==='refund'&&(metadata?.fullRefund===true||incident.metadata?.fullRefund===true);
   const confirmedLostChargeback=kind==='chargeback'&&(status==='lost'||incident.incident_status==='lost');
   const moneyConfirmedLost=confirmedFullRefund||confirmedLostChargeback;
   if(moneyConfirmedLost&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
-      const matched=await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND customer_id=$3 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`,[provider,subscriptionRef,effectIdentity.customerId]);
+      const matched=await query(`SELECT id,billing_mode,current_period_end,duration_days_snapshot FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND customer_id=$3 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`,[provider,subscriptionRef,effectIdentity.customerId]);
       if(matched.rowCount){
-        const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
-        const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
-        if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
+        let terminationDecision={terminate:true,reason:'confirmed_lost_chargeback'};
+        if(confirmedFullRefund)terminationDecision=await refundTerminatesMatchedSubscription(matched.rows[0],{provider,eventId,metadata:{...(incident.metadata||{}),...(metadata||{})}});
+        if(terminationDecision.terminate){
+          const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
+          const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
+          if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
+        }else{
+          const updated=await query(`UPDATE payment_incidents SET metadata=COALESCE(metadata,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING *`,[incident.id,JSON.stringify({automaticTerminationSkipped:true,terminationDecision:terminationDecision.reason,transactionOccurredAt:terminationDecision.transactionAt||null,currentTermStartApprox:terminationDecision.currentTermStartApprox||null,currentTermEnd:terminationDecision.currentTermEnd||null})]);
+          if(updated.rowCount)incident={...updated.rows[0],duplicate:incident.duplicate};
+        }
       }
     }
   }
@@ -120,4 +164,4 @@ async function reopen(id,actorUserId){
 }
 async function notes(id){const r=await query(`SELECT n.*,u.username actor_username FROM payment_incident_notes n LEFT JOIN app_users u ON u.id=n.actor_user_id WHERE n.incident_id=$1 ORDER BY n.created_at DESC`,[id]);return r.rows}
 async function recent(limit=100){const result=await query(`SELECT pi.*,c.display_name customer_name,au.username assigned_username FROM payment_incidents pi LEFT JOIN customers c ON c.id=pi.customer_id LEFT JOIN app_users au ON au.id=pi.assigned_to ORDER BY pi.created_at DESC LIMIT $1`,[Math.max(1,Math.min(500,Number(limit)||100))]);return result.rows}
-module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed};
+module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};

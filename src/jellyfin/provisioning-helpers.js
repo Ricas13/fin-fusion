@@ -160,7 +160,7 @@ async function selectServerForPlan(plan) {
   return selected ? { ...selected, requested_access_lane: lane } : null;
 }
 
-async function reservePlacement(customerId, server) {
+async function reservePlacement(customerId, server, { allowOverCapacity = false } = {}) {
   if (!customerId || !server?.id) throw new Error('Customer and Jellyfin server are required for placement reservation.');
   return transaction(async db => {
     const locked = await db.query(`SELECT id,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`, [server.id]);
@@ -176,7 +176,7 @@ async function reservePlacement(customerId, server) {
       return { ...server, placement_lease_id: renewed.rows[0].id };
     }
 
-    if (server.placement_forced !== true) {
+    if (server.placement_forced !== true && allowOverCapacity !== true) {
       const ownCapacity = await db.query(`SELECT EXISTS(
         SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND disabled=FALSE AND account_purpose='jellyfin'
         UNION ALL
@@ -276,7 +276,7 @@ async function notifyNewJellyfinAccess(customerId, account) {
 }
 
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
-  const reservedServer = await reservePlacement(customerId, server);
+  const reservedServer = await reservePlacement(customerId, server, { allowOverCapacity: Boolean(options.allowOverCapacity) });
   let account;
   try {
     account = await durableCreation.createJellyfinAccount(customerId, reservedServer, effective, {
