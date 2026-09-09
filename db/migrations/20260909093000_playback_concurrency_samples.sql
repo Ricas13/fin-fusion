@@ -134,8 +134,10 @@ ON jellyfin_server_metrics
 FOR EACH ROW
 EXECUTE FUNCTION public.capture_playback_concurrency_sample();
 
--- The web process reads concurrency through this narrow function instead of
--- receiving direct write access to the telemetry table.
+-- The web process reads concurrency through this narrow aggregate function
+-- instead of receiving direct access to the telemetry table. EXECUTE is safe for
+-- database roles because it exposes only fleet totals and no user/session data;
+-- keeping it on PUBLIC also makes fresh-install role bootstrap order independent.
 CREATE OR REPLACE FUNCTION public.playback_concurrency_metrics(
     period_start timestamptz,
     period_end timestamptz
@@ -160,7 +162,7 @@ AS $$
        AND s.bucket_start < period_end;
 $$;
 
-REVOKE ALL ON FUNCTION public.playback_concurrency_metrics(timestamptz, timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.playback_concurrency_metrics(timestamptz, timestamptz) TO PUBLIC;
 REVOKE ALL ON playback_concurrency_samples FROM PUBLIC;
 
 DO $$
