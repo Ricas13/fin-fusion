@@ -21,7 +21,7 @@ async function main(){
  // Keep adversarial audit regressions inside the always-run DB contract suite.
  // Each child owns its own pool lifecycle so failures cannot be hidden by this
  // legacy contract's surrounding transaction.
- for(const smoke of ['./state-machine-invariants-db-smoke','./post-audit-schema-hardening-db-smoke']){
+ for(const smoke of ['./state-machine-invariants-db-smoke','./post-audit-schema-hardening-db-smoke','./migration-runner-hardening-smoke']){
   execFileSync(process.execPath,[require.resolve(smoke)],{stdio:'inherit',env:process.env});
  }
 
