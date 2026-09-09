@@ -8,6 +8,13 @@ const state=require('../src/entitlements/subscription-state');
 const jobHealth=require('../src/automation/job-health');
 const lifecycle=require('../src/payments/lifecycle-primitives');
 
+// Static references are intentional: the strict dead-code audit must see these
+// DB contracts as permanent CI roots rather than treating a dynamic loop as an
+// unreferenced test-only script.
+const stateMachineSmoke=require.resolve('./state-machine-invariants-db-smoke');
+const postAuditSmoke=require.resolve('./post-audit-schema-hardening-db-smoke');
+const migrationRunnerSmoke=require.resolve('./migration-runner-hardening-smoke');
+
 function assertIso(actual,expected,message){assert.strictEqual(actual.toISOString(),expected,message);}
 
 async function main(){
@@ -18,11 +25,8 @@ async function main(){
  assertIso(lifecycle.addPlanDuration({billing_interval:'year',duration_days:365},new Date('2028-02-29T00:00:00.000Z')),'2029-02-28T00:00:00.000Z','yearly billing must clamp leap day to the following February');
  assertIso(lifecycle.addPlanDuration({billing_interval:'custom',duration_days:30},new Date('2026-02-01T00:00:00.000Z')),'2026-03-03T00:00:00.000Z','custom plans must keep exact day-duration arithmetic');
 
- // Keep adversarial audit regressions inside the always-run DB contract suite.
- // Each child owns its own pool lifecycle so failures cannot be hidden by this
- // legacy contract's surrounding transaction.
- for(const smoke of ['./state-machine-invariants-db-smoke','./post-audit-schema-hardening-db-smoke','./migration-runner-hardening-smoke']){
-  execFileSync(process.execPath,[require.resolve(smoke)],{stdio:'inherit',env:process.env});
+ for(const smoke of [stateMachineSmoke,postAuditSmoke,migrationRunnerSmoke]){
+  execFileSync(process.execPath,[smoke],{stdio:'inherit',env:process.env});
  }
 
  const client=await getPool().connect(),suffix=crypto.randomBytes(5).toString('hex');
