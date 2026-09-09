@@ -150,8 +150,6 @@ function desiredMainSettings(current, externalUsername, plan, externalEmail = nu
     locale: requestLocale(plan?.request_locale, current?.locale),
     discoverRegion,
     streamingRegion,
-    // Kept for compatibility with older Overseerr/Jellyseerr releases that
-    // represented both region settings as one field. Modern Seerr ignores it.
     region: discoverRegion,
     originalLanguage: planValue(plan?.request_original_language, current?.originalLanguage, null),
     watchlistSyncMovies: planValue(plan?.request_watchlist_sync_movies, current?.watchlistSyncMovies, false),
@@ -213,6 +211,27 @@ async function suspendCustomer(candidate, external, { planId = null, desired = n
 function indexesFor(users) {
   return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user])) };
 }
+function rememberExternal(indexes, external) {
+  if (external?.id != null && indexes?.byId) indexes.byId.set(String(external.id), external);
+  if (external?.email && indexes?.byEmail) indexes.byEmail.set(String(external.email).toLowerCase(), external);
+  return external;
+}
+async function createExternalUserConvergently({ candidate, indexes, email, username, password, createUser = null, listUsers = null }) {
+  const create = createUser || (body => apiRequest('/api/v1/user', { method: 'POST', body }));
+  const refresh = listUsers || externalUsers;
+  try {
+    const external = await create({ email, username, password });
+    return { external: rememberExternal(indexes, external), created: true, recoveredConcurrentCreate: false };
+  } catch (createError) {
+    let refreshed;
+    try { refreshed = indexesFor(await refresh()); }
+    catch { throw createError; }
+    let external = candidate?.external_user_id ? refreshed.byId.get(String(candidate.external_user_id)) : null;
+    if (!external) external = refreshed.byEmail.get(String(email).toLowerCase()) || null;
+    if (!external) throw createError;
+    return { external: rememberExternal(indexes, external), created: false, recoveredConcurrentCreate: true };
+  }
+}
 async function resolveRequestCandidate(candidate) {
   if (candidate?.entitlement_active && candidate.request_access_enabled !== false) return candidate;
   const alternate = candidate?.customer_id ? await requestEntitlements.resolve(candidate.customer_id) : null;
@@ -230,23 +249,25 @@ async function syncCustomer(candidate, indexes = {}, options = {}) {
     return suspendCustomer(candidate, external, { planId: candidate.plan_id, desired: managedDesired });
   }
   try {
-    let created = false;
+    let created = false, recoveredConcurrentCreate = false;
     if (!external) {
       const bootstrapPassword = suppliedPassword || crypto.randomBytes(30).toString('base64url');
-      external = await apiRequest('/api/v1/user', { method: 'POST', body: { email, username, password: bootstrapPassword } });
-      created = true;
-      if (external?.id && indexes.byId) indexes.byId.set(String(external.id), external);
-      if (external?.email && indexes.byEmail) indexes.byEmail.set(String(external.email).toLowerCase(), external);
+      const creation = await createExternalUserConvergently({ candidate, indexes, email, username, password: bootstrapPassword });
+      external = creation.external;
+      created = creation.created;
+      recoveredConcurrentCreate = creation.recoveredConcurrentCreate;
     }
     if (!external?.id) throw new Error('Request service did not return a user id.');
+    rememberExternal(indexes, external);
     const currentPermissions = await permissionState(external.id);
     const activePermissions = desiredPermissions(candidate, currentPermissions);
     const permissionsChanged = currentPermissions !== activePermissions;
     if (permissionsChanged) await setPermissions(external.id, activePermissions);
     const main = await syncMainSettings(external.id, external.username || username, candidate, external.email || email);
     const settings = main.settings;
-    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired: Boolean(candidate.password_reset_required) || (created && !suppliedPassword), activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
-    return { status: 'synced', customerId: candidate.customer_id, created, passwordApplied: Boolean(created && suppliedPassword), remoteChanged: created || permissionsChanged || main.changed };
+    const passwordResetRequired = Boolean(candidate.password_reset_required) || (created && !suppliedPassword) || recoveredConcurrentCreate;
+    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired, activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
+    return { status: 'synced', customerId: candidate.customer_id, created, recoveredConcurrentCreate, passwordApplied: Boolean(created && suppliedPassword), remoteChanged: created || permissionsChanged || main.changed };
   } catch (error) {
     await mark(candidate.customer_id, { status: 'failed', externalUserId: external?.id || candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
     return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
@@ -369,4 +390,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, createExternalUserConvergently };

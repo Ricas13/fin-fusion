@@ -22,12 +22,57 @@ const remote = {
     passwordCalls: [],
     permissionCalls: [],
     quotaCalls: [],
-    failMainForId: null
+    failMainForId: null,
+    raceEmail: null,
+    raceArrivals: 0,
+    raceRelease: null
 };
 
 function userById(id) { return remote.users.find(user => Number(user.id) === Number(id)); }
 function readJson(req) { return new Promise((resolve, reject) => { const chunks=[]; req.on('data',chunk=>chunks.push(chunk)); req.on('end',()=>{try{resolve(chunks.length?JSON.parse(Buffer.concat(chunks).toString('utf8')):{})}catch(error){reject(error)}}); req.on('error',reject); }); }
-const server = http.createServer(async (req,res)=>{try{if(req.headers['x-api-key']!==process.env.SEERR_API_KEY){res.writeHead(401,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'bad api key'}));}const url=new URL(req.url,'http://request.test');if(req.method==='GET'&&url.pathname==='/api/v1/user'){const take=Math.max(1,Number(url.searchParams.get('take')||10)),skip=Math.max(0,Number(url.searchParams.get('skip')||0)),results=remote.users.slice(skip,skip+take).map(({settings,...user})=>user);res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({pageInfo:{pages:Math.max(1,Math.ceil(remote.users.length/take)),pageSize:take,results:remote.users.length,page:Math.floor(skip/take)+1},results}));}if(req.method==='POST'&&url.pathname==='/api/v1/user'){const body=await readJson(req);if(!body.email||!body.username||!body.password)throw new Error('missing local-user fields');if(remote.users.some(user=>String(user.email).toLowerCase()===String(body.email).toLowerCase())){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'User already exists with submitted email.'}));}const created={id:100+remote.createCalls,email:body.email,username:body.username,permissions:32,settings:{username:body.username,locale:null,region:null,originalLanguage:null,movieQuotaLimit:0,movieQuotaDays:30,tvQuotaLimit:0,tvQuotaDays:30}};remote.createCalls++;remote.users.push(created);res.writeHead(201,{'Content-Type':'application/json'});const{settings,...publicUser}=created;return res.end(JSON.stringify(publicUser));}const permissions=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/permissions$/);if(permissions){const user=userById(permissions[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}if(req.method==='POST'){const body=await readJson(req);user.permissions=Number(body.permissions)||0;remote.permissionCalls.push({id:user.id,permissions:user.permissions});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}}const main=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/main$/);if(main){const user=userById(main[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}if(req.method==='POST'){if(Number(remote.failMainForId)===Number(user.id)){res.writeHead(503,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'forced request-user mutation failure'}));}const body=await readJson(req);if(body.locale==null||!String(body.locale).trim()){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'SQLITE_CONSTRAINT: NOT NULL constraint failed: user_settings.locale'}));}user.settings={...user.settings,...body};user.username=body.username||user.username;remote.quotaCalls.push({id:user.id,...body});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}}const password=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/password$/);if(req.method==='POST'&&password){const body=await readJson(req);remote.passwordCalls.push({id:Number(password[1]),newPassword:body.newPassword});res.writeHead(204);return res.end();}res.writeHead(404,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:`unexpected ${req.method} ${url.pathname}`}));}catch(error){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:error.message}));}});
+async function synchronizeRaceCreate(email) {
+    if (!remote.raceEmail || String(email || '').toLowerCase() !== String(remote.raceEmail).toLowerCase()) return;
+    remote.raceArrivals++;
+    if (remote.raceArrivals === 1) {
+        await new Promise(resolve => { remote.raceRelease = resolve; });
+        return;
+    }
+    if (remote.raceArrivals === 2 && remote.raceRelease) {
+        const release = remote.raceRelease;
+        remote.raceRelease = null;
+        release();
+    }
+}
+const server = http.createServer(async (req,res)=>{
+    try {
+        if(req.headers['x-api-key']!==process.env.SEERR_API_KEY){res.writeHead(401,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'bad api key'}));}
+        const url=new URL(req.url,'http://request.test');
+        if(req.method==='GET'&&url.pathname==='/api/v1/user'){
+            const take=Math.max(1,Number(url.searchParams.get('take')||10)),skip=Math.max(0,Number(url.searchParams.get('skip')||0)),results=remote.users.slice(skip,skip+take).map(({settings,...user})=>user);
+            res.writeHead(200,{'Content-Type':'application/json'});
+            return res.end(JSON.stringify({pageInfo:{pages:Math.max(1,Math.ceil(remote.users.length/take)),pageSize:take,results:remote.users.length,page:Math.floor(skip/take)+1},results}));
+        }
+        if(req.method==='POST'&&url.pathname==='/api/v1/user'){
+            const body=await readJson(req);
+            if(!body.email||!body.username||!body.password)throw new Error('missing local-user fields');
+            await synchronizeRaceCreate(body.email);
+            if(remote.users.some(user=>String(user.email).toLowerCase()===String(body.email).toLowerCase())){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'User already exists with submitted email.'}));}
+            const created={id:100+remote.createCalls,email:body.email,username:body.username,permissions:32,settings:{username:body.username,locale:null,region:null,originalLanguage:null,movieQuotaLimit:0,movieQuotaDays:30,tvQuotaLimit:0,tvQuotaDays:30}};
+            remote.createCalls++;
+            remote.users.push(created);
+            res.writeHead(201,{'Content-Type':'application/json'});
+            const{settings,...publicUser}=created;
+            return res.end(JSON.stringify(publicUser));
+        }
+        const permissions=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/permissions$/);
+        if(permissions){const user=userById(permissions[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}if(req.method==='POST'){const body=await readJson(req);user.permissions=Number(body.permissions)||0;remote.permissionCalls.push({id:user.id,permissions:user.permissions});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}}
+        const main=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/main$/);
+        if(main){const user=userById(main[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}if(req.method==='POST'){if(Number(remote.failMainForId)===Number(user.id)){res.writeHead(503,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'forced request-user mutation failure'}));}const body=await readJson(req);if(body.locale==null||!String(body.locale).trim()){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'SQLITE_CONSTRAINT: NOT NULL constraint failed: user_settings.locale'}));}user.settings={...user.settings,...body};user.username=body.username||user.username;remote.quotaCalls.push({id:user.id,...body});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}}
+        const password=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/password$/);
+        if(req.method==='POST'&&password){const body=await readJson(req);remote.passwordCalls.push({id:Number(password[1]),newPassword:body.newPassword});res.writeHead(204);return res.end();}
+        res.writeHead(404,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:`unexpected ${req.method} ${url.pathname}`}));
+    }catch(error){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:error.message}));}
+});
 function listen(){return new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',()=>resolve(server.address()));});}
 function closeServer(){return new Promise(resolve=>server.close(()=>resolve()));}
 async function makeServer(name,slug){const result=await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled) VALUES($1,$2,'premium',$3,$3,'not-used',TRUE,100,100,'healthy',TRUE,TRUE,TRUE) RETURNING id`,[name,slug,`https://${slug}.example.test`]);return result.rows[0].id;}
@@ -61,5 +106,22 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute',status='expired' WHERE customer_id=$1`,[multiServerCustomer]);const expired=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(expired,{total:3,created:0,linked:2,suspended:1,failed:0});const multiRemote=userById(multiAccess.external_user_id);assert.strictEqual(multiRemote.permissions,0,'expired customer must lose request permission');const suspended=await requestSync.requestAccessForCustomer(multiServerCustomer);assert.strictEqual(suspended.access_suspended,true);assert.strictEqual(Number(suspended.active_permissions),32);assert.strictEqual(remote.users.length,3,'expiry must not delete request users');
     await query(`UPDATE plans SET request_movie_quota_limit=10,request_tv_quota_limit=15 WHERE id=$1`,[planId]);await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '30 days',status='active' WHERE customer_id=$1`,[multiServerCustomer]);const renewed=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(renewed,{total:3,created:0,linked:3,suspended:0,failed:0});assert.strictEqual(multiRemote.permissions,32,'renewal must restore remembered request permissions');assert.strictEqual(multiRemote.settings.movieQuotaLimit,10);assert.strictEqual(multiRemote.settings.tvQuotaLimit,15);assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).access_suspended,false);
     await query(`UPDATE plans SET request_movie_quota_limit=NULL,request_tv_quota_limit=NULL WHERE id=$1`,[planId]);await requestSync.syncSelected(fixtureCustomerIds);assert.strictEqual(multiRemote.settings.movieQuotaLimit,0);assert.strictEqual(multiRemote.settings.tvQuotaLimit,0);
+
+    const raceCustomer=await makeCustomer({username:'race-user',email:'race@example.test',serverIds:[firstServer],planId});
+    remote.raceEmail='race@example.test';
+    remote.raceArrivals=0;
+    const createCallsBeforeRace=remote.createCalls;
+    const raceResults=await Promise.all([requestSync.syncOneCustomer(raceCustomer),requestSync.syncOneCustomer(raceCustomer)]);
+    assert(raceResults.every(result=>result.status==='synced'),'both concurrent sync calls must converge successfully');
+    assert.strictEqual(raceResults.filter(result=>result.created).length,1,'only one concurrent sync may create the remote request user');
+    assert.strictEqual(raceResults.filter(result=>result.recoveredConcurrentCreate).length,1,'the losing create must adopt the concurrently-created remote user');
+    assert.strictEqual(remote.createCalls,createCallsBeforeRace+1,'concurrent sync must create exactly one remote request user');
+    const raceUsers=remote.users.filter(user=>String(user.email).toLowerCase()==='race@example.test');
+    assert.strictEqual(raceUsers.length,1,'concurrent sync must not duplicate external identities');
+    const raceAccess=await requestSync.requestAccessForCustomer(raceCustomer);
+    assert.strictEqual(Number(raceAccess.external_user_id),Number(raceUsers[0].id),'both sync paths must persist the same external identity');
+    assert.strictEqual(raceAccess.status,'synced');
+    remote.raceEmail=null;
+
     const{compactRuns}=require('../src/platform/admin-provisioning'),grouped=compactRuns([{customer_id:multiServerCustomer,customer_name:'multi-user',action:'reconcile',status:'succeeded',detail:{},started_at:'2026-08-14T20:00:00Z'},{customer_id:multiServerCustomer,customer_name:'multi-user',action:'reconcile',status:'succeeded',detail:{},started_at:'2026-08-14T19:55:00Z'},{customer_id:multiServerCustomer,customer_name:'multi-user',action:'reconcile',status:'succeeded',detail:{},started_at:'2026-08-14T19:50:00Z'}]);assert.strictEqual(grouped.length,1);assert.strictEqual(grouped[0].repeat_count,3);console.log('request user sync smoke: ok');
 })().finally(async()=>{await closeServer().catch(()=>{});await getPool().end();}).catch(error=>{console.error(error);process.exitCode=1;});
