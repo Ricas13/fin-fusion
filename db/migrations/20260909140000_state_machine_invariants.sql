@@ -4,10 +4,12 @@ BEGIN;
 -- 1. Confirmed money loss is terminal for the exact provider settlement.
 -- ---------------------------------------------------------------------------
 -- #689 made refund termination durable through refund_terminated_at and barred
--- later service extensions. Keep the stronger rule at the database boundary:
--- any INSERT/UPDATE that refers to an exact provider payment/subscription which
--- already has confirmed full-refund/lost-chargeback evidence must remain
--- terminal. This closes both refund-before-activation and stale checkout replay.
+-- later service extensions. Keep the stronger rule at the database boundary
+-- for exact one-time settlements and confirmed current-term recurring loss.
+-- A refund attached to a recurring agreement can belong to an older invoice,
+-- so a generic full-refund incident must not poison a later healthy term unless
+-- provider evidence explicitly marked currentTermLoss=true. Once normal refund
+-- reconciliation sets refund_terminated_at, that terminal state remains sticky.
 CREATE OR REPLACE FUNCTION public.enforce_subscription_money_loss_terminal()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -24,8 +26,15 @@ BEGIN
          WHERE pi.provider=NEW.source
            AND pi.provider_subscription_id=NEW.provider_subscription_id
            AND (
-               (pi.incident_type='refund' AND COALESCE(pi.metadata->>'fullRefund','false')='true')
-               OR (pi.incident_type='chargeback' AND pi.incident_status='lost')
+               (pi.incident_type='chargeback' AND pi.incident_status='lost')
+               OR (
+                   pi.incident_type='refund'
+                   AND COALESCE(pi.metadata->>'fullRefund','false')='true'
+                   AND (
+                       COALESCE(NEW.billing_mode,'payment')<>'subscription'
+                       OR COALESCE(pi.metadata->>'currentTermLoss','false')='true'
+                   )
+               )
            )
          ORDER BY pi.created_at DESC,pi.id DESC
          LIMIT 1;
