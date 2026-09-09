@@ -153,20 +153,26 @@ async function assertSettlementCheckout(client, checkoutIntentId, { customerId, 
     return row;
 }
 
-async function confirmedMoneyLoss(client, provider, providerSubscriptionId) {
+async function confirmedMoneyLoss(client, provider, providerSubscriptionId, { billingMode: subscriptionBillingMode = null } = {}) {
+    const recurring = billingMode.normalize(subscriptionBillingMode) === billingMode.BILLING_MODES.SUBSCRIPTION
+        && billingMode.PROVIDER_RECURRING_SOURCES.has(String(provider || '').trim().toLowerCase());
     const result = await client.query(`
         SELECT id,incident_type,incident_status,created_at,metadata
         FROM payment_incidents
         WHERE provider=$1
           AND provider_subscription_id=$2
           AND (
-              (incident_type='refund' AND COALESCE(metadata->>'fullRefund','false')='true')
-              OR (incident_type='chargeback' AND incident_status='lost')
+              (incident_type='chargeback' AND incident_status='lost')
+              OR (
+                  incident_type='refund'
+                  AND COALESCE(metadata->>'fullRefund','false')='true'
+                  AND ($3::boolean=FALSE OR COALESCE(metadata->>'currentTermLoss','false')='true')
+              )
           )
         ORDER BY created_at DESC,id DESC
         LIMIT 1
         FOR SHARE
-    `, [provider, String(providerSubscriptionId)]);
+    `, [provider, String(providerSubscriptionId), recurring]);
     return result.rows[0] || null;
 }
 
@@ -233,7 +239,9 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             if (!status) throw new Error(`Unsupported ${provider} subscription status: ${String(providerStatus || 'unknown').slice(0, 120)}`);
             const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
             const settlementIntent = await assertSettlementCheckout(client, settlementCheckoutIntentId, { customerId, planId, provider });
-            const moneyLoss = await confirmedMoneyLoss(client, provider, providerSubscriptionId);
+            const checkoutBillingMode = billingMode.normalize(contract?.checkoutMode) || null;
+            const effectiveBillingMode = billingMode.normalize(existing.rows[0]?.billing_mode) || checkoutBillingMode;
+            const moneyLoss = await confirmedMoneyLoss(client, provider, providerSubscriptionId, { billingMode: effectiveBillingMode });
             activationSuppressedByMoneyLoss = Boolean(moneyLoss || existing.rows[0]?.refund_terminated_at);
             historicalCheckoutReplay = Boolean(
                 activationSuppressedByMoneyLoss
@@ -247,7 +255,6 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
-            const checkoutBillingMode = billingMode.normalize(contract?.checkoutMode) || null;
 
             if (!existing.rowCount && !activationSuppressedByMoneyLoss) {
                 if (billingMode.isRecurring({ source: provider, billing_mode: checkoutBillingMode })) {
