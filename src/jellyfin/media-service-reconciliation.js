@@ -12,6 +12,7 @@ function normalizeService(value){
   if(!['jellyfin','emby'].includes(type))throw new Error(`Unsupported media service lane: ${type}`);
   return type;
 }
+function remoteMissing(error){return Number(error?.status||0)===404||/\b404\b|not found|not\s+exist/i.test(String(error?.message||error||''));}
 
 async function entitlementFor(customerId,serviceType,{includeBlocked=false}={}){
   const type=normalizeService(serviceType);
@@ -98,6 +99,29 @@ async function markPasswordSetupRequired(account){
   return account;
 }
 
+async function createForEntitlement(customerId,type,entitlement,effective){
+  const server=await selectServerForPlan(entitlement);
+  if(!server)throw new Error(`No eligible ${serviceCatalog.label(type)} server is currently available for plan ${entitlement.contract_plan_code||entitlement.code}`);
+  const account=await core.createJellyfinAccount(customerId,server,effective,{makePrimary:type==='jellyfin'});
+  if(type==='emby')await markPasswordSetupRequired(account);
+  account.media_server_type=type;
+  account.public_url=server.public_url||null;
+  account.server_name=server.name||null;
+  return account;
+}
+
+async function recoverMissingAccount(customerId,type,account,entitlement,effective){
+  const stale={id:account.id,serverId:account.server_id,remoteUserId:account.jellyfin_user_id,username:account.jellyfin_username};
+  await core.deleteJellyfinAccount(account,{reason:`Remote ${serviceCatalog.label(type)} account was already missing during reconciliation`});
+  const replacement=await createForEntitlement(customerId,type,entitlement,effective);
+  await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+               VALUES('media.remote_missing.recreated','customer',$1,$2::jsonb)`,[
+    customerId,
+    JSON.stringify({serviceType:type,oldAccountId:stale.id,oldServerId:stale.serverId,oldRemoteUserId:stale.remoteUserId,oldUsername:stale.username,newAccountId:replacement.id,newServerId:replacement.server_id,newRemoteUserId:replacement.jellyfin_user_id,newUsername:replacement.jellyfin_username})
+  ]);
+  return replacement;
+}
+
 async function reconcileCustomer(customerId,serviceType){
   const type=normalizeService(serviceType);
   const entitlement=await entitlementFor(customerId,type);
@@ -119,16 +143,16 @@ async function reconcileCustomer(customerId,serviceType){
     let created=false;
 
     if(!account){
-      const server=await selectServerForPlan(entitlement);
-      if(!server)throw new Error(`No eligible ${serviceCatalog.label(type)} server is currently available for plan ${entitlement.contract_plan_code||entitlement.code}`);
-      account=await core.createJellyfinAccount(customerId,server,effective,{makePrimary:type==='jellyfin'});
+      account=await createForEntitlement(customerId,type,entitlement,effective);
       created=true;
-      if(type==='emby')await markPasswordSetupRequired(account);
-      account.media_server_type=type;
-      account.public_url=server.public_url||null;
-      account.server_name=server.name||null;
     }else{
-      await core.applyPolicy(account,effective,false);
+      try{
+        await core.applyPolicy(account,effective,false);
+      }catch(error){
+        if(!remoteMissing(error))throw error;
+        account=await recoverMissingAccount(customerId,type,account,entitlement,effective);
+        created=true;
+      }
       if(type==='jellyfin'&&!account.is_primary){
         await core.markPrimaryAccount(customerId,account.id);
         account.is_primary=true;
@@ -178,7 +202,11 @@ async function reconcileAccount(accountId){
   const entitlement=await entitlementFor(account.customer_id,type);
   if(!entitlement||!account.server_enabled)return core.disableJellyfinAccount(account);
   const effective=await core.effectivePolicyForCustomer(account.customer_id,entitlement);
-  return core.applyPolicy(account,effective,false);
+  try{return await core.applyPolicy(account,effective,false);}
+  catch(error){
+    if(!remoteMissing(error))throw error;
+    return recoverMissingAccount(account.customer_id,type,account,entitlement,effective);
+  }
 }
 
-module.exports={normalizeService,entitlementFor,accountsFor,selectServerForPlan,reconcileCustomer,reconcileAll,reconcileAccount,markPasswordSetupRequired};
+module.exports={normalizeService,remoteMissing,entitlementFor,accountsFor,selectServerForPlan,reconcileCustomer,reconcileAll,reconcileAccount,markPasswordSetupRequired,createForEntitlement,recoverMissingAccount};
