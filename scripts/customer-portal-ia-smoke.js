@@ -150,7 +150,7 @@ assert(storefront.includes('/account/register?intent=free'),'public Free Access 
 assert(pending.includes('FREE_HOLD_MINUTES=10')&&pending.includes('async function reserveFreeAccess')&&pending.includes('free_access_registration_reservations'),'explicit Free Access reservation must create a real 10-minute expiring capacity hold before registration details are entered');
 assert(capacity.includes('free_access_registration_reservations')&&capacity.includes('reserved'),'plan capacity must count live registration holds');
 assert(publicAuth.includes('await establish(req,created)')&&publicAuth.includes('activateRequestedFreeAccess(created)'),'verified registration must establish the customer session and continue onboarding automatically');
-assert(publicAuth.includes('hold expired before verification'),'expired Free Access holds must preserve the new account and explain the next step');
+assert(publicAuth.includes('reserved Free Access place expired before verification'),'expired Free Access reservations must preserve the new account and explain the next step without mislabeling the submitted reservation as a 10-minute hold');
 {
   const future=new Date(Date.now()+86400000).toISOString();
   const inactivePast=new Date(Date.now()-86400000).toISOString();

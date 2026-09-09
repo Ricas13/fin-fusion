@@ -2,12 +2,14 @@
 
 const core = require('./provisioning-engine');
 const durableCreation = require('./durable-account-creation');
-const { query } = require('../db');
+const { query, transaction } = require('../db');
 const subscriptionState = require('../entitlements/subscription-state');
 const planServers = require('./plan-servers');
 const placement = require('./placement');
 const adminControl = require('./admin-control');
 const userCapacity = require('./user-capacity');
+
+const PLACEMENT_LEASE_MINUTES = 10;
 
 // This module is the dependency-safe helper surface used by the canonical
 // multi-service reconciler. Jellyfin customer accounts have one invariant:
@@ -84,12 +86,42 @@ async function markPasswordSetupRequired(accountId) {
   `, [accountId]);
 }
 
+function requestedAccessLane(plan) {
+  return plan?.is_free_tier === true || String(plan?.server_class || '') === 'free' && Number(plan?.price_minor ?? plan?.contract_price_minor ?? 0) === 0
+    ? 'free'
+    : 'primary';
+}
+
+async function reservedServerForCustomer(customerId, available, lane) {
+  const ids = (available || []).map(server => server.id).filter(Boolean);
+  if (!customerId || !ids.length) return null;
+  const found = await query(`
+    WITH reservations AS (
+      SELECT server_id,0 AS kind_rank,updated_at
+      FROM jellyfin_account_creation_intents
+      WHERE customer_id=$1 AND server_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT server_id,1 AS kind_rank,updated_at
+      FROM jellyfin_server_placement_leases
+      WHERE customer_id=$1 AND server_id=ANY($2::uuid[]) AND expires_at>NOW()
+    )
+    SELECT server_id
+    FROM reservations
+    ORDER BY kind_rank ASC,updated_at DESC
+    LIMIT 1
+  `, [customerId, ids]);
+  if (!found.rowCount) return null;
+  const server = available.find(candidate => String(candidate.id) === String(found.rows[0].server_id));
+  return server ? { ...server, requested_access_lane: lane, placement_recovery: true } : null;
+}
+
 async function selectServerForPlan(plan) {
   // An explicit admin pin is an imperative command, not a placement hint.
   // Return the exact configured Jellyfin target before evaluating public
   // capacity, plan mappings, allow_new_users, health ranking or pool priority.
+  const lane = requestedAccessLane(plan);
   const forced = await adminControl.forcedServerForPlan(plan);
-  if (forced) return forced;
+  if (forced) return { ...forced, placement_forced: true, requested_access_lane: lane };
 
   const accessKind = String(plan?.billing_interval || plan?.contract_billing_interval || '') === 'trial'
     ? 'trial'
@@ -105,8 +137,15 @@ async function selectServerForPlan(plan) {
         : true);
   if (!available.length) return null;
 
-  // Server capacity has one meaning everywhere: managed customer users that
-  // actually exist. There is no disabled-user bucket to count or reserve.
+  // If this customer's earlier attempt already reserved a server or created a
+  // durable creation intent there, retry that server first. Re-running load
+  // balancing here could otherwise create a second remote account elsewhere.
+  const recovery = await reservedServerForCustomer(plan?.customer_id || null, available, lane);
+  if (recovery) return recovery;
+
+  // Server capacity includes durable accounts plus short-lived placement leases
+  // and creation intents. A concurrent reconciler therefore sees a slot as used
+  // before the corresponding remote Jellyfin account exists.
   const candidates = await userCapacity.decorateServers(available);
   const ids = candidates.map(server => server.id);
   const playback = await query(`
@@ -117,7 +156,68 @@ async function selectServerForPlan(plan) {
   `, [ids]);
   const streams = new Map(playback.rows.map(row => [String(row.server_id), Number(row.active_streams || 0)]));
   for (const server of candidates) server.active_streams = streams.get(String(server.id)) || 0;
-  return placement.selectServer(candidates, plan?.placement_strategy);
+  const selected = placement.selectServer(candidates, plan?.placement_strategy);
+  return selected ? { ...selected, requested_access_lane: lane } : null;
+}
+
+async function reservePlacement(customerId, server) {
+  if (!customerId || !server?.id) throw new Error('Customer and Jellyfin server are required for placement reservation.');
+  return transaction(async db => {
+    const locked = await db.query(`SELECT id,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`, [server.id]);
+    if (!locked.rowCount) throw new Error('Selected Jellyfin server no longer exists.');
+    await db.query(`DELETE FROM jellyfin_server_placement_leases WHERE server_id=$1 AND expires_at<=NOW()`, [server.id]);
+
+    const existing = await db.query(`SELECT id FROM jellyfin_server_placement_leases
+      WHERE customer_id=$1 AND server_id=$2 AND expires_at>NOW() LIMIT 1`, [customerId, server.id]);
+    if (existing.rowCount) {
+      const renewed = await db.query(`UPDATE jellyfin_server_placement_leases
+        SET expires_at=NOW()+($2||' minutes')::interval,updated_at=NOW()
+        WHERE id=$1 RETURNING id`, [existing.rows[0].id, String(PLACEMENT_LEASE_MINUTES)]);
+      return { ...server, placement_lease_id: renewed.rows[0].id };
+    }
+
+    if (server.placement_forced !== true) {
+      const ownCapacity = await db.query(`SELECT EXISTS(
+        SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND disabled=FALSE AND account_purpose='jellyfin'
+        UNION ALL
+        SELECT 1 FROM jellyfin_account_creation_intents WHERE customer_id=$1 AND server_id=$2
+      ) yes`, [customerId, server.id]);
+      if (ownCapacity.rows[0]?.yes !== true) {
+        const counts = await userCapacity.countsForServers([server.id], (sql, params) => db.query(sql, params));
+        const used = Number(counts.get(String(server.id)) || 0);
+        const maxUsers = Number(locked.rows[0].max_users || 0);
+        if (maxUsers > 0 && used >= maxUsers) {
+          const error = new Error('Selected Jellyfin server became full before account creation. Provisioning will retry on another available server.');
+          error.code = 'JELLYFIN_SERVER_CAPACITY_CHANGED';
+          throw error;
+        }
+      }
+    }
+
+    const lease = await db.query(`INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at)
+      VALUES($1,$2,NOW()+($3||' minutes')::interval)
+      ON CONFLICT(customer_id,server_id) DO UPDATE SET expires_at=EXCLUDED.expires_at,updated_at=NOW()
+      RETURNING id`, [customerId, server.id, String(PLACEMENT_LEASE_MINUTES)]);
+    return { ...server, placement_lease_id: lease.rows[0].id };
+  });
+}
+
+async function releaseDefinitivePlacementFailure(customerId, serverId, leaseId) {
+  if (!leaseId) return;
+  try {
+    const intent = await query(`SELECT 1 FROM jellyfin_account_creation_intents
+      WHERE customer_id=$1 AND server_id=$2 LIMIT 1`, [customerId, serverId]);
+    if (!intent.rowCount) {
+      await query(`DELETE FROM jellyfin_server_placement_leases
+        WHERE id=$1 AND customer_id=$2 AND server_id=$3`, [leaseId, customerId, serverId]);
+    }
+  } catch (cleanupError) {
+    console.warn('Unable to release failed Jellyfin placement lease.', {
+      customerId: safeLog(customerId, 100),
+      serverId: safeLog(serverId, 100),
+      error: safeLog(cleanupError?.message || cleanupError)
+    });
+  }
 }
 
 async function notifyNewJellyfinAccess(customerId, account) {
@@ -176,7 +276,18 @@ async function notifyNewJellyfinAccess(customerId, account) {
 }
 
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
-  const account = await durableCreation.createJellyfinAccount(customerId, server, effective, options);
+  const reservedServer = await reservePlacement(customerId, server);
+  let account;
+  try {
+    account = await durableCreation.createJellyfinAccount(customerId, reservedServer, effective, {
+      ...options,
+      placementLeaseId: reservedServer.placement_lease_id,
+      accessLane: options.accessLane || reservedServer.requested_access_lane || requestedAccessLane(effective)
+    });
+  } catch (error) {
+    await releaseDefinitivePlacementFailure(customerId, reservedServer.id, reservedServer.placement_lease_id);
+    throw error;
+  }
   if (options.passwordSetupRequired !== false) {
     await markPasswordSetupRequired(account.id);
     account.password_setup_required = true;
@@ -196,6 +307,7 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
 }
 
 module.exports = {
+  PLACEMENT_LEASE_MINUTES,
   discoverServerLibraries,
   libraryCatalogForServerClass,
   libraryCatalogForPlan,
@@ -220,7 +332,11 @@ module.exports = {
   markPrimaryAccount,
   renameJellyfinAccount,
   currentEntitlement,
+  requestedAccessLane,
+  reservedServerForCustomer,
   selectServerForPlan,
+  reservePlacement,
+  releaseDefinitivePlacementFailure,
   notifyNewJellyfinAccess,
   createJellyfinAccount,
   setJellyfinPassword
