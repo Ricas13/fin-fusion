@@ -19,8 +19,8 @@ assert(!planExternal.includes('SELECT s.*,s.priority plan_priority FROM stremio_
 assert(externalRuntime.includes("require('./plan-external-sources')"),'external stream generation must use explicit plan source composition');
 assert(externalRuntime.includes('planExternalSources.forEntitlement(entitlement)'),'external stream generation must not implicitly add unselected sources');
 assert(!runtime.includes("require('./plan-external-sources')"),'protocol runtime must not own external source authorization after relay retirement');
-assert(runtime.includes("const retiredPlayback = (_req, res) => res.status(410).end();")&&runtime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', retiredPlayback)"),'legacy external CAPTaINFiN proxy URLs must remain retired with 410');
-assert(!externalRuntime.includes('controlPlaybackUrl'),'external stream results must not be wrapped in a CAPTaINFiN playback control hop');
+assert(runtime.includes("const retiredPlayback = (_req, res) => res.status(410).end();")&&runtime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', retiredPlayback)"),'legacy external CAPTAiNFiN proxy URLs must remain retired with 410');
+assert(!externalRuntime.includes('controlPlaybackUrl'),'external stream results must not be wrapped in a CAPTAiNFiN playback control hop');
 assert(externalRuntime.includes("require('./external-playback-token')"),'external raw playback must use isolated entitlement playback sessions');
 assert(externalRuntime.includes('const accessToken=await externalPlaybackToken.tokenFor(source,entitlement)'),'external stream generation must mint or reuse an entitlement-isolated upstream playback token');
 assert(/url\s*:\s*directPlaybackUrl\(\{source,itemId:item\.Id,mediaSourceId:media\.Id,container:media\.Container,filename:file,accessToken\}\)/.test(externalRuntime),'external stream results must contain the provider raw-file URL directly using the isolated playback token');
