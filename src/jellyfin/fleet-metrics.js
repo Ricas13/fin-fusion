@@ -152,10 +152,12 @@ async function cachedTotalUsers(serverId) {
 }
 
 async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}) {
-    const windowSeconds = activeWindowSeconds();
+    // Peak-concurrency analytics needs the exact set of playback sessions Jellyfin
+    // currently exposes. Do not use activeWithinSeconds here: a genuinely paused
+    // item is still a concurrent stream even when its activity timestamp is old.
     const sessionsPromise = registry.request(
         serverId,
-        `/Sessions?activeWithinSeconds=${encodeURIComponent(windowSeconds)}`,
+        '/Sessions',
         { timeoutMs: 10000, cacheTtlMs: 45000 }
     );
     const usersPromise = refreshUsers
@@ -166,7 +168,7 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}
     if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
 
     const activity = refreshUsers ? await persistUserActivity(serverId, users) : { observed: 0, updated: 0 };
-    const playing = sessions.filter(session => session?.Id && session?.UserId && session?.NowPlayingItem);
+    const playing = sessions.filter(session => session?.Id && session?.NowPlayingItem);
     let managedStreams = 0;
     let transcodeStreams = 0;
     let directStreamStreams = 0;
@@ -174,7 +176,7 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}
     let pausedStreams = 0;
 
     for (const session of playing) {
-        if (managedUserIds.has(String(session.UserId).toLowerCase())) managedStreams += 1;
+        if (session?.UserId && managedUserIds.has(String(session.UserId).toLowerCase())) managedStreams += 1;
         if (session?.PlayState?.IsPaused) pausedStreams += 1;
         const method = playbackMethod(session);
         if (method === 'transcode') transcodeStreams += 1;

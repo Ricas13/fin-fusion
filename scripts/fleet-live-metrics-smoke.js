@@ -32,7 +32,7 @@ const fleetDashboard = require('../src/platform/admin-server-fleet-dashboard');
             }
             if (String(serverId) === String(server2)) return [{ Id: 'free-1' }, { Id: 'free-2' }];
         }
-        if (String(path).startsWith('/Sessions?')) {
+        if (path === '/Sessions') {
             if (String(serverId) === String(server1)) return [
                 { Id: 's1', UserId: 'managed-user-id', NowPlayingItem: { Id: 'm1', Name: 'Managed Movie' }, PlayState: { PlayMethod: 'DirectPlay', IsPaused: false } },
                 { Id: 's2', UserId: 'legacy-1', NowPlayingItem: { Id: 'm2', Name: 'Legacy Movie' }, PlayState: { PlayMethod: 'DirectStream', IsPaused: false } },
@@ -64,6 +64,21 @@ const fleetDashboard = require('../src/platform/admin-server-fleet-dashboard');
         assert.strictEqual(Number(premium.paused_streams), 1);
         assert.strictEqual(Number(free.total_users), 2);
         assert.strictEqual(Number(free.active_streams), 0);
+
+        const concurrency = await query(`
+            SELECT peak_concurrent_streams,peak_playing_streams,peak_paused_streams,
+                   peak_transcode_streams,peak_direct_stream_streams,peak_direct_play_streams
+            FROM playback_concurrency_samples
+            ORDER BY bucket_start DESC
+            LIMIT 1
+        `);
+        assert.strictEqual(concurrency.rowCount, 1, 'trusted fleet concurrency sample must be captured');
+        assert.strictEqual(Number(concurrency.rows[0].peak_concurrent_streams), 3, 'paused playback still counts toward fleet concurrency');
+        assert.strictEqual(Number(concurrency.rows[0].peak_playing_streams), 2);
+        assert.strictEqual(Number(concurrency.rows[0].peak_paused_streams), 1);
+        assert.strictEqual(Number(concurrency.rows[0].peak_transcode_streams), 1);
+        assert.strictEqual(Number(concurrency.rows[0].peak_direct_stream_streams), 1);
+        assert.strictEqual(Number(concurrency.rows[0].peak_direct_play_streams), 1);
 
         const dashboardRows = await fleetDashboard.dashboardRows();
         const premiumDashboard = dashboardRows.find(row => String(row.id) === String(server1));

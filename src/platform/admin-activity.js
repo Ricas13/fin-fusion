@@ -6,6 +6,7 @@ const activity=require('../jellyfin/activity');
 const policyEvents=require('../jellyfin/activity-policy-events');
 const streamPolicy=require('../jellyfin/stream-policy-settings');
 const playbackAnalytics=require('./playback-analytics');
+const playbackConcurrency=require('./playback-concurrency');
 const runtimeSettings=require('./runtime-settings');
 const csrf=require('../auth/csrf');
 const ui=require('./admin-ui');
@@ -88,8 +89,9 @@ function createAdminActivityRouter(){
   router.use('/admin/activity',requireAdminSession,noStore);
   router.get('/admin/activity',async(req,res,next)=>{try{
     await runtimeSettings.ensureLoaded();
-    const policy=await streamPolicy.get(),cfg={...activity.config(),countPaused:policy.countPaused},analyticsDays=playbackAnalytics.normalizeDays(req.query.range);
-    const[data,analytics]=await Promise.all([dashboardData(cfg),playbackAnalytics.load(analyticsDays)]),state=playbackState(data);
+    const policy=await streamPolicy.get(),cfg={...activity.config(),countPaused:policy.countPaused},analyticsRange=playbackAnalytics.resolveRange(req.query.range);
+    const[data,analytics,observedConcurrency]=await Promise.all([dashboardData(cfg),playbackAnalytics.load(analyticsRange),playbackConcurrency.load(analyticsRange)]),state=playbackState(data);
+    playbackConcurrency.applyToAnalytics(analytics,observedConcurrency);
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.activity.view','admin_dashboard','activity',$2::jsonb)`,[req.session.authUserId,JSON.stringify({mode:policy.mode,analyticsRangeDays:analytics.days})]);
     return res.render('admin/activity',{siteName:runtimeSettings.siteName(),cfg,policy,analytics,csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null,heroHtml:playbackHero(data,policy,state),issueHtml:issueCards(state),state,recentDecisions:state.recentDecisions.map(decorateEvent),events:data.events.map(decorateEvent),summary:data.summary,streams:data.streams,servers:data.servers,history:data.history});
   }catch(error){return next(error);}});
