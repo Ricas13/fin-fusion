@@ -142,7 +142,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
   let freePlanQuery='',storedStatus=null;
   const statusClient={query:async(sql,params=[])=>{
     if(sql.includes('pg_advisory_xact_lock'))return{rowCount:1,rows:[{}]};
-    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};}
+    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};
     if(sql.includes('SELECT setting_value FROM platform_settings WHERE setting_key=$1'))return storedStatus?{rowCount:1,rows:[{setting_value:storedStatus}]}:{rowCount:0,rows:[]};
     if(sql.includes('INSERT INTO platform_settings(setting_key,setting_value)')){storedStatus=JSON.parse(params[1]);return{rowCount:1,rows:[]};}
     throw new Error(`Unexpected Free Server status query: ${sql.slice(0,120)}`);
@@ -160,14 +160,14 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
   assert.strictEqual(sent.length,1);
   assert.strictEqual(edited.length,0);
   assert.strictEqual(sent[0].allowEveryone,false);
-  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='Reserve / Create Free Account: https://portal.example/account/register?intent=free')&&sent[0].text.includes('10 minutes'));
+  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='Start Free Access signup: https://portal.example/account/register?intent=free')&&sent[0].text.includes('10-minute window')&&sent[0].text.includes('It does not reserve a place.')&&sent[0].text.includes('Capacity is checked atomically'));
   assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'));
   const fullStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:0}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example'}});
   assert.strictEqual(fullStatus.updated,1);
   assert.strictEqual(sent.length,1);
   assert.strictEqual(edited.length,1);
   assert.strictEqual(edited[0].messageId,'987654321098765432');
-  assert(edited[0].text.includes('No free places currently available.')&&edited[0].text.includes('10 minutes'));
+  assert(edited[0].text.includes('No free places currently available.')&&edited[0].text.includes('does not reserve a place')&&edited[0].text.includes('10-minute signup window'));
 
   const soldPlan={id:'free-plan',name:'Free Server',description:'Free access',service_type:'jellyfin',billing_interval:'month',price_minor:0,streams:1,capacity:{soldOut:true,label:'Currently full',kind:'sold'}};
   const soldWithInvite=storefrontRuntime.freeTierPanel(soldPlan,{logged:false,registrationOpen:true,discordInviteUrl:'https://discord.gg/captainfin'});
