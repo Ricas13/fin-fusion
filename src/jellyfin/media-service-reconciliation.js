@@ -113,6 +113,11 @@ async function createForEntitlement(customerId,type,entitlement,effective){
 async function recoverMissingAccount(customerId,type,account,entitlement,effective){
   const stale={id:account.id,serverId:account.server_id,remoteUserId:account.jellyfin_user_id,username:account.jellyfin_username};
   await core.deleteJellyfinAccount(account,{reason:`Remote ${serviceCatalog.label(type)} account was already missing during reconciliation`});
+  // This object may still be present in the caller's pre-recovery account list.
+  // Mark it retired in memory so the same reconciliation pass cannot try to
+  // disable/delete the already-removed identity a second time.
+  account.disabled=true;
+  account.server_enabled=false;
   const replacement=await createForEntitlement(customerId,type,entitlement,effective);
   await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
                VALUES('media.remote_missing.recreated','customer',$1,$2::jsonb)`,[
