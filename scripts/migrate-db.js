@@ -89,22 +89,31 @@ async function databaseShape(pool) {
     };
 }
 
-async function recordDriftAcceptance(pool, { filename, oldChecksum, newChecksum }) {
-    await pool.query(
-        'UPDATE public.schema_migrations SET checksum=$2 WHERE filename=$1',
-        [filename, newChecksum]
+async function recordDriftAcceptance(db, { filename, oldChecksum, newChecksum }) {
+    // Ledger mutation and audit evidence are one PostgreSQL statement. If the
+    // audit table/constraint/write fails, the checksum update cannot commit on
+    // its own. Recovery therefore remains explicit, targeted and provably
+    // audited instead of merely printing a best-effort warning afterwards.
+    const result = await db.query(
+        `WITH repaired AS (
+            UPDATE public.schema_migrations
+            SET checksum=$2
+            WHERE filename=$1 AND checksum=$3
+            RETURNING filename
+         )
+         INSERT INTO public.audit_log(action,entity_type,entity_id,metadata)
+         SELECT 'migration.checksum_drift_accepted','migration',filename,$4::jsonb
+         FROM repaired
+         RETURNING entity_id`,
+        [
+            filename,
+            newChecksum,
+            oldChecksum,
+            JSON.stringify({ filename, oldChecksum, newChecksum, explicitOperatorConfirmation: true })
+        ]
     );
-    try {
-        const auditTable = await pool.query("SELECT to_regclass('public.audit_log') AS table_name");
-        if (auditTable.rows[0]?.table_name) {
-            await pool.query(
-                `INSERT INTO public.audit_log(action,entity_type,entity_id,metadata)
-                 VALUES('migration.checksum_drift_accepted','migration',$1,$2::jsonb)`,
-                [filename, JSON.stringify({ filename, oldChecksum, newChecksum, explicitOperatorConfirmation: true })]
-            );
-        }
-    } catch (error) {
-        console.warn(`Could not write migration checksum recovery audit row: ${error.message}`);
+    if (result.rowCount !== 1) {
+        throw new Error(`Checksum drift recovery for ${filename} did not update exactly one reviewed migration; the ledger may have changed concurrently.`);
     }
     console.warn(`accepted migration checksum drift ${filename}: ${oldChecksum} -> ${newChecksum}`);
 }
