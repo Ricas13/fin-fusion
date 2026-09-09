@@ -45,14 +45,14 @@ async function plan(label, options = {}) {
   return row.rows[0].id;
 }
 
-async function fullRefundIncident(customerId, provider, providerRef, label) {
+async function fullRefundIncident(customerId, provider, providerRef, label, metadata = {}) {
   return (await query(`
     INSERT INTO payment_incidents(
       provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,
       customer_id,provider_subscription_id,access_action,metadata
     ) VALUES($1,$2,$3,'refund','recorded','direct',$4,$5,'preserve',$6::jsonb)
     RETURNING *
-  `, [provider, `state-machine-refund-${label}-${suffix}`, `case-${label}-${suffix}`, customerId, providerRef, JSON.stringify({ fullRefund: true, test: true })])).rows[0];
+  `, [provider, `state-machine-refund-${label}-${suffix}`, `case-${label}-${suffix}`, customerId, providerRef, JSON.stringify({ fullRefund: true, test: true, ...metadata })])).rows[0];
 }
 
 async function activate({ customerId, planId, provider = 'stripe', providerRef, mode = 'payment' }) {
@@ -130,6 +130,43 @@ async function testRefundThenStaleActivationReplay() {
   assert.strictEqual(forced.status, 'cancelled', 'DB boundary must prevent direct refund resurrection');
   assert.strictEqual(Number(forced.service_extension_days || 0), 0, 'DB boundary must clear extensions on refund-terminated rows');
   assert(new Date(forced.current_period_end).getTime() <= Date.now() + 1000, 'DB boundary must cap refund-terminated period end');
+}
+
+async function testHistoricalRecurringRefundDoesNotPoisonCurrentTerm() {
+  const customerId = await customer('historical-recurring-refund');
+  const planId = await plan('historical-recurring-refund', { serviceType: 'emby' });
+  const ref = `sub_historical_refund_${suffix}`;
+
+  const first = await activate({ customerId, planId, providerRef: ref, mode: 'subscription' });
+  assert.strictEqual(first.status, 'active', 'recurring fixture must start active');
+  assert.strictEqual(first.billing_mode, 'subscription', 'fixture must be classified as recurring');
+
+  await fullRefundIncident(customerId, 'stripe', ref, 'historical-recurring', {
+    currentTermLoss: false,
+    automaticTerminationSkipped: true,
+    terminationDecision: 'historical_recurring_term'
+  });
+
+  const replay = await activate({ customerId, planId, providerRef: ref, mode: 'subscription' });
+  assert.strictEqual(replay.status, 'active', 'historical recurring refund must not cancel a currently healthy agreement');
+  assert.strictEqual(replay.refund_terminated_at, null, 'historical recurring refund must not poison the agreement with a terminal marker');
+  assert(new Date(replay.current_period_end).getTime() > Date.now(), 'healthy recurring agreement must retain future paid-through time');
+
+  const directRefresh = (await query(`
+    UPDATE subscriptions
+       SET status='active',current_period_end=NOW()+INTERVAL '30 days',updated_at=NOW()
+     WHERE id=$1
+     RETURNING status,current_period_end,refund_terminated_at
+  `, [first.id])).rows[0];
+  assert.strictEqual(directRefresh.status, 'active', 'DB boundary must also preserve a healthy recurring term after a historical refund');
+  assert.strictEqual(directRefresh.refund_terminated_at, null, 'DB boundary must not infer current-term loss from a historical recurring refund');
+
+  // Explicit provider evidence that the current recurring term itself was lost
+  // is different: both the activation guard and DB boundary must then be terminal.
+  await fullRefundIncident(customerId, 'stripe', ref, 'current-recurring', { currentTermLoss: true });
+  const currentLossReplay = await activate({ customerId, planId, providerRef: ref, mode: 'subscription' });
+  assert.strictEqual(currentLossReplay.status, 'cancelled', 'provider-confirmed current-term recurring refund must terminate access');
+  assert(currentLossReplay.refund_terminated_at, 'current-term recurring refund must persist the terminal marker');
 }
 
 async function testConcurrentRecurringSettlement() {
@@ -237,6 +274,7 @@ async function cleanup() {
 (async () => {
   await testRefundBeforeActivation();
   await testRefundThenStaleActivationReplay();
+  await testHistoricalRecurringRefundDoesNotPoisonCurrentTerm();
   await testConcurrentRecurringSettlement();
   await testEnableDoesNotUndoDestructiveAuthority();
   await testDiscordRoleHistory();
