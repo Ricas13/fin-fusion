@@ -142,7 +142,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
   let freePlanQuery='',storedStatus=null;
   const statusClient={query:async(sql,params=[])=>{
     if(sql.includes('pg_advisory_xact_lock'))return{rowCount:1,rows:[{}]};
-    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};
+    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};}
     if(sql.includes('SELECT setting_value FROM platform_settings WHERE setting_key=$1'))return storedStatus?{rowCount:1,rows:[{setting_value:storedStatus}]}:{rowCount:0,rows:[]};
     if(sql.includes('INSERT INTO platform_settings(setting_key,setting_value)')){storedStatus=JSON.parse(params[1]);return{rowCount:1,rows:[]};}
     throw new Error(`Unexpected Free Server status query: ${sql.slice(0,120)}`);
