@@ -127,12 +127,12 @@ async function main() {
     assert.strictEqual(legacyAdmin.rowCount, 0, 'clearing canonical Jellyfin admin authority must clear legacy compatibility state');
 
     // Anonymous Free signup intent must never occupy scarce capacity. Use a
-    // manual-capacity service here so the contract is independent of Jellyfin
-    // fleet configuration while exercising the same reservation table counted
-    // by plan-capacity.js.
+    // zero-price non-canonical manual-capacity plan so this contract stays
+    // independent of the singleton Free-plan schema rule and Jellyfin fleet
+    // configuration while exercising the same reservation accounting tables.
     const intentPlan = (await client.query(`
       INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams,service_type,is_free_tier,capacity_limit)
-      VALUES($1,$2,'direct','month',30,0,'GBP',FALSE,FALSE,'premium',1,'emby',TRUE,1)
+      VALUES($1,$2,'direct','month',30,0,'GBP',FALSE,FALSE,'premium',1,'emby',FALSE,1)
       RETURNING id
     `,[`intent-${suffix}`,`Intent ${suffix}`])).rows[0];
     const sessionA=`intent-session-a-${suffix}`;
