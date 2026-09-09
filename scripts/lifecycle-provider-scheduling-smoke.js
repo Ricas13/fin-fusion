@@ -71,6 +71,7 @@ async function subscriptionOwnershipBehavior(){
     if(sql==='SELECT * FROM plans WHERE id=$1')return{rowCount:1,rows:[{id:'plan-a',name:'Plan A',code:'plan-a',billing_interval:'month',duration_days:30,price_minor:600,currency:'GBP'}]};
     if(sql.startsWith('SELECT external_id FROM plan_provider_prices'))return{rowCount:0,rows:[]};
     if(sql.startsWith('SELECT * FROM subscriptions WHERE source='))return{rowCount:1,rows:[existing]};
+    if(sql.includes('FROM payment_incidents')&&sql.includes('provider_subscription_id=$2'))return{rowCount:0,rows:[]};
     if(sql.startsWith('UPDATE subscriptions SET'))return{rowCount:1,rows:[{...existing,status:'active'}]};
     if(sql.startsWith('INSERT INTO audit_log'))return{rowCount:1,rows:[]};
     throw new Error(`Unexpected lifecycle ownership SQL: ${sql}`);
