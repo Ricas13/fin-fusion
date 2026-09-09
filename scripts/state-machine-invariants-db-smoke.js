@@ -12,7 +12,7 @@ const cleanupReturn = require('../src/entitlements/jellyfin-cleanup-return');
 const discordRoles = require('../src/integrations/discord-roles');
 
 const suffix = crypto.randomBytes(5).toString('hex');
-const created = { customers: [], plans: [] };
+const created = { customers: [], plans: [], discordRoles: [] };
 
 async function customer(label) {
   const row = await query(
@@ -175,6 +175,7 @@ async function testEnableDoesNotUndoDestructiveAuthority() {
 async function testDiscordRoleHistory() {
   const roleA = `10${String(Date.now()).slice(-16)}`.padEnd(18, '1').slice(0, 18);
   const roleB = `20${String(Date.now()).slice(-16)}`.padEnd(18, '2').slice(0, 18);
+  created.discordRoles.push(roleA, roleB);
   const planId = await plan('discord-history', { discordRoleId: roleA });
   await query('UPDATE plans SET discord_role_id=$2,updated_at=NOW() WHERE id=$1', [planId, roleB]);
 
@@ -192,7 +193,14 @@ async function testDiscordRoleHistory() {
 
 async function testFreeRestoreUsesInactivityHold() {
   const customerId = await customer('free-restore');
-  const planId = await plan('free-restore', { free: true, priceMinor: 0, billingInterval: 'custom', serviceType: 'jellyfin' });
+  const canonical = await query(`
+    SELECT id FROM plans
+    WHERE is_free_tier=TRUE AND service_type='jellyfin'
+    ORDER BY created_at ASC
+    LIMIT 1
+  `);
+  assert.strictEqual(canonical.rowCount, 1, 'canonical Free Access plan must exist in the migrated database');
+  const planId = canonical.rows[0].id;
   await query(`
     INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot,billing_mode)
     VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '1 day',NOW()+INTERVAL '3650 days','jellyfin','payment')
@@ -220,6 +228,9 @@ async function cleanup() {
   }
   for (const planId of [...created.plans].reverse()) {
     await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
+  }
+  if (created.discordRoles.length) {
+    await query('DELETE FROM discord_managed_role_history WHERE role_id=ANY($1::text[])', [created.discordRoles]).catch(() => {});
   }
 }
 
