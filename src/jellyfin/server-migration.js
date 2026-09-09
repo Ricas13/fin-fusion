@@ -191,7 +191,8 @@ async function executeMigration(migrationId) {
         targetAccount = await provisioning.createJellyfinAccount(migration.customer_id, check.target, check.effective, {
             preferredUsername: check.source.jellyfin_username,
             requireExactUsername: true,
-            makePrimary: false
+            makePrimary: false,
+            allowOverCapacity
         });
         await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`, [targetAccount.id]);
         targetAccount.password_setup_required = true;
