@@ -34,20 +34,23 @@ assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jell
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');
 
-assert(/const FREE_HOLD_MINUTES=10;/.test(pendingRegistration),'Free Server pre-registration reservation must stay at 10 minutes before the form is submitted');
-assert(/expires_at=\$4/.test(pendingRegistration)&&/freeReservation\.id,created\.rows\[0\]\.id,email,expiresAt/.test(pendingRegistration),'submitted Free Server registration must extend its reservation to the verification expiry');
-assert(/async function reserveFreeAccess/.test(pendingRegistration)&&/holder_session_hash/.test(pendingRegistration),'Free Server must have a session-bound pre-registration hold');
+assert(/const FREE_INTENT_MINUTES=10;/.test(pendingRegistration),'anonymous Free Server signup intent must stay bounded to 10 minutes');
+assert(/free_access_registration_intents/.test(pendingRegistration)&&/holder_session_hash/.test(pendingRegistration),'Free Server signup start must create a session-bound intent rather than a capacity hold');
+assert(/planCapacity\.lockAndAssert\(client,freePlan\.id/.test(pendingRegistration)&&/INSERT INTO free_access_registration_reservations/.test(pendingRegistration),'validated Free Server registration must reserve capacity only under the canonical capacity lock');
+assert(/DELETE FROM free_access_registration_intents WHERE id=\$1/.test(pendingRegistration),'validated Free Server registration must consume the anonymous signup intent after a real reservation is created');
+assert(/expires_at=GREATEST\(expires_at,NOW\(\)\+\(\$3::int\*INTERVAL '1 minute'\)\)/.test(pendingRegistration),'verified Free Server registration must retain a bounded post-verification retry window');
 assert(/FREE_ACCESS_CAPACITY_EXHAUSTED/.test(pendingRegistration)&&/No free places currently available/.test(pendingRegistration),'last-place loser must receive the canonical no-capacity result');
-assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server hold must be created only by the explicit registration POST');
-assert(/method=\"post\" action=\"\/account\/register\"/.test(storefront)&&/name=\"reserveFree\" value=\"1\"/.test(storefront),'storefront Free Server CTA must be an explicit POST reservation action');
-assert(/Reserve my Free Access place/.test(register)&&/freeIntent && !hasFreeReservation/.test(register)&&/registrationOpen && \(!freeIntent \|\| hasFreeReservation\)/.test(register),'Free registration page must require reservation before showing signup details');
-assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'reserve-only registration must carry the same Turnstile protection as account creation');
-assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/cf-turnstile/.test(storefront),'storefront reservation POST must remain Turnstile fail-closed when CAPTCHA is enabled');
+assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server signup intent must be created only by the explicit registration POST');
+assert(/method=\"post\" action=\"\/account\/register\"/.test(storefront)&&/name=\"reserveFree\" value=\"1\"/.test(storefront),'storefront Free Server CTA must explicitly start the Free signup intent');
+assert(/Start Free Access signup/.test(register)&&/hasFreeSignupIntent/.test(register)&&/It does not consume or reserve a Free place yet/.test(register),'Free registration page must distinguish the signup window from a real capacity reservation');
+assert(/Capacity is checked atomically at submission/.test(register)&&/Create account & reserve available place/.test(register),'Free registration page must explain that scarce capacity is reserved only after valid account submission');
+assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'signup-intent registration must carry the same Turnstile protection as account creation');
+assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/cf-turnstile/.test(storefront),'storefront signup-intent POST must remain Turnstile fail-closed when CAPTCHA is enabled');
 assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrogate-Control','no-store/.test(storefront),'storefront capacity must be no-store at browser and surrogate caches');
 assert(!/public, max-age=60/.test(storefront),'storefront must not retain the old one-minute public capacity cache');
 
 assert(/STATE_KEY='discord_free_places_status_v1'/.test(freePlaces),'Discord Free Server availability must persist the canonical message identity');
-assert(/persistentMessage\(remaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Reserve \/ Create Free Account/.test(freePlaces),'Discord Free Server availability must render a structured status card with a reservation action');
+assert(/persistentMessage\(remaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Start Free Access signup/.test(freePlaces),'Discord Free Server availability must render a structured status card with an accurate signup action');
 assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===signature/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged structured capacity');
 assert(/availabilityRestored=becameAvailable\(stored\.remaining,remaining\)/.test(freePlaces),'Discord availability must explicitly recognize a durable zero-to-positive reopening');
 const routinePatchGuard=/stored\.messageId&&!availabilityRestored/.test(freePlaces)||/else if\(stored\.messageId\)/.test(freePlaces);
@@ -55,10 +58,11 @@ assert(routinePatchGuard,'routine capacity changes must PATCH the canonical mess
 if(/deleteDiscordMessage/.test(freePlaces)){
   assert(/stored\.messageId&&availabilityRestored/.test(freePlaces)&&/await remove\(\{channelId,messageId:stored\.messageId\}\)/.test(freePlaces),'reopened Free availability must retire the stale full message before posting the fresh notification');
 }
-assert(/No free places currently available/.test(freePlaces)&&/\$\{FREE_HOLD_MINUTES\} minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
-assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live hold-duration constant instead of hardcoding it separately');
+assert(/No free places currently available/.test(freePlaces)&&/FREE_INTENT_MINUTES/.test(freePlaces),'persistent Discord status must describe the bounded signup intent without claiming that anonymous visitors consume capacity');
+assert(/Starting signup opens a \$\{FREE_INTENT_MINUTES\}-minute window/.test(freePlaces)&&/It does not reserve a place/.test(freePlaces)&&/Capacity is checked atomically/.test(freePlaces),'Discord availability copy must explain the intent-to-reservation boundary accurately');
+assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live signup-intent duration constant instead of hardcoding it separately');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
-assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
+assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful validated Free Server reservation must nudge the persistent Discord status immediately after commit');
 assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');
 
 assert(/allowOverCapacity = false/.test(serverMigration)&&/targetAtCapacity && !allowOverCapacity/.test(serverMigration),'normal customer moves must still fail closed at target capacity');
