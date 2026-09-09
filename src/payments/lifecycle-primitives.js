@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const { reconcileCustomer } = require('../jellyfin/resilient-provisioning');
 const accessHolds = require('../entitlements/access-holds');
 const capacity = require('../entitlements/plan-capacity');
+const subscriptionState = require('../entitlements/subscription-state');
 const discounts = require('./discounts');
 const referrals = require('../referrals');
 const billingPeriods = require('./billing-periods');
@@ -152,6 +153,23 @@ async function assertSettlementCheckout(client, checkoutIntentId, { customerId, 
     return row;
 }
 
+async function confirmedMoneyLoss(client, provider, providerSubscriptionId) {
+    const result = await client.query(`
+        SELECT id,incident_type,incident_status,created_at,metadata
+        FROM payment_incidents
+        WHERE provider=$1
+          AND provider_subscription_id=$2
+          AND (
+              (incident_type='refund' AND COALESCE(metadata->>'fullRefund','false')='true')
+              OR (incident_type='chargeback' AND incident_status='lost')
+          )
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1
+        FOR SHARE
+    `, [provider, String(providerSubscriptionId)]);
+    return result.rows[0] || null;
+}
+
 async function recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId, error }) {
     if (!checkoutIntentId) return null;
     const eventId = `capacity:${String(checkoutIntentId)}`;
@@ -197,6 +215,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
     const settlementCheckoutIntentId = checkoutIntentId || contract?.checkoutIntentId || null;
     let subscription;
     let historicalCheckoutReplay = false;
+    let activationSuppressedByMoneyLoss = false;
     try {
         subscription = await transaction(async client => {
             const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
@@ -214,14 +233,13 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             if (!status) throw new Error(`Unsupported ${provider} subscription status: ${String(providerStatus || 'unknown').slice(0, 120)}`);
             const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
             const settlementIntent = await assertSettlementCheckout(client, settlementCheckoutIntentId, { customerId, planId, provider });
-            historicalCheckoutReplay = Boolean(existing.rowCount && settlementIntent && settlementIntent.state !== 'open');
-            if (!existing.rowCount) {
-                await capacity.lockAndAssert(client, planId, plan.name || 'This plan', {
-                    excludeCheckoutIntentId: settlementIntent?.id || null,
-                    streams: contract?.streams,
-                    households: contract?.stremioHouseholdNetworkLimit
-                });
-            }
+            const moneyLoss = await confirmedMoneyLoss(client, provider, providerSubscriptionId);
+            activationSuppressedByMoneyLoss = Boolean(moneyLoss || existing.rows[0]?.refund_terminated_at);
+            historicalCheckoutReplay = Boolean(
+                activationSuppressedByMoneyLoss
+                || (existing.rowCount && settlementIntent && settlementIntent.state !== 'open')
+            );
+
             const snapshotJson = contract ? JSON.stringify(contract) : null;
             const planNameSnapshot = contract?.planName || plan.name;
             const planCodeSnapshot = contract?.planCode || plan.code;
@@ -230,6 +248,18 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
             const checkoutBillingMode = billingMode.normalize(contract?.checkoutMode) || null;
+
+            if (!existing.rowCount && !activationSuppressedByMoneyLoss) {
+                if (billingMode.isRecurring({ source: provider, billing_mode: checkoutBillingMode })) {
+                    await subscriptionState.assertNoOtherLiveRecurring(client, customerId, null, planId);
+                }
+                await capacity.lockAndAssert(client, planId, plan.name || 'This plan', {
+                    excludeCheckoutIntentId: settlementIntent?.id || null,
+                    streams: contract?.streams,
+                    households: contract?.stremioHouseholdNetworkLimit
+                });
+            }
+
             let row;
             if (existing.rowCount) {
                 const existingSubscription = existing.rows[0];
@@ -238,17 +268,44 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     mismatch.code = 'PROVIDER_SUBSCRIPTION_CUSTOMER_MISMATCH';
                     throw mismatch;
                 }
-                if (historicalCheckoutReplay) {
+                if (activationSuppressedByMoneyLoss) {
+                    const ended = await client.query(`
+                        UPDATE subscriptions
+                        SET status='cancelled',
+                            current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                            service_extension_days=0,
+                            cancel_at_period_end=TRUE,
+                            refund_terminated_at=COALESCE(refund_terminated_at,$2,NOW()),
+                            updated_at=NOW()
+                        WHERE id=$1
+                        RETURNING *
+                    `, [existingSubscription.id, moneyLoss?.created_at || null]);
+                    row = ended.rows[0];
+                } else if (historicalCheckoutReplay) {
                     row = existingSubscription;
                 } else {
                     const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,billing_mode=COALESCE($15,billing_mode),updated_at=NOW() WHERE id=$16 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, checkoutBillingMode, existingSubscription.id]);
                     row = updated.rows[0];
                 }
+            } else if (activationSuppressedByMoneyLoss) {
+                const inserted = await client.query(`
+                    INSERT INTO subscriptions(
+                        customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,
+                        provider_customer_id,provider_subscription_id,provider_price_id_snapshot,
+                        plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,
+                        billing_interval_snapshot,duration_days_snapshot,commercial_snapshot,billing_mode,
+                        refund_terminated_at,service_extension_days
+                    ) VALUES($1,$2,'cancelled',$3,$4,LEAST($5,NOW()),TRUE,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                             COALESCE($15::jsonb,'{}'::jsonb),COALESCE($16,'payment'),COALESCE($17,NOW()),0)
+                    RETURNING *
+                `, [customerId, planId, provider, startsAt, endsAt, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson, checkoutBillingMode, moneyLoss?.created_at || null]);
+                row = inserted.rows[0];
             } else {
                 const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot,billing_mode) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb),COALESCE($18,'payment')) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson, checkoutBillingMode]);
                 row = inserted.rows[0];
             }
-            const effectiveStatus = historicalCheckoutReplay ? row.status : status;
+
+            const effectiveStatus = row.status;
             await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
@@ -258,7 +315,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
-            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay })]);
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null })]);
             return row;
         });
     } catch (error) {
@@ -273,7 +330,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         throw error;
     }
     if (providerCustomerId && !historicalCheckoutReplay) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
-    await reconcileCommittedCustomer(customerId, historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription');
+    await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss ? 'Money-loss checkout replay' : historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription');
     if (!historicalCheckoutReplay) {
         try { await referrals.rewardIfQualifying(customerId); }
         catch (error) { console.error('Referral reward check failed:', error.message); }
@@ -287,7 +344,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
     const row = await transaction(async client => {
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
-        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status, billingMode: result.rows[0].billing_mode }, client);
+        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status: result.rows[0].status, billingMode: result.rows[0].billing_mode }, client);
         return result.rows[0];
     });
     if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
@@ -310,6 +367,7 @@ module.exports = {
     claimRetryablePaymentEvents,
     purchaseSnapshot,
     assertSettlementCheckout,
+    confirmedMoneyLoss,
     recordCapacitySettlementIncident,
     resolveCapacitySettlementIncident,
     activatePurchase,
