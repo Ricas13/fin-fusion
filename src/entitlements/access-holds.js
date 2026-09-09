@@ -5,6 +5,35 @@ const { query, transaction } = require('../db');
 function runner(client) { return client || { query }; }
 function clean(value, max = 500) { return String(value == null ? '' : value).trim().slice(0, max); }
 
+function canonicalHoldIdentity(type, sourceKey = '', reason = '') {
+    let holdType = clean(type, 80);
+    let key = clean(sourceKey, 200);
+    const normalizedReason = clean(reason, 500).toLowerCase();
+    if (!holdType) throw new Error('Access hold type is required.');
+
+    // Historical holdAccess(reason) collapsed every non-disabled/non-suspended
+    // administrative reason into admin_hold/source=admin. Preserve the reason
+    // as authority instead: a routine Enable must never silently undo a ban,
+    // explicit identity removal, deletion protection, or a future destructive
+    // admin restriction merely because they all came from an administrator.
+    if (holdType === 'admin_hold' && key === 'admin') {
+        if (normalizedReason.includes('ban')) {
+            holdType = 'administrative_ban';
+            key = 'ban';
+        } else if (
+            normalizedReason === 'jellyfin_deleted'
+            || (normalizedReason.includes('jellyfin') && (normalizedReason.includes('delete') || normalizedReason.includes('removed')))
+        ) {
+            holdType = 'jellyfin_identity_removed';
+            key = 'identity-removal';
+        } else {
+            holdType = 'administrative_restriction';
+            key = `reason:${normalizedReason.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120) || 'unspecified'}`;
+        }
+    }
+    return { holdType, key };
+}
+
 async function syncLegacySummary(customerId, client = null) {
     const db = runner(client);
     const active = await db.query(`
@@ -29,9 +58,9 @@ async function syncLegacySummary(customerId, client = null) {
 
 async function addHold({ customerId, type, sourceKey = '', reason = '', actorUserId = null, metadata = {} }, client = null) {
     const execute = async db => {
-        const holdType = clean(type, 80);
-        if (!holdType) throw new Error('Access hold type is required.');
-        const key = clean(sourceKey, 200);
+        const identity = canonicalHoldIdentity(type, sourceKey, reason);
+        const holdType = identity.holdType;
+        const key = identity.key;
         const result = await db.query(`
             INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason,metadata,actor_user_id)
             VALUES($1,$2,$3,$4,$5::jsonb,$6)
@@ -75,7 +104,7 @@ async function releaseAllAdminHolds(customerId, actorUserId = null) {
         const result = await client.query(`
             UPDATE customer_access_holds SET released_at=NOW(),released_by=$2
             WHERE customer_id=$1 AND released_at IS NULL
-              AND hold_type IN ('admin_disabled','admin_suspended','admin_hold','legacy')
+              AND hold_type IN ('admin_disabled','admin_suspended','legacy')
             RETURNING id,hold_type,source_key
         `, [customerId, actorUserId]);
         await syncLegacySummary(customerId, client);
@@ -106,4 +135,4 @@ async function isBlocked(customerId, client = null) {
     return Boolean(result.rows[0]?.blocked);
 }
 
-module.exports = { addHold, releaseHold, releaseAllAdminHolds, activeHolds, isBlocked, syncLegacySummary };
+module.exports = { addHold, releaseHold, releaseAllAdminHolds, activeHolds, isBlocked, syncLegacySummary, canonicalHoldIdentity };
