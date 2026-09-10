@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 const { getPool } = require('../src/db');
+const { validateRuntimePrivileges } = require('./runtime-db-privilege-smoke');
 
 const ROLE_SPECS = {
     app: { role: 'steamfusion_app', urlEnv: 'APP_DATABASE_URL', connectionLimit: 40, statementTimeout: '30s', lockTimeout: '10s', idleTimeout: '30s', createdb: false },
@@ -120,8 +121,7 @@ async function grantRetentionFunctions(client, role) {
 }
 
 async function revokeFutureRuntimeDefaults(client) {
-    // Migrations run as the owner/deploy role. New tables/functions are deliberately inaccessible
-    // until this script or the migration grants the exact runtime capability they require.
+    // Reset inherited defaults first; broad app/automation defaults are deliberately restored below.
     for (const spec of Object.values(ROLE_SPECS)) {
         await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM ${spec.role}`);
         await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM ${spec.role}`);
@@ -168,6 +168,32 @@ async function grantAutomation(client) {
     ]);
     await grantDeletionFinalizer(client, role);
     await grantRetentionFunctions(client, role);
+}
+
+async function grantBroadRuntimeAccess(client) {
+    // Reliability policy: the web and automation runtimes must never lose access because a new
+    // application table/function/sequence was omitted from a hand-maintained grant allowlist.
+    // Keep the logins non-superuser/non-owner, but grant full data-plane access to the app schema.
+    for (const role of [ROLE_SPECS.app.role, ROLE_SPECS.automation.role]) {
+        await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+        await client.query(`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${role}`);
+        await client.query(`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+        await client.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO ${role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO ${role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO ${role}`);
+    }
+
+    // Preserve only the established automation authentication boundary. The web role stays broad,
+    // and every ordinary current/future application table remains available without an allowlist.
+    const automationRole = ROLE_SPECS.automation.role;
+    for (const table of ['auth_totp_enrollments','auth_recovery_codes','auth_sessions','auth_events','login_rate_limits','schema_migrations','user_sessions']) {
+        if (await tableExists(client, table)) await client.query(`REVOKE ALL ON ${table} FROM ${automationRole}`);
+    }
+    if (await tableExists(client, 'app_users')) {
+        await client.query(`REVOKE INSERT,UPDATE,DELETE ON app_users FROM ${automationRole}`);
+        await client.query(`GRANT SELECT ON app_users TO ${automationRole}`);
+    }
 }
 
 async function grantActivity(client) {
@@ -257,9 +283,11 @@ async function configureRoles({ activityOnly = false } = {}) {
             await grantBackup(client);
             await grantBackupVerify(client);
             await revokeFutureRuntimeDefaults(client);
+            await grantBroadRuntimeAccess(client);
+            await validateRuntimePrivileges(client);
         }
         await client.query('COMMIT');
-        console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured isolated app, automation, activity, backup and backup-verify PostgreSQL roles');
+        console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured and validated runtime PostgreSQL roles; app has broad application-schema access');
     } catch (error) {
         try { await client.query('ROLLBACK'); } catch (_) {}
         throw error;
