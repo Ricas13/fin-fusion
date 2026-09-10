@@ -288,9 +288,24 @@ async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = '
     const offset = (boundedPage - 1) * boundedPageSize;
     const limitIdx = params.length + 1;
     const offsetIdx = params.length + 2;
-    const rows = await query(`SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ${orderSql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`, [...params, boundedPageSize, offset]);
-    const countResult = await query(`SELECT COUNT(*)::int AS n ${baseJoins()} ${whereSql}`, params);
-    return { rows: rows.rows, total: countResult.rows[0].n, page: boundedPage, pageSize: boundedPageSize, sort: sortState };
+    // The customer population join is deliberately expensive because it projects
+    // entitlement, account, reconciliation, payment and override state. Do it once
+    // for the normal page path: the window count is computed over the same filtered
+    // result before LIMIT/OFFSET instead of repeating the whole join for COUNT(*).
+    const result = await query(`SELECT ${SELECT_COLUMNS}, COUNT(*) OVER()::int AS _total_count ${baseJoins()} ${whereSql} ${orderSql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`, [...params, boundedPageSize, offset]);
+    let total = result.rowCount ? Number(result.rows[0]._total_count || 0) : 0;
+    const rows = result.rows.map(row => {
+        const { _total_count, ...customer } = row;
+        return customer;
+    });
+    // An out-of-range page has no row from which to read the window total. Preserve
+    // the pagination contract with one fallback count only for that exceptional
+    // path; page one with no rows is definitively an empty result set.
+    if (!rows.length && boundedPage > 1) {
+        const countResult = await query(`SELECT COUNT(*)::int AS n ${baseJoins()} ${whereSql}`, params);
+        total = Number(countResult.rows[0]?.n || 0);
+    }
+    return { rows, total, page: boundedPage, pageSize: boundedPageSize, sort: sortState };
 }
 
 async function exportRows(filters, scope) {
