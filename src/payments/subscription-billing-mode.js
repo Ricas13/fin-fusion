@@ -12,9 +12,20 @@ function modeFor(row){
   return normalize(row?.billing_mode);
 }
 
+function providerIdentityContradictsRecurring(row){
+  const source=String(row?.source||'').trim().toLowerCase();
+  const providerId=String(row?.provider_subscription_id||'').trim();
+  // A Stripe PaymentIntent is a one-off payment resource, never a Stripe
+  // Subscription. Treat this explicit resource-family contradiction as
+  // non-recurring even if historical local metadata says otherwise.
+  return source==='stripe'&&/^pi_/i.test(providerId);
+}
+
 function recurringProvider(row){
   const source=String(row?.source||'').trim().toLowerCase();
-  return modeFor(row)===BILLING_MODES.SUBSCRIPTION&&PROVIDER_RECURRING_SOURCES.has(source)?source:null;
+  if(modeFor(row)!==BILLING_MODES.SUBSCRIPTION||!PROVIDER_RECURRING_SOURCES.has(source))return null;
+  if(providerIdentityContradictsRecurring(row))return null;
+  return source;
 }
 
 function isRecurring(row){return Boolean(recurringProvider(row));}
@@ -28,4 +39,4 @@ function sameCurrency(a,b){
   return Boolean(left&&right&&left===right);
 }
 
-module.exports={BILLING_MODES,PROVIDER_RECURRING_SOURCES,normalize,modeFor,recurringProvider,isRecurring,currencyOf,sameCurrency};
+module.exports={BILLING_MODES,PROVIDER_RECURRING_SOURCES,normalize,modeFor,providerIdentityContradictsRecurring,recurringProvider,isRecurring,currencyOf,sameCurrency};
