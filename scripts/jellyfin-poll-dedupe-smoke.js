@@ -13,7 +13,8 @@ const inactivity = read('src/automation/customer-inactivity-scoped.js');
 
 assert(registry.includes('cacheTtlMs=0'), 'registry requests must make response reuse opt-in');
 assert(registry.includes('if(reusable&&ttl>0)') && registry.includes('responseCache.set'), 'GET responses must be retained and only reused by opt-in callers');
-assert(registry.includes('else clearServerCache(serverId)'), 'media-server mutations must invalidate reusable GET snapshots');
+assert(registry.includes('else if(!reusable)clearServerCache(serverId)'), 'media-server mutations must invalidate reusable GET snapshots without retaining zero-TTL GETs');
+assert(registry.includes('responseCacheMax') && registry.includes('pruneResponseCache'), 'reusable GET snapshots must have bounded TTL/LRU-style eviction');
 
 assert(metrics.includes('cacheTtlMs: 45000'), 'fleet metrics must reuse the recent canonical /Sessions sample instead of forcing another Jellyfin request');
 assert(metrics.includes('{ refreshUsers = true }') && /const usersPromise = refreshUsers\s*\?\s*registry\.request\(serverId, '\/Users'/.test(metrics), 'fleet metrics must be able to refresh live streams without polling /Users every time');
