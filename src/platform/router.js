@@ -35,12 +35,14 @@ const { createAdminDashboardLayoutRouter } = require('./admin-dashboard-layout')
 const { createAdminServersDashboardRouter } = require('./admin-servers-dashboard');
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAdminCustomerJellyfinPasswordRouter } = require('./admin-customer-jellyfin-password');
+const { createAdminPortalCredentialRecoveryRouter } = require('./admin-portal-credential-recovery');
 const { createAdminDocsRouter } = require('./admin-docs');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerActivityRouter } = require('./customer-activity');
+const { createPortalCredentialConfirmationRouter } = require('./portal-credential-confirmation');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter, issueCustomerInstallation } = require('./customer-stremio');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
@@ -86,6 +88,7 @@ function createRouter() {
     router.use(createAccountActivationRouter());
     router.use(createCustomerPublicAuthRouter());
     router.use(createCustomerLoginRouter());
+    router.use(createPortalCredentialConfirmationRouter());
     router.use(createCustomerSecurityRouter());
     router.use(createCustomerCommunicationsRouter());
     router.use(createCustomerStremioRouter());
@@ -100,6 +103,7 @@ function createRouter() {
     router.use(createAdminServersDashboardRouter());
     router.use(createAdminJellyfinLifecycleRouter());
     router.use(createAdminCustomerJellyfinPasswordRouter());
+    router.use(createAdminPortalCredentialRecoveryRouter());
     router.use(createAdminDocsRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
