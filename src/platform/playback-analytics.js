@@ -155,18 +155,15 @@ async function periodMetrics(input, legacyOffsetDays = 0) {
       FROM playback_history ph CROSS JOIN bounds b
       WHERE ph.started_at >= b.period_start AND ph.started_at < b.period_end
     ),
-    concurrency_events AS (
-      SELECT clipped_start AS at,1::int AS delta FROM intersecting WHERE clipped_end>clipped_start
-      UNION ALL
-      SELECT clipped_end AS at,-1::int AS delta FROM intersecting WHERE clipped_end>clipped_start
-    ),
-    concurrency_points AS (SELECT at,SUM(delta)::int AS delta FROM concurrency_events GROUP BY at),
-    concurrency_running AS (SELECT SUM(delta) OVER(ORDER BY at ROWS UNBOUNDED PRECEDING)::int AS concurrent FROM concurrency_points)
+    trusted_concurrency AS (
+      SELECT peak_concurrent_streams
+      FROM public.playback_concurrency_metrics($1::timestamptz,$2::timestamptz)
+    )
     SELECT
       (SELECT COUNT(*)::int FROM started) AS total_plays,
       (SELECT COUNT(DISTINCT customer_id)::int FROM started WHERE customer_id IS NOT NULL) AS unique_users,
       COALESCE((SELECT SUM(EXTRACT(EPOCH FROM(clipped_end-clipped_start)))::bigint FROM intersecting WHERE clipped_end>clipped_start),0) AS total_watch_seconds,
-      COALESCE((SELECT MAX(concurrent)::int FROM concurrency_running),0) AS peak_concurrent_streams,
+      COALESCE((SELECT peak_concurrent_streams::int FROM trusted_concurrency),0) AS peak_concurrent_streams,
       COALESCE((SELECT (COUNT(*) FILTER(WHERE playback_method='transcode'))::numeric*100/NULLIF(COUNT(*),0) FROM started),0) AS transcode_rate,
       COALESCE((SELECT AVG(EXTRACT(EPOCH FROM(session_end-started_at)))::bigint FROM started WHERE session_end>started_at),0) AS average_session_seconds
   `, boundsParams(range));
