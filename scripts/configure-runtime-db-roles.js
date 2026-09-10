@@ -120,8 +120,7 @@ async function grantRetentionFunctions(client, role) {
 }
 
 async function revokeFutureRuntimeDefaults(client) {
-    // Migrations run as the owner/deploy role. New tables/functions are deliberately inaccessible
-    // until this script or the migration grants the exact runtime capability they require.
+    // Reset inherited defaults first; broad app/automation defaults are deliberately restored below.
     for (const spec of Object.values(ROLE_SPECS)) {
         await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM ${spec.role}`);
         await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM ${spec.role}`);
@@ -168,6 +167,21 @@ async function grantAutomation(client) {
     ]);
     await grantDeletionFinalizer(client, role);
     await grantRetentionFunctions(client, role);
+}
+
+async function grantBroadRuntimeAccess(client) {
+    // Reliability policy: the web and automation runtimes must never lose access because a new
+    // application table/function/sequence was omitted from a hand-maintained grant allowlist.
+    // Keep the logins non-superuser/non-owner, but grant full data-plane access to the app schema.
+    for (const role of [ROLE_SPECS.app.role, ROLE_SPECS.automation.role]) {
+        await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+        await client.query(`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${role}`);
+        await client.query(`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+        await client.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO ${role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO ${role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO ${role}`);
+    }
 }
 
 async function grantActivity(client) {
@@ -257,9 +271,10 @@ async function configureRoles({ activityOnly = false } = {}) {
             await grantBackup(client);
             await grantBackupVerify(client);
             await revokeFutureRuntimeDefaults(client);
+            await grantBroadRuntimeAccess(client);
         }
         await client.query('COMMIT');
-        console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured isolated app, automation, activity, backup and backup-verify PostgreSQL roles');
+        console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured runtime PostgreSQL roles; app and automation have broad application-schema access');
     } catch (error) {
         try { await client.query('ROLLBACK'); } catch (_) {}
         throw error;
