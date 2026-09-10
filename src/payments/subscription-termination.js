@@ -132,12 +132,11 @@ async function hardRevokeRefundedStremio(customerId,result){
 
 // Service-agnostic version of terminateLocal for confirmed-refund handling:
 // "a confirmed refund removes the associated plan" applies to any service
-// (Jellyfin, Stremio, bundle, add-on), not only the Jellyfin primary lane,
-// and must not be coupled to the Jellyfin-only permanent-access override.
-// Admin authority (customer_service_admin_control) is untouched here -
-// canceling this subscription row does not defeat an active admin_present
-// directive, which independently keeps the service eligible regardless of
-// the underlying subscription's status.
+// (Jellyfin, Stremio, bundle, add-on). A subscription-pinned Permanent Access
+// override is also part of that subscription's effective entitlement, so it
+// must be revoked in the same transaction when (and only when) it is pinned to
+// this exact refunded subscription. Independent service admin authority remains
+// untouched: an explicit admin_present directive still wins over automation.
 //
 // Stremio is deliberately stricter after a confirmed refund than an ordinary
 // expiry. An expiry may keep the old installation credential around so the
@@ -155,7 +154,18 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
         `,[subscriptionId,customerId]);
         if(!row.rowCount)return{changed:false,reason:'not_found_or_superseded'};
         const subscription=row.rows[0],effectiveServiceType=serviceType(subscription);
-        if(subscription.status==='cancelled'&&Number(subscription.service_extension_days||0)===0)return{changed:false,reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType};
+        const permanent=await permanentAccess.revokeInTransaction(client,customerId,{
+            actorUserId,
+            reason:`Confirmed payment loss: ${note}`.slice(0,500),
+            expectedSubscriptionId:subscription.id
+        });
+        const permanentAccessRevoked=Boolean(permanent.changed);
+        // A mismatch means an administrator has since pinned Permanent Access
+        // to another subscription. Refund automation must not defeat that newer
+        // explicit authority.
+        if(subscription.status==='cancelled'&&Number(subscription.service_extension_days||0)===0){
+            return{changed:permanentAccessRevoked,reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType,permanentAccessRevoked};
+        }
         const ended=await client.query(`
             UPDATE subscriptions
             SET status='cancelled',current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),service_extension_days=0,cancel_at_period_end=TRUE,updated_at=NOW()
@@ -163,8 +173,8 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_for_refund','subscription',$2,$3::jsonb)`,
-            [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType})]);
-        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType};
+            [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
+        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked};
     });
     return hardRevokeRefundedStremio(customerId,local);
 }
