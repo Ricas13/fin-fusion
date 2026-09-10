@@ -4,7 +4,7 @@ const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
 
-const DEFAULT_RECONCILE_CONCURRENCY = 3;
+const DEFAULT_RECONCILE_CONCURRENCY = 2;
 const MAX_RECONCILE_CONCURRENCY = 8;
 const DEFAULT_RECONCILE_LIMIT = 500;
 
