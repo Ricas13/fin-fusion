@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 const { getPool } = require('../src/db');
+const { validateRuntimePrivileges } = require('./runtime-db-privilege-smoke');
 
 const ROLE_SPECS = {
     app: { role: 'steamfusion_app', urlEnv: 'APP_DATABASE_URL', connectionLimit: 40, statementTimeout: '30s', lockTimeout: '10s', idleTimeout: '30s', createdb: false },
@@ -182,6 +183,17 @@ async function grantBroadRuntimeAccess(client) {
         await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO ${role}`);
         await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO ${role}`);
     }
+
+    // Preserve only the established automation authentication boundary. The web role stays broad,
+    // and every ordinary current/future application table remains available without an allowlist.
+    const automationRole = ROLE_SPECS.automation.role;
+    for (const table of ['auth_totp_enrollments','auth_recovery_codes','auth_sessions','auth_events','login_rate_limits','schema_migrations','user_sessions']) {
+        if (await tableExists(client, table)) await client.query(`REVOKE ALL ON ${table} FROM ${automationRole}`);
+    }
+    if (await tableExists(client, 'app_users')) {
+        await client.query(`REVOKE INSERT,UPDATE,DELETE ON app_users FROM ${automationRole}`);
+        await client.query(`GRANT SELECT ON app_users TO ${automationRole}`);
+    }
 }
 
 async function grantActivity(client) {
@@ -272,9 +284,10 @@ async function configureRoles({ activityOnly = false } = {}) {
             await grantBackupVerify(client);
             await revokeFutureRuntimeDefaults(client);
             await grantBroadRuntimeAccess(client);
+            await validateRuntimePrivileges(client);
         }
         await client.query('COMMIT');
-        console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured runtime PostgreSQL roles; app and automation have broad application-schema access');
+        console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured and validated runtime PostgreSQL roles; app has broad application-schema access');
     } catch (error) {
         try { await client.query('ROLLBACK'); } catch (_) {}
         throw error;
