@@ -25,6 +25,9 @@ function finding(kind, row, detail) {
 
 async function scan() {
     const findings = [];
+    // These reads deliberately fail the job if PostgreSQL/schema permissions are
+    // broken. A watchdog that silently turns query failures into "0 findings"
+    // would recreate the exact failure mode this job exists to prevent.
     const [permanentRefunds, manualProviderOps, deletionFailures, staleCreationIntents, contaminatedPlans, strandedProvisioning, stalePaymentEvents] = await Promise.all([
         query(`
             SELECT o.customer_id,o.subscription_id,s.source,s.provider_subscription_id
@@ -34,14 +37,14 @@ async function scan() {
               AND s.refund_terminated_at IS NOT NULL
             ORDER BY o.updated_at
             LIMIT 100
-        `).catch(() => ({ rows: [] })),
+        `),
         query(`
             SELECT id,provider,operation_type,owner_id,last_error,updated_at
             FROM provider_operations
             WHERE manual_review_required=TRUE
             ORDER BY updated_at
             LIMIT 100
-        `).catch(() => ({ rows: [] })),
+        `),
         query(`
             SELECT id,customer_id,status,attempt_count,last_error,updated_at,next_attempt_at
             FROM customer_deletion_jobs
@@ -49,21 +52,21 @@ async function scan() {
                OR (status='running' AND updated_at<NOW()-INTERVAL '20 minutes')
             ORDER BY updated_at
             LIMIT 100
-        `).catch(() => ({ rows: [] })),
+        `),
         query(`
             SELECT id,customer_id,server_id,username,status,remote_user_id,last_error,updated_at
             FROM jellyfin_account_creation_intents
             WHERE updated_at<NOW()-INTERVAL '45 minutes'
             ORDER BY updated_at
             LIMIT 100
-        `).catch(() => ({ rows: [] })),
+        `),
         query(`
             SELECT id,code,name,server_class,is_free_tier,price_minor,billing_interval
             FROM plans
             WHERE server_class='free' AND COALESCE(is_free_tier,FALSE)=FALSE
             ORDER BY updated_at DESC
             LIMIT 100
-        `).catch(() => ({ rows: [] })),
+        `),
         query(`
             SELECT customer_id,status,consecutive_failures,last_error,last_attempt_at,next_attempt_at,updated_at
             FROM customer_provisioning_state
@@ -74,7 +77,7 @@ async function scan() {
               )
             ORDER BY COALESCE(last_attempt_at,updated_at)
             LIMIT 100
-        `).catch(() => ({ rows: [] })),
+        `),
         query(`
             SELECT id,provider,provider_event_id,event_type,processing_error,processing_started_at,created_at
             FROM payment_events
@@ -83,7 +86,7 @@ async function scan() {
               AND created_at<NOW()-INTERVAL '45 minutes'
             ORDER BY created_at
             LIMIT 100
-        `).catch(() => ({ rows: [] }))
+        `)
     ]);
 
     for (const row of permanentRefunds.rows) findings.push(finding('refunded_permanent_access', row, `Refund-terminated subscription ${row.subscription_id} still has Permanent Access.`));
