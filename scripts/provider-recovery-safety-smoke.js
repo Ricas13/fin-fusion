@@ -3,7 +3,6 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const billingMode = require('../src/payments/subscription-billing-mode');
 
 function read(relativePath) {
     return fs.readFileSync(path.resolve(__dirname, '..', relativePath), 'utf8');
@@ -20,25 +19,13 @@ assert(missing.includes("code === 'resource_missing'"), 'Stripe resource_missing
 assert(!matching.includes('catch (_) {}'), 'recorded Stripe schedule lookup must never swallow all provider errors');
 assert.match(matching, /catch \(error\)[\s\S]*if \(!stripeResourceMissing\(error\)\) throw error;/, 'timeouts, 5xx, auth and network failures must propagate into provider-operation retry handling');
 
-assert.strictEqual(
-    billingMode.isRecurring({ source:'stripe', billing_mode:'subscription', provider_subscription_id:'sub_live_123' }),
-    true,
-    'Stripe sub_* identities must remain eligible for recurring billing control'
-);
-assert.strictEqual(
-    billingMode.isRecurring({ source:'stripe', billing_mode:'subscription', provider_subscription_id:'pi_oneoff_123' }),
-    false,
-    'Stripe pi_* PaymentIntent identities must never enter recurring subscription control'
-);
-assert.strictEqual(
-    billingMode.providerIdentityContradictsRecurring({ source:'stripe', provider_subscription_id:'PI_ONEOFF_123' }),
-    true,
-    'Stripe PaymentIntent contradiction guard must be case-insensitive'
-);
-
+// billing_mode remains the application-level authority. The database migration
+// repairs and rejects the one impossible Stripe tuple (subscription + pi_*), so
+// provider-shape heuristics do not leak into the general policy engine.
 const integrityRepair = read('db/migrations/20260910234000_payment_integrity_repair.sql');
 assert(integrityRepair.includes("COALESCE(NEW.provider_subscription_id,'') ~* '^pi_'"), 'billing-mode trigger must self-heal Stripe PaymentIntent rows');
 assert(integrityRepair.includes('UPDATE OF source,commercial_snapshot,billing_mode,provider_subscription_id'), 'billing-mode trigger must react when the provider identity changes');
+assert(integrityRepair.includes("SET billing_mode='payment'"), 'historical Stripe PaymentIntent rows must be repaired to payment mode');
 assert(integrityRepair.includes("failure_kind='superseded'"), 'impossible historical renewal operations must be retired as superseded');
 assert(integrityRepair.includes('manual_review_required=FALSE'), 'retired impossible renewal operations must leave the manual-review queue');
 assert(integrityRepair.includes('subscriptions_stripe_recurring_provider_id_check'), 'database must reject future Stripe subscription/payment identity contradictions');
