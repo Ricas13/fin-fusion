@@ -99,5 +99,7 @@ assert.strictEqual(a, b, 'integrity alert fingerprint must be stable regardless 
 const migration = source('db/migrations/20260910214500_automation_revenue_integrity.sql');
 assert(migration.includes("'automation.integrity.failed'"), 'integrity alert notification preference must be migrated');
 assert(migration.includes('plans_free_server_class_requires_free_tier'), 'database must prevent new paid-plan/free-pool contamination');
+assert(migration.includes('customer_deletion_target_parent_heartbeat'), 'durable deletion target progress must refresh the parent deletion job lease');
+assert(migration.includes('touch_customer_deletion_job_from_target'), 'deletion lease heartbeat trigger function must remain part of the schema');
 
 console.log('automation reliability audit smoke: ok');
