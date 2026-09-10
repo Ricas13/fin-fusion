@@ -81,14 +81,17 @@ const maintenanceLock = read('src/security/maintenance-lock.js');
 const reconciliationLock = read('src/jellyfin/reconciliation-lock.js');
 assert(compose.includes('RECONCILIATION_MAX_CONCURRENCY: ${RECONCILIATION_MAX_CONCURRENCY:-4}'),
     'Compose must pass the documented web reconciliation limit into the web runtime');
-assert(compose.includes('AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: ${AUTOMATION_RECONCILIATION_MAX_CONCURRENCY:-1}'),
+assert(compose.includes('AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: ${AUTOMATION_RECONCILIATION_MAX_CONCURRENCY:-2}'),
     'Compose must pass the automation-specific reconciliation budget into the worker');
-assert(compose.includes('AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: ${AUTOMATION_MAINTENANCE_LOCK_POOL_MAX:-4}'),
+assert(compose.includes('AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: ${AUTOMATION_MAINTENANCE_LOCK_POOL_MAX:-3}'),
     'Compose must pass the automation-specific maintenance-lock budget into the worker');
+assert(compose.includes('ENTITLEMENT_RECONCILE_CONCURRENCY: ${ENTITLEMENT_RECONCILE_CONCURRENCY:-2}')
+    && compose.includes('ENTITLEMENT_RECONCILE_LIMIT: ${ENTITLEMENT_RECONCILE_LIMIT:-500}'),
+    'Compose must pass bounded entitlement throughput settings into the automation worker');
 for (const setting of [
     'RECONCILIATION_MAX_CONCURRENCY=4',
-    'AUTOMATION_RECONCILIATION_MAX_CONCURRENCY=1',
-    'AUTOMATION_MAINTENANCE_LOCK_POOL_MAX=4'
+    'AUTOMATION_RECONCILIATION_MAX_CONCURRENCY=2',
+    'AUTOMATION_MAINTENANCE_LOCK_POOL_MAX=3'
 ]) {
     assert(envExample.includes(setting), `.env.example must document effective runtime setting ${setting}`);
 }
@@ -104,8 +107,8 @@ const defaultAutomationBudget = connectionBudget.automationConnectionBudget({
     AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: String(connectionBudget.AUTOMATION_DEFAULT_RECONCILIATION_MAX)
 });
 assert.strictEqual(defaultAutomationBudget.primaryPoolMax, 6, 'automation primary pool default should remain six');
-assert.strictEqual(defaultAutomationBudget.maintenanceLockPoolMax, 4, 'automation maintenance-lock default should remain four');
-assert.strictEqual(defaultAutomationBudget.reconciliationMax, 1, 'automation reconciliation must reserve only one dedicated lock connection by default');
+assert.strictEqual(defaultAutomationBudget.maintenanceLockPoolMax, 3, 'automation maintenance-lock default should cover the worker default concurrency of three');
+assert.strictEqual(defaultAutomationBudget.reconciliationMax, 2, 'automation reconciliation should reserve two dedicated lock connections by default');
 assert.strictEqual(defaultAutomationBudget.healthcheckReserve, 1, 'automation healthcheck must retain a dedicated connection reserve');
 assert(defaultAutomationBudget.totalReserved <= automationRoleLimit,
     'Default automation primary + maintenance + reconciliation + healthcheck budget must fit inside the role limit');
@@ -113,7 +116,7 @@ assert.strictEqual(defaultAutomationBudget.spare, 0, 'the default automation bud
 assert.strictEqual(connectionBudget.automationConnectionBudget({
     DB_POOL_SIZE: '6',
     RECONCILIATION_MAX_CONCURRENCY: '4'
-}).reconciliationMax, 1,
+}).reconciliationMax, 2,
 'web reconciliation configuration must not leak into the automation role budget');
 assert.throws(() => connectionBudget.automationConnectionBudget({
     DB_POOL_SIZE: '6',
@@ -122,7 +125,7 @@ assert.throws(() => connectionBudget.automationConnectionBudget({
 'unsafe automation reconciliation concurrency must fail fast instead of oversubscribing the automation role');
 assert.throws(() => connectionBudget.automationConnectionBudget({
     DB_POOL_SIZE: '6',
-    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: '1',
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: '2',
     AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: '5'
 }), /Unsafe automation maintenance-lock pool/,
 'unsafe explicit maintenance-lock concurrency must fail fast instead of oversubscribing the automation role');
