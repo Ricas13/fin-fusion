@@ -7,6 +7,27 @@ const outbound=require('../security/outbound-url-policy');
 const mediaProvider=require('../media-servers/provider');
 
 const responseCache=new Map();
+const DEFAULT_RESPONSE_CACHE_MAX=1000;
+function responseCacheMax(){const n=Number.parseInt(process.env.JELLYFIN_RESPONSE_CACHE_MAX||'',10);return Number.isInteger(n)?Math.max(50,Math.min(10000,n)):DEFAULT_RESPONSE_CACHE_MAX;}
+function pruneResponseCache(now=Date.now()){
+    for(const [key,entry] of responseCache){if(!entry||Number(entry.expiresAt||0)<=now)responseCache.delete(key);}
+    const max=responseCacheMax();
+    while(responseCache.size>max){const oldest=responseCache.keys().next().value;if(oldest===undefined)break;responseCache.delete(oldest);}
+}
+function cachedResponse(key,now=Date.now()){
+    const cached=responseCache.get(key);
+    if(!cached)return undefined;
+    if(Number(cached.expiresAt||0)<=now){responseCache.delete(key);return undefined;}
+    // Touch on read so Map insertion order acts as a small LRU.
+    responseCache.delete(key);responseCache.set(key,cached);
+    return cached.value;
+}
+function rememberResponse(key,value,ttl,now=Date.now()){
+    if(!(ttl>0))return;
+    responseCache.delete(key);
+    responseCache.set(key,{expiresAt:now+ttl,value});
+    pruneResponseCache(now);
+}
 
 function normalizeBaseUrl(value) {
     let parsed;
@@ -140,8 +161,8 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
     const key=cacheKey(serverId,verb,endpoint);
     const ttl=Math.max(0,Math.min(120000,Number(cacheTtlMs)||0));
     if(reusable&&ttl>0){
-        const cached=responseCache.get(key);
-        if(cached&&Date.now()-cached.observedAt<=ttl)return cached.value;
+        const cached=cachedResponse(key);
+        if(cached!==undefined)return cached;
     }
 
     const server=await getServerSecret(serverId);
@@ -194,8 +215,8 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
     }
 
     const value=mediaProvider.responseBody(server.media_server_type,endpoint,parsed??{});
-    if(reusable)responseCache.set(key,{observedAt:Date.now(),value});
-    else clearServerCache(serverId);
+    if(reusable&&ttl>0)rememberResponse(key,value,ttl);
+    else if(!reusable)clearServerCache(serverId);
     return value;
 }
 
