@@ -81,6 +81,16 @@ assert(inactivity.includes('deferred'), 'inactivity automation must report defer
 
 assert(attentionPolicy.IMMEDIATE_CRITICAL_JOBS.has('revenue_integrity'), 'integrity failures must surface immediately as critical');
 assert(attentionPolicy.REQUIRED_ENABLED_JOBS.has('revenue_integrity'), 'integrity watchdog must not be silently disableable without attention');
+assert(attentionPolicy.IMMEDIATE_WARNING_JOBS.has('email_outbox'), 'email delivery failures must surface on their first degraded automation pass');
+assert(attentionPolicy.IMMEDIATE_WARNING_JOBS.has('notification_outbox'), 'Discord/Telegram delivery failures must surface on their first degraded automation pass');
+
+const integritySource = source('src/automation/revenue-integrity.js');
+assert(integritySource.includes('notification_delivery_uncertain'), 'integrity watchdog must persistently surface quarantined uncertain notification deliveries');
+assert(integritySource.includes("status='sending'"), 'integrity watchdog must detect notification rows stuck in sending state');
+
+const deploymentVerification = source('scripts/verify-deployment.js');
+assert(deploymentVerification.includes("'degraded'"), 'deployment verification must reject degraded critical automation jobs');
+assert(deploymentVerification.includes('badStates.has(jobHealth.healthState(job))'), 'critical deployment verification must evaluate the hardened bad-state set');
 
 const a = integrity.fingerprint([{ kind: 'b', id: '2' }, { kind: 'a', id: '1' }]);
 const b = integrity.fingerprint([{ kind: 'a', id: '1' }, { kind: 'b', id: '2' }]);
