@@ -8,8 +8,22 @@ const JOB_WARNING_FAILURES = 3;
 const JOB_CRITICAL_FAILURES = 6;
 const WORKER_WARNING_MS = 5 * MINUTE_MS;
 const WORKER_CRITICAL_MS = 15 * MINUTE_MS;
-const CORE_AUTOMATION_JOBS = new Set(['entitlements', 'billing', 'plan_changes', 'health']);
-const REQUIRED_ENABLED_JOBS = new Set(['payment_events', 'plan_changes']);
+const CORE_AUTOMATION_JOBS = new Set([
+    'entitlements', 'billing', 'plan_changes', 'health', 'payment_events',
+    'provider_operation_recovery', 'customer_deletions', 'creation_intent_recovery',
+    'customer_service_recovery', 'revenue_integrity'
+]);
+const REQUIRED_ENABLED_JOBS = new Set([
+    'entitlements', 'billing', 'payment_events', 'provider_operation_recovery',
+    'plan_changes', 'customer_deletions', 'creation_intent_recovery',
+    'customer_service_recovery', 'revenue_integrity', 'discord_roles',
+    'email_outbox', 'notification_outbox'
+]);
+const IMMEDIATE_CRITICAL_JOBS = new Set(['revenue_integrity']);
+const IMMEDIATE_WARNING_JOBS = new Set([
+    'payment_events', 'provider_operation_recovery', 'customer_deletions',
+    'creation_intent_recovery', 'customer_service_recovery'
+]);
 
 function timestamp(value) {
     if (!value) return 0;
@@ -29,7 +43,7 @@ function provisioningDecision(row, now = Date.now()) {
     const ageMs = problemStarted ? Math.max(0, now - problemStarted) : Infinity;
 
     // Access removal is safety-sensitive: a failed disable can leave service
-    // available after CAPTAiNFiN intended to revoke it, so do not hide it behind
+    // available after CAPTaINFiN intended to revoke it, so do not hide it behind
     // the normal retry tolerance.
     if (action === 'disable') {
         return { visible: true, automatic: false, severity: 'critical', failures, ageMs, reason: 'access_removal_failed' };
@@ -64,9 +78,15 @@ function jobDecision(row, state) {
     const health = String(state || '').toLowerCase();
     const jobKey = String(row?.job_key || '');
     if (health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)) return { visible: true, severity: 'critical', reason: 'disabled', failures: 0 };
-    if (health === 'stale') return { visible: true, severity: 'warning', reason: 'stale' };
+    if (health === 'stale') return { visible: true, severity: CORE_AUTOMATION_JOBS.has(jobKey) ? 'critical' : 'warning', reason: 'stale' };
     if (!['failed', 'degraded'].includes(health)) return { visible: false, severity: null };
     const failures = Math.max(0, Number(row?.consecutive_failures || 0));
+    // The integrity watchdog means an invariant is already broken, not merely
+    // that an attempt failed. Surface it on the very first observation.
+    if (IMMEDIATE_CRITICAL_JOBS.has(jobKey)) return { visible: true, severity: 'critical', failures, reason: health };
+    // Durable money/access recovery jobs also surface from their first failed
+    // pass. They keep retrying automatically, but the operator should know now.
+    if (IMMEDIATE_WARNING_JOBS.has(jobKey)) return { visible: true, severity: failures >= JOB_CRITICAL_FAILURES ? 'critical' : 'warning', failures, reason: health };
     if (failures < JOB_WARNING_FAILURES) return { visible: false, severity: null, failures, reason: 'automatic_retry' };
     const core = CORE_AUTOMATION_JOBS.has(jobKey);
     return {
@@ -124,7 +144,7 @@ function paymentDecision(row) {
         return { visible: true, severity: 'critical', reason: type };
     }
     // Refunds, mapped renewal failures and mapped checkout completions are
-    // provider/lifecycle history. Surface them only when CAPTAiNFiN cannot
+    // provider/lifecycle history. Surface them only when CAPTaINFiN cannot
     // safely identify the customer or finish checkout reconciliation.
     if (type === 'refund') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'history_only' };
     if (type === 'failed_renewal') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'provider_retry' };
@@ -144,6 +164,8 @@ module.exports = {
     WORKER_CRITICAL_MS,
     CORE_AUTOMATION_JOBS,
     REQUIRED_ENABLED_JOBS,
+    IMMEDIATE_CRITICAL_JOBS,
+    IMMEDIATE_WARNING_JOBS,
     timestamp,
     provisioningDecision,
     jobDecision,
