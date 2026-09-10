@@ -4,6 +4,16 @@ require('dotenv').config();
 const { getPool } = require('../src/db');
 
 const RUNTIME_ROLES = Object.freeze(['steamfusion_app', 'steamfusion_automation']);
+const AUTOMATION_NO_ACCESS_TABLES = Object.freeze(new Set([
+    'auth_totp_enrollments',
+    'auth_recovery_codes',
+    'auth_sessions',
+    'auth_events',
+    'login_rate_limits',
+    'schema_migrations',
+    'user_sessions'
+]));
+const AUTOMATION_READ_ONLY_TABLES = Object.freeze(new Set(['app_users']));
 
 function collectMissing(role, kind, rows, checks) {
     const missing = [];
@@ -13,6 +23,27 @@ function collectMissing(role, kind, rows, checks) {
         }
     }
     return missing;
+}
+
+function tableChecksFor(role, row) {
+    if (role !== 'steamfusion_automation') {
+        return [
+            ['can_select', 'SELECT'],
+            ['can_insert', 'INSERT'],
+            ['can_update', 'UPDATE'],
+            ['can_delete', 'DELETE']
+        ];
+    }
+
+    const tableName = String(row.table_name || '');
+    if (AUTOMATION_NO_ACCESS_TABLES.has(tableName)) return [];
+    if (AUTOMATION_READ_ONLY_TABLES.has(tableName)) return [['can_select', 'SELECT']];
+    return [
+        ['can_select', 'SELECT'],
+        ['can_insert', 'INSERT'],
+        ['can_update', 'UPDATE'],
+        ['can_delete', 'DELETE']
+    ];
 }
 
 async function validateRuntimePrivileges(client) {
@@ -26,13 +57,15 @@ async function validateRuntimePrivileges(client) {
         }
 
         const schemaResult = await client.query(
-            "SELECT has_schema_privilege($1, 'public', 'USAGE') AS can_usage",
+            "SELECT has_schema_privilege($1, 'public', 'USAGE') AS can_usage, has_schema_privilege($1, 'public', 'CREATE') AS can_create",
             [role]
         );
         if (!schemaResult.rows[0]?.can_usage) missing.push(`${role} missing USAGE on schema public`);
+        if (schemaResult.rows[0]?.can_create) missing.push(`${role} must not have CREATE on schema public`);
 
         const tableResult = await client.query(`
             SELECT
+                c.relname AS table_name,
                 format('%I.%I', n.nspname, c.relname) AS object_name,
                 has_table_privilege($1, c.oid, 'SELECT') AS can_select,
                 has_table_privilege($1, c.oid, 'INSERT') AS can_insert,
@@ -44,12 +77,9 @@ async function validateRuntimePrivileges(client) {
               AND c.relkind IN ('r', 'p')
             ORDER BY c.relname
         `, [role]);
-        missing.push(...collectMissing(role, 'table', tableResult.rows, [
-            ['can_select', 'SELECT'],
-            ['can_insert', 'INSERT'],
-            ['can_update', 'UPDATE'],
-            ['can_delete', 'DELETE']
-        ]));
+        for (const row of tableResult.rows) {
+            missing.push(...collectMissing(role, 'table', [row], tableChecksFor(role, row)));
+        }
 
         const sequenceResult = await client.query(`
             SELECT
@@ -109,4 +139,12 @@ if (require.main === module) {
     });
 }
 
-module.exports = { RUNTIME_ROLES, collectMissing, validateRuntimePrivileges, main };
+module.exports = {
+    RUNTIME_ROLES,
+    AUTOMATION_NO_ACCESS_TABLES,
+    AUTOMATION_READ_ONLY_TABLES,
+    collectMissing,
+    tableChecksFor,
+    validateRuntimePrivileges,
+    main
+};
