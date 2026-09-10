@@ -123,6 +123,18 @@ async function dueActiveCustomers(limit = 250) {
     return dueCustomers(limit);
 }
 
+async function ensureFailureBackoff(customerId, error) {
+    let state = await provisioning.control.getCustomerState(customerId).catch(() => null);
+    if (!['failed', 'blocked'].includes(String(state?.status || ''))) {
+        const classified = provisioning.control.classifyError(error);
+        await provisioning.control.markCustomerProblem(customerId, classified.status, error).catch(markError => {
+            console.error(`Unable to persist entitlement failure backoff for ${customerId}:`, markError.message);
+        });
+        state = await provisioning.control.getCustomerState(customerId).catch(() => state);
+    }
+    return state;
+}
+
 async function reconcileActiveEntitlements(options = {}) {
     const limit = options.limit == null ? reconcileLimit() : boundedInteger(options.limit, DEFAULT_RECONCILE_LIMIT, 1, 1000);
     const concurrency = options.concurrency == null ? reconcileConcurrency() : boundedInteger(options.concurrency, DEFAULT_RECONCILE_CONCURRENCY, 1, MAX_RECONCILE_CONCURRENCY);
@@ -132,7 +144,11 @@ async function reconcileActiveEntitlements(options = {}) {
             await provisioning.reconcileCustomer(row.customer_id);
             return { status: 'succeeded' };
         } catch (error) {
-            const state = await provisioning.control.getCustomerState(row.customer_id).catch(() => null);
+            // Some failures can occur before reconcileCustomerUnlocked reaches
+            // markCustomerRunning (for example an entitlement/hold read). Make
+            // sure those failures still receive durable backoff; otherwise a
+            // NULL next_attempt_at row can sit at the head of every bounded batch.
+            const state = await ensureFailureBackoff(row.customer_id, error);
             if (state?.status === 'blocked') {
                 console.error(`Entitlement reconcile blocked for ${row.customer_id}:`, error.message);
                 return { status: 'blocked' };
@@ -192,6 +208,7 @@ module.exports = {
     dueCustomers,
     dueActiveCustomers,
     reconcileActiveEntitlements,
+    ensureFailureBackoff,
     healthcheckAllServers,
     cleanFailureMessage,
     summarizeFailureReasons
