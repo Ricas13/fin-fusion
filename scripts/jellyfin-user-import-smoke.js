@@ -25,15 +25,15 @@ async function addServer({ name, slug, serverClass }) {
     return result.rows[0].id;
 }
 
-async function addPlan({ code, name, serverClass, billing = 'month', duration = 30, isFreeTier = false }) {
+async function addPlan({ code, name, serverClass, billing = 'month', duration = 30 }) {
     const result = await query(`
         INSERT INTO plans(
             code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
             allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,
-            allow_live_tv_management,server_class,is_free_tier,active,visible,sort_order
-        ) VALUES($1,$2,'','direct',$4,$5,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,$3,$6,TRUE,TRUE,10)
+            allow_live_tv_management,server_class,active,visible,sort_order
+        ) VALUES($1,$2,'','direct',$4,$5,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,$3,TRUE,TRUE,10)
         RETURNING *
-    `, [code, name, serverClass, billing, duration, Boolean(isFreeTier)]);
+    `, [code, name, serverClass, billing, duration]);
     return result.rows[0];
 }
 
@@ -55,11 +55,12 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
 
 (async () => {
     const premiumServer = await addServer({ name: 'Premium A', slug: 'premium-a', serverClass: 'premium' });
-    const freeServer = await addServer({ name: 'Free A', slug: 'free-a', serverClass: 'free' });
+    // Use the independent custom pool for the trial-import fixture. The permanent
+    // Free Server plan is a singleton and must never be duplicated or converted
+    // into a trial merely to exercise import lifecycle behaviour.
+    const trialServer = await addServer({ name: 'Trial Import A', slug: 'trial-import-a', serverClass: 'custom' });
     const premiumPlan = await addPlan({ code: 'premium-test', name: 'Premium Test', serverClass: 'premium' });
-    // This fixture deliberately uses a trial lifecycle on the canonical Free
-    // Server lane, so its free-tier identity must be explicit under the DB guard.
-    const freePlan = await addPlan({ code: 'free-test', name: 'Free Test', serverClass: 'free', billing: 'trial', duration: 1, isFreeTier: true });
+    const trialPlan = await addPlan({ code: 'import-trial-test', name: 'Import Trial Test', serverClass: 'custom', billing: 'trial', duration: 1 });
 
     const driftCustomer = await addBareCustomer('Bob Existing');
     await query(`
@@ -76,7 +77,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
         jellyUser('admin-id', 'ServerAdmin', { admin: true }),
         jellyUser('sleep-id', 'SleepingUser', { disabled: true })
     ]);
-    remoteByServer.set(String(freeServer), [jellyUser('free-id', 'FreeUser')]);
+    remoteByServer.set(String(trialServer), [jellyUser('trial-id', 'TrialUser')]);
 
     const discovery = await importer.discover();
     assert.strictEqual(discovery.failures.length, 0);
@@ -84,7 +85,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     assert.strictEqual(byName.get('Alice').import_status, 'unmanaged');
     assert.strictEqual(byName.get('Bob').import_status, 'identity_drift');
     assert.strictEqual(byName.get('ServerAdmin').import_status, 'administrator');
-    assert.strictEqual(byName.get('FreeUser').import_status, 'unmanaged');
+    assert.strictEqual(byName.get('TrialUser').import_status, 'unmanaged');
     assert.strictEqual(byName.get('SleepingUser').disabled, true, 'discovery may report a legacy remote disabled identity without adopting it as managed state');
 
     const alice = await importer.createImportedCustomer({
@@ -120,14 +121,14 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
         'server administrators must be protected from customer import'
     );
     await assert.rejects(
-        () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'charlie-id', planId: freePlan.id }),
-        /requires free servers/i,
+        () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'charlie-id', planId: trialPlan.id }),
+        /requires custom servers/i,
         'plan/server class mismatch must fail before import'
     );
     await assert.rejects(
         () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'sleep-id', planId: null, applyPolicy: false }),
         /disabled jellyfin users cannot be managed/i,
-        'a remote disabled identity must never be adopted as a CAPTAiNFiN managed account'
+        'a remote disabled identity must never be adopted as a CAPTaINFiN managed account'
     );
 
     const linked = await importer.linkExistingCustomer({
@@ -186,20 +187,20 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     assert.strictEqual(bob.rows[0].disabled, false);
 
     const bulk = await importer.bulkImport({
-        selected: [`${freeServer}:free-id`],
-        planId: freePlan.id,
+        selected: [`${trialServer}:trial-id`],
+        planId: trialPlan.id,
         applyPolicy: false
     });
     assert.deepStrictEqual({ total: bulk.total, imported: bulk.imported, failed: bulk.failed }, { total: 1, imported: 1, failed: 0 });
-    const freeSubscription = await query(`
+    const trialSubscription = await query(`
         SELECT s.status,s.source,p.code,ja.disabled FROM subscriptions s JOIN plans p ON p.id=s.plan_id
         JOIN jellyfin_accounts ja ON ja.customer_id=s.customer_id
-        WHERE ja.server_id=$1 AND ja.jellyfin_user_id='free-id'
-    `, [freeServer]);
-    assert.strictEqual(freeSubscription.rows[0].status, 'trialing');
-    assert.strictEqual(freeSubscription.rows[0].source, 'migration');
-    assert.strictEqual(freeSubscription.rows[0].code, 'free-test');
-    assert.strictEqual(freeSubscription.rows[0].disabled, false);
+        WHERE ja.server_id=$1 AND ja.jellyfin_user_id='trial-id'
+    `, [trialServer]);
+    assert.strictEqual(trialSubscription.rows[0].status, 'trialing');
+    assert.strictEqual(trialSubscription.rows[0].source, 'migration');
+    assert.strictEqual(trialSubscription.rows[0].code, 'import-trial-test');
+    assert.strictEqual(trialSubscription.rows[0].disabled, false);
 
     const after = await importer.discover({ serverId: premiumServer });
     const afterMap = new Map(after.rows.map(row => [row.jellyfin_username, row.import_status]));
