@@ -82,7 +82,11 @@ async function main() {
 
             const jobs = await jobHealth.list();
             const critical = new Set(requiredJobs);
-            const bad = jobs.filter(job => critical.has(job.job_key) && ['failed', 'stale', 'missing'].includes(jobHealth.healthState(job)));
+            // A degraded critical job means one or more customer/revenue sub-operations
+            // failed. Treat that as a deployment blocker rather than accepting a green
+            // worker heartbeat while customers remain stranded.
+            const badStates = new Set(['failed', 'degraded', 'stale', 'missing']);
+            const bad = jobs.filter(job => critical.has(job.job_key) && badStates.has(jobHealth.healthState(job)));
             const inactivityJob = jobs.find(job => job.job_key === 'customer_inactivity');
             add('Free Server lifecycle job', Boolean(inactivityJob?.enabled), inactivityJob ? `state=${jobHealth.healthState(inactivityJob)} next=${inactivityJob.next_run_at || 'pending'}` : 'job row missing');
             const freeBackfillJob = jobs.find(job => job.job_key === 'free_capacity_backfill');
