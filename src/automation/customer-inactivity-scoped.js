@@ -9,6 +9,8 @@ const activityTrust = require('../jellyfin/activity-trust');
 const fleetMetrics = require('../jellyfin/fleet-metrics');
 const base = require('./customer-inactivity');
 
+const MAX_ENFORCEMENTS_PER_RUN = Math.max(1, Math.min(500, Number(process.env.INACTIVITY_MAX_ENFORCEMENTS_PER_RUN || 100)));
+
 async function activityWorkerTelemetry() {
     return activityTrust.workerTelemetry();
 }
@@ -162,6 +164,8 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     serverTelemetry = await refreshCandidateServers(rows, serverTelemetry);
     const eligible = eligibleOnReadyServers(rows, serverTelemetry);
     const unsafeEligible = rows.filter(row => row?.eligible && !serverTelemetry[String(row.server_id)]?.ready);
+    const selectedEligible = eligible.slice(0, MAX_ENFORCEMENTS_PER_RUN);
+    const deferred = Math.max(0, eligible.length - selectedEligible.length);
     let enforced = 0, wouldRemove = 0, failed = 0, safetySkipped = unsafeEligible.length;
 
     for (const row of unsafeEligible) {
@@ -169,7 +173,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         await logTelemetrySkip(row, actorUserId, server?.reason || 'server_poll_untrusted', server);
     }
 
-    for (const original of eligible) {
+    for (const original of selectedEligible) {
         const final = await finalEligibility(original, globalCfg);
         if (!final.ready) {
             safetySkipped += 1;
@@ -234,17 +238,21 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     }
 
     const telemetry = telemetrySummary(worker, serverTelemetry);
+    const warning = deferred
+        ? `${deferred} eligible inactivity removal${deferred === 1 ? '' : 's'} deferred by the ${MAX_ENFORCEMENTS_PER_RUN}-customer safety cap; they will be reconsidered on the next run.`
+        : undefined;
     return {
         processed: rows.length,
         eligible: eligible.length,
         enforced,
         wouldRemove,
-        // Compatibility key for older job dashboards; no disable action exists.
         wouldDisable: wouldRemove,
         failed,
+        deferred,
         safetySkipped,
         released,
-        dryRun: eligible.every(row => forceDryRun === true || row.policy.dryRun),
+        warning,
+        dryRun: selectedEligible.every(row => forceDryRun === true || row.policy.dryRun),
         telemetry,
         serverFailures: telemetry.unsafeTargetServers,
         examples: eligible.slice(0,25).map(row=>({customerId:row.customer_id,name:row.customer_name,plan:row.plan_code,server:row.server_name,triggers:row.triggers,lastPlaybackAt:row.last_playback_at,playbackMinutes:Math.round(row.playback_seconds/60)}))
@@ -263,6 +271,7 @@ async function run(options = {}) {
 }
 
 module.exports = {
+    MAX_ENFORCEMENTS_PER_RUN,
     activityWorkerTelemetry,
     candidateServerIds,
     refreshCandidateServers,

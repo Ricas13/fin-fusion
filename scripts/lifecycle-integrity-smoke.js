@@ -12,6 +12,10 @@ const lifecycle=require('../src/payments/lifecycle-primitives');
 // DB contracts as permanent CI roots rather than treating a dynamic loop as an
 // unreferenced test-only script.
 const stateMachineSmoke=require.resolve('./state-machine-invariants-db-smoke');
+const paymentReplaySmoke=require.resolve('./payment-event-replay-db-smoke');
+const providerRecoverySmoke=require.resolve('./provider-operation-recovery-db-smoke');
+const automationReliabilityFastSmoke=require.resolve('./automation-reliability-audit-smoke');
+const automationReliabilityDbSmoke=require.resolve('./automation-reliability-audit-db-smoke');
 const postAuditSmoke=require.resolve('./post-audit-schema-hardening-db-smoke');
 const migrationRunnerSmoke=require.resolve('./migration-runner-hardening-smoke');
 
@@ -25,7 +29,15 @@ async function main(){
  assertIso(lifecycle.addPlanDuration({billing_interval:'year',duration_days:365},new Date('2028-02-29T00:00:00.000Z')),'2029-02-28T00:00:00.000Z','yearly billing must clamp leap day to the following February');
  assertIso(lifecycle.addPlanDuration({billing_interval:'custom',duration_days:30},new Date('2026-02-01T00:00:00.000Z')),'2026-03-03T00:00:00.000Z','custom plans must keep exact day-duration arithmetic');
 
- for(const smoke of [stateMachineSmoke,postAuditSmoke,migrationRunnerSmoke]){
+ for(const smoke of [
+  automationReliabilityFastSmoke,
+  stateMachineSmoke,
+  paymentReplaySmoke,
+  providerRecoverySmoke,
+  automationReliabilityDbSmoke,
+  postAuditSmoke,
+  migrationRunnerSmoke
+ ]){
   execFileSync(process.execPath,[smoke],{stdio:'inherit',env:process.env});
  }
 

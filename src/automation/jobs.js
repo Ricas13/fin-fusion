@@ -25,6 +25,9 @@ const serviceEndEmails=require('./service-end-emails');
 const adminActivityNotifications=require('./admin-activity-notifications');
 const freePlacesDigest=require('./free-places-digest');
 const dataRetention=require('./data-retention');
+const creationIntentRecovery=require('./jellyfin-creation-intent-recovery');
+const customerServiceRecovery=require('./customer-service-recovery');
+const revenueIntegrity=require('./revenue-integrity');
 const pendingRegistrations=require('../security/pending-registration');
 const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
@@ -42,6 +45,9 @@ const jobs={
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
+ async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
+ async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
+ async revenue_integrity(){return revenueIntegrity.run()},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
