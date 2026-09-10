@@ -180,25 +180,45 @@ async function mrrTrend(range,reporting) {
 
 async function playbackTrend(range) {
   const grain=playbackGrain(range),step=grainInterval(grain);
-  const result=await query(`WITH buckets AS (
-      SELECT gs AS bucket,GREATEST(gs,$1::timestamptz) bucket_start,LEAST(gs+INTERVAL '${step}',$2::timestamptz) bucket_end
-      FROM generate_series(date_trunc('${grain}',$1::timestamptz),date_trunc('${grain}',($2::timestamptz-INTERVAL '1 microsecond')),INTERVAL '${step}') gs
+  // Filter to sessions that can overlap the selected range first, then generate
+  // only the buckets each surviving session actually touches. The previous
+  // buckets LEFT JOIN playback_history shape repeatedly compared every dashboard
+  // bucket with a broad slice of historical playback and became pathological at
+  // million-row scale. This shape is O(relevant sessions × buckets touched), and
+  // the effective-end expression is backed by a dedicated index.
+  const result=await query(`WITH relevant AS (
+      SELECT ph.id,ph.started_at,LEAST(COALESCE(ph.ended_at,ph.last_seen_at),$2::timestamptz) ended_at,
+             LOWER(COALESCE(ph.playback_method,'unknown')) method
+      FROM playback_history ph
+      WHERE ph.started_at<$2::timestamptz
+        AND COALESCE(ph.ended_at,ph.last_seen_at)>$1::timestamptz
     ), playback_overlap AS (
-      SELECT b.bucket,b.bucket_start,b.bucket_end,ph.id,LOWER(COALESCE(ph.playback_method,'unknown')) method,
-        CASE WHEN ph.id IS NULL THEN 0 ELSE GREATEST(0,EXTRACT(EPOCH FROM (LEAST(COALESCE(ph.ended_at,ph.last_seen_at),b.bucket_end)-GREATEST(ph.started_at,b.bucket_start)))) END seconds,
-        CASE WHEN ph.id IS NOT NULL AND ph.started_at>=b.bucket_start AND ph.started_at<b.bucket_end THEN 1 ELSE 0 END started
-      FROM buckets b LEFT JOIN playback_history ph
-        ON ph.started_at<b.bucket_end AND COALESCE(ph.ended_at,ph.last_seen_at)>b.bucket_start
+      SELECT r.id,r.method,r.started_at,
+             gs AS bucket,
+             GREATEST(gs,$1::timestamptz) bucket_start,
+             LEAST(gs+INTERVAL '${step}',$2::timestamptz) bucket_end,
+             GREATEST(0,EXTRACT(EPOCH FROM (
+               LEAST(r.ended_at,gs+INTERVAL '${step}',$2::timestamptz)
+               - GREATEST(r.started_at,gs,$1::timestamptz)
+             ))) seconds
+      FROM relevant r
+      CROSS JOIN LATERAL generate_series(
+        date_trunc('${grain}',GREATEST(r.started_at,$1::timestamptz)),
+        date_trunc('${grain}',LEAST(r.ended_at,$2::timestamptz)-INTERVAL '1 microsecond'),
+        INTERVAL '${step}'
+      ) gs
     )
     SELECT bucket,
       EXTRACT(EPOCH FROM(MAX(bucket_end)-MIN(bucket_start)))::numeric bucket_seconds,
       COALESCE(SUM(seconds)/NULLIF(EXTRACT(EPOCH FROM(MAX(bucket_end)-MIN(bucket_start))),0),0)::numeric avg_concurrent,
-      SUM(started)::int session_starts,
+      COUNT(*) FILTER(WHERE started_at>=bucket_start AND started_at<bucket_end)::int session_starts,
       COALESCE(SUM(seconds) FILTER(WHERE method='directplay'),0)::bigint directplay_seconds,
       COALESCE(SUM(seconds) FILTER(WHERE method='directstream'),0)::bigint directstream_seconds,
       COALESCE(SUM(seconds) FILTER(WHERE method='transcode'),0)::bigint transcode_seconds,
       COALESCE(SUM(seconds) FILTER(WHERE method NOT IN('directplay','directstream','transcode')),0)::bigint unknown_seconds
-    FROM playback_overlap GROUP BY bucket ORDER BY bucket`,[range.start,range.end]);
+    FROM playback_overlap
+    WHERE seconds>0
+    GROUP BY bucket ORDER BY bucket`,[range.start,range.end]);
   const rows=fillPlaybackSeries(range,grain,result.rows,['bucket_seconds','avg_concurrent','session_starts','directplay_seconds','directstream_seconds','transcode_seconds','unknown_seconds']).map(row=>{
     const total=row.directplay_seconds+row.directstream_seconds+row.transcode_seconds+row.unknown_seconds;
     return{...row,directplay_pct:total?row.directplay_seconds/total*100:0,directstream_pct:total?row.directstream_seconds/total*100:0,transcode_pct:total?row.transcode_seconds/total*100:0,unknown_pct:total?row.unknown_seconds/total*100:0};
