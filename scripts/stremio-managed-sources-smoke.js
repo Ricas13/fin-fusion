@@ -15,6 +15,7 @@ const customerStremio=read('src/platform/customer-stremio.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const tokenMaintenance=read('src/stremio/external-token-maintenance.js');
 const operationLock=read('src/stremio/operation-lock.js');
+const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const admin=read('src/platform/admin-stremio-managed-sources.js');
 const sources=read('src/platform/admin-stremio-sources.js');
 const externalConfig=read('src/stremio/source-admin-config.js');
@@ -43,8 +44,13 @@ assert(managedEntitlements.includes('logoutRestrictedToken({id:row.server_id,nam
 // Source credential mutation is multi-instance state. Concurrent workers must
 // serialize around the same provider identity and old credentials must become
 // durable retired-token work before the current credential is overwritten.
-assert(operationLock.includes('pg_try_advisory_lock(hashtextextended($1,0))'),'Stremio mutation lock must be a database advisory lock, not process-local state');
-assert(operationLock.includes('pg_advisory_unlock(hashtextextended($1,0))'),'Stremio mutation lock must always have an explicit unlock path');
+// operation-lock now delegates to the dedicated reconciliation lock budget; the
+// regression still proves the effective primitive is a PostgreSQL advisory lock
+// with an explicit unlock path rather than process-local state.
+assert(operationLock.includes("require('../jellyfin/reconciliation-lock')"),'Stremio mutation lock must delegate to the database-backed reconciliation lock owner');
+assert(operationLock.includes('reconciliationLock.withDatabaseLock(lockKey, fn, { timeoutMs })'),'Stremio mutation lock must retain cross-process database serialization');
+assert(reconciliationLock.includes('pg_try_advisory_lock($1::int,hashtext($2::text))'),'delegated Stremio mutation lock must use a database advisory lock');
+assert(reconciliationLock.includes('pg_advisory_unlock($1::int,hashtext($2::text))'),'delegated Stremio mutation lock must always have an explicit unlock path');
 assert(tokenMaintenance.includes('operationLock.withLock(`external-token:${source.id}`'),'automatic external token rotation must serialize per source');
 assert(tokenMaintenance.includes('SELECT * FROM stremio_sources WHERE id=$1 FOR UPDATE'),'token rotation must revalidate current source state in the mutation transaction');
 assert(tokenMaintenance.includes('retireEncryptedTokenTx(db,latest'),'token rotation must durably retire the transaction-locked current credential before replacing it');
@@ -97,7 +103,7 @@ assert(sources.includes('capabilitySourceDisclosure')&&sources.includes('sourceI
 assert(sources.includes('action="/admin/servers/stremio/managed/${esc(server.id)}"'),'managed rows must save through the canonical managed mutation route');
 assert(sources.includes('action="/admin/servers/stremio/${esc(source.id)}/configure"'),'external sources must be configurable inline on the same page');
 assert(sources.includes('name="enabled" value="1"')&&sources.includes('name="priority"'),'both source groups must expose participation and priority controls');
-assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must state that fallback playback bypasses CAPTAiNFiN media transport');
+assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must state that fallback playback bypasses CAPTaINFiN media transport');
 assert(/media bytes never pass through the portal/i.test(sources),'source UI must state the no-byte-proxy invariant');
 assert(externalConfig.includes('UPDATE stremio_sources SET enabled=$2,priority=$3'),'external source participation and priority must update atomically');
 assert(externalConfig.includes("'admin.stremio.source.configure'"),'external source inline configuration must be audited');
