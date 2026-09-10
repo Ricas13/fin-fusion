@@ -5,7 +5,10 @@ const { revenueFromEvent, bucketKey, fillSeries } = require('../platform/admin-d
 const classifier = require('./provider-transaction-classifier');
 
 const EVENT_PAGE_SIZE = 5000;
+const HISTORY_PAGE_SIZE = 5000;
 const MAX_EVENT_PAGES = 1000;
+const MAX_HISTORY_PAGES = 1000;
+const MAX_COMPAT_RECORDS = 100000;
 
 function addWarning(warnings, message) {
     if (!Array.isArray(warnings) || !message || warnings.includes(message)) return;
@@ -31,16 +34,11 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
         const previousSeen = Number(state.get(chargeId));
         let incremental = null;
 
-        // Stripe amount_refunded is cumulative. Prefer the event's own previous
-        // value, then an earlier event observed while walking chronologically.
         if (Number.isFinite(previousAttribute) && previousAttribute >= 0 && cumulative >= previousAttribute) {
             incremental = cumulative - previousAttribute;
         } else if (Number.isFinite(previousSeen) && previousSeen >= 0 && cumulative >= previousSeen) {
             incremental = cumulative - previousSeen;
         } else {
-            // Older stored webhook payloads may not contain previous_attributes.
-            // In that case use the newest refund object's own incremental amount,
-            // never the charge's cumulative amount_refunded total.
             const refund = newestStripeRefund(object);
             if (refund) incremental = Number(refund.amount);
         }
@@ -146,90 +144,174 @@ function eventRecords(row, refundState = new Map(), warnings = []) {
     return records;
 }
 
-async function paymentEventsInRange(range) {
-    const rows = [];
+async function coverageRunsInRange(range, queryFn = query) {
+    return queryFn(`
+        SELECT provider_scope,range_start,range_end,completed_at
+        FROM payment_history_import_runs
+        WHERE status='completed'
+          AND range_end >= ($1::timestamptz AT TIME ZONE 'UTC')::date
+          AND range_start <= ($2::timestamptz AT TIME ZONE 'UTC')::date
+        ORDER BY range_start
+    `, [range.previousStart, range.end]);
+}
+
+async function scanPaymentEventsInRange(range, visit, queryFn = query) {
+    if (typeof visit !== 'function') throw new Error('Payment-event scan requires a visitor.');
     let cursor = null;
-    for (let page = 0; page < MAX_EVENT_PAGES; page++) {
-        const result = await query(`
+    let scanned = 0;
+    for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
+        const result = await queryFn(`
             SELECT provider,provider_event_id,event_type,payload,created_at
             FROM payment_events
             WHERE provider IN ('stripe','paypal')
               AND processed_at IS NOT NULL AND processing_error IS NULL
               AND created_at >= $1 AND created_at < $2
-              AND ($3::timestamptz IS NULL OR (created_at,provider,provider_event_id) < ($3::timestamptz,$4::text,$5::text))
-            ORDER BY created_at DESC,provider DESC,provider_event_id DESC
+              AND ($3::timestamptz IS NULL OR (created_at,provider,provider_event_id) > ($3::timestamptz,$4::text,$5::text))
+            ORDER BY created_at ASC,provider ASC,provider_event_id ASC
             LIMIT $6
         `, [range.previousStart, range.end, cursor?.created_at || null, cursor?.provider || null, cursor?.provider_event_id || null, EVENT_PAGE_SIZE]);
-        rows.push(...result.rows);
-        if (result.rows.length < EVENT_PAGE_SIZE) return rows;
+        for (const row of result.rows) {
+            await visit(row);
+            scanned += 1;
+        }
+        if (result.rows.length < EVENT_PAGE_SIZE) return scanned;
         cursor = result.rows[result.rows.length - 1];
     }
     throw new Error(`Payment event accounting exceeded ${EVENT_PAGE_SIZE * MAX_EVENT_PAGES} rows. Run a Payment History import or narrow the dashboard range; totals were not rendered as complete.`);
 }
 
-async function accountingRecords(range) {
-    const [runs, history, events] = await Promise.all([
-        query(`SELECT provider_scope,range_start,range_end,completed_at FROM payment_history_import_runs WHERE status='completed' ORDER BY range_start`),
-        query(`
+async function scanHistoryInRange(range, visit, queryFn = query) {
+    if (typeof visit !== 'function') throw new Error('Payment-history scan requires a visitor.');
+    let cursor = null;
+    let scanned = 0;
+    for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
+        const result = await queryFn(`
             SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,customer_id,provider_customer_id
             FROM payment_history_transactions
             WHERE occurred_at >= $1 AND occurred_at < $2
-            ORDER BY occurred_at DESC
-        `, [range.previousStart, range.end]),
-        paymentEventsInRange(range)
-    ]);
+              AND ($3::timestamptz IS NULL OR (occurred_at,provider,provider_transaction_id) > ($3::timestamptz,$4::text,$5::text))
+            ORDER BY occurred_at ASC,provider ASC,provider_transaction_id ASC
+            LIMIT $6
+        `, [range.previousStart, range.end, cursor?.occurred_at || null, cursor?.provider || null, cursor?.provider_transaction_id || null, HISTORY_PAGE_SIZE]);
+        for (const row of result.rows) {
+            await visit(row);
+            scanned += 1;
+        }
+        if (result.rows.length < HISTORY_PAGE_SIZE) return scanned;
+        cursor = result.rows[result.rows.length - 1];
+    }
+    throw new Error(`Imported payment accounting exceeded ${HISTORY_PAGE_SIZE * MAX_HISTORY_PAGES} rows. Narrow the dashboard range; totals were not rendered as complete.`);
+}
+
+async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
+    if (typeof visit !== 'function') throw new Error('Accounting scan requires a visitor.');
+    const runs = await coverageRunsInRange(range, queryFn);
     const coverage = coverageFromRuns(runs.rows);
-    const records = [];
     const warnings = [];
     const refundState = new Map();
 
-    // Walk events chronologically so cumulative Stripe refund state can be
-    // diffed safely. Covered events still update the accumulator, but only
-    // uncovered events become fallback accounting records.
-    const chronologicalEvents = events.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    for (const row of chronologicalEvents) {
+    // Events are keyset-scanned oldest-first so cumulative Stripe refund state
+    // remains correct without retaining every webhook payload in Node memory.
+    // Covered events still advance the refund accumulator but are not emitted,
+    // because imported provider history is authoritative inside that interval.
+    const eventRowsScanned = await scanPaymentEventsInRange(range, async row => {
         const extracted = eventRecords(row, refundState, warnings);
-        if (!isCovered(coverage, row.provider, row.created_at)) records.push(...extracted);
-    }
-    for (const row of history.rows) {
-        if (!isCovered(coverage, row.provider, row.occurred_at)) continue;
+        if (isCovered(coverage, row.provider, row.created_at)) return;
+        for (const record of extracted) await visit(record);
+    }, queryFn);
+
+    const historyRowsScanned = await scanHistoryInRange(range, async row => {
+        if (!isCovered(coverage, row.provider, row.occurred_at)) return;
         const kind = classifier.historyKind(row);
-        if (kind) records.push(historyRecord(row, kind));
-    }
+        if (kind) await visit(historyRecord(row, kind));
+    }, queryFn);
+
+    return { coverage, warnings, eventRowsScanned, historyRowsScanned };
+}
+
+// Compatibility reader retained for old internal callers/tests. Financial
+// dashboard paths no longer call this accumulator. If a future caller tries to
+// materialize an extreme webhook range, fail explicitly instead of allowing an
+// unbounded multi-gigabyte array to grow inside the web process.
+async function paymentEventsInRange(range) {
+    const rows = [];
+    await scanPaymentEventsInRange(range, row => {
+        if (rows.length >= MAX_COMPAT_RECORDS) {
+            throw new Error(`Payment event compatibility reader exceeded ${MAX_COMPAT_RECORDS} rows. Use the streaming accounting scan instead.`);
+        }
+        rows.push(row);
+    });
+    return rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+}
+
+// Compatibility materializer for callers that genuinely need records. Revenue
+// dashboards use streaming reducers below and therefore remain bounded by one
+// database page plus compact aggregates. This path is deliberately fail-loud.
+async function accountingRecords(range) {
+    const records = [];
+    const meta = await scanAccountingRecords(range, record => {
+        if (records.length >= MAX_COMPAT_RECORDS) {
+            throw new Error(`Payment accounting compatibility reader exceeded ${MAX_COMPAT_RECORDS} records. Use streaming aggregation instead.`);
+        }
+        records.push(record);
+    });
     records.sort((a, b) => b.createdAt - a.createdAt);
-    return { records, coverage, warnings, eventRowsScanned: events.length };
+    return { records, ...meta };
 }
 
 function inWindow(at, start, end) { return at >= start && at < end; }
+function addMinor(map, key, minor) { map.set(key, Number(map.get(key) || 0) + Number(minor || 0)); }
+function rememberRecent(rows, record, limit = 12) {
+    rows.push(record);
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    if (rows.length > limit) rows.length = limit;
+}
 
 async function revenueSummary(range, fallbackCurrency = 'USD') {
-    const { records, coverage, warnings } = await accountingRecords(range);
-    const current = records.filter(row => row.kind === 'payment' && inWindow(row.createdAt, range.start, range.end));
-    const previous = records.filter(row => row.kind === 'payment' && inWindow(row.createdAt, range.previousStart, range.previousEnd));
-    const byCurrency = new Map();
-    for (const record of current) byCurrency.set(record.currency, (byCurrency.get(record.currency) || 0) + record.minor);
-    const primaryCurrency = [...byCurrency.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || fallbackCurrency || 'USD';
-    const totalMinor = current.filter(row => row.currency === primaryCurrency).reduce((sum, row) => sum + row.minor, 0);
-    const previousMinor = previous.filter(row => row.currency === primaryCurrency).reduce((sum, row) => sum + row.minor, 0);
+    const currentByCurrency = new Map();
+    const previousByCurrency = new Map();
+    const bucketByCurrency = new Map();
+    const recent = [];
+    const meta = await scanAccountingRecords(range, record => {
+        if (record.kind !== 'payment') return;
+        const current = inWindow(record.createdAt, range.start, range.end);
+        const previous = inWindow(record.createdAt, range.previousStart, range.previousEnd);
+        if (current) {
+            addMinor(currentByCurrency, record.currency, record.minor);
+            const key = bucketKey(record.createdAt, range.bucket);
+            if (!bucketByCurrency.has(key)) bucketByCurrency.set(key, new Map());
+            addMinor(bucketByCurrency.get(key), record.currency, record.minor);
+            rememberRecent(recent, record, 12);
+        } else if (previous) addMinor(previousByCurrency, record.currency, record.minor);
+    });
+
+    const primaryCurrency = [...currentByCurrency.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || fallbackCurrency || 'USD';
+    const totalMinor = Number(currentByCurrency.get(primaryCurrency) || 0);
+    const previousMinor = Number(previousByCurrency.get(primaryCurrency) || 0);
     const buckets = fillSeries(range, [], []).map(point => ({ ...point, revenue_minor: 0 }));
-    const byKey = new Map(buckets.map(point => [point.key, point]));
-    for (const record of current) {
-        if (record.currency !== primaryCurrency) continue;
-        const point = byKey.get(bucketKey(record.createdAt, range.bucket));
-        if (point) point.revenue_minor += record.minor;
-    }
-    return { primaryCurrency, totalMinor, previousMinor, currencies: [...byCurrency.entries()].map(([currency, minor]) => ({ currency, minor })), series: buckets, recent: current.slice(0, 12), coverage, warnings };
+    for (const point of buckets) point.revenue_minor = Number(bucketByCurrency.get(point.key)?.get(primaryCurrency) || 0);
+    return {
+        primaryCurrency,
+        totalMinor,
+        previousMinor,
+        currencies: [...currentByCurrency.entries()].map(([currency, minor]) => ({ currency, minor })),
+        series: buckets,
+        recent,
+        coverage: meta.coverage,
+        warnings: meta.warnings
+    };
 }
 
 async function commerceRevenue(range, reporting, reportingCurrency) {
-    const { records, coverage, warnings } = await accountingRecords(range);
     const target = reportingCurrency.cleanCurrency(reporting?.currency || 'GBP');
     const convert = record => reportingCurrency.convertMinor(Number(record.minor || 0), record.currency || target, target, reporting);
     let grossMinor = 0, previousGrossMinor = 0, refundMinor = 0, previousRefundMinor = 0, refundCount = 0;
     const payerKeys = new Set(), byBucketCurrency = new Map();
-    for (const record of records) {
-        const current = inWindow(record.createdAt, range.start, range.end), previous = inWindow(record.createdAt, range.previousStart, range.previousEnd);
-        if (!current && !previous) continue;
+
+    const meta = await scanAccountingRecords(range, record => {
+        const current = inWindow(record.createdAt, range.start, range.end);
+        const previous = inWindow(record.createdAt, range.previousStart, range.previousEnd);
+        if (!current && !previous) return;
         const amount = convert(record);
         if (record.kind === 'payment') {
             if (current) {
@@ -244,26 +326,35 @@ async function commerceRevenue(range, reporting, reportingCurrency) {
             if (current) { refundMinor += amount; refundCount += 1; }
             else previousRefundMinor += amount;
         }
-    }
+    });
+
     return {
         primaryCurrency: target, grossMinor, previousGrossMinor,
         netMinor: grossMinor - refundMinor, previousNetMinor: previousGrossMinor - previousRefundMinor,
         refundMinor, refundCount, previousRefundMinor,
         payingCustomers: payerKeys.size, arpuMinor: payerKeys.size ? Math.round(grossMinor / payerKeys.size) : 0,
-        currencies: [target], byBucketCurrency, coverage, warnings
+        currencies: [target], byBucketCurrency, coverage: meta.coverage, warnings: meta.warnings
     };
 }
 
 module.exports = {
     EVENT_PAGE_SIZE,
+    HISTORY_PAGE_SIZE,
     MAX_EVENT_PAGES,
+    MAX_HISTORY_PAGES,
+    MAX_COMPAT_RECORDS,
     coverageFromRuns,
     isCovered,
     historyKind: classifier.historyKind,
+    coverageRunsInRange,
+    scanPaymentEventsInRange,
+    scanHistoryInRange,
+    scanAccountingRecords,
     paymentEventsInRange,
     accountingRecords,
     revenueSummary,
     commerceRevenue,
     refundFromEvent,
-    eventRecords
+    eventRecords,
+    rememberRecent
 };
