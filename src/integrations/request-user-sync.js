@@ -6,10 +6,14 @@ const requestSettings = require('./request-service-settings');
 const planPolicy = require('./request-plan-policy');
 const requestEntitlements = require('./request-entitlement');
 const outbound = require('../security/outbound-url-policy');
+const scanCursor = require('../automation/scan-cursor');
 
 const REQUEST_PERMISSION = planPolicy.DEFAULT_REQUEST_MASK;
 const DEFAULT_SYNC_CONCURRENCY = 3;
 const MAX_SYNC_CONCURRENCY = 8;
+const REQUEST_SCAN_KEY = 'request_users.customers';
+const DEFAULT_SYNC_BATCH_SIZE = 250;
+const MAX_SYNC_BATCH_SIZE = 1000;
 const MANAGED_MAIN_FIELDS = [
   'username','email','locale','discoverRegion','streamingRegion','region','originalLanguage',
   'watchlistSyncMovies','watchlistSyncTv','movieQuotaLimit','movieQuotaDays','tvQuotaLimit','tvQuotaDays'
@@ -66,6 +70,12 @@ function syncConcurrency(value = process.env.REQUEST_USER_SYNC_CONCURRENCY) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? Math.min(MAX_SYNC_CONCURRENCY, parsed) : DEFAULT_SYNC_CONCURRENCY;
 }
+function syncBatchSize(value = process.env.REQUEST_USER_SYNC_BATCH_SIZE) {
+  return scanCursor.boundedInteger(value, DEFAULT_SYNC_BATCH_SIZE, 10, MAX_SYNC_BATCH_SIZE);
+}
+function isUuid(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
 async function mapBounded(items, limit, mapper) {
   const values = Array.from(items || []), results = new Array(values.length);
   if (!values.length) return results;
@@ -81,7 +91,17 @@ async function mapBounded(items, limit, mapper) {
   return results;
 }
 
-async function syncCandidates() {
+async function syncCandidates(options = {}) {
+  const after = isUuid(options.after) ? options.after : null;
+  const requestedIds = Array.isArray(options.ids) ? [...new Set(options.ids.map(String).filter(isUuid))] : [];
+  const limit = options.limit == null ? null : scanCursor.boundedInteger(options.limit, DEFAULT_SYNC_BATCH_SIZE, 1, MAX_SYNC_BATCH_SIZE + 1);
+  const params = [];
+  const where = [];
+  if (after) { params.push(after); where.push(`c.id>$${params.length}::uuid`); }
+  if (requestedIds.length) { params.push(requestedIds); where.push(`c.id=ANY($${params.length}::uuid[])`); }
+  let limitSql = '';
+  if (limit !== null) { params.push(limit); limitSql = `LIMIT $${params.length}`; }
+  const boundedMode = Boolean(after || requestedIds.length || limit !== null);
   const result = await query(`
     SELECT c.id AS customer_id,
       COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS email,
@@ -114,8 +134,10 @@ async function syncCandidates() {
     ) jf ON TRUE
     LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
     LEFT JOIN customer_request_permission_overrides cpo ON cpo.customer_id=c.id
-    ORDER BY COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user')
-  `);
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY ${boundedMode ? 'c.id' : "COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user')"}
+    ${limitSql}
+  `, params);
   return result.rows;
 }
 
@@ -127,6 +149,30 @@ async function externalUsers() {
     if (rows.length < take) break;
   }
   return users;
+}
+async function externalUsersForCandidates(candidates) {
+  const rows = Array.from(candidates || []);
+  const wantedIds = new Set(rows.map(row => row.external_user_id == null ? null : String(row.external_user_id)).filter(Boolean));
+  const wantedEmails = new Set();
+  for (const candidate of rows) {
+    for (const value of [candidate.email, candidate.external_email, fallbackEmail(candidate.customer_id)]) {
+      const email = validEmail(value);
+      if (email) wantedEmails.add(email);
+    }
+  }
+  const indexes = { byId: new Map(), byEmail: new Map() };
+  const take = 100;
+  for (let skip = 0; skip < 100000; skip += take) {
+    const page = await apiRequest(`/api/v1/user?take=${take}&skip=${skip}&sort=displayname`);
+    const remoteRows = Array.isArray(page?.results) ? page.results : [];
+    for (const user of remoteRows) {
+      const id = user?.id == null ? null : String(user.id);
+      const email = validEmail(user?.email);
+      if ((id && wantedIds.has(id)) || (email && wantedEmails.has(email))) rememberExternal(indexes, user);
+    }
+    if (remoteRows.length < take) break;
+  }
+  return indexes;
 }
 async function permissionState(externalUserId) {
   const response = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`), permissions = Number(response?.permissions);
@@ -218,7 +264,10 @@ function rememberExternal(indexes, external) {
 }
 async function createExternalUserConvergently({ candidate, indexes, email, username, password, createUser = null, listUsers = null }) {
   const create = createUser || (body => apiRequest('/api/v1/user', { method: 'POST', body }));
-  const refresh = listUsers || externalUsers;
+  const refresh = listUsers || (async () => {
+    const targeted = await externalUsersForCandidates([candidate]);
+    return [...new Map([...targeted.byId.values(), ...targeted.byEmail.values()].map(user => [String(user.id), user])).values()];
+  });
   try {
     const external = await create({ email, username, password });
     return { external: rememberExternal(indexes, external), created: true, recoveredConcurrentCreate: false };
@@ -323,15 +372,50 @@ async function syncBatch(candidates, indexes, summary) {
   });
   for (const result of results) countResult(summary, result);
 }
+async function requestRoleRetry() {
+  const result = await query(`
+    UPDATE automation_job_state
+    SET next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()
+    WHERE job_key='request_users' AND enabled=TRUE
+    RETURNING job_key
+  `);
+  return result.rows[0] || null;
+}
 async function syncAll() {
   const config = await configuration();
   if (!config.configured) throw new Error('Configure the external request service URL and API key first.');
-  const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]), indexes = indexesFor(existing), summary = operationalSummary(candidates.length);
+  const pageSize = syncBatchSize();
+  let after = await scanCursor.load(REQUEST_SCAN_KEY);
+  if (after && !isUuid(after)) {
+    await scanCursor.clear(REQUEST_SCAN_KEY);
+    after = null;
+  }
+  const fetched = await syncCandidates({ after, limit: pageSize + 1 });
+  const hasMore = fetched.length > pageSize;
+  const candidates = hasMore ? fetched.slice(0, pageSize) : fetched;
+  const indexes = await externalUsersForCandidates(candidates);
+  const summary = operationalSummary(candidates.length);
   await syncBatch(candidates, indexes, summary);
-  return finalizeSummary(summary);
+  const finalized = finalizeSummary(summary);
+  if (candidates.length && hasMore) {
+    const cursor = String(candidates[candidates.length - 1].customer_id || '');
+    if (!isUuid(cursor)) throw new Error('Request-user sync produced an invalid durable cursor.');
+    await scanCursor.save(REQUEST_SCAN_KEY, cursor);
+    finalized.cursor = cursor;
+  } else {
+    await scanCursor.clear(REQUEST_SCAN_KEY);
+    finalized.cursor = null;
+  }
+  finalized.hasMore = hasMore;
+  // Chain healthy pages immediately. Failed pages intentionally use the generic
+  // automation health backoff; the cursor still advances so one bad customer
+  // cannot poison the front of every batch, and the next completed sweep starts
+  // from the beginning to retry it.
+  if (hasMore && finalized.failed === 0) await requestRoleRetry();
+  return finalized;
 }
 function selectedIds(values) {
-  const ids = [...new Set((Array.isArray(values) ? values : [values]).map(v => String(v || '').trim()).filter(v => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)))];
+  const ids = [...new Set((Array.isArray(values) ? values : [values]).map(v => String(v || '').trim()).filter(isUuid))];
   if (!ids.length) throw new Error('Select at least one managed request user.');
   if (ids.length > 500) throw new Error('Select no more than 500 request users at once.');
   return ids;
@@ -339,18 +423,18 @@ function selectedIds(values) {
 async function syncSelected(customerIds) {
   const ids = selectedIds(customerIds), config = await configuration();
   if (!config.configured) throw new Error('Configure the external request service URL and API key first.');
-  const [allCandidates, existing] = await Promise.all([syncCandidates(), externalUsers()]);
-  const wanted = new Set(ids), candidates = allCandidates.filter(row => wanted.has(String(row.customer_id)));
+  const candidates = await syncCandidates({ ids, limit: ids.length });
   if (candidates.length !== ids.length) throw new Error('One or more selected customers no longer exist. Refresh the page and try again.');
-  const indexes = indexesFor(existing), summary = operationalSummary(candidates.length);
+  const indexes = await externalUsersForCandidates(candidates), summary = operationalSummary(candidates.length);
   await syncBatch(candidates, indexes, summary);
   return finalizeSummary(summary);
 }
 async function syncOneCustomer(customerId, options = {}) {
-  const candidates = await syncCandidates(), candidate = candidates.find(row => String(row.customer_id) === String(customerId));
+  const ids = selectedIds([customerId]);
+  const candidates = await syncCandidates({ ids, limit: 1 }), candidate = candidates[0];
   if (!candidate) throw new Error('Customer not found.');
-  const existing = await externalUsers();
-  return syncCustomer(candidate, indexesFor(existing), options);
+  const indexes = await externalUsersForCandidates([candidate]);
+  return syncCustomer(candidate, indexes, options);
 }
 async function requestAccessForCustomer(customerId) {
   const result = await query(`
@@ -390,4 +474,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, createExternalUserConvergently };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, createExternalUserConvergently, syncCustomer, syncBatch, requestRoleRetry };
