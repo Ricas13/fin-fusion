@@ -25,15 +25,15 @@ async function addServer({ name, slug, serverClass }) {
     return result.rows[0].id;
 }
 
-async function addPlan({ code, name, serverClass, billing = 'month', duration = 30 }) {
+async function addPlan({ code, name, serverClass, billing = 'month', duration = 30, isFreeTier = false }) {
     const result = await query(`
         INSERT INTO plans(
             code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
             allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,
-            allow_live_tv_management,server_class,active,visible,sort_order
-        ) VALUES($1,$2,'','direct',$4,$5,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,$3,TRUE,TRUE,10)
+            allow_live_tv_management,server_class,is_free_tier,active,visible,sort_order
+        ) VALUES($1,$2,'','direct',$4,$5,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,$3,$6,TRUE,TRUE,10)
         RETURNING *
-    `, [code, name, serverClass, billing, duration]);
+    `, [code, name, serverClass, billing, duration, Boolean(isFreeTier)]);
     return result.rows[0];
 }
 
@@ -57,7 +57,9 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     const premiumServer = await addServer({ name: 'Premium A', slug: 'premium-a', serverClass: 'premium' });
     const freeServer = await addServer({ name: 'Free A', slug: 'free-a', serverClass: 'free' });
     const premiumPlan = await addPlan({ code: 'premium-test', name: 'Premium Test', serverClass: 'premium' });
-    const freePlan = await addPlan({ code: 'free-test', name: 'Free Test', serverClass: 'free', billing: 'trial', duration: 1 });
+    // This fixture deliberately uses a trial lifecycle on the canonical Free
+    // Server lane, so its free-tier identity must be explicit under the DB guard.
+    const freePlan = await addPlan({ code: 'free-test', name: 'Free Test', serverClass: 'free', billing: 'trial', duration: 1, isFreeTier: true });
 
     const driftCustomer = await addBareCustomer('Bob Existing');
     await query(`
@@ -125,7 +127,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     await assert.rejects(
         () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'sleep-id', planId: null, applyPolicy: false }),
         /disabled jellyfin users cannot be managed/i,
-        'a remote disabled identity must never be adopted as a CAPTAiNFiN managed account'
+        'a remote disabled identity must never be adopted as a CAPTaINFiN managed account'
     );
 
     const linked = await importer.linkExistingCustomer({
