@@ -22,7 +22,8 @@ const REQUIRED_ENABLED_JOBS = new Set([
 const IMMEDIATE_CRITICAL_JOBS = new Set(['revenue_integrity']);
 const IMMEDIATE_WARNING_JOBS = new Set([
     'payment_events', 'provider_operation_recovery', 'customer_deletions',
-    'creation_intent_recovery', 'customer_service_recovery'
+    'creation_intent_recovery', 'customer_service_recovery',
+    'email_outbox', 'notification_outbox'
 ]);
 
 function timestamp(value) {
@@ -84,8 +85,9 @@ function jobDecision(row, state) {
     // The integrity watchdog means an invariant is already broken, not merely
     // that an attempt failed. Surface it on the very first observation.
     if (IMMEDIATE_CRITICAL_JOBS.has(jobKey)) return { visible: true, severity: 'critical', failures, reason: health };
-    // Durable money/access recovery jobs also surface from their first failed
-    // pass. They keep retrying automatically, but the operator should know now.
+    // Durable money/access recovery and external delivery jobs also surface from
+    // their first failed pass. They keep retrying automatically, but the operator
+    // should know now rather than discovering a stranded customer later.
     if (IMMEDIATE_WARNING_JOBS.has(jobKey)) return { visible: true, severity: failures >= JOB_CRITICAL_FAILURES ? 'critical' : 'warning', failures, reason: health };
     if (failures < JOB_WARNING_FAILURES) return { visible: false, severity: null, failures, reason: 'automatic_retry' };
     const core = CORE_AUTOMATION_JOBS.has(jobKey);
@@ -144,7 +146,7 @@ function paymentDecision(row) {
         return { visible: true, severity: 'critical', reason: type };
     }
     // Refunds, mapped renewal failures and mapped checkout completions are
-    // provider/lifecycle history. Surface them only when CAPTAiNFiN cannot
+    // provider/lifecycle history. Surface them only when CAPTaINFiN cannot
     // safely identify the customer or finish checkout reconciliation.
     if (type === 'refund') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'history_only' };
     if (type === 'failed_renewal') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'provider_retry' };
