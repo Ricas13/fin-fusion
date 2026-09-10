@@ -65,39 +65,46 @@ async function linkDiscord(raw,{userId,handle=null},{inspectFn=inspect,consumeFn
     // authoritative and all new code reads customer_communication_preferences.
     await client.query(`UPDATE customers SET discord_user_id=$2,discord_username=$3,updated_at=NOW() WHERE id=$1`,[customerId,id,linkedHandle]);
     if(previousId&&previousId!==id){
-      await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.discord.relink','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({managedRolesRevokedBeforeIdentityChange:true})]);
+      await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.discord.relink','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({managedRolesRevokedBeforeIdentityChange:true,previousDiscordUserId:previousId})]);
     }
   }));
 }
-async function revokeDiscordRolesBeforeUnlink(customerId){
-  const linked=await query(`SELECT discord_user_id FROM customer_communication_preferences WHERE customer_id=$1 AND discord_user_id IS NOT NULL AND discord_user_id<>'' LIMIT 1`,[customerId]);
-  if(!linked.rowCount)return{skipped:'not_linked'};
+async function revokeDiscordRolesBeforeUnlink(customerId,{alreadyLocked=false,syncRolesFn=null}={}){
   const lock=require('../jellyfin/reconciliation-lock');
-  const discordRoles=require('./discord-roles');
-  return lock.withCustomerReconciliationLock(customerId,async()=>{
+  const syncRoles=syncRolesFn||require('./discord-roles').syncRoleForCustomer;
+  const perform=async()=>{
+    const linked=await query(`SELECT discord_user_id FROM customer_communication_preferences WHERE customer_id=$1 AND discord_user_id IS NOT NULL AND discord_user_id<>'' LIMIT 1`,[customerId]);
+    if(!linked.rowCount)return{skipped:'not_linked',previousDiscordUserId:null};
+    const previousDiscordUserId=String(linked.rows[0].discord_user_id);
     // activePlanIds=[] deliberately means "remove every role CAPTAiNFiN has ever
-    // managed for this member". The Discord identity must remain in the DB
-    // until this succeeds; otherwise the user becomes unreachable forever.
-    const result=await discordRoles.syncRoleForCustomer(customerId,[]);
+    // managed for this member". The Discord identity remains authoritative until
+    // both this revoke and the following DB clear have completed under one lock.
+    const result=await syncRoles(customerId,[]);
     const failures=[...(result?.errors||[]),...(result?.configurationErrors||[])].filter(Boolean);
+    if(result?.skipped==='not_configured')failures.push('Discord role management is not configured');
     if(failures.length){
       const error=new Error(`Discord roles could not be removed before unlink: ${failures.join('; ').slice(0,800)}`);
       error.code='DISCORD_UNLINK_ROLE_REVOKE_FAILED';
       throw error;
     }
-    return result;
-  });
+    return{...result,previousDiscordUserId};
+  };
+  return alreadyLocked?perform():lock.withCustomerReconciliationLock(customerId,perform);
 }
-async function unlink(customerId,channel){
+async function unlink(customerId,channel,{withCustomerLock=null,syncRolesFn=null}={}){
   channel=cleanChannel(channel);
-  if(channel==='telegram')await query(`UPDATE customer_communication_preferences SET telegram_chat_id=NULL,telegram_linked_at=NULL,telegram_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
-  else{
-    await revokeDiscordRolesBeforeUnlink(customerId);
+  if(channel==='telegram'){
+    await query(`UPDATE customer_communication_preferences SET telegram_chat_id=NULL,telegram_linked_at=NULL,telegram_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
+    return;
+  }
+  const runLocked=withCustomerLock||require('../jellyfin/reconciliation-lock').withCustomerReconciliationLock;
+  await runLocked(customerId,async()=>{
+    const revoked=await revokeDiscordRolesBeforeUnlink(customerId,{alreadyLocked:true,syncRolesFn});
     await transaction(async client=>{
       await client.query(`UPDATE customer_communication_preferences SET discord_user_id=NULL,discord_handle=NULL,discord_linked_at=NULL,discord_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
       await client.query(`UPDATE customers SET discord_user_id=NULL,discord_username=NULL,updated_at=NOW() WHERE id=$1`,[customerId]);
-      await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.discord.unlink','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({managedRolesRevokedBeforeIdentityRemoval:true})]);
+      await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.discord.unlink','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({managedRolesRevokedBeforeIdentityRemoval:true,previousDiscordUserId:revoked?.previousDiscordUserId||null})]);
     });
-  }
+  });
 }
 module.exports={issue,inspect,consume,linkTelegram,linkDiscord,unlink,hash,revokeDiscordRolesBeforeUnlink};
