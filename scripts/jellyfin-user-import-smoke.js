@@ -34,7 +34,7 @@ async function addPlan({ code, name, serverClass, billing = 'month', duration = 
         ) VALUES($1,$2,'','direct',$4,$5,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,$3,TRUE,TRUE,10)
         RETURNING *
     `, [code, name, serverClass, billing, duration]);
-    return result.rows[0];
+    return result.rows[0].id;
 }
 
 async function addBareCustomer(name) {
@@ -128,7 +128,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     await assert.rejects(
         () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'sleep-id', planId: null, applyPolicy: false }),
         /disabled jellyfin users cannot be managed/i,
-        'a remote disabled identity must never be adopted as a CAPTaINFiN managed account'
+        'a remote disabled identity must never be adopted as a CAPTAiNFiN managed account'
     );
 
     const linked = await importer.linkExistingCustomer({
