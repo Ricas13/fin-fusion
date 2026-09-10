@@ -56,14 +56,16 @@ const emailOutbox = source('src/integrations/email-outbox.js');
 const emailClaim = between(emailOutbox, 'async function claimOne()', 'async function recordConfirmedFailure');
 assert(emailOutbox.includes('quarantineStaleSending'), 'email outbox must quarantine ambiguous in-flight delivery');
 assert(emailClaim.includes("status IN ('pending','failed')"), 'email claim must only lease confirmed retryable states');
-assert(!emailClaim.includes("status='sending'"), 'email claim must not automatically resend an ambiguous sending row');
+assert(!emailClaim.includes("(status='sending' AND last_attempt_at"), 'email claim must not automatically reclaim an ambiguous sending row');
+assert(!emailClaim.includes("OR (status='sending'"), 'email claim must not include sending rows in retry eligibility');
 assert(emailOutbox.includes("status='dead'"), 'email uncertain delivery must become operator-actionable');
 
 const notificationOutbox = source('src/integrations/notification-outbox.js');
 const notificationClaim = between(notificationOutbox, 'async function claim(', 'function retryAt');
 assert(notificationOutbox.includes('quarantineStaleSending'), 'notification outbox must quarantine ambiguous in-flight delivery');
 assert(notificationClaim.includes("status IN('pending','failed')"), 'notification claim must only lease confirmed retryable states');
-assert(!notificationClaim.includes("status='sending'"), 'notification claim must not automatically resend an ambiguous sending row');
+assert(!notificationClaim.includes("OR status='sending'"), 'notification claim must not include sending rows in retry eligibility');
+assert(!notificationClaim.includes("status IN('pending','failed','sending')"), 'notification claim must never lease sending rows');
 assert(notificationOutbox.includes("status='dead'"), 'notification uncertain delivery must become operator-actionable');
 
 const jellyfinJobs = source('src/jellyfin/jobs.js');
