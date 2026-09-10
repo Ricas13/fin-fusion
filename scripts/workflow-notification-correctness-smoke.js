@@ -184,23 +184,30 @@ for (const retired of [
 assert(retirementMigration.includes("SET event_scope='customer'"), 'payment.failed must be customer scoped to avoid duplicate admin renewal alerts');
 assert(retirementMigration.includes("WHERE event_type='payment.failed'"), 'payment.failed scope migration is missing');
 
-// Email and secondary messaging use one physical table. Each worker must claim,
-// retry and report only its own rows. Both workers must also reclaim stale
-// `sending` leases after a crash, otherwise one interrupted delivery is lost forever.
+// Email and secondary messaging share one physical outbox but have independent
+// workers. A stale `sending` row is ambiguous: the external provider may already
+// have accepted it before the worker died. Blindly reclaiming that row can send a
+// duplicate customer/admin message. Quarantine it as dead/uncertain instead and
+// require an explicit operator retry.
 assert(emailOutbox.includes("INSERT INTO notification_outbox(channel,message_type,recipient_email"), 'email enqueue must identify its channel explicitly');
 assert(emailOutbox.includes("VALUES('email',$1,$2,$3,$4,'pending',NOW())"), 'email rows must be persisted with channel=email');
-for (const fragment of [
-    "WHERE channel='email' AND (",
-    "status IN ('pending','failed')",
-    "status='sending' AND last_attempt_at<=NOW()-make_interval(mins=>$1)",
-    "WHERE id=$1 AND channel='email'",
-    "FROM notification_outbox WHERE channel='email' ORDER BY created_at DESC",
-    "WHERE channel='email'"
-]) assert(emailOutbox.includes(fragment), `email outbox is missing durable channel/lease handling: ${fragment}`);
-assert(emailOutbox.includes('const STALE_SENDING_MINUTES = 15'), 'email sending leases must have a bounded stale threshold');
-assert(secondaryOutbox.includes("WHERE channel<>'email' AND (((status IN('pending','failed')) AND next_attempt_at<=NOW()) OR (status='sending'"), 'secondary worker must reclaim stale sending rows while remaining isolated from email');
-assert(secondaryOutbox.includes('make_interval(mins=>$2)'), 'secondary notification sending leases must have an explicit stale timeout');
+assert(emailOutbox.includes("WHERE channel='email' AND status='sending'"), 'email worker must identify stale in-flight email rows for quarantine');
+assert(emailOutbox.includes("SET status='dead',last_error=$1"), 'ambiguous email delivery must be quarantined instead of automatically resent');
+assert(emailOutbox.includes("status IN ('pending','failed')"), 'email claims must be limited to confirmed retryable states');
+assert(!/SELECT id FROM notification_outbox[\s\S]*?status='sending'[\s\S]*?FOR UPDATE SKIP LOCKED/.test(emailOutbox), 'email claim must never reclaim an ambiguous sending row');
+assert(emailOutbox.includes("WHERE id=$1 AND channel='email'"), 'email row mutations must remain channel-scoped');
+assert(emailOutbox.includes("FROM notification_outbox WHERE channel='email' ORDER BY created_at DESC"), 'email delivery history must remain isolated to email rows');
+assert(emailOutbox.includes("WHERE channel='email'"), 'email aggregate queries must remain channel-scoped');
+assert(emailOutbox.includes('const STALE_SENDING_MINUTES = 15'), 'email sending ambiguity must have a bounded stale threshold');
+assert(emailOutbox.includes('UNCERTAIN_DELIVERY_ERROR'), 'email uncertain delivery must retain an operator-readable reason');
+
+assert(secondaryOutbox.includes("WHERE channel<>'email' AND status='sending'"), 'secondary worker must identify stale in-flight rows while remaining isolated from email');
+assert(secondaryOutbox.includes("SET status='dead',last_error=$1"), 'ambiguous secondary delivery must be quarantined instead of automatically resent');
+assert(secondaryOutbox.includes("WHERE channel<>'email' AND status IN('pending','failed')"), 'secondary claims must be limited to confirmed retryable states');
+assert(!/SELECT id,channel,message_type[\s\S]*?status='sending'[\s\S]*?FOR UPDATE SKIP LOCKED/.test(secondaryOutbox), 'secondary claim must never reclaim an ambiguous sending row');
+assert(secondaryOutbox.includes('make_interval(mins=>$2)'), 'secondary notification quarantine must have an explicit stale timeout');
 assert(secondaryOutbox.includes("WHERE channel<>'email' ORDER BY created_at DESC"), 'secondary delivery history must remain isolated from email rows');
+assert(secondaryOutbox.includes('UNCERTAIN_DELIVERY_ERROR'), 'secondary uncertain delivery must retain an operator-readable reason');
 
 console.log('workflow notification correctness smoke: ok');
 require('./notification-catalogue-producer-audit');
