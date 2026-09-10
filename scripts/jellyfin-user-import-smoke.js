@@ -34,7 +34,7 @@ async function addPlan({ code, name, serverClass, billing = 'month', duration = 
         ) VALUES($1,$2,'','direct',$4,$5,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,$3,TRUE,TRUE,10)
         RETURNING *
     `, [code, name, serverClass, billing, duration]);
-    return result.rows[0].id;
+    return result.rows[0];
 }
 
 async function addBareCustomer(name) {
