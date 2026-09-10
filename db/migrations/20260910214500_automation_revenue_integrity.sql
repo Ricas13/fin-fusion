@@ -20,7 +20,7 @@ INSERT INTO notification_preferences(
     'admin',
     FALSE,
     'Customer / revenue integrity failure',
-    'CAPTaINFiN detected a durable mismatch that can strand a customer, retain unpaid access, lose capacity, or leave a payment/deletion operation requiring intervention.'
+    'The integrity watchdog detected a durable mismatch that can strand a customer, retain unpaid access, lose capacity, or leave a payment/deletion operation requiring intervention.'
 )
 ON CONFLICT(event_type) DO UPDATE SET
     telegram_enabled=TRUE,
@@ -85,6 +85,32 @@ BEGIN
             NOT VALID;
     END IF;
 END $$;
+
+-- A customer deletion may legitimately take longer than the stale-reclaim
+-- threshold when it has many external resources. Every durable target transition
+-- therefore refreshes the parent job lease. This prevents an admin request and
+-- the automation worker from both reclaiming the same live deletion saga while
+-- the first worker is still making progress.
+CREATE OR REPLACE FUNCTION public.touch_customer_deletion_job_from_target()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    UPDATE customer_deletion_jobs
+       SET updated_at=NOW()
+     WHERE id=NEW.deletion_job_id
+       AND status='running';
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS customer_deletion_target_parent_heartbeat ON public.customer_external_deletion_targets;
+CREATE TRIGGER customer_deletion_target_parent_heartbeat
+AFTER INSERT OR UPDATE OF state,last_attempt_at,next_attempt_at,updated_at
+ON public.customer_external_deletion_targets
+FOR EACH ROW
+EXECUTE FUNCTION public.touch_customer_deletion_job_from_target();
 
 CREATE INDEX IF NOT EXISTS provider_operations_manual_review_attention_idx
     ON provider_operations(updated_at)
