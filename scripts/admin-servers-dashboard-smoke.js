@@ -26,10 +26,19 @@ async function seedServerData(suffix) {
         VALUES($1,5,2,2,1,1,0,0,NOW(),'Connection timed out',NOW()-INTERVAL '10 minutes')
     `, [server.id]);
     const customer = (await query(`INSERT INTO customers(display_name,email,created_at) VALUES('Servers Dashboard Customer',$1,NOW()) RETURNING id`, [`servers-widget-${suffix}@example.invalid`])).rows[0];
+
+    // Keep an intentionally-open historical row with a different title. The live
+    // widget must ignore this row and read active_playback_sessions instead.
     await query(`
         INSERT INTO playback_history(server_id,customer_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
-        VALUES($1,$2,$3,$4,'Smoke Movie','Movie','Living Room TV','Jellyfin Web','transcode',NOW()-INTERVAL '10 minutes',NOW(),NULL)
-    `, [server.id, customer.id, `servers-play-${suffix}`, `servers-session-${suffix}`]);
+        VALUES($1,$2,$3,$4,'Historical Open Row','Movie','Living Room TV','Jellyfin Web','transcode',NOW()-INTERVAL '10 minutes',NOW(),NULL)
+    `, [server.id, customer.id, `servers-history-${suffix}`, `servers-history-session-${suffix}`]);
+    await query(`
+        INSERT INTO active_playback_sessions(
+            server_id,jellyfin_session_id,playback_key,customer_id,item_name,item_type,
+            client_name,device_name,playback_method,stream_limit,first_seen_at,last_seen_at
+        ) VALUES($1,$2,$3,$4,'Smoke Movie','Movie','Jellyfin Web','Living Room TV','transcode',3,NOW()-INTERVAL '10 minutes',NOW())
+    `, [server.id, `servers-session-${suffix}`, `servers-play-${suffix}`, customer.id]);
     return { server, customer };
 }
 
@@ -91,9 +100,11 @@ async function main() {
     const libHtml = await libSpec.render(ctx);
     assert(typeof libHtml === 'string' && libHtml.length > 0);
 
-    // Current active streams (lazy) must reflect the seeded live session and never leak a session id or API key.
+    // Current active streams (lazy) must use active_playback_sessions, not an
+    // open historical row, and must never leak a session id or API key.
     const streams = await currentActiveStreams();
-    assert(streams.some(row => row.item_name === 'Smoke Movie'), 'current active streams must include the seeded live session');
+    assert(streams.some(row => row.item_name === 'Smoke Movie'), 'current active streams must include the seeded active session');
+    assert(!streams.some(row => row.item_name === 'Historical Open Row'), 'current active streams must not derive liveness from playback history');
     const streamsSpec = registry.getWidget('servers', 'currentActiveStreams');
     const streamsHtml = (await streamsSpec.render(ctx)).toLowerCase();
     for (const banned of ['api_key', 'apikey', 'password_hash', 'session_secret', 'servers-session-', 'jellyfin_session_id']) {

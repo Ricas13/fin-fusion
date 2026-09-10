@@ -4,6 +4,40 @@ const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
 
+const DEFAULT_RECONCILE_CONCURRENCY = 2;
+const MAX_RECONCILE_CONCURRENCY = 8;
+const DEFAULT_RECONCILE_LIMIT = 500;
+
+function boundedInteger(value, fallback, min, max) {
+    const parsed = Number.parseInt(value == null ? '' : String(value), 10);
+    if (!Number.isInteger(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function reconcileConcurrency(value = process.env.ENTITLEMENT_RECONCILE_CONCURRENCY) {
+    return boundedInteger(value, DEFAULT_RECONCILE_CONCURRENCY, 1, MAX_RECONCILE_CONCURRENCY);
+}
+
+function reconcileLimit(value = process.env.ENTITLEMENT_RECONCILE_LIMIT) {
+    return boundedInteger(value, DEFAULT_RECONCILE_LIMIT, 1, 1000);
+}
+
+async function mapBounded(items, limit, mapper) {
+    const values = Array.from(items || []);
+    if (!values.length) return [];
+    const output = new Array(values.length);
+    let cursor = 0;
+    const workers = Math.min(Math.max(1, Number(limit) || 1), values.length);
+    await Promise.all(Array.from({ length: workers }, async () => {
+        for (;;) {
+            const index = cursor++;
+            if (index >= values.length) return;
+            output[index] = await mapper(values[index], index);
+        }
+    }));
+    return output;
+}
+
 function cleanFailureMessage(value) {
     return String(value || 'Unknown entitlement reconciliation failure')
         .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
@@ -90,32 +124,52 @@ async function dueActiveCustomers(limit = 250) {
 }
 
 async function reconcileActiveEntitlements(options = {}) {
-    const rows = await dueCustomers(options.limit || 250);
+    const limit = options.limit == null ? reconcileLimit() : boundedInteger(options.limit, DEFAULT_RECONCILE_LIMIT, 1, 1000);
+    const concurrency = options.concurrency == null ? reconcileConcurrency() : boundedInteger(options.concurrency, DEFAULT_RECONCILE_CONCURRENCY, 1, MAX_RECONCILE_CONCURRENCY);
+    const rows = await dueCustomers(limit);
+    const results = await mapBounded(rows, concurrency, async row => {
+        try {
+            await provisioning.reconcileCustomer(row.customer_id);
+            return { status: 'succeeded' };
+        } catch (error) {
+            const state = await provisioning.control.getCustomerState(row.customer_id).catch(() => null);
+            if (state?.status === 'blocked') {
+                console.error(`Entitlement reconcile blocked for ${row.customer_id}:`, error.message);
+                return { status: 'blocked' };
+            }
+            const reason = cleanFailureMessage(error?.message || error);
+            console.error(`Entitlement reconcile failed for ${row.customer_id}:`, error.message);
+            return { status: 'failed', reason };
+        }
+    });
+
     let succeeded = 0;
     let blocked = 0;
     let failed = 0;
     const failureReasons = new Map();
-    for (const row of rows) {
-        try {
-            await provisioning.reconcileCustomer(row.customer_id);
-            succeeded += 1;
-        } catch (error) {
-            const state = await provisioning.control.getCustomerState(row.customer_id).catch(() => null);
-            if (state?.status === 'blocked') blocked += 1;
-            else {
-                failed += 1;
-                const reason = cleanFailureMessage(error?.message || error);
-                failureReasons.set(reason, Number(failureReasons.get(reason) || 0) + 1);
-            }
-            console.error(`Entitlement reconcile failed for ${row.customer_id}:`, error.message);
+    for (const result of results) {
+        if (result?.status === 'succeeded') succeeded += 1;
+        else if (result?.status === 'blocked') blocked += 1;
+        else if (result?.status === 'failed') {
+            failed += 1;
+            failureReasons.set(result.reason, Number(failureReasons.get(result.reason) || 0) + 1);
         }
     }
+
     const warning = summarizeFailureReasons(failureReasons, failed);
     const blockedWarning = blocked
         ? `${blocked} entitlement reconciliation${blocked === 1 ? '' : 's'} blocked pending recovery.`
         : null;
     const combinedWarning = [blockedWarning, warning].filter(Boolean).join('; ').slice(0, 1000) || null;
-    return { total: rows.length, succeeded, blocked, failed, ...(combinedWarning ? { warning: combinedWarning } : {}) };
+    return {
+        total: rows.length,
+        succeeded,
+        blocked,
+        failed,
+        concurrency,
+        limit,
+        ...(combinedWarning ? { warning: combinedWarning } : {})
+    };
 }
 
 async function healthcheckAllServers() {
@@ -127,4 +181,18 @@ async function healthcheckAllServers() {
     return results;
 }
 
-module.exports = { dueCustomers, dueActiveCustomers, reconcileActiveEntitlements, healthcheckAllServers, cleanFailureMessage, summarizeFailureReasons };
+module.exports = {
+    DEFAULT_RECONCILE_CONCURRENCY,
+    MAX_RECONCILE_CONCURRENCY,
+    DEFAULT_RECONCILE_LIMIT,
+    boundedInteger,
+    reconcileConcurrency,
+    reconcileLimit,
+    mapBounded,
+    dueCustomers,
+    dueActiveCustomers,
+    reconcileActiveEntitlements,
+    healthcheckAllServers,
+    cleanFailureMessage,
+    summarizeFailureReasons
+};

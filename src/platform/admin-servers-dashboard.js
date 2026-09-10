@@ -32,23 +32,19 @@ async function playbackMethodBreakdown(range) {
     return result.rows;
 }
 
-// Live-only: playback_history has no session id/API key/token columns, and
-// this intentionally never selects any -- only customer-facing identity and
-// playback metadata.
+// Live-only: active_playback_sessions is the bounded source of truth for what
+// is playing now. Never derive this widget by scanning historical playback.
 async function currentActiveStreams() {
     const result = await query(`
-        SELECT ph.id,ph.item_name,ph.item_type,ph.playback_method,ph.started_at,ph.client_name,
+        SELECT aps.playback_key AS id,aps.item_name,aps.item_type,aps.playback_method,
+               aps.first_seen_at AS started_at,aps.client_name,aps.stream_limit,
                js.name server_name,
-               COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.id customer_id,
-               (SELECT p.streams FROM subscriptions sub JOIN plans p ON p.id=sub.plan_id
-                WHERE sub.customer_id=c.id AND sub.status IN('active','trialing') AND sub.current_period_end>NOW()
-                ORDER BY sub.current_period_end DESC LIMIT 1) stream_limit
-        FROM playback_history ph
-        JOIN jellyfin_servers js ON js.id=ph.server_id
-        LEFT JOIN customers c ON c.id=ph.customer_id
+               COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.id customer_id
+        FROM active_playback_sessions aps
+        JOIN jellyfin_servers js ON js.id=aps.server_id
+        LEFT JOIN customers c ON c.id=aps.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id
-        WHERE ph.ended_at IS NULL
-        ORDER BY ph.started_at ASC
+        ORDER BY aps.first_seen_at ASC
         LIMIT 50
     `);
     return result.rows;
