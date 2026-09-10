@@ -4,6 +4,7 @@ const express=require('express');
 const bcrypt=require('bcryptjs');
 const customers=require('../customers');
 const csrf=require('../auth/csrf');
+const routeRateLimit=require('../security/route-rate-limit');
 const {query,transaction}=require('../db');
 const emailChange=require('../security/customer-email-change');
 const emailSettings=require('../integrations/email-settings');
@@ -14,6 +15,8 @@ const operations=require('./operations-settings');
 const adminHtml=require('./admin-html');
 const {PASSWORD_TOKEN,EMAIL_OLD_TOKEN,EMAIL_NEW_TOKEN}=require('./portal-credential-confirmation');
 
+const adminRecoveryLimit=routeRateLimit.middleware({scope:'admin-portal-credential-recovery',max:20,windowSeconds:300,reason:'admin_portal_credential_recovery'});
+
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function cleanReason(value){const reason=String(value||'').trim().slice(0,500);if(reason.length<8)throw new Error('Enter a short recovery reason (at least 8 characters).');return reason;}
@@ -22,14 +25,14 @@ function requestMeta(req){return{ip:String(req.ip||req.socket?.remoteAddress||''
 
 async function revokeAll(client,userId){const sessions=await client.query(`SELECT session_id FROM auth_sessions WHERE user_id=$1 AND role='customer'`,[userId]),ids=sessions.rows.map(row=>row.session_id);await client.query(`UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE user_id=$1 AND role='customer'`,[userId]);if(ids.length)await client.query(`DELETE FROM user_sessions WHERE sid=ANY($1::text[])`,[ids]);return ids.length;}
 
-async function notifyPreviousAddress({to,customerId,emailChanged,passwordChanged,twoFactorCleared}){
+async function notifyPreviousAddress({to,emailChanged,passwordChanged,twoFactorCleared}){
   try{
     if(!to)return;
     const mail=await emailSettings.status();if(!mail.configured)return;
     await runtimeSettings.ensureLoaded();const site=runtimeSettings.siteName(),cfg=await operations.get().catch(()=>operations.DEFAULTS),base=String(cfg.publicBaseUrl||'').replace(/\/+$/,'');
     const changes=[emailChanged?'portal email':'',passwordChanged?'portal password':'',twoFactorCleared?'portal 2FA':''].filter(Boolean).join(', ');
     await emailOutbox.enqueue({type:'admin_portal_credential_recovery',to,subject:`${site} account recovery performed`,text:`An administrator performed assisted account recovery for your ${site} portal account. Changed: ${changes}. All portal sessions were signed out. If you did not request this, contact support immediately.`,html:renderProfessionalEmail({subject:`${site} account recovery performed`,title:'Administrator-assisted account recovery',text:`An administrator changed ${changes} after an account-recovery request. All portal sessions were signed out. If you did not request this, contact support immediately.`,eventLabel:'Account recovery',tone:'warn',actionLabel:base?'Sign in to portal':'',actionUrl:base?`${base}/account/login`:'',siteName:site,publicBaseUrl:base}),dedupeKey:null});
-  }catch(error){console.warn(`Admin portal recovery notice failed for ${customerId}:`,error.message);}
+  }catch(_){console.warn('Admin portal recovery notice failed');}
 }
 
 async function recoveryPage(req,res){
@@ -55,7 +58,7 @@ async function recoveryPage(req,res){
 function createAdminPortalCredentialRecoveryRouter(){
   const router=express.Router();router.use('/admin/users/:customerId/portal-credential-recovery',gate,noStore);
   router.get('/admin/users/:customerId/portal-credential-recovery',recoveryPage);
-  router.post('/admin/users/:customerId/portal-credential-recovery',async(req,res)=>{
+  router.post('/admin/users/:customerId/portal-credential-recovery',adminRecoveryLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid security token');
     try{
       if(String(req.body.confirmation||'').trim()!=='RECOVER PORTAL'||req.body.verifiedCustomer!=='1')throw new Error('Recovery confirmation was not completed.');
@@ -77,7 +80,7 @@ function createAdminPortalCredentialRecoveryRouter(){
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.portal_credential_recovery','customer',$2,$3::jsonb)`,[req.session.authUserId,row.id,JSON.stringify({reason,emailChanged,passwordChanged:Boolean(passwordHash),twoFactorCleared:clear2fa,previousTwoFactorEnabled:Boolean(row.totp_enabled),previousEmailVerified:Boolean(row.email_verified_at),revokedSessions:revoked,...meta})]);
         return{oldEmail:row.email,oldEmailVerified:Boolean(row.email_verified_at),emailChanged,passwordChanged:Boolean(passwordHash),twoFactorCleared:clear2fa,revoked};
       });
-      if(outcome.oldEmailVerified)notifyPreviousAddress({to:outcome.oldEmail,customerId:req.params.customerId,...outcome}).catch(()=>{});
+      if(outcome.oldEmailVerified)notifyPreviousAddress({to:outcome.oldEmail,...outcome}).catch(()=>{});
       return res.redirect(back(req.params.customerId,`Portal recovery completed. ${outcome.revoked} portal session(s) revoked. Jellyfin/Overseerr credentials were not changed.`));
     }catch(error){return res.redirect(back(req.params.customerId,'',String(error.message||'Portal recovery failed.')));}
   });
