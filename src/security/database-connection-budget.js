@@ -3,8 +3,11 @@
 const AUTOMATION_ROLE = 'steamfusion_automation';
 const AUTOMATION_ROLE_CONNECTION_LIMIT = 12;
 const AUTOMATION_DEFAULT_PRIMARY_POOL_MAX = 6;
-const AUTOMATION_DEFAULT_MAINTENANCE_LOCK_POOL_MAX = 4;
-const AUTOMATION_DEFAULT_RECONCILIATION_MAX = 1;
+// Keep the total runtime-role budget at 12 while allowing two independent
+// customer reconciliations to make forward progress. Three maintenance-lock
+// connections still cover the automation worker's default max of three jobs.
+const AUTOMATION_DEFAULT_MAINTENANCE_LOCK_POOL_MAX = 3;
+const AUTOMATION_DEFAULT_RECONCILIATION_MAX = 2;
 const AUTOMATION_HEALTHCHECK_RESERVE = 1;
 
 function boundedInteger(value, fallback, min, max) {
@@ -31,7 +34,7 @@ function automationConnectionBudget(env = process.env) {
     // Keep the web application's RECONCILIATION_MAX_CONCURRENCY independent.
     // A developer running the worker directly loads the same .env file, so
     // reusing the web value here could accidentally turn a safe web setting of
-    // four into four extra long-lived automation-role connections.
+    // four into extra long-lived automation-role connections.
     const reconciliationMax = boundedInteger(
         env.AUTOMATION_RECONCILIATION_MAX_CONCURRENCY,
         AUTOMATION_DEFAULT_RECONCILIATION_MAX,
