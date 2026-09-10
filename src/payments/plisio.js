@@ -6,6 +6,8 @@ const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
 
 const API_BASE = 'https://api.plisio.net';
+const WAITING_STATUSES = new Set(['new', 'pending', 'pending internal']);
+const TERMINAL_UNPAID_STATUSES = new Set(['expired', 'cancelled', 'cancelled duplicate', 'error', 'mismatch']);
 
 function enabled() {
     const cfg = providerSettings.peek('plisio');
@@ -165,7 +167,7 @@ async function activateCompleted(remote, fields, intent) {
 async function applyRemoteOperation(remote, intent) {
     const fields = operationFields(remote);
     if (fields.status === 'completed') return activateCompleted(remote, fields, intent);
-    if (['new', 'pending', 'pending internal'].includes(fields.status)) return { status: fields.status, completed: false, waiting: true };
+    if (WAITING_STATUSES.has(fields.status)) return { status: fields.status, completed: false, waiting: true };
     if (['expired', 'cancelled', 'cancelled duplicate'].includes(fields.status)) {
         await intents.completeVerifiedProvider('plisio', fields.id, 'cancelled');
         return { status: fields.status, completed: false, terminal: true };
@@ -193,6 +195,8 @@ async function processClaimedCallback(eventRow, payload) {
 
 async function processWebhook(rawBody, contentType = '') {
     const payload = parseCallback(rawBody, contentType);
+    // Authentication intentionally happens before the event is persisted. New
+    // invalid or forged callbacks must never enter the durable retry queue.
     const { providerId } = await authenticateCallback(payload);
     const callbackFields = operationFields(payload);
     const marker = String(payload?.updated_at || payload?.created_at || payload?.date || '').slice(0, 80);
@@ -213,11 +217,64 @@ async function processWebhook(rawBody, contentType = '') {
     };
 }
 
+function storedEventProviderId(eventRow, payload = null) {
+    const payloadId = String(payload?.txn_id || '').trim();
+    if (payloadId) return payloadId;
+    const eventId = String(eventRow?.provider_event_id || '').trim();
+    const match = eventId.match(/^operation:([^:]+)(?::|$)/i);
+    return String(match?.[1] || '').trim();
+}
+
+async function reconcileStoredPaymentEvent(eventRow, payload) {
+    try {
+        const providerId = storedEventProviderId(eventRow, payload);
+        if (!providerId) throw new Error('Stored Plisio payment event has no provider operation ID.');
+
+        // Persisted events are historical evidence, not an authentication
+        // boundary. Re-fetch the transaction through the authenticated merchant
+        // API and use that provider response as the recovery source of truth.
+        const remote = await getOperation(providerId);
+        const fields = operationFields(remote);
+        if (fields.id !== providerId) throw new Error('Plisio operation ID does not match the stored payment event.');
+
+        const intent = await intents.findProviderIntent('plisio', providerId);
+        if (!intent) {
+            if (TERMINAL_UNPAID_STATUSES.has(fields.status)) {
+                // An old rejected/orphan callback for a transaction that can no
+                // longer collect money is safe to close. There is no entitlement
+                // or revenue action left to recover.
+                await lifecycle.finishPaymentEvent(eventRow);
+                return { processed: true, status: fields.status, completed: false, terminal: true, orphaned: true };
+            }
+            if (fields.status === 'completed') {
+                throw new Error('Completed Plisio transaction has no local checkout intent and requires manual reconciliation.');
+            }
+            if (WAITING_STATUSES.has(fields.status)) {
+                throw new Error(`Plisio ${fields.status} operation has no local checkout intent.`);
+            }
+            throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
+        }
+
+        if (fields.orderNumber !== String(intent.id)) throw new Error('Plisio operation does not match the local checkout intent.');
+        if (!(fields.status === 'completed' || WAITING_STATUSES.has(fields.status) || TERMINAL_UNPAID_STATUSES.has(fields.status))) {
+            throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
+        }
+
+        const result = await applyRemoteOperation(remote, intent);
+        await lifecycle.finishPaymentEvent(eventRow);
+        return { processed: true, ...result };
+    } catch (error) {
+        await lifecycle.finishPaymentEvent(eventRow, error);
+        console.error('Stored Plisio payment event reconciliation deferred:', error.message);
+        return { processed: false, error };
+    }
+}
+
 async function retryPaymentEvent(eventRow) {
     if (!eventRow || eventRow.provider !== 'plisio') throw new Error('Plisio retry received the wrong payment event.');
     const payload = eventRow.payload;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Stored Plisio payment event payload is invalid.');
-    return processClaimedCallback(eventRow, payload);
+    return reconcileStoredPaymentEvent(eventRow, payload);
 }
 
 async function confirmCheckout(providerTxnId, intent) {
@@ -225,4 +282,25 @@ async function confirmCheckout(providerTxnId, intent) {
     return applyRemoteOperation(remote, intent);
 }
 
-module.exports = { API_BASE, enabled, api, createCheckout, getOperation, parseCallback, callbackDigest, moneyMinor, operationFields, processWebhook, retryPaymentEvent, confirmCheckout, applyRemoteOperation, authenticateCallback, verifiedRemoteOperation, safeEqual };
+module.exports = {
+    API_BASE,
+    WAITING_STATUSES,
+    TERMINAL_UNPAID_STATUSES,
+    enabled,
+    api,
+    createCheckout,
+    getOperation,
+    parseCallback,
+    callbackDigest,
+    moneyMinor,
+    operationFields,
+    processWebhook,
+    retryPaymentEvent,
+    confirmCheckout,
+    applyRemoteOperation,
+    authenticateCallback,
+    verifiedRemoteOperation,
+    storedEventProviderId,
+    reconcileStoredPaymentEvent,
+    safeEqual
+};
