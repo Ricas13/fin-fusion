@@ -71,6 +71,49 @@ async function acquireSharedMaintenanceLock({ tryOnly = true } = {}) {
     }
 }
 
+// A session advisory lock is owned by the PostgreSQL session, not by an HTTP
+// request. Holding one dedicated pool client per mutating request therefore adds
+// no restore-safety compared with holding one shared session lock for all
+// concurrent mutations in this Node process. Reference-counting the process lock
+// preserves the whole-request restore barrier (including provider/API calls)
+// while reducing the request-side lock-pool demand from O(concurrent mutations)
+// to one connection per web process.
+let requestLockHandle = null;
+let requestLockRefs = 0;
+let requestLockTransition = Promise.resolve();
+
+function serializeRequestLock(fn) {
+    const next = requestLockTransition.then(fn, fn);
+    requestLockTransition = next.then(() => undefined, () => undefined);
+    return next;
+}
+
+async function acquireRequestMaintenanceLock() {
+    return serializeRequestLock(async () => {
+        if (!requestLockHandle) {
+            const handle = await acquireSharedMaintenanceLock({ tryOnly: true });
+            if (!handle) return null;
+            requestLockHandle = handle;
+        }
+
+        requestLockRefs += 1;
+        let released = false;
+        return {
+            release: async () => {
+                if (released) return;
+                released = true;
+                await serializeRequestLock(async () => {
+                    requestLockRefs = Math.max(0, requestLockRefs - 1);
+                    if (requestLockRefs !== 0 || !requestLockHandle) return;
+                    const handle = requestLockHandle;
+                    requestLockHandle = null;
+                    await handle.release();
+                });
+            }
+        };
+    });
+}
+
 async function withMaintenanceSharedLock(fn, { skipIfBusy = true } = {}) {
     const handle = await acquireSharedMaintenanceLock({ tryOnly: skipIfBusy });
     if (!handle) return { skipped: true, reason: 'database_maintenance' };
@@ -86,7 +129,7 @@ async function requestMaintenanceGuard(req, res, next) {
 
     let handle;
     try {
-        handle = await acquireSharedMaintenanceLock({ tryOnly: true });
+        handle = await acquireRequestMaintenanceLock();
         if (!handle) {
             res.setHeader('Retry-After', '30');
             return res.status(503).send('CAPTAiNFiN is temporarily unavailable for database maintenance.');
@@ -99,11 +142,11 @@ async function requestMaintenanceGuard(req, res, next) {
             await handle.release();
         };
 
-        // Keep the shared session-level lock for the complete mutation request,
-        // including any provider/API calls that occur before the local DB write.
-        // An exclusive restore lock therefore cannot be acquired halfway through
-        // a Stripe/PayPal/admin transition. Release on either normal completion
-        // or an aborted connection; release() is idempotent for the dual events.
+        // Keep the process shared session-level lock for the complete mutation
+        // request, including provider/API calls that occur before the local DB
+        // write. The final in-flight mutation releases it; finish/close can both
+        // fire, so each request lease and the underlying process lease are
+        // idempotent.
         res.once('finish', () => { release().catch(error => console.warn(`Maintenance request-lock release failed: ${error.message}`)); });
         res.once('close', () => { release().catch(error => console.warn(`Maintenance request-lock release failed: ${error.message}`)); });
         return next();
@@ -114,11 +157,20 @@ async function requestMaintenanceGuard(req, res, next) {
 }
 
 async function closeMaintenanceLockPool() {
+    await serializeRequestLock(async () => {
+        requestLockRefs = 0;
+        if (requestLockHandle) {
+            const handle = requestLockHandle;
+            requestLockHandle = null;
+            await handle.release().catch(() => {});
+        }
+    });
     await lockPool.end();
 }
 
 module.exports = {
     acquireSharedMaintenanceLock,
+    acquireRequestMaintenanceLock,
     withMaintenanceSharedLock,
     requestMaintenanceGuard,
     closeMaintenanceLockPool,
