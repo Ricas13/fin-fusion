@@ -43,7 +43,7 @@ function provisioningDecision(row, now = Date.now()) {
     const ageMs = problemStarted ? Math.max(0, now - problemStarted) : Infinity;
 
     // Access removal is safety-sensitive: a failed disable can leave service
-    // available after CAPTaINFiN intended to revoke it, so do not hide it behind
+    // available after CAPTAiNFiN intended to revoke it, so do not hide it behind
     // the normal retry tolerance.
     if (action === 'disable') {
         return { visible: true, automatic: false, severity: 'critical', failures, ageMs, reason: 'access_removal_failed' };
@@ -144,7 +144,7 @@ function paymentDecision(row) {
         return { visible: true, severity: 'critical', reason: type };
     }
     // Refunds, mapped renewal failures and mapped checkout completions are
-    // provider/lifecycle history. Surface them only when CAPTaINFiN cannot
+    // provider/lifecycle history. Surface them only when CAPTAiNFiN cannot
     // safely identify the customer or finish checkout reconciliation.
     if (type === 'refund') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'history_only' };
     if (type === 'failed_renewal') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'provider_retry' };
