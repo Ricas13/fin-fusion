@@ -8,6 +8,13 @@ function source(relative) {
     return fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
 }
 
+function between(body, start, end) {
+    const from = body.indexOf(start);
+    assert(from >= 0, `Missing source marker: ${start}`);
+    const to = end ? body.indexOf(end, from + start.length) : body.length;
+    return body.slice(from, to < 0 ? body.length : to);
+}
+
 const critical = require('../src/automation/critical-jobs');
 const jobs = require('../src/automation/jobs');
 const attentionPolicy = require('../src/platform/actionable-attention-policy');
@@ -45,15 +52,26 @@ const channelLinks = source('src/integrations/customer-channel-links.js');
 assert(channelLinks.includes('alreadyLocked:true'), 'Discord unlink must revoke roles while still holding the same reconciliation lock');
 assert(channelLinks.includes('previousDiscordUserId'), 'Discord unlink audit must retain the discarded identity for repairability');
 
-for (const file of ['src/integrations/email-outbox.js', 'src/integrations/notification-outbox.js']) {
-    const body = source(file);
-    assert(body.includes('quarantineStaleSending'), `${file} must quarantine ambiguous in-flight delivery`);
-    assert(!/status='sending'\s+AND\s+last_attempt_at<=NOW\(\)-make_interval/.test(body), `${file} must not automatically reclaim stale sending rows for resend`);
-    assert(body.includes("status='dead'"), `${file} must make uncertain delivery operator-actionable`);
-}
+const emailOutbox = source('src/integrations/email-outbox.js');
+const emailClaim = between(emailOutbox, 'async function claimOne()', 'async function recordConfirmedFailure');
+assert(emailOutbox.includes('quarantineStaleSending'), 'email outbox must quarantine ambiguous in-flight delivery');
+assert(emailClaim.includes("status IN ('pending','failed')"), 'email claim must only lease confirmed retryable states');
+assert(!emailClaim.includes("status='sending'"), 'email claim must not automatically resend an ambiguous sending row');
+assert(emailOutbox.includes("status='dead'"), 'email uncertain delivery must become operator-actionable');
+
+const notificationOutbox = source('src/integrations/notification-outbox.js');
+const notificationClaim = between(notificationOutbox, 'async function claim(', 'function retryAt');
+assert(notificationOutbox.includes('quarantineStaleSending'), 'notification outbox must quarantine ambiguous in-flight delivery');
+assert(notificationClaim.includes("status IN('pending','failed')"), 'notification claim must only lease confirmed retryable states');
+assert(!notificationClaim.includes("status='sending'"), 'notification claim must not automatically resend an ambiguous sending row');
+assert(notificationOutbox.includes("status='dead'"), 'notification uncertain delivery must become operator-actionable');
 
 const jellyfinJobs = source('src/jellyfin/jobs.js');
 assert(jellyfinJobs.includes('ensureFailureBackoff'), 'entitlement reconciliation must persist backoff for pre-state failures');
+
+const creationRecovery = source('src/automation/jellyfin-creation-intent-recovery.js');
+assert(creationRecovery.includes("admin?.mode === 'admin_present'"), 'creation-intent recovery must preserve explicit admin-present authority');
+assert(creationRecovery.includes('beforeDelete'), 'creation-intent cleanup must re-check authority before remote deletion');
 
 const inactivity = source('src/automation/customer-inactivity-scoped.js');
 assert(inactivity.includes('MAX_ENFORCEMENTS_PER_RUN'), 'inactivity automation must have a destructive-run safety cap');
