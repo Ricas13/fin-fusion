@@ -11,7 +11,7 @@ const providerOps = require('../src/payments/provider-operations');
 const integrity = require('../src/automation/revenue-integrity');
 
 const suffix = crypto.randomBytes(5).toString('hex');
-const created = { customers: [], plans: [], paymentEvents: [], providerOps: [] };
+const created = { customers: [], plans: [], paymentEvents: [], providerOps: [], deletionJobs: [] };
 
 async function createCustomer(label) {
     const result = await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`, [
@@ -130,7 +130,29 @@ async function testManualProviderOperationIsIntegrityFinding() {
     assert(findings.some(item => item.kind === 'provider_manual_review' && String(item.id) === String(op.id)), 'manual-review provider operation must be surfaced by integrity watchdog');
 }
 
+async function testDeletionTargetRefreshesParentLease() {
+    const syntheticCustomerId = crypto.randomUUID();
+    const job = await query(`
+        INSERT INTO customer_deletion_jobs(customer_id,reason,status,updated_at)
+        VALUES($1,'Automation reliability deletion heartbeat','running',NOW()-INTERVAL '1 hour')
+        RETURNING id,updated_at
+    `, [syntheticCustomerId]);
+    created.deletionJobs.push(job.rows[0].id);
+    const before = new Date(job.rows[0].updated_at).getTime();
+
+    await query(`
+        INSERT INTO customer_external_deletion_targets(
+            deletion_job_id,customer_id,provider,resource_type,external_identifier,state,updated_at
+        ) VALUES($1,$2,'jellyfin','user',$3,'pending',NOW())
+    `, [job.rows[0].id, syntheticCustomerId, `heartbeat:${suffix}`]);
+
+    const after = await query('SELECT updated_at FROM customer_deletion_jobs WHERE id=$1', [job.rows[0].id]);
+    assert(after.rowCount, 'deletion heartbeat fixture job must still exist');
+    assert(new Date(after.rows[0].updated_at).getTime() > before, 'durable deletion target progress must refresh the parent deletion job lease');
+}
+
 async function cleanup() {
+    if (created.deletionJobs.length) await query(`DELETE FROM customer_deletion_jobs WHERE id=ANY($1::uuid[])`, [created.deletionJobs]).catch(() => {});
     if (created.paymentEvents.length) await query(`DELETE FROM payment_events WHERE id=ANY($1::uuid[])`, [created.paymentEvents]).catch(() => {});
     if (created.providerOps.length) await query(`DELETE FROM provider_operations WHERE id=ANY($1::uuid[])`, [created.providerOps]).catch(() => {});
     for (const customerId of [...created.customers].reverse()) {
@@ -149,6 +171,7 @@ async function cleanup() {
         await testPaidPlanCannotEnterFreePool();
         await testImmediatePlanChangeWakesReconciliation();
         await testManualProviderOperationIsIntegrityFinding();
+        await testDeletionTargetRefreshesParentLease();
         console.log('automation reliability audit DB smoke: ok');
     } finally {
         await cleanup();
