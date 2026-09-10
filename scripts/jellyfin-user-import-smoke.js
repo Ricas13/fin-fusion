@@ -127,7 +127,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     await assert.rejects(
         () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'sleep-id', planId: null, applyPolicy: false }),
         /disabled jellyfin users cannot be managed/i,
-        'a remote disabled identity must never be adopted as a CAPTaINFiN managed account'
+        'a remote disabled identity must never be adopted as a CAPTAiNFiN managed account'
     );
 
     const linked = await importer.linkExistingCustomer({
