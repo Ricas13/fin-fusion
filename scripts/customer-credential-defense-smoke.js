@@ -119,8 +119,8 @@ async function main() {
   const credentialPolicyOrder=router.indexOf('router.use(createPortalCredentialConfirmationRouter())');
   const customerSecurityOrder=router.indexOf('router.use(createCustomerSecurityRouter())');
   assert(credentialPolicyOrder>=0&&customerSecurityOrder>credentialPolicyOrder,'portal credential confirmation policy must run before customer-security route ownership');
-  assert(portalCredentials.includes("router.use('/account/security/password',onlyPost,requireCustomer,csrfGuard"),'portal password changes must pass through the verified-email policy interceptor');
-  assert(portalCredentials.includes("router.use('/account/security/profile',onlyPost,requireCustomer,csrfGuard"),'portal email changes must pass through the verified-email policy interceptor');
+  assert(portalCredentials.includes("router.use('/account/security/password',onlyPost,requireCustomer,credentialRequestLimit,csrfGuard"),'portal password changes must pass through the verified-email policy interceptor with explicit rate limiting');
+  assert(portalCredentials.includes("router.use('/account/security/profile',onlyPost,requireCustomer,credentialRequestLimit,csrfGuard"),'portal email changes must pass through the verified-email policy interceptor with explicit rate limiting');
   assert.doesNotMatch(portalCredentials,/router\.post\('\/account\/security\/(?:password|profile)'/,'credential policy must not register duplicate POST route owners');
 
   const passwordRequest=portalCredentials.match(/async function requestPasswordChange\(req\)[\s\S]*?\n\}/)?.[0]||'';
