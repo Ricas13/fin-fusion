@@ -9,6 +9,49 @@ const runtimeSettings = require('../src/platform/runtime-settings');
 const jobHealth = require('../src/automation/job-health');
 const criticalJobs = require('../src/automation/critical-jobs');
 
+const DEPLOYMENT_PROBE_JOBS = Object.freeze([
+    'creation_intent_recovery',
+    'customer_service_recovery',
+    'revenue_integrity'
+]);
+const DEPLOYMENT_PROBE_TIMEOUT_MS = 120000;
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function proveAutomationRecoveryPass({ timeoutMs = DEPLOYMENT_PROBE_TIMEOUT_MS } = {}) {
+    // Use PostgreSQL's clock for the marker so comparisons against job timestamps
+    // are not vulnerable to clock skew between the app and database containers.
+    const marker = new Date((await query('SELECT NOW() AS marker')).rows[0].marker);
+    for (const jobKey of DEPLOYMENT_PROBE_JOBS) await jobHealth.requestRun(jobKey);
+
+    const deadline = Date.now() + Math.max(15000, Number(timeoutMs) || DEPLOYMENT_PROBE_TIMEOUT_MS);
+    while (Date.now() < deadline) {
+        const rows = await jobHealth.list();
+        const byKey = new Map(rows.map(row => [row.job_key, row]));
+        const completed = DEPLOYMENT_PROBE_JOBS.every(jobKey => {
+            const row = byKey.get(jobKey);
+            if (!row?.last_completed_at || row.force_run_requested) return false;
+            return new Date(row.last_completed_at).getTime() >= marker.getTime();
+        });
+        if (completed) {
+            return DEPLOYMENT_PROBE_JOBS.map(jobKey => {
+                const row = byKey.get(jobKey);
+                return { jobKey, state: jobHealth.healthState(row), completedAt: row.last_completed_at };
+            });
+        }
+        await sleep(2000);
+    }
+    const rows = await jobHealth.list();
+    const byKey = new Map(rows.map(row => [row.job_key, row]));
+    const detail = DEPLOYMENT_PROBE_JOBS.map(jobKey => {
+        const row = byKey.get(jobKey);
+        return `${jobKey}:${row ? jobHealth.healthState(row) : 'missing'}`;
+    }).join(', ');
+    throw new Error(`Timed out waiting for the post-deploy automation recovery probe (${detail}).`);
+}
+
 async function main() {
     const checks = [];
     const add = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail: String(detail || '') });
@@ -44,7 +87,8 @@ async function main() {
             `);
             const byKey = new Map(workers.rows.map(row => [row.worker_key, row]));
             const automationWorker = byKey.get('automation');
-            add('automation worker', automationWorker && Number(automationWorker.age) < 90,
+            const automationWorkerHealthy = Boolean(automationWorker && Number(automationWorker.age) < 90);
+            add('automation worker', automationWorkerHealthy,
                 automationWorker ? `instance=${automationWorker.instance_id} heartbeat_age=${automationWorker.age}s` : 'no heartbeat');
             const expectedSha = buildInfo.gitSha;
             const automationShaMatches = !expectedSha || String(automationWorker?.commit_sha || '') === String(expectedSha);
@@ -59,6 +103,22 @@ async function main() {
                 missingRegisteredJobs.length
                     ? `running worker missing=${missingRegisteredJobs.join(',')}`
                     : `${registeredJobs.length} jobs registered; ${requiredJobs.length} access-critical jobs present`);
+
+            // A heartbeat proves only that the worker process is alive. Before
+            // accepting a deployment, force the new recovery lanes plus the
+            // integrity watchdog through the real scheduler and wait for a pass
+            // completed by this running release.
+            if (automationWorkerHealthy && automationShaMatches && missingRegisteredJobs.length === 0) {
+                try {
+                    const probe = await proveAutomationRecoveryPass();
+                    add('automation recovery probe', probe.every(item => item.state === 'healthy'),
+                        probe.map(item => `${item.jobKey}:${item.state}`).join(', '));
+                } catch (error) {
+                    add('automation recovery probe', false, error.message);
+                }
+            } else {
+                add('automation recovery probe', false, 'worker/release/registry prerequisite failed');
+            }
 
             const activityWorker = byKey.get('activity');
             add('activity worker', activityWorker && Number(activityWorker.age) < 120,
@@ -130,3 +190,5 @@ main().catch(error => {
     console.error(error);
     process.exit(1);
 });
+
+module.exports = { DEPLOYMENT_PROBE_JOBS, DEPLOYMENT_PROBE_TIMEOUT_MS, sleep, proveAutomationRecoveryPass, main };
