@@ -28,7 +28,7 @@ async function scan() {
     // These reads deliberately fail the job if PostgreSQL/schema permissions are
     // broken. A watchdog that silently turns query failures into "0 findings"
     // would recreate the exact failure mode this job exists to prevent.
-    const [permanentRefunds, manualProviderOps, deletionFailures, staleCreationIntents, contaminatedPlans, strandedProvisioning, stalePaymentEvents] = await Promise.all([
+    const [permanentRefunds, manualProviderOps, deletionFailures, staleCreationIntents, contaminatedPlans, strandedProvisioning, stalePaymentEvents, uncertainNotifications] = await Promise.all([
         query(`
             SELECT o.customer_id,o.subscription_id,s.source,s.provider_subscription_id
             FROM customer_entitlement_overrides o
@@ -86,6 +86,19 @@ async function scan() {
               AND created_at<NOW()-INTERVAL '45 minutes'
             ORDER BY created_at
             LIMIT 100
+        `),
+        query(`
+            SELECT id,channel,message_type,status,attempts,last_attempt_at,last_error,updated_at
+            FROM notification_outbox
+            WHERE (
+                status='dead'
+                AND COALESCE(last_error,'') LIKE 'Delivery outcome is uncertain%'
+            ) OR (
+                status='sending'
+                AND last_attempt_at<NOW()-INTERVAL '20 minutes'
+            )
+            ORDER BY updated_at
+            LIMIT 100
         `)
     ]);
 
@@ -96,6 +109,7 @@ async function scan() {
     for (const row of contaminatedPlans.rows) findings.push(finding('paid_plan_on_free_pool', row, `Plan ${row.code || row.name || row.id} is not a Free plan but uses server_class=free.`));
     for (const row of strandedProvisioning.rows) findings.push(finding('customer_access_not_converged', row, `Customer access is ${row.status} after ${row.consecutive_failures || 0} failure(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of stalePaymentEvents.rows) findings.push(finding('payment_event_stale', row, `${row.provider} ${row.event_type || 'payment event'} ${row.provider_event_id} has remained unprocessed${row.processing_error ? `: ${row.processing_error}` : ''}`));
+    for (const row of uncertainNotifications.rows) findings.push(finding('notification_delivery_uncertain', row, `${row.channel} ${row.message_type || 'notification'} ${row.id} has an uncertain delivery outcome after ${row.attempts || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
 
     return findings;
 }
