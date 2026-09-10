@@ -128,9 +128,9 @@ async function notify(findings) {
     const extra = findings.length > 8 ? `\n• +${findings.length - 8} more integrity failure(s)` : '';
     return notifications.dispatch({
         eventType: 'automation.integrity.failed',
-        subject: 'CAPTAiNFiN customer/revenue integrity failure',
+        subject: 'Customer/revenue integrity failure',
         text: `${findings.length} customer/revenue integrity condition${findings.length === 1 ? '' : 's'} require attention.\n\n${top}${extra}`,
-        adminSubject: `URGENT: ${findings.length} CAPTAiNFiN integrity failure${findings.length === 1 ? '' : 's'}`,
+        adminSubject: `URGENT: ${findings.length} customer/revenue integrity failure${findings.length === 1 ? '' : 's'}`,
         adminText: `${findings.length} customer/revenue integrity condition${findings.length === 1 ? '' : 's'} require attention.\n\n${top}${extra}`,
         dedupeKey: `automation-integrity:${fingerprint(findings)}:${bucket}`,
         templatePayload: { count: findings.length, findings: findings.slice(0, 12) }
