@@ -143,11 +143,11 @@ async function main() {
   assert(emailComplete.includes('pending_email')&&emailComplete.includes('email_verified_at=NOW()')&&emailComplete.includes('revokeAllSessions(client,token.user_id)'),'new-email completion must verify the staged address and revoke every portal session');
   assert(emailComplete.includes("invalidate(client,token.user_id,[PASSWORD_TOKEN,EMAIL_OLD_TOKEN,'email_change'])"),'email completion must invalidate stale password and email approval links');
 
-  assert(adminPortalRecovery.includes("confirmation!=='RECOVER PORTAL'"),'admin portal recovery must require an explicit typed break-glass confirmation');
-  assert(adminPortalRecovery.includes("req.body.identityVerified!=='1'"),'admin portal recovery must require an explicit identity-verification acknowledgement');
+  assert(adminPortalRecovery.includes("confirmation||'').trim()!=='RECOVER PORTAL'"),'admin portal recovery must require an explicit typed break-glass confirmation');
+  assert(adminPortalRecovery.includes("req.body.verifiedCustomer!=='1'"),'admin portal recovery must require an explicit identity-verification acknowledgement');
   assert(adminPortalRecovery.includes('reason.length<8'),'admin portal recovery must record a meaningful support reason');
   assert(adminPortalRecovery.includes('session_version=session_version+1')&&adminPortalRecovery.includes("UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW())"),'admin portal recovery must invalidate existing customer sessions');
-  assert(adminPortalRecovery.includes("'portal_password_change','portal_email_old_approval','portal_email_new_verification','email_change','password_reset'"),'admin portal recovery must invalidate outstanding customer credential tokens');
+  assert(adminPortalRecovery.includes("[PASSWORD_TOKEN,EMAIL_OLD_TOKEN,EMAIL_NEW_TOKEN,'email_change','password_reset']"),'admin portal recovery must invalidate outstanding customer credential tokens');
   assert(adminPortalRecovery.includes("'admin.customer.portal_credential_recovery'"),'admin recovery must create a dedicated audit event');
   assert(adminPortalRecovery.includes("req.body.clear2fa==='1'")&&adminPortalRecovery.includes('DELETE FROM auth_recovery_codes'),'2FA removal must remain an explicit admin recovery choice and clear recovery material');
   assert(adminPrimaryActions.includes('Recover portal account')&&adminPrimaryActions.includes('/portal-credential-recovery'),'portal recovery must be discoverable from the customer admin actions');
