@@ -1,6 +1,6 @@
 'use strict';
 
-const { getPool } = require('../db');
+const reconciliationLock = require('../jellyfin/reconciliation-lock');
 
 const LOCK_TIMEOUT_MS = 30000;
 const LOCK_POLL_MS = 100;
@@ -11,30 +11,24 @@ function key(value) {
   return `captainfin:stremio:${text}`;
 }
 
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
 async function withLock(value, fn, { timeoutMs = LOCK_TIMEOUT_MS } = {}) {
   if (typeof fn !== 'function') throw new Error('Stremio operation lock requires a callback.');
   const lockKey = key(value);
-  const client = await getPool().connect();
-  const deadline = Date.now() + Math.max(1000, Math.min(120000, Number(timeoutMs) || LOCK_TIMEOUT_MS));
-  let locked = false;
   try {
-    do {
-      const result = await client.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked', [lockKey]);
-      if (result.rows[0]?.locked === true) { locked = true; break; }
-      if (Date.now() >= deadline) break;
-      await sleep(Math.min(LOCK_POLL_MS, Math.max(1, deadline - Date.now())));
-    } while (Date.now() <= deadline);
-    if (!locked) {
-      const error = new Error('Another Stremio operation for this resource is still running. Try again shortly.');
+    // Stremio operations must remain serialized across web/worker processes while
+    // provider calls are in flight, so a session advisory lock is still the
+    // correctness primitive. Reuse the dedicated, process-bounded reconciliation
+    // lock connection budget instead of checking a client out of the main app
+    // pool for the entire external operation. This keeps slow media servers from
+    // starving unrelated application queries while preserving cross-process
+    // exclusion and the automation role's explicit connection ceiling.
+    return await reconciliationLock.withDatabaseLock(lockKey, fn, { timeoutMs });
+  } catch (error) {
+    if (error?.code === 'CUSTOMER_RECONCILIATION_LOCK_TIMEOUT') {
       error.code = 'STREMIO_OPERATION_LOCK_TIMEOUT';
-      throw error;
+      error.message = 'Another Stremio operation for this resource is still running. Try again shortly.';
     }
-    return await fn();
-  } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [lockKey]).catch(() => {});
-    client.release();
+    throw error;
   }
 }
 
