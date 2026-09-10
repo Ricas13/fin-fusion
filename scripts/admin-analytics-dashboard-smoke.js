@@ -7,6 +7,7 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const { dashboardRange, analyticsData, revenueFromEvent, revenueSummary } = require('../src/platform/admin-dashboard-analytics');
+const growthData = require('../src/platform/admin-dashboard-growth-data');
 const { renderDashboard } = require('../src/platform/admin-dashboard-view');
 const fs = require('fs');
 const path = require('path');
@@ -96,6 +97,17 @@ async function main() {
     assert(Number(stats.operational.provisioning_problems) >= 1, 'provisioning alerts should use customer_provisioning_state');
     assert(Number(stats.operational.request_sync_problems) >= 1, 'request sync alerts should use request_user_sync');
 
+    const playback = await growthData.playbackTrend(liveRange);
+    const playbackTotals = playback.rows.reduce((acc,row) => {
+        acc.starts += Number(row.session_starts || 0);
+        acc.direct += Number(row.directplay_seconds || 0);
+        acc.transcode += Number(row.transcode_seconds || 0);
+        return acc;
+    }, { starts: 0, direct: 0, transcode: 0 });
+    assert(playbackTotals.starts >= 2, 'overlap analytics must count seeded playback starts');
+    assert(playbackTotals.direct >= 3500, 'overlap analytics must retain direct-play duration');
+    assert(playbackTotals.transcode >= 3500, 'overlap analytics must retain transcode duration');
+
     const html = renderDashboard({
         ...stats,
         setup: { configuredCount: 1, totalCount: 2 },
@@ -111,6 +123,14 @@ async function main() {
     // Keep asserting that wiring here so a future edit can't silently detach it.
     const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-dashboard.js'), 'utf8');
     assert(dashboardSource.includes("require('./admin-dashboard-main')"), 'the live dashboard route must render through admin-dashboard-main.js');
+
+    const growthSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-dashboard-growth-data.js'), 'utf8');
+    assert(growthSource.includes('CROSS JOIN LATERAL generate_series('), 'playback overlap analytics must generate buckets only for relevant sessions');
+    assert(!growthSource.includes('FROM buckets b LEFT JOIN playback_history ph'), 'playback overlap analytics must not restore the bucket-by-history broad join');
+    assert(growthSource.includes('COALESCE(ph.ended_at,ph.last_seen_at)>$1::timestamptz'), 'playback overlap analytics must prune sessions that ended before the range');
+    const overlapMigration = fs.readFileSync(path.join(__dirname, '..', 'db', 'migrations', '20260910230000_playback_overlap_index.sql'), 'utf8');
+    assert(overlapMigration.includes('playback_history_effective_end_started_idx'), 'playback overlap end-time index migration missing');
+    assert(overlapMigration.includes('COALESCE(ended_at,last_seen_at)'), 'playback overlap index must match the runtime effective-end predicate');
 
     console.log('admin analytics dashboard smoke: ok');
 }
