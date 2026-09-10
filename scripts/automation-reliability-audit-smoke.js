@@ -91,6 +91,10 @@ assert(integritySource.includes("status='sending'"), 'integrity watchdog must de
 const deploymentVerification = source('scripts/verify-deployment.js');
 assert(deploymentVerification.includes("'degraded'"), 'deployment verification must reject degraded critical automation jobs');
 assert(deploymentVerification.includes('badStates.has(jobHealth.healthState(job))'), 'critical deployment verification must evaluate the hardened bad-state set');
+assert(deploymentVerification.includes('DEPLOYMENT_PROBE_JOBS'), 'deployment verification must define the live recovery automation probe set');
+assert(deploymentVerification.includes('jobHealth.requestRun(jobKey)'), 'deployment verification must force the recovery probe through the real automation worker');
+assert(deploymentVerification.includes("SELECT NOW() AS marker"), 'deployment automation probe must compare completion using the database clock');
+assert(deploymentVerification.includes("add('automation recovery probe'"), 'post-deploy automation execution must be a visible deployment gate');
 
 const a = integrity.fingerprint([{ kind: 'b', id: '2' }, { kind: 'a', id: '1' }]);
 const b = integrity.fingerprint([{ kind: 'a', id: '1' }, { kind: 'b', id: '2' }]);
