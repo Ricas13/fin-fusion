@@ -32,10 +32,46 @@ ON CONFLICT(event_type) DO UPDATE SET
     description=EXCLUDED.description,
     updated_at=NOW();
 
+-- The historical portable configuration format did not carry is_free_tier.
+-- Normalize the one unambiguous legacy shape before enforcing the pool guard:
+-- a zero-price, non-trial, non-add-on plan assigned to server_class=free is the
+-- canonical Free Server plan. This keeps old exports/imports safe without ever
+-- allowing a paid or trial plan to enter that pool.
+CREATE OR REPLACE FUNCTION public.normalize_free_server_plan_identity()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF COALESCE(NEW.server_class,'premium')='free'
+       AND COALESCE(NEW.price_minor,0)=0
+       AND COALESCE(NEW.billing_interval,'')<>'trial'
+       AND COALESCE(NEW.is_addon,FALSE)=FALSE THEN
+        NEW.is_free_tier=TRUE;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS normalize_free_server_plan_identity_before_write ON public.plans;
+CREATE TRIGGER normalize_free_server_plan_identity_before_write
+BEFORE INSERT OR UPDATE OF server_class,price_minor,billing_interval,is_addon,is_free_tier
+ON public.plans
+FOR EACH ROW
+EXECUTE FUNCTION public.normalize_free_server_plan_identity();
+
+UPDATE public.plans
+SET is_free_tier=TRUE,updated_at=NOW()
+WHERE COALESCE(server_class,'premium')='free'
+  AND COALESCE(price_minor,0)=0
+  AND COALESCE(billing_interval,'')<>'trial'
+  AND COALESCE(is_addon,FALSE)=FALSE
+  AND COALESCE(is_free_tier,FALSE)=FALSE;
+
 -- A paid/trial plan must never silently share the canonical Free Server pool.
--- NOT VALID deliberately allows deployment when an old contaminated row already
--- exists; the integrity watchdog will flag it. PostgreSQL still enforces this
--- constraint for every newly inserted or updated row immediately.
+-- NOT VALID deliberately allows deployment when an old contaminated paid row
+-- already exists; the integrity watchdog will flag it. PostgreSQL still enforces
+-- this constraint for every newly inserted or updated row immediately.
 DO $$
 BEGIN
     IF NOT EXISTS (
