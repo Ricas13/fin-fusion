@@ -62,7 +62,10 @@ for(const [label,source,area,captureMarker,ackMarker,persistMarker] of serverRea
 assert(!adminCustomers.includes("readCursors.markSeen(req.session?.authUserId,'customers');"),'Customers must never use a write-time read cursor without a rendered-snapshot watermark');
 
 assert(adminOrders.includes("const readCursors=require('./operator-read-cursors');"),'Orders must own a server-side read-cursor fallback');
-assert(!client.includes('/admin/api/operator-state/read'),'the browser must not acknowledge unread state itself; each admin page snapshots and advances its own read cursor server-side around rendering, so a click-vs-navigation race can never leave a false-cleared badge');
+assert(client.includes("fetch('/admin/api/operator-state/read'"),'the browser must retry the canonical read acknowledgement after the destination workspace has actually loaded');
+assert(client.includes('seenThroughFor(area,data)')&&client.includes('data?.updatedAt?.[area]'),'browser acknowledgement must use the exact unread snapshot watermark rather than a write-time latest value');
+assert(client.includes('markAreaReadWithRetry')&&client.includes('[0,250,750,1500]'),'browser acknowledgement must retry transient failures without advancing the original watermark');
+assert(client.includes('locallyClearedSnapshot(data,areaForCurrentPage)'),'a successful acknowledgement must repaint the current workspace badge immediately instead of waiting for the next polling interval');
 assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before deciding which sidebar/signal badges to suppress for the current page');
 assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
 assert(client.includes('/^\\/admin\\/users\\/[0-9a-f-]{36}$/i'),'opening a customer detail must count as reviewing the new-customer indicator');
@@ -72,11 +75,11 @@ assert(client.includes("path==='/admin/payments')return'payments'"),'opening Pay
 assert(client.includes("meta:'New provider callback issues — clears after review'")&&client.includes("href:'/admin/payments'"),'Payments alert must explain that it clears after the operator reviews the Payments page');
 assert(client.includes("areaForCurrentPage==='payments'?0:Number(data.counts.payments||0)"),'Payments must not show its own stale callback alert while it is being reviewed');
 assert(client.includes('provider callback notifications clear after you review Payments.'),'Alerts copy must distinguish reviewable provider callbacks from persistent health incidents');
-assert(client.includes('setTimeout(()=>refresh().catch(()=>{}),80)')&&client.includes('setInterval(()=>refresh().catch(()=>{}),15000)'),'browser must repaint unread state from a fresh server snapshot on load and periodically, since it never persists an acknowledgement itself');
+assert(client.includes('setTimeout(()=>refresh().catch(()=>{}),80)')&&client.includes('setInterval(()=>refresh().catch(()=>{}),15000)'),'browser must repaint unread state from a fresh server snapshot on load and periodically');
 assert(client.includes("setSignal('new',areaForCurrentPage==='customers'?0:customers)")&&client.includes("areaForCurrentPage==='tickets'?0:tickets")&&client.includes("areaForCurrentPage==='orders'?0:orders"),'the currently reviewed business workspace must never display its own stale split signal');
 assert(client.includes('clearSidebarBadge'),'fresh zero counts must actively remove previously rendered sidebar badges');
 assert(client.includes("cache:'no-store'"),'unread snapshots must bypass browser HTTP caching');
-assert(!client.includes('data.counts[areaForCurrentPage]=0'),'browser must not mutate the server snapshot to fake a cleared count');
+assert(!client.includes('data.counts[areaForCurrentPage]=0'),'browser must not mutate the server snapshot in place to fake a cleared count');
 assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(client),'business unread state must not depend on local browser storage');
 assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(experience),'legacy operator experience must not maintain a second local unread cursor');
 assert(!experience.includes("fetch('/admin/api/operator-state/unread'"),'legacy operator experience must not independently fetch unread counts');
