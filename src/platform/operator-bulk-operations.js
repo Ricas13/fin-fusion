@@ -27,12 +27,20 @@ bulkWorker.registerHandler('add_plan',async item=>{
   if(reason.length<3)throw new Error('Reason must be at least 3 characters');
   const planResult=await query(`SELECT id,name,duration_days,currency,COALESCE(service_type,'jellyfin') AS service_type FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planId]);
   if(!planResult.rowCount)throw new Error('Target plan is not available for a manual bulk grant');
-  const plan=planResult.rows[0],startAt=new Date(),endAt=new Date(startAt);
+  const plan=planResult.rows[0],operationRef=`bulk:${item.job_id}:${item.id}`;
+  // createManualGrant commits the subscription before service reconciliation.
+  // Anchor the bulk item in its canonical grant audit so a worker crash after
+  // that commit can retry without creating (or falsely failing on) a second plan.
+  const prior=await query(`SELECT s.id FROM audit_log a JOIN subscriptions s ON s.id::text=a.entity_id::text WHERE a.action='admin.customer.manual_grant' AND s.customer_id=$1 AND s.plan_id=$2 AND a.metadata->>'externalReference'=$3 ORDER BY a.created_at DESC LIMIT 1`,[item.customer_id,plan.id,operationRef]);
+  if(prior.rowCount){
+    let reconciled=true;
+    try{await provisioning.reconcileCustomer(item.customer_id);}catch(_error){reconciled=false;}
+    return{planId:plan.id,planName:plan.name,serviceType:plan.service_type,subscriptionId:prior.rows[0].id,reconciled,chargedProvider:false,recurringBillingCreated:false,reason,jobItemId:item.id,reused:true};
+  }
+  const startAt=new Date(),endAt=new Date(startAt);
   endAt.setUTCDate(endAt.getUTCDate()+Math.max(1,Number(plan.duration_days||30)));
-  const result=await manualEntitlement.createManualGrant(item.customer_id,actor,{planId:plan.id,method:'other',currency:String(plan.currency||'GBP').toUpperCase(),amountMinor:0,startAt,endAt,externalReference:null,note:reason,returnTab:'access'});
-  const payload={planId:plan.id,planName:plan.name,serviceType:plan.service_type,subscriptionId:result.subscriptionId,reconciled:Boolean(result.reconciled),chargedProvider:false,recurringBillingCreated:false,reason,jobItemId:item.id};
-  await audit('admin.bulk.add_plan',item.customer_id,actor,payload);
-  return payload;
+  const result=await manualEntitlement.createManualGrant(item.customer_id,actor,{planId:plan.id,method:'other',currency:String(plan.currency||'GBP').toUpperCase(),amountMinor:0,startAt,endAt,externalReference:operationRef,note:reason,returnTab:'access'});
+  return{planId:plan.id,planName:plan.name,serviceType:plan.service_type,subscriptionId:result.subscriptionId,reconciled:Boolean(result.reconciled),chargedProvider:false,recurringBillingCreated:false,reason,jobItemId:item.id,reused:false};
 });
 
 bulkWorker.registerHandler('cancel_plan',async item=>{
