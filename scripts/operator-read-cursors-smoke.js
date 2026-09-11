@@ -44,17 +44,22 @@ assert(operator.includes("created_at>$1::timestamptz)`,[seen.payments||null])"),
 assert(tickets.includes('staffQueueSummary(since=null)'),'ticket unread summary must accept a cursor');
 
 const serverReadPages=[
-  ['Customers',adminCustomers,'customers','const seenThrough=await captureCustomersSeenThrough();','readCursors.markSeen(req.session?.authUserId,\'customers\',seenThrough)'],
-  ['Orders',adminOrders,'orders',"const seenThrough=await readCursors.captureSeenThrough('orders')", "readCursors.markSeen(req.session.authUserId,'orders',seenThrough)"],
-  ['Tickets',adminTickets,'tickets','const seenThrough=await captureTicketsSeenThrough();',"readCursors.markSeen(req.session?.authUserId,'tickets',seenThrough)"],
-  ['Payments',adminPayments,'payments','const seenThrough=await capturePaymentsSeenThrough();',"readCursors.markSeen(req.session?.authUserId,'payments',seenThrough)"]
+  ['Customers',adminCustomers,'customers','const seenThrough=await captureCustomersSeenThrough();','await markCustomersSeen(req,seenThrough);return res.send(html)',"readCursors.markSeen(req.session?.authUserId,'customers',seenThrough)"],
+  ['Orders',adminOrders,'orders',"const seenThrough=await readCursors.captureSeenThrough('orders')",'await markOrdersSeen(req,seenThrough);return res.send(html)',"readCursors.markSeen(req.session.authUserId,'orders',seenThrough)"],
+  ['Tickets',adminTickets,'tickets','const seenThrough=await captureTicketsSeenThrough();','await markTicketsSeen(req,seenThrough);return res.send(html)',"readCursors.markSeen(req.session?.authUserId,'tickets',seenThrough)"],
+  ['Payments',adminPayments,'payments','const seenThrough=await capturePaymentsSeenThrough();','await markPaymentsSeen(req,seenThrough);return res.send(html)',"readCursors.markSeen(req.session?.authUserId,'payments',seenThrough)"]
 ];
-for(const [label,source,area,captureMarker,markMarker] of serverReadPages){
+for(const [label,source,area,captureMarker,ackMarker,persistMarker] of serverReadPages){
   assert(source.includes(captureMarker),`${label} must capture the ${area} read watermark before rendering`);
-  assert(source.includes(markMarker),`${label} must persist the exact captured ${area} watermark after rendering`);
-  assert(source.indexOf(captureMarker)<source.indexOf('const html=await'),`${label} must snapshot unread state before starting the page render`);
-  assert(source.indexOf(markMarker)>source.indexOf('const html=await'),`${label} must acknowledge unread state only after the page render has completed`);
+  assert(source.includes(persistMarker),`${label} must persist the exact captured ${area} watermark`);
+  assert(source.includes(ackMarker),`${label} must acknowledge the captured ${area} watermark only after rendering`);
+  const captureIndex=source.indexOf(captureMarker);
+  const renderIndex=source.indexOf('const html=await',captureIndex);
+  const ackIndex=source.indexOf(ackMarker,renderIndex);
+  assert(renderIndex>captureIndex,`${label} must snapshot unread state before starting the page render`);
+  assert(ackIndex>renderIndex,`${label} must acknowledge unread state only after the page render has completed`);
 }
+assert(!adminCustomers.includes("readCursors.markSeen(req.session?.authUserId,'customers');"),'Customers must never use a write-time read cursor without a rendered-snapshot watermark');
 
 assert(adminOrders.includes("const readCursors=require('./operator-read-cursors');"),'Orders must own a server-side read-cursor fallback');
 assert(!client.includes('/admin/api/operator-state/read'),'the browser must not acknowledge unread state itself; each admin page snapshots and advances its own read cursor server-side around rendering, so a click-vs-navigation race can never leave a false-cleared badge');
