@@ -77,7 +77,7 @@ function freeInactivitySafetyContract(){
   assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/,'Free inactivity must preserve current and orphaned same-customer/server playback continuity');
   const historical=inactivity.match(/SELECT MIN\(ph\.started_at\) historical_first_playback_at[\s\S]*?\) historical ON TRUE/);
   assert(historical,'historical playback continuity query must exist');
-  assert(!historical[0].includes('ph.started_at>=ja.access_lane_changed_at'),'access-lane changes must never erase established playback activation');
+  assert(historical[0].includes('ph.started_at>=ja.access_lane_changed_at'),'historical Free activation evidence must be scoped to the current access lane so paid-era playback cannot activate a newly adopted Free allocation');
 
   assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must have an explicit fail-closed state');
   assert.equal(lifecyclePolicy.explicitlyConfigured({}),false,'empty lifecycle settings must not authorize destructive automation');
