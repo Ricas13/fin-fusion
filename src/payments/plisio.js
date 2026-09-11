@@ -254,6 +254,31 @@ function storedEventProviderId(eventRow, payload = null) {
     return String(match?.[1] || '').trim();
 }
 
+function storedIntentEvidenceMatches(payload, intent, providerId) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !intent) return false;
+    const storedProviderId = String(payload.txn_id || '').trim();
+    const storedOrderNumber = String(payload.order_number || '').trim();
+    const boundProviderId = String(intent.provider_checkout_id || '').trim();
+    return Boolean(
+        storedProviderId
+        && storedProviderId === String(providerId)
+        && boundProviderId === String(providerId)
+        && storedOrderNumber
+        && storedOrderNumber === String(intent.id)
+    );
+}
+
+function storedEventIntentMatches(fields, payload, intent, providerId) {
+    const remoteOrderNumber = String(fields?.orderNumber || '').trim();
+    if (remoteOrderNumber) return remoteOrderNumber === String(intent?.id || '');
+    // Plisio's operations endpoint can omit order_number after an invoice becomes
+    // terminal. That is safe to recover only for a provider-confirmed terminal
+    // unpaid state and only when the originally authenticated callback, persisted
+    // before retry, exactly binds the same txn_id to the same checkout intent.
+    return TERMINAL_UNPAID_STATUSES.has(String(fields?.status || '').toLowerCase())
+        && storedIntentEvidenceMatches(payload, intent, providerId);
+}
+
 async function reconcileStoredPaymentEvent(eventRow, payload) {
     try {
         const providerId = storedEventProviderId(eventRow, payload);
@@ -286,7 +311,7 @@ async function reconcileStoredPaymentEvent(eventRow, payload) {
             throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
         }
 
-        if (fields.orderNumber !== String(intent.id)) throw new Error('Plisio operation does not match the local checkout intent.');
+        if (!storedEventIntentMatches(fields, payload, intent, providerId)) throw new Error('Plisio operation does not match the local checkout intent.');
         if (!(fields.status === 'completed' || WAITING_STATUSES.has(fields.status) || TERMINAL_UNPAID_STATUSES.has(fields.status))) {
             throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
         }
@@ -333,6 +358,8 @@ module.exports = {
     authenticateCallback,
     verifiedRemoteOperation,
     storedEventProviderId,
+    storedIntentEvidenceMatches,
+    storedEventIntentMatches,
     reconcileStoredPaymentEvent,
     safeEqual
 };
