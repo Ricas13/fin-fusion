@@ -23,8 +23,58 @@ function finding(kind, row, detail) {
     };
 }
 
+async function retireObsoleteManualRenewalOperations({ limit = 100 } = {}) {
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+    const result = await query(`
+        WITH candidates AS (
+            SELECT po.id
+            FROM provider_operations po
+            JOIN subscriptions s
+              ON s.id::text = COALESCE(
+                  NULLIF(po.request_snapshot->>'subscriptionId',''),
+                  NULLIF(po.local_reference,'')
+              )
+            WHERE po.manual_review_required=TRUE
+              AND po.state='failed'
+              AND po.failure_kind='terminal'
+              AND po.operation_type IN('renewal_stop','renewal_resume')
+              AND po.provider IN('stripe','paypal')
+              AND (
+                  COALESCE(s.billing_mode,'')<>'subscription'
+                  OR COALESCE(s.source,'')<>po.provider
+                  OR NULLIF(s.provider_subscription_id,'') IS NULL
+                  OR (
+                      NULLIF(po.request_snapshot->>'providerSubscriptionId','') IS NOT NULL
+                      AND s.provider_subscription_id IS DISTINCT FROM po.request_snapshot->>'providerSubscriptionId'
+                  )
+              )
+            ORDER BY po.updated_at
+            LIMIT $1
+            FOR UPDATE OF po SKIP LOCKED
+        )
+        UPDATE provider_operations po
+           SET failure_kind='superseded',
+               manual_review_required=FALSE,
+               next_attempt_at=NULL,
+               provider_result=COALESCE(po.provider_result,'{}'::jsonb)
+                   || '{"autoSuperseded":"renewal_target_no_longer_current"}'::jsonb,
+               updated_at=NOW()
+          FROM candidates c
+         WHERE po.id=c.id
+         RETURNING po.id,po.provider,po.operation_type,po.owner_id
+    `, [safeLimit]);
+    return result.rows;
+}
+
 async function scan() {
     const findings = [];
+    // A terminal renewal operation is only actionable while its original local
+    // subscription is still the same live recurring provider contract. If the
+    // subscription has since been migrated/manualised/replaced, preserving the
+    // operation as audit history is useful but continuing to page an operator is
+    // not. Retire those rows before reading the active manual-review set.
+    await retireObsoleteManualRenewalOperations();
+
     // These reads deliberately fail the job if PostgreSQL/schema permissions are
     // broken. A watchdog that silently turns query failures into "0 findings"
     // would recreate the exact failure mode this job exists to prevent.
@@ -157,4 +207,4 @@ async function run() {
     };
 }
 
-module.exports = { ALERT_BUCKET_MS, clean, finding, scan, fingerprint, notify, run };
+module.exports = { ALERT_BUCKET_MS, clean, finding, retireObsoleteManualRenewalOperations, scan, fingerprint, notify, run };

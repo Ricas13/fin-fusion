@@ -30,6 +30,16 @@ let rejected=false;try{plisio.parseCallback(Buffer.from('txn_id=x'),'application
 expect(plisio.storedEventProviderId({provider_event_id:'operation:txn-fallback:expired:legacy'}, {})==='txn-fallback','Stored Plisio recovery must recover the provider transaction from the durable event ID.');
 expect(plisio.storedEventProviderId({provider_event_id:'operation:txn-fallback:expired:legacy'}, {txn_id:'txn-payload'})==='txn-payload','Stored Plisio recovery must prefer the persisted payload transaction ID when present.');
 
+const historicalIntent={id:'intent-historical',provider_checkout_id:'txn-historical'};
+const authenticatedHistoricalPayload={txn_id:'txn-historical',order_number:'intent-historical',status:'new',verify_hash:'persisted-authenticated-evidence'};
+expect(plisio.storedIntentEvidenceMatches(authenticatedHistoricalPayload,historicalIntent,'txn-historical'),'Stored Plisio evidence must exactly bind provider transaction to local checkout intent.');
+expect(plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'',status:'cancelled'},authenticatedHistoricalPayload,historicalIntent,'txn-historical'),'Terminal unpaid Plisio recovery may use exact authenticated stored identity when the current provider response omits order_number.');
+expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'',status:'completed'},authenticatedHistoricalPayload,historicalIntent,'txn-historical'),'Completed Plisio payments must never use historical identity fallback when current provider order_number is missing.');
+expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'',status:'pending'},authenticatedHistoricalPayload,historicalIntent,'txn-historical'),'Waiting Plisio payments must never use historical identity fallback when current provider order_number is missing.');
+expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'',status:'cancelled'},{...authenticatedHistoricalPayload,order_number:'wrong-intent'},historicalIntent,'txn-historical'),'Terminal fallback must reject a stored callback that names another checkout intent.');
+expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'other-intent',status:'cancelled'},authenticatedHistoricalPayload,historicalIntent,'txn-historical'),'A non-empty current provider order_number mismatch must remain authoritative and be rejected.');
+expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'',status:'cancelled'},authenticatedHistoricalPayload,{...historicalIntent,provider_checkout_id:'another-txn'},'txn-historical'),'Terminal fallback must reject a checkout no longer bound to the provider transaction.');
+
 const moduleSource=source('src/payments/plisio.js');
 expect(moduleSource.includes("'/api/v1/invoices/new'"),'Plisio checkout must use invoices/new.');
 expect(moduleSource.includes('source_currency')&&moduleSource.includes('source_amount'),'Plisio checkout must anchor invoices to the local fiat contract.');
