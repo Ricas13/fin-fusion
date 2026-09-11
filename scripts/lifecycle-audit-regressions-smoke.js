@@ -8,6 +8,7 @@ const providerHttp=require('../src/payments/provider-http');
 const providerCheckoutRecovery=require('../src/payments/provider-checkout-recovery');
 const inactivityScoped=require('../src/automation/customer-inactivity-scoped');
 const fleetMetrics=require('../src/jellyfin/fleet-metrics');
+const lifecyclePolicy=require('../src/entitlements/jellyfin-lifecycle-policy');
 
 const root=path.resolve(__dirname,'..');
 const source=file=>fs.readFileSync(path.join(root,file),'utf8');
@@ -72,7 +73,6 @@ function freeInactivitySafetyContract(){
   const inactivity=source('src/automation/customer-inactivity.js');
   const scoped=source('src/automation/customer-inactivity-scoped.js');
   const lifecycle=source('src/entitlements/jellyfin-lifecycle-policy.js');
-  const fleet=source('src/jellyfin/fleet-metrics.js');
 
   assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/,'Free inactivity must preserve current and orphaned same-customer/server playback continuity');
   const historical=inactivity.match(/SELECT MIN\(ph\.started_at\) historical_first_playback_at[\s\S]*?\) historical ON TRUE/);
@@ -80,7 +80,10 @@ function freeInactivitySafetyContract(){
   assert(!historical[0].includes('ph.started_at>=ja.access_lane_changed_at'),'access-lane changes must never erase established playback activation');
 
   assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must have an explicit fail-closed state');
-  assert.match(lifecycle,/if\(!r\.rowCount\)return\{\.\.\.normalize\(DEFAULTS\),\.\.\.SAFE_UNCONFIGURED,configurationMissing:true\}/,'missing lifecycle settings row must disable live enforcement');
+  assert.equal(lifecyclePolicy.explicitlyConfigured({}),false,'empty lifecycle settings must not authorize destructive automation');
+  assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true}),false,'partial lifecycle settings must not authorize destructive automation');
+  assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true,dryRun:false}),true,'both execution fields must be explicitly persisted before enforcement can be enabled');
+  assert.match(lifecycle,/if\(!r\.rowCount\|\|!explicitlyConfigured\(stored\)\)/,'missing or partial lifecycle settings must take the fail-closed branch');
 
   const observed=fleetMetrics.expectedUserEvidence([
     {Id:'ABC',LastActivityDate:'2026-09-11T12:00:00Z'}
