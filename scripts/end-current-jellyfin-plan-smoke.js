@@ -11,13 +11,13 @@ const permanent=fs.readFileSync('src/entitlements/permanent-access.js','utf8');
 const terminationSource=fs.readFileSync('src/payments/subscription-termination.js','utf8');
 const stateSource=fs.readFileSync('src/entitlements/subscription-state.js','utf8');
 
-assert(ui.includes("['end_jellyfin_plan','End current Jellyfin plan',{highImpact:true,fields:['reason'],confirmWord:'END'}]"),'admin action must be high-impact, require a reason, and use explicit END confirmation');
-assert(ui.includes("action==='end_jellyfin_plan'&&!row.plan_id"),'preview must exclude customers without a current plan');
-assert(ui.includes("action==='end_jellyfin_plan'&&!['jellyfin','bundle'].includes(service)"),'preview must reject Stremio-only primary plans');
-assert(ui.includes('Recurring Stripe/PayPal billing is cancelled and verified'),'operator warning must say provider billing is terminated and verified');
-assert(ui.includes("A bundle\\'s bundled Stremio access also ends"),'operator warning must disclose bundle impact');
+assert(!ui.includes("['end_jellyfin_plan','End current Jellyfin plan'"),'surgical End current Jellyfin plan action must remain off the bulk customer menu');
+assert(ui.includes("['cancel_plan','Cancel Plan',{highImpact:true,fields:['reason'],confirmWord:'CANCEL'}]"),'bulk customer cancellation must use the focused Cancel Plan action with an explicit confirmation');
 
-assert(bulk.includes("registerHandler('end_jellyfin_plan'"),'bulk worker must own the new mutation');
+// Keep the underlying immediate Jellyfin-plan termination lifecycle covered even
+// though it is no longer exposed in the bulk selector. Individual/admin flows and
+// recovery code may still rely on the same canonical termination owner.
+assert(bulk.includes("registerHandler('end_jellyfin_plan'"),'canonical immediate Jellyfin-plan termination worker must remain available');
 assert(bulk.includes('subscriptionTermination.currentJellyfinSubscription(item.customer_id)'),'handler must resolve only the current effective Jellyfin/bundle entitlement');
 assert(bulk.includes('planChange.cancelPendingChange(item.customer_id,null)'),'open plan changes tied to the ended subscription must be cancelled first');
 assert(bulk.includes('subscriptionTermination.terminateRecurringNow'),'provider-managed recurring plans must use durable provider termination');
