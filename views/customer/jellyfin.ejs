@@ -19,8 +19,21 @@
   function subscriptionName(subscription){return subscription?.plan_name||subscription?.contract_plan_name||subscription?.name||subscription?.plan_code||subscription?.code||'Streaming access';}
   function subscriptionKind(subscription){if(subscription?.is_free_tier)return'Free Server';const type=serviceType(subscription);if(type==='emby')return'Emby Share';if(type==='stremio')return'Stremio';if(type==='bundle')return'Jellyfin + Stremio';return String(subscription?.billing_interval_snapshot||subscription?.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin';}
   function subscriptionStatus(subscription){if(subscription?.access_removed_reason==='inactivity')return'Removed for inactivity';if(subscription?.status==='trialing')return'Trial active';if(subscription?.status==='past_due')return'Payment needs attention';if(subscription?.status==='paused')return'Paused';return'Active';}
+  function trialWindow(subscription){
+    const interval=String(subscription?.billing_interval_snapshot||subscription?.billing_interval||'').toLowerCase();
+    const status=String(subscription?.status||'').toLowerCase();
+    if(interval!=='trial'&&status!=='trialing')return null;
+    const start=validDate(subscription?.starts_at||subscription?.current_period_start||subscription?.created_at);
+    const end=validDate(subscription?.current_period_end);
+    return start&&end&&end.getTime()>start.getTime()&&end.getTime()>Date.now()?{start,end}:null;
+  }
   const accessRows=Array.isArray(subscriptions)?subscriptions:[];
   const activeSubscriptions=accessRows.filter(subscription=>!subscription.access_removed);
+  const subscriptionById=new Map();
+  activeSubscriptions.forEach(subscription=>{
+    if(subscription?.id)subscriptionById.set(String(subscription.id),subscription);
+    if(subscription?.subscription_id)subscriptionById.set(String(subscription.subscription_id),subscription);
+  });
   const removedSubscriptions=accessRows.filter(subscription=>subscription.access_removed);
   const stremioSubscriptions=activeSubscriptions.filter(subscription=>['stremio','bundle'].includes(serviceType(subscription)));
   const stremioSubscription=stremioSubscriptions[0]||null;
@@ -64,8 +77,15 @@
   <% } %>
 
   <div class="jellyfinAccountList">
-  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]);const player=account.serviceType==='emby'?'Emby':'Jellyfin';const showFreeHealth=account.accessLane==='free'&&freeHealth&&freeHealth.rulesText;const minimumMinutes=showFreeHealth?Number(freeHealth.minimumPlaybackMinutes):0;const watchedMinutes=showFreeHealth?Math.max(0,Number(freeHealth.playbackMinutes)||0):0;const watchProgress=minimumMinutes>0?Math.min(100,Math.round((watchedMinutes/minimumMinutes)*100)):100; %>
+  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]);const player=account.serviceType==='emby'?'Emby':'Jellyfin';const showFreeHealth=account.accessLane==='free'&&freeHealth&&freeHealth.rulesText;const minimumMinutes=showFreeHealth?Number(freeHealth.minimumPlaybackMinutes):0;const watchedMinutes=showFreeHealth?Math.max(0,Number(freeHealth.playbackMinutes)||0):0;const watchProgress=minimumMinutes>0?Math.min(100,Math.round((watchedMinutes/minimumMinutes)*100)):100;const accountSubscription=account.subscriptionId?subscriptionById.get(String(account.subscriptionId)):null;const accountTrial=trialWindow(accountSubscription); %>
     <section class="jellyfinAccountCard <%= account.disabled?'isUnavailable':'' %>" id="account-<%= account.id %>">
+      <% if(accountTrial){ %>
+      <div class="serviceTrialCountdown" style="position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:13px 18px 15px;border-bottom:1px solid var(--line-soft);background:linear-gradient(90deg,rgba(32,169,214,.12),rgba(53,201,135,.06))" data-service-trial-start="<%= accountTrial.start.toISOString() %>" data-service-trial-end="<%= accountTrial.end.toISOString() %>">
+        <div class="serviceTrialCopy"><span class="eyebrow">Trial access</span><strong style="display:block;margin-top:2px">Your <%= player %> trial is active</strong><small style="display:block;margin-top:3px;color:var(--muted)" data-service-trial-range></small></div>
+        <div class="serviceTrialRemaining" style="text-align:right"><span style="display:block;color:var(--muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em">Time remaining</span><strong style="display:block;margin-top:3px;font-size:17px" data-service-trial-remaining>Calculating…</strong></div>
+        <div class="serviceTrialProgress" style="position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.05);overflow:hidden" aria-hidden="true"><span style="display:block;height:100%;width:0;background:currentColor;color:#35c987;transition:width .5s linear" data-service-trial-progress></span></div>
+      </div>
+      <% } %>
       <div class="jellyfinAccountHead">
         <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLabel %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
         <% if(account.publicUrl&&!account.disabled&&!account.passwordSetupRequired){ %><a class="button primary" href="<%= account.publicUrl %>" target="_blank" rel="noopener noreferrer">Open <%= player %></a><% } %>
