@@ -2,6 +2,7 @@
 
 const express=require('express');
 const {rateLimit,ipKeyGenerator}=require('express-rate-limit');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const stremio=require('../stremio/entitlements');
@@ -9,6 +10,8 @@ const managedEntitlements=require('../stremio/managed-entitlements');
 const managedSources=require('../stremio/managed-sources');
 const householdAccess=require('../stremio/household-access');
 const installationLinks=require('../stremio/customer-installation-links');
+const networkIdentity=require('../access/network-identity');
+const networkLeases=require('../access/network-leases');
 
 const accessLimit=routeRateLimit.middleware({scope:'customer-stremio-access',max:120,windowSeconds:60});
 const mutateLimit=routeRateLimit.middleware({scope:'customer-stremio-install',max:10,windowSeconds:300});
@@ -36,20 +39,50 @@ async function issueCustomerInstallation(customerId,{actorUserId=null}={}){
   const provisioned=await preprovisionManaged(issued.credential);
   return{issued,provisioned};
 }
+async function trialState(entitlement){
+  if(!entitlement?.subscription_id)return null;
+  const result=await query(`SELECT status,starts_at,current_period_end FROM subscriptions WHERE id=$1 LIMIT 1`,[entitlement.subscription_id]);
+  const row=result.rows[0]||null;
+  if(!row||String(row.status||'').toLowerCase()!=='trialing')return null;
+  const startsAt=row.starts_at?new Date(row.starts_at):null,endsAt=row.current_period_end?new Date(row.current_period_end):null;
+  if(!startsAt||!endsAt||!Number.isFinite(startsAt.getTime())||!Number.isFinite(endsAt.getTime())||endsAt<=startsAt)return null;
+  return{startsAt:startsAt.toISOString(),endsAt:endsAt.toISOString()};
+}
+async function currentLeaseState(req,entitlement){
+  if(!entitlement)return null;
+  const active=await networkLeases.activeForSubject({scope:'stremio',subjectKey:householdAccess.subjectKey(entitlement)});
+  if(!active.length)return{activeCount:0,address:null,currentConnectionRegistered:false,networkFamily:null};
+  const address=networkIdentity.requestAddress(req);
+  let matching=null;
+  if(address&&networkIdentity.isPublicAddress(address)){
+    const hash=networkIdentity.hashNetwork(address);
+    matching=active.find(row=>String(row.network_hash||'').trim()===String(hash||'').trim())||null;
+  }
+  return{
+    activeCount:active.length,
+    address:matching?address:null,
+    currentConnectionRegistered:Boolean(matching),
+    networkFamily:matching?.network_family||(active.length===1?active[0].network_family:null)||null
+  };
+}
 async function customerSetupState(req,customerId){
   const links=await installationLinks.current(req,customerId);
   const entitlement=await stremio.current(customerId).catch(()=>null);
-  if(!entitlement)return{...links,household:null};
+  if(!entitlement)return{...links,household:null,trial:null};
+  const trial=await trialState(entitlement).catch(error=>{console.warn('Customer Stremio trial status unavailable:',{customerId,error:error.message});return null;});
   try{
     const configured=await householdAccess.configForEntitlement(entitlement);
     const limit=Math.max(1,Number(configured?.component?.config?.networkLimit||1));
     const status=String(entitlement.status||'pending');
     const replacement=status==='active'?await householdAccess.replacementState(entitlement):null;
+    const currentLease=status==='active'?await currentLeaseState(req,entitlement):null;
     return{
       ...links,
+      trial,
       household:{
         status,
         accessModel:`Unlimited streams · Unlimited devices · ${limit} household connection${limit===1?'':'s'}`,
+        currentLease,
         replacementState:replacement?{
           allowed:Boolean(replacement.allowed),
           message:replacement.allowed?'You can change the registered household connection now.':householdAccess.cooldownMessage(replacement)
@@ -58,7 +91,7 @@ async function customerSetupState(req,customerId){
     };
   }catch(error){
     console.warn('Customer Stremio household status unavailable:',{customerId,error:error.message});
-    return{...links,household:{status:String(entitlement.status||'pending'),accessModel:'Unlimited streams · Unlimited devices · 1 household connection',replacementState:null}};
+    return{...links,trial,household:{status:String(entitlement.status||'pending'),accessModel:'Unlimited streams · Unlimited devices · 1 household connection',currentLease:null,replacementState:null}};
   }
 }
 function accessRedirect(kind,message){return `/account/access?${kind}=${encodeURIComponent(message)}#stremio-access`;}
@@ -68,7 +101,7 @@ function createCustomerStremioRouter(){
   const r=express.Router();r.use('/account/stremio',accessLimit,guard);
   // Preserve the legacy compatibility URL while the customer-facing setup now lives on My Access.
   r.get('/account/stremio',(req,res)=>res.redirect(302,'/account/access#stremio-access'));
-  r.get('/account/stremio/installation.json',async(req,res)=>{try{res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.json(await customerSetupState(req,req.session.customerId));}catch(error){console.warn('Customer Stremio installation lookup failed:',{customerId:req.session.customerId,error:error.message});return res.status(503).json({manifestUrl:null,installUrl:null,household:null,error:'Stremio installation link is temporarily unavailable.'});}});
+  r.get('/account/stremio/installation.json',async(req,res)=>{try{res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.json(await customerSetupState(req,req.session.customerId));}catch(error){console.warn('Customer Stremio installation lookup failed:',{customerId:req.session.customerId,error:error.message});return res.status(503).json({manifestUrl:null,installUrl:null,household:null,trial:null,error:'Stremio installation link is temporarily unavailable.'});}});
   r.post('/account/stremio/install',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const{provisioned}=await issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId});const message=provisioned?'Your new Stremio installation link is ready. This is a secret bearer link: anyone who has it can use your Stremio access, so treat it like a password and do not share it. Any previous installation link has been replaced.':'Your new Stremio installation link is ready, but automatic access setup is still finishing. Treat the link like a password and do not share it. If playback does not work within a few minutes, retry Stremio setup.';const target=req.body?.returnTo==='access'?accessRedirect(provisioned?'message':'error',message):homeRedirect(provisioned ? 'message' : 'error',message);return res.redirect(target);}catch(error){return res.redirect(requestRedirect(req,'error',error.message||'Stremio installation link could not be created.'));}});
   r.post('/account/stremio/reset-household',mutationBurstLimit,mutateLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const row=await stremio.current(req.session.customerId);if(!row||String(row.status||'')!=='active')throw new Error('No active household connection is available to replace.');const released=await householdAccess.release(row,{actorUserId:req.session.customerUserId,reason:'customer_reset',customerInitiated:true});return res.redirect(requestRedirect(req,'message',released?'Household connection released. Your next Stremio playback will register the internet connection you are using now.':'No household connection needed replacing.'));}catch(error){return res.redirect(requestRedirect(req,'error',error.message));}});
   r.post('/account/stremio/revoke',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await stremio.revoke(req.session.customerId);await managedEntitlements.revokeInactiveMappings();return res.redirect(requestRedirect(req,'message','Stremio installation link revoked. Create a new link whenever you want to use Stremio again.'));}catch(error){return res.redirect(requestRedirect(req,'error',error.message));}});
