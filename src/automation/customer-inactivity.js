@@ -72,8 +72,8 @@ async function candidates(globalCfg=null,{customerId=null}={}){
     LEFT JOIN LATERAL (
       SELECT MIN(ph.started_at) historical_first_playback_at
       FROM playback_history ph
-      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id AND ph.jellyfin_account_id=ja.id
-        AND ph.started_at>=ja.access_lane_changed_at
+      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
+        AND (ph.jellyfin_account_id=ja.id OR ph.jellyfin_account_id IS NULL)
     ) historical ON TRUE
     LEFT JOIN LATERAL (
       SELECT CASE
@@ -89,7 +89,8 @@ async function candidates(globalCfg=null,{customerId=null}={}){
              COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ph.ended_at,ph.last_seen_at)-ph.started_at))))
                FILTER(WHERE ph.started_at>=GREATEST(allocation.allocation_start_at,NOW()-(COALESCE(NULLIF(fa.inactivity_policy->>'playbackWindowDays','')::int,$3)||' days')::interval)),0)::bigint playback_seconds
       FROM playback_history ph
-      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id AND ph.jellyfin_account_id=ja.id
+      WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
+        AND (ph.jellyfin_account_id=ja.id OR ph.jellyfin_account_id IS NULL)
     ) us ON TRUE
     WHERE NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=fa.customer_id AND b.revoked_at IS NULL AND b.blocks_service_access=TRUE)
     ORDER BY COALESCE(us.last_playback_at,allocation.allocation_start_at),customer_name

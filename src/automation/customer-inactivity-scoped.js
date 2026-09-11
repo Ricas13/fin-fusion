@@ -9,7 +9,22 @@ const activityTrust = require('../jellyfin/activity-trust');
 const fleetMetrics = require('../jellyfin/fleet-metrics');
 const base = require('./customer-inactivity');
 
-const MAX_ENFORCEMENTS_PER_RUN = Math.max(1, Math.min(500, Number(process.env.INACTIVITY_MAX_ENFORCEMENTS_PER_RUN || 100)));
+function intEnv(name, fallback, min, max) {
+    const value = Number.parseInt(process.env[name] || '', 10);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+}
+
+function floatEnv(name, fallback, min, max) {
+    const value = Number.parseFloat(process.env[name] || '');
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+}
+
+const MAX_ENFORCEMENTS_PER_RUN = intEnv('INACTIVITY_MAX_ENFORCEMENTS_PER_RUN', 20, 1, 500);
+const CIRCUIT_BREAKER_MIN_ELIGIBLE = intEnv('INACTIVITY_CIRCUIT_BREAKER_MIN_ELIGIBLE', 5, 2, 500);
+const CIRCUIT_BREAKER_MAX_ABSOLUTE = intEnv('INACTIVITY_CIRCUIT_BREAKER_MAX_ABSOLUTE', 20, 2, 500);
+const CIRCUIT_BREAKER_MAX_RATIO = floatEnv('INACTIVITY_CIRCUIT_BREAKER_MAX_RATIO', 0.15, 0.01, 1);
 
 async function activityWorkerTelemetry() {
     return activityTrust.workerTelemetry();
@@ -19,6 +34,35 @@ function candidateServerIds(rows) {
     return [...new Set((rows || [])
         .map(row => row?.server_id == null ? null : String(row.server_id))
         .filter(Boolean))];
+}
+
+function expectedUserIdsForServer(rows, serverId) {
+    return [...new Set((rows || [])
+        .filter(row => String(row?.server_id || '') === String(serverId))
+        .map(row => row?.jellyfin_user_id == null ? null : String(row.jellyfin_user_id))
+        .filter(Boolean))];
+}
+
+function candidateUserEvidence(server, row) {
+    const id = row?.jellyfin_user_id == null ? '' : String(row.jellyfin_user_id).toLowerCase();
+    return id ? server?.userActivity?.expectedUsers?.[id] || null : null;
+}
+
+function massRemovalRisk(rows, eligible) {
+    const population = Math.max(0, Number(rows?.length || 0));
+    const eligibleCount = Math.max(0, Number(eligible?.length || 0));
+    const ratio = population > 0 ? eligibleCount / population : 0;
+    const tripped = eligibleCount >= CIRCUIT_BREAKER_MIN_ELIGIBLE
+        && (eligibleCount > CIRCUIT_BREAKER_MAX_ABSOLUTE || ratio > CIRCUIT_BREAKER_MAX_RATIO);
+    return {
+        tripped,
+        population,
+        eligible: eligibleCount,
+        ratio,
+        maxAbsolute: CIRCUIT_BREAKER_MAX_ABSOLUTE,
+        maxRatio: CIRCUIT_BREAKER_MAX_RATIO,
+        minEligible: CIRCUIT_BREAKER_MIN_ELIGIBLE
+    };
 }
 
 async function refreshCandidateServers(rows, existing = {}) {
@@ -32,7 +76,9 @@ async function refreshCandidateUserActivity(rows, serverTelemetry = {}) {
         const poll = telemetry[serverId];
         if (!poll?.ready) continue;
         try {
-            const refreshed = await fleetMetrics.refreshServerUserActivity(serverId);
+            const refreshed = await fleetMetrics.refreshServerUserActivity(serverId, {
+                expectedUserIds: expectedUserIdsForServer(rows, serverId)
+            });
             telemetry[serverId] = { ...poll, userActivityReady: true, userActivity: refreshed };
         } catch (error) {
             telemetry[serverId] = {
@@ -112,11 +158,16 @@ async function finalEligibility(row, globalCfg) {
     server = serverTelemetry[String(row.server_id)] || null;
     if (!server?.ready) return { ready: false, reason: server?.reason || 'user_activity_refresh_failed', worker, server };
 
+    const userEvidence = candidateUserEvidence(server, row);
+    if (!userEvidence?.present) {
+        return { ready: false, reason: 'candidate_user_not_observed_in_fresh_users_response', worker, server, userEvidence };
+    }
+
     const freshRows = await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg, { customerId: row.customer_id }));
     const fresh = freshRows.find(item => String(item.account_id) === String(row.account_id) && String(item.plan_id) === String(row.plan_id)) || null;
-    if (!fresh?.eligible) return { ready: false, reason: fresh?.restoration_grace ? 'admin_restore_observation_window' : 'usage_no_longer_eligible', worker, server, fresh };
-    if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh };
-    return { ready: true, worker, server, fresh };
+    if (!fresh?.eligible) return { ready: false, reason: fresh?.restoration_grace ? 'admin_restore_observation_window' : 'usage_no_longer_eligible', worker, server, fresh, userEvidence };
+    if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh, userEvidence };
+    return { ready: true, worker, server, fresh, userEvidence };
 }
 
 async function logTelemetrySkip(row, actorUserId, reason, server = null) {
@@ -126,7 +177,9 @@ async function logTelemetrySkip(row, actorUserId, reason, server = null) {
         accessLane: 'free',
         accountId: row.account_id,
         serverId: row.server_id,
+        jellyfinUserId: row.jellyfin_user_id || null,
         reason,
+        candidateUserEvidence: candidateUserEvidence(server, row),
         serverTelemetry: server || null
     };
     console.warn('Free Server inactivity enforcement skipped:', metadata);
@@ -145,7 +198,18 @@ async function verifyRemoved(accountId) {
 async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     const globalCfg = await lifecyclePolicy.get();
     const released = await base.releaseObsoletePlanHolds(actorUserId, globalCfg);
-    if (!globalCfg.enabled) return { processed: 0, eligible: 0, enforced: 0, wouldRemove: 0, released, dryRun: true, skipped: 'lifecycle_disabled' };
+    if (!globalCfg.enabled) {
+        return {
+            processed: 0,
+            eligible: 0,
+            enforced: 0,
+            wouldRemove: 0,
+            released,
+            dryRun: true,
+            skipped: globalCfg.configurationMissing ? 'lifecycle_configuration_missing' : 'lifecycle_disabled',
+            warning: globalCfg.configurationMissing ? 'Free Server inactivity enforcement is paused because the lifecycle settings row is missing. Save the lifecycle configuration explicitly before enabling enforcement.' : undefined
+        };
+    }
 
     const worker = await activityWorkerTelemetry();
     if (!worker.ready) {
@@ -166,6 +230,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     const unsafeEligible = rows.filter(row => row?.eligible && !serverTelemetry[String(row.server_id)]?.ready);
     const selectedEligible = eligible.slice(0, MAX_ENFORCEMENTS_PER_RUN);
     const deferred = Math.max(0, eligible.length - selectedEligible.length);
+    const circuitBreaker = massRemovalRisk(rows, eligible);
     let enforced = 0, wouldRemove = 0, failed = 0, safetySkipped = unsafeEligible.length;
 
     for (const row of unsafeEligible) {
@@ -181,13 +246,15 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
             continue;
         }
         const row = final.fresh;
-        const dryRun = forceDryRun === null ? row.policy.dryRun : Boolean(forceDryRun);
+        const configuredDryRun = forceDryRun === null ? row.policy.dryRun : Boolean(forceDryRun);
+        const dryRun = Boolean(configuredDryRun || circuitBreaker.tripped);
         const evidence = {
             planId: row.plan_id,
             planCode: row.plan_code,
             accessLane: 'free',
             accountId: row.account_id,
             serverId: row.server_id,
+            jellyfinUserId: row.jellyfin_user_id || null,
             allocationStartAt: row.allocation_start_at || null,
             firstPlaybackAt: row.first_playback_at || null,
             lastPlaybackAt: row.last_playback_at || null,
@@ -196,11 +263,17 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
             playbackMinutes: Math.round(row.playback_seconds / 60),
             triggers: row.triggers,
             dryRun,
+            safetyDryRun: circuitBreaker.tripped,
+            circuitBreaker,
             policyInherited: row.policy.inherited,
             repairExistingHold: Boolean(row.repairExistingHold),
             portalAccountPreserved: true,
             activityPollTrustedImmediatelyBeforeDecision: true,
             activityRefreshedImmediatelyBeforeDecision: true,
+            activityObservedForCandidate: Boolean(final.userEvidence?.present),
+            jellyfinLastActivityDate: final.userEvidence?.lastActivityDate || null,
+            jellyfinLastLoginDate: final.userEvidence?.lastLoginDate || null,
+            jellyfinActivityAt: final.userEvidence?.activityAt || null,
             lifecycle: 'present_or_deleted'
         };
         try {
@@ -238,9 +311,12 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     }
 
     const telemetry = telemetrySummary(worker, serverTelemetry);
-    const warning = deferred
-        ? `${deferred} eligible inactivity removal${deferred === 1 ? '' : 's'} deferred by the ${MAX_ENFORCEMENTS_PER_RUN}-customer safety cap; they will be reconsidered on the next run.`
-        : undefined;
+    const warnings = [];
+    if (circuitBreaker.tripped) {
+        warnings.push(`Mass-removal circuit breaker forced dry-run: ${circuitBreaker.eligible}/${circuitBreaker.population} (${(circuitBreaker.ratio * 100).toFixed(1)}%) candidates were eligible; live removal is blocked above ${circuitBreaker.maxAbsolute} accounts or ${(circuitBreaker.maxRatio * 100).toFixed(1)}% once at least ${circuitBreaker.minEligible} accounts are eligible.`);
+    }
+    if (deferred) warnings.push(`${deferred} eligible inactivity removal${deferred === 1 ? '' : 's'} deferred by the ${MAX_ENFORCEMENTS_PER_RUN}-customer throughput cap; they will be reconsidered on the next run.`);
+    const warning = warnings.length ? warnings.join(' ') : undefined;
     return {
         processed: rows.length,
         eligible: eligible.length,
@@ -252,7 +328,8 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         safetySkipped,
         released,
         warning,
-        dryRun: selectedEligible.every(row => forceDryRun === true || row.policy.dryRun),
+        circuitBreaker,
+        dryRun: Boolean(circuitBreaker.tripped || selectedEligible.every(row => forceDryRun === true || row.policy.dryRun)),
         telemetry,
         serverFailures: telemetry.unsafeTargetServers,
         examples: eligible.slice(0,25).map(row=>({customerId:row.customer_id,name:row.customer_name,plan:row.plan_code,server:row.server_name,triggers:row.triggers,lastPlaybackAt:row.last_playback_at,playbackMinutes:Math.round(row.playback_seconds/60)}))
@@ -272,8 +349,14 @@ async function run(options = {}) {
 
 module.exports = {
     MAX_ENFORCEMENTS_PER_RUN,
+    CIRCUIT_BREAKER_MIN_ELIGIBLE,
+    CIRCUIT_BREAKER_MAX_ABSOLUTE,
+    CIRCUIT_BREAKER_MAX_RATIO,
     activityWorkerTelemetry,
     candidateServerIds,
+    expectedUserIdsForServer,
+    candidateUserEvidence,
+    massRemovalRisk,
     refreshCandidateServers,
     refreshCandidateUserActivity,
     eligibleOnReadyServers,
