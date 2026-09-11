@@ -69,7 +69,13 @@
   }
 
   function fetchSnapshot(){return fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'}).then(response=>response.ok?response.json():null);}
-  async function refresh(){const data=await fetchSnapshot().catch(()=>null);if(data)apply(data);return data;}
+  function seenThroughFor(area,data){const value=Number(data?.updatedAt?.[area]||0);return Number.isFinite(value)&&value>0?String(Math.trunc(value)):null;}
+  function markAreaRead(area,data){const seenThrough=seenThroughFor(area,data);if(!area||!seenThrough||!data?.csrfToken)return Promise.reject(new Error('Read acknowledgement data unavailable'));const body=new URLSearchParams({area,seenThrough,_csrf:data.csrfToken});return fetch('/admin/api/operator-state/read',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-CSRF-Token':data.csrfToken,Accept:'application/json'},body:body.toString(),keepalive:true}).then(response=>{if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`);return response.json();});}
+  function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+  async function markAreaReadWithRetry(area,data){let lastError=null;for(const delay of [0,250,750,1500]){if(delay)await wait(delay);try{return await markAreaRead(area,data);}catch(error){lastError=error;}}throw lastError||new Error('Read acknowledgement failed');}
+  function locallyClearedSnapshot(data,area){return {...data,counts:{...data.counts,[area]:0}};}
+  async function acknowledgeCurrentArea(data){if(!areaForCurrentPage||Number(data?.counts?.[areaForCurrentPage]||0)<=0||!seenThroughFor(areaForCurrentPage,data))return data;try{await markAreaReadWithRetry(areaForCurrentPage,data);const cleared=locallyClearedSnapshot(data,areaForCurrentPage);apply(cleared);const fresh=await fetchSnapshot().catch(()=>null);if(fresh)apply(fresh);return fresh||cleared;}catch(_){return data;}}
+  async function refresh(){const data=await fetchSnapshot().catch(()=>null);if(!data)return null;apply(data);return acknowledgeCurrentArea(data);}
   ensureSignalNodes();
   setTimeout(()=>refresh().catch(()=>{}),80);
   setInterval(()=>refresh().catch(()=>{}),15000);
