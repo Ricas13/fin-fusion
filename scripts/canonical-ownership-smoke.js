@@ -74,6 +74,17 @@ assert(!provisioning.includes('WITH expired AS')&&!resilientProvisioning.include
 assert(subscriptionExpiry.includes('WITH expired AS')&&subscriptionExpiry.includes("status IN('active','trialing','past_due','paused','cancelled')"),'canonical subscription expiry helper must own the expiry state transition');
 assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/jellyfin/provisioning.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry helper consumers must stay limited to provisioning surfaces');
 
+// Activation cleanup must never own the right to delete a customer while a
+// provider checkout can still settle. Checkout creation takes the customer row
+// lock, and cleanup must re-check both open local checkouts and attached
+// provider-unresolved checkouts while holding that same owner lock.
+const activationCleanup=read('src/automation/activation-cleanup.js');
+assert((activationCleanup.match(/FROM billing_checkout_intents bci/g)||[]).length>=2,'activation cleanup must protect payable checkout state both during candidate classification and final delete re-check');
+assert(activationCleanup.includes("bci.state='open'"),'an open checkout must protect an unactivated customer from cleanup');
+assert(activationCleanup.includes('bci.provider_checkout_id IS NOT NULL')&&activationCleanup.includes('bci.provider_terminal_at IS NULL')&&activationCleanup.includes('COALESCE(bci.capacity_hold_until,bci.expires_at)>NOW()'),'locally terminal but provider-payable checkouts must stay protected until provider truth or the shared safety backstop');
+assert(activationCleanup.includes('FOR UPDATE OF c,u'),'activation cleanup must serialize final deletion against checkout creation through the customer owner row');
+assert(activationCleanup.includes('hasCheckout: Boolean(row.has_checkout)'),'protected-stale audit evidence must disclose checkout protection');
+
 // Database schema ownership: migrations create the session table; web runtime only uses it.
 const application=read('src/application.js');
 const sessionMigration=read('db/migrations/002_add_runtime_session_store.sql');
