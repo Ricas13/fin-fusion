@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
+const incidents = require('./incidents');
 
 const API_BASE = 'https://api.plisio.net';
 const WAITING_STATUSES = new Set(['new', 'pending', 'pending internal']);
@@ -92,7 +93,7 @@ async function createCheckout({ intentId, resolvedPlan, finalAmountMinor = null,
     const callback = new URL(callbackUrl);
     callback.searchParams.set('json', 'true');
     const invoice = await api('/api/v1/invoices/new', {
-        order_name: String(plan.name || 'CAPTAiNFiN access').trim().slice(0, 150) || 'CAPTAiNFiN access',
+        order_name: String(plan.name || 'CAPTaINFiN access').trim().slice(0, 150) || 'CAPTaINFiN access',
         order_number: String(intentId),
         source_currency: String(plan.currency || 'GBP').toUpperCase(),
         source_amount: (amountMinor / 100).toFixed(2),
@@ -164,17 +165,45 @@ async function activateCompleted(remote, fields, intent) {
     return { status: 'completed', completed: true };
 }
 
-async function applyRemoteOperation(remote, intent) {
+async function recordActivatedProviderLoss(fields, { eventId = null } = {}) {
+    if (!fields?.id || !TERMINAL_UNPAID_STATUSES.has(String(fields.status || '').toLowerCase())) return { matched: false };
+    const identity = await incidents.identityFromProviderSubscription('plisio', fields.id);
+    // A failed/cancelled checkout that never produced access is not a payment
+    // loss incident. Only current provider truth for an exact already-activated
+    // Plisio transaction is allowed to remove service.
+    if (identity.scope === 'unresolved' || !identity.customerId) return { matched: false };
+    const providerStatus = String(fields.status || '').toLowerCase();
+    const result = await incidents.record({
+        provider: 'plisio',
+        eventId: String(eventId || `operation-loss:${fields.id}:${providerStatus}`),
+        caseId: fields.id,
+        kind: 'chargeback',
+        status: 'lost',
+        identity,
+        providerSubscriptionId: fields.id,
+        metadata: {
+            providerVerified: true,
+            providerStatus,
+            providerLoss: true,
+            source: 'plisio_operation'
+        }
+    });
+    return { matched: true, incidentId: result?.incident?.id || null, duplicate: Boolean(result?.duplicate) };
+}
+
+async function applyRemoteOperation(remote, intent, { eventId = null } = {}) {
     const fields = operationFields(remote);
     if (fields.status === 'completed') return activateCompleted(remote, fields, intent);
     if (WAITING_STATUSES.has(fields.status)) return { status: fields.status, completed: false, waiting: true };
     if (['expired', 'cancelled', 'cancelled duplicate'].includes(fields.status)) {
         await intents.completeVerifiedProvider('plisio', fields.id, 'cancelled');
-        return { status: fields.status, completed: false, terminal: true };
+        const loss = await recordActivatedProviderLoss(fields, { eventId });
+        return { status: fields.status, completed: false, terminal: true, activatedProviderLoss: loss.matched };
     }
     if (['error', 'mismatch'].includes(fields.status)) {
         await intents.completeVerifiedProvider('plisio', fields.id, 'failed');
-        return { status: fields.status, completed: false, terminal: true };
+        const loss = await recordActivatedProviderLoss(fields, { eventId });
+        return { status: fields.status, completed: false, terminal: true, activatedProviderLoss: loss.matched };
     }
     return { status: fields.status || 'unknown', completed: false };
 }
@@ -183,7 +212,7 @@ async function processClaimedCallback(eventRow, payload) {
     try {
         const { intent, providerId } = await authenticateCallback(payload);
         const { remote } = await verifiedRemoteOperation(providerId, intent);
-        const result = await applyRemoteOperation(remote, intent);
+        const result = await applyRemoteOperation(remote, intent, { eventId: eventRow.provider_event_id });
         await lifecycle.finishPaymentEvent(eventRow);
         return { processed: true, ...result };
     } catch (error) {
@@ -240,11 +269,13 @@ async function reconcileStoredPaymentEvent(eventRow, payload) {
         const intent = await intents.findProviderIntent('plisio', providerId);
         if (!intent) {
             if (TERMINAL_UNPAID_STATUSES.has(fields.status)) {
-                // An old rejected/orphan callback for a transaction that can no
-                // longer collect money is safe to close. There is no entitlement
-                // or revenue action left to recover.
+                // Even when the checkout intent has since been cleaned up, an
+                // exact activated subscription for this transaction remains
+                // authoritative. Current provider loss must close that access;
+                // a never-activated orphan terminal event is safe to settle.
+                const loss = await recordActivatedProviderLoss(fields, { eventId: eventRow.provider_event_id });
                 await lifecycle.finishPaymentEvent(eventRow);
-                return { processed: true, status: fields.status, completed: false, terminal: true, orphaned: true };
+                return { processed: true, status: fields.status, completed: false, terminal: true, orphaned: !loss.matched, activatedProviderLoss: loss.matched };
             }
             if (fields.status === 'completed') {
                 throw new Error('Completed Plisio transaction has no local checkout intent and requires manual reconciliation.');
@@ -260,7 +291,7 @@ async function reconcileStoredPaymentEvent(eventRow, payload) {
             throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
         }
 
-        const result = await applyRemoteOperation(remote, intent);
+        const result = await applyRemoteOperation(remote, intent, { eventId: eventRow.provider_event_id });
         await lifecycle.finishPaymentEvent(eventRow);
         return { processed: true, ...result };
     } catch (error) {
@@ -279,7 +310,7 @@ async function retryPaymentEvent(eventRow) {
 
 async function confirmCheckout(providerTxnId, intent) {
     const { remote } = await verifiedRemoteOperation(providerTxnId, intent);
-    return applyRemoteOperation(remote, intent);
+    return applyRemoteOperation(remote, intent, { eventId: `operation-confirm:${providerTxnId}:${operationFields(remote).status || 'unknown'}` });
 }
 
 module.exports = {
@@ -298,6 +329,7 @@ module.exports = {
     retryPaymentEvent,
     confirmCheckout,
     applyRemoteOperation,
+    recordActivatedProviderLoss,
     authenticateCallback,
     verifiedRemoteOperation,
     storedEventProviderId,
