@@ -93,7 +93,7 @@ async function createCheckout({ intentId, resolvedPlan, finalAmountMinor = null,
     const callback = new URL(callbackUrl);
     callback.searchParams.set('json', 'true');
     const invoice = await api('/api/v1/invoices/new', {
-        order_name: String(plan.name || 'CAPTaINFiN access').trim().slice(0, 150) || 'CAPTaINFiN access',
+        order_name: String(plan.name || 'CAPTAiNFiN access').trim().slice(0, 150) || 'CAPTAiNFiN access',
         order_number: String(intentId),
         source_currency: String(plan.currency || 'GBP').toUpperCase(),
         source_amount: (amountMinor / 100).toFixed(2),
