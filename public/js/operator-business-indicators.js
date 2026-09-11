@@ -5,7 +5,7 @@
   const labelByKey={customers:['Customers','New customers since you last reviewed Customers'],orders:['Orders','New paid orders since you last reviewed Orders'],tickets:['Tickets','New tickets or customer replies since you last reviewed Tickets']};
   const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
   function businessAreaForPath(path){if(path==='/admin/users'||path==='/admin/users/dashboard'||/^\/admin\/users\/[0-9a-f-]{36}$/i.test(path))return'customers';if(path==='/admin/commerce/orders'||path==='/admin/orders')return'orders';if(path==='/admin/tickets')return'tickets';if(path==='/admin/payments')return'payments';return null;}
-  const areaForCurrentPage=businessAreaForPath(normalizedPath);
+  const areaForCurrentPage=businessAreaForPath(normalizedPath);let latestSnapshot=null;
 
   function ensureStyles(){if(document.querySelector('link[href="/css/operator-business-indicators.css"]'))return;const link=document.createElement('link');link.rel='stylesheet';link.href='/css/operator-business-indicators.css';document.head.appendChild(link);}
   ensureStyles();
@@ -60,7 +60,7 @@
   }
 
   function apply(data){
-    if(!data?.counts)return;applyMetrics(data.metrics);
+    if(!data?.counts)return;latestSnapshot=data;applyMetrics(data.metrics);
     Object.keys(hrefByKey).forEach(key=>{const count=Number(data.counts[key]||0);if(count<=0||key===areaForCurrentPage)clearSidebarBadge(key);else addSidebarBadge(key,count);});
     const customers=Number(data.counts.customers||0),attention=Number(data.counts.attention||0),servers=Number(data.counts.servers||0),payments=areaForCurrentPage==='payments'?0:Number(data.counts.payments||0),tickets=Number(data.counts.tickets||0),orders=Number(data.counts.orders||0);
     setSignal('new',areaForCurrentPage==='customers'?0:customers);
@@ -69,7 +69,13 @@
   }
 
   function fetchSnapshot(){return fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'}).then(response=>response.ok?response.json():null);}
-  async function refresh(){const data=await fetchSnapshot().catch(()=>null);if(data)apply(data);return data;}
+  function seenThroughFor(area,data){const value=Number(data?.updatedAt?.[area]||0);return Number.isFinite(value)&&value>0?String(Math.trunc(value)):null;}
+  function markAreaRead(area,data){const seenThrough=seenThroughFor(area,data);if(!area||!seenThrough||!data?.csrfToken)return Promise.reject(new Error('Read acknowledgement data unavailable'));const body=new URLSearchParams({area,seenThrough,_csrf:data.csrfToken});return fetch('/admin/api/operator-state/read',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-CSRF-Token':data.csrfToken,Accept:'application/json'},body:body.toString(),keepalive:true}).then(response=>{if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`);return response.json();});}
+  function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+  async function markAreaReadWithRetry(area,data){let lastError=null;for(const delay of [0,250,750,1500]){if(delay)await wait(delay);try{return await markAreaRead(area,data);}catch(error){lastError=error;}}throw lastError||new Error('Read acknowledgement failed');}
+  function locallyClearedSnapshot(data,area){return {...data,counts:{...data.counts,[area]:0}};}
+  async function acknowledgeCurrentArea(data){if(!areaForCurrentPage||Number(data?.counts?.[areaForCurrentPage]||0)<=0||!seenThroughFor(areaForCurrentPage,data))return data;try{await markAreaReadWithRetry(areaForCurrentPage,data);const cleared=locallyClearedSnapshot(data,areaForCurrentPage);apply(cleared);const fresh=await fetchSnapshot().catch(()=>null);if(fresh)apply(fresh);return fresh||cleared;}catch(_){return data;}}
+  async function refresh(){const data=await fetchSnapshot().catch(()=>null);if(!data)return null;apply(data);return acknowledgeCurrentArea(data);}
   ensureSignalNodes();
   setTimeout(()=>refresh().catch(()=>{}),80);
   setInterval(()=>refresh().catch(()=>{}),15000);
