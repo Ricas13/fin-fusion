@@ -90,6 +90,7 @@ async function main() {
 
     const first = await recovery.run({
         limit: 20,
+        checkoutIntentIds: createdIntents,
         handlers: {
             async stripe(row) {
                 if (row.id === stripeFail.id) throw new Error('synthetic provider timeout');
@@ -125,6 +126,7 @@ async function main() {
 
     const second = await recovery.run({
         limit: 20,
+        checkoutIntentIds: createdIntents,
         handlers: {
             async stripe(row) {
                 await intents.completeVerifiedProvider('stripe', row.provider_checkout_id, 'completed');
@@ -154,7 +156,7 @@ async function main() {
     assert.strictEqual(pendingTerminal.state, 'cancelled');
     assert(pendingTerminal.provider_terminal_at, 'verified provider-terminal checkout must record terminal proof');
 
-    const third = await recovery.run({ limit: 20, handlers: {} });
+    const third = await recovery.run({ limit: 20, checkoutIntentIds: createdIntents, handlers: {} });
     assert.strictEqual(third.total, 0, 'settled/terminal checkouts must not be polled forever');
 
     console.log('provider checkout recovery DB smoke: retry isolation, pending safety and terminal convergence ok');
