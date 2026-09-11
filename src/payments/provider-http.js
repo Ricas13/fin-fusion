@@ -92,8 +92,8 @@ function normalizeLegacyPayPalAgreement(agreement) {
     legacy_api_family: 'billing-agreements-v1'
   };
 }
-function paypalLegacyFallback(url, options, status) {
-  if (![404, 422].includes(Number(status))) return null;
+function paypalLegacyFallback(url, options, status, payload = null) {
+  const responseStatus = Number(status);
   let parsed;
   try { parsed = new URL(url); } catch { return null; }
   if (!['api-m.paypal.com', 'api-m.sandbox.paypal.com'].includes(parsed.hostname)) return null;
@@ -101,14 +101,19 @@ function paypalLegacyFallback(url, options, status) {
   if (!match) return null;
   const method = String(options?.method || 'GET').toUpperCase();
   const id = match[1], cancel = Boolean(match[2]);
-  if (!cancel && method === 'GET') {
+  const providerDetail = clean(payload?.message || payload?.name || payload?.error_description || payload?.error, 300);
+  const legacyReadHint = responseStatus === 400 && /profile id is invalid/i.test(providerDetail);
+  const readFallbackAllowed = !cancel && method === 'GET' && ([404, 422].includes(responseStatus) || legacyReadHint);
+  const mutationFallbackAllowed = cancel && method === 'POST' && [404, 422].includes(responseStatus);
+  if (!readFallbackAllowed && !mutationFallbackAllowed) return null;
+  if (readFallbackAllowed) {
     return {
       url: `${parsed.origin}/v1/payments/billing-agreements/${encodeURIComponent(id)}`,
       options,
       normalize: normalizeLegacyPayPalAgreement
     };
   }
-  if (cancel && method === 'POST') {
+  if (mutationFallbackAllowed) {
     let reason = 'Recurring payment cancelled by CAPTAiNFiN';
     try {
       const body = typeof options?.body === 'string' ? JSON.parse(options.body) : options?.body;
@@ -146,7 +151,7 @@ async function fetchJson(provider, url, options = {}, { timeout = timeoutMs(prov
   try {
     let result = await oneFetch(provider, url, options, { maxResponseBytes, fetchImpl, signal: controller.signal });
     if (String(provider || '').toLowerCase() === 'paypal' && !result.response.ok) {
-      const fallback = paypalLegacyFallback(url, options, result.response.status);
+      const fallback = paypalLegacyFallback(url, options, result.response.status, result.data);
       if (fallback) {
         const legacy = await oneFetch(provider, fallback.url, fallback.options, { maxResponseBytes, fetchImpl, signal: controller.signal });
         result = { ...legacy, data: legacy.response.ok ? fallback.normalize(legacy.data) : legacy.data, legacyFallback: true };

@@ -15,6 +15,18 @@ function clampLimit(value) {
     return Math.max(1, Math.min(MAX_LIMIT, Number(value) || DEFAULT_LIMIT));
 }
 
+function failureWarning(failures) {
+    if (!Array.isArray(failures) || failures.length === 0) return null;
+    const shown = failures.slice(0, 3).map(item => {
+        const provider = String(item?.provider || 'provider').replace(/\s+/g, ' ').trim().slice(0, 40);
+        const reference = String(item?.providerCheckoutId || item?.checkoutIntentId || 'checkout').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const error = String(item?.error || 'recovery failed').replace(/[\r\n\t\u2028\u2029]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 300);
+        return `${provider} ${reference}: ${error}`;
+    });
+    const extra = failures.length > shown.length ? `; +${failures.length - shown.length} more` : '';
+    return `${failures.length} provider checkout recovery failure${failures.length === 1 ? '' : 's'}: ${shown.join('; ')}${extra}`.slice(0, 1000);
+}
+
 async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = {}) {
     const safeLimit = clampLimit(limit);
     const scopedIds = Array.isArray(checkoutIntentIds)
@@ -132,6 +144,7 @@ async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds =
         }
     }
 
+    if (summary.failed) summary.warning = failureWarning(summary.failures);
     return summary;
 }
 
@@ -142,6 +155,7 @@ module.exports = {
     PAYPAL_RECOVERABLE,
     PAYPAL_TERMINAL,
     clampLimit,
+    failureWarning,
     candidates,
     recoverStripe,
     recoverPayPal,

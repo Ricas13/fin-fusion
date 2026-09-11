@@ -4,6 +4,8 @@ const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
 const paypal=require('../src/payments/paypal');
+const providerHttp=require('../src/payments/provider-http');
+const providerCheckoutRecovery=require('../src/payments/provider-checkout-recovery');
 
 const root=path.resolve(__dirname,'..');
 const source=file=>fs.readFileSync(path.join(root,file),'utf8');
@@ -30,6 +32,32 @@ function paypalPaidThroughCancellation(){
   const stillActive=paypal.paidThroughCancellationUpdate({status:'active',billing_mode:'subscription',current_period_end:future,refund_terminated_at:null},active);
   assert.equal(stillActive.preserved,false,'normal ACTIVE state must pass through without cancellation rewriting');
   assert.equal(stillActive.providerStatus,'ACTIVE');
+}
+
+function legacyPayPalProfileRecovery(){
+  const modern='https://api-m.paypal.com/v1/billing/subscriptions/I-LEGACY123';
+  const invalidProfile={message:'The profile ID is invalid'};
+  const fallback=providerHttp.paypalLegacyFallback(modern,{method:'GET'},400,invalidProfile);
+  assert(fallback,'legacy PayPal profiles rejected by the modern read endpoint must receive a compatibility lookup');
+  assert.equal(fallback.url,'https://api-m.paypal.com/v1/payments/billing-agreements/I-LEGACY123','legacy PayPal read fallback must use the billing-agreements API');
+  assert.equal(providerHttp.paypalLegacyFallback(modern,{method:'GET'},400,{message:'Generic bad request'}),null,'unrelated PayPal HTTP 400 responses must not trigger legacy fallback');
+  assert.equal(providerHttp.paypalLegacyFallback(`${modern}/cancel`,{method:'POST',body:'{}'},400,invalidProfile),null,'ambiguous HTTP 400 mutations must never be replayed through the legacy API');
+  const historicalCancel=providerHttp.paypalLegacyFallback(`${modern}/cancel`,{method:'POST',body:'{}'},404,{});
+  assert(historicalCancel&&historicalCancel.url.endsWith('/v1/payments/billing-agreements/I-LEGACY123/cancel'),'existing 404 legacy cancellation fallback must remain supported');
+}
+
+function providerCheckoutRecoveryDiagnostics(){
+  const warning=providerCheckoutRecovery.failureWarning([{
+    checkoutIntentId:'intent-1',
+    provider:'paypal',
+    providerCheckoutId:'I-LEGACY123',
+    error:'PayPal HTTP 400:\nThe profile ID is invalid'
+  }]);
+  assert.match(warning,/1 provider checkout recovery failure:/,'checkout recovery failures must expose a useful automation warning');
+  assert.match(warning,/paypal I-LEGACY123: PayPal HTTP 400: The profile ID is invalid/,'checkout recovery warning must identify the provider checkout and root error');
+  assert(!warning.includes('\n'),'checkout recovery warning must remain log/UI safe on one line');
+  assert(warning.length<=1000,'checkout recovery warning must remain bounded');
+  assert.match(source('src/payments/provider-checkout-recovery.js'),/if \(summary\.failed\) summary\.warning = failureWarning\(summary\.failures\);/,'checkout recovery run result must publish detailed failure warnings to automation health');
 }
 
 function jellyfinDeletionScope(){
@@ -80,6 +108,8 @@ function obsoleteRenewalIntegrityContract(){
 }
 
 paypalPaidThroughCancellation();
+legacyPayPalProfileRecovery();
+providerCheckoutRecoveryDiagnostics();
 jellyfinDeletionScope();
 deferredWebhookContract();
 discoveryAutomationContract();
