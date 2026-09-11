@@ -10,7 +10,10 @@ const baseline=read('db/migrations/000_database_baseline.sql');
 const cursors=read('src/platform/operator-read-cursors.js');
 const operator=read('src/platform/admin-operator-state.js');
 const tickets=read('src/support/tickets.js');
+const adminCustomers=read('src/platform/admin-customers-list.js');
 const adminOrders=read('src/platform/admin-orders.js');
+const adminTickets=read('src/platform/admin-support-tickets.js');
+const adminPayments=read('src/platform/admin-payment-settings.js');
 const client=read('public/js/operator-business-indicators.js');
 const experience=read('public/js/operator-experience.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -27,16 +30,33 @@ assert(cursors.includes("provider='plisio'")&&cursors.includes('ACTIONABLE_PAYME
 assert(operator.includes('readCursors.ACTIONABLE_PAYMENT_EVENT_SQL'),'operator payment alert count must reuse the canonical actionable payment-event predicate');
 assert(cursors.includes('GREATEST(admin_nav_read_state.last_seen_at,EXCLUDED.last_seen_at)'),'read cursor must move forward only');
 assert(cursors.includes("MAX(COALESCE(last_customer_reply_at,created_at))"),'ticket read watermark must use latest customer activity');
+assert(cursors.includes("throw new Error('Operator read watermark is required.')"),'read acknowledgements must fail closed when no rendered-snapshot watermark is supplied');
+assert(cursors.includes('const seenAt = readWatermark(seenThrough);'),'read acknowledgements must persist the caller-supplied rendered-snapshot watermark rather than querying a newer value at write time');
+assert(!cursors.includes('explicitWatermark || await latestFor'),'markSeen must never fall back to a write-time latest query, which can clear unseen notifications');
 assert(operator.includes('snapshot(res.locals.operatorActorUserId)'),'unread snapshot must be administrator-specific');
 assert(operator.includes("router.post('/admin/api/operator-state/read'"),'read acknowledgement endpoint missing');
 assert(operator.includes('csrf.verify(req)'),'read acknowledgement must require CSRF');
 assert(operator.includes('csrfToken:csrf.token(req)'),'authenticated unread response must provide same-origin CSRF token');
+assert(operator.includes("error:'missing_seen_through'"),'read acknowledgement endpoint must reject requests without an explicit seen-through watermark');
+assert(operator.includes('readCursors.markSeen(res.locals.operatorActorUserId,req.body.area,seenThrough)'),'read acknowledgement endpoint must pass the exact client snapshot watermark to persistence');
 assert(operator.includes('seen.customers')&&operator.includes('seen.orders')&&operator.includes('seen.tickets')&&operator.includes('seen.payments'),'reviewable counts must use stored cursors');
 assert(operator.includes("created_at>$1::timestamptz)`,[seen.payments||null])"),'provider callback count must only include events newer than the administrator review cursor');
 assert(tickets.includes('staffQueueSummary(since=null)'),'ticket unread summary must accept a cursor');
+
+const serverReadPages=[
+  ['Customers',adminCustomers,'customers','const seenThrough=await captureCustomersSeenThrough();','readCursors.markSeen(req.session?.authUserId,\'customers\',seenThrough)'],
+  ['Orders',adminOrders,'orders',"const seenThrough=await readCursors.captureSeenThrough('orders')", "readCursors.markSeen(req.session.authUserId,'orders',seenThrough)"],
+  ['Tickets',adminTickets,'tickets','const seenThrough=await captureTicketsSeenThrough();',"readCursors.markSeen(req.session?.authUserId,'tickets',seenThrough)"],
+  ['Payments',adminPayments,'payments','const seenThrough=await capturePaymentsSeenThrough();',"readCursors.markSeen(req.session?.authUserId,'payments',seenThrough)"]
+];
+for(const [label,source,area,captureMarker,markMarker] of serverReadPages){
+  assert(source.includes(captureMarker),`${label} must capture the ${area} read watermark before rendering`);
+  assert(source.includes(markMarker),`${label} must persist the exact captured ${area} watermark after rendering`);
+  assert(source.indexOf(captureMarker)<source.indexOf('const html=await'),`${label} must snapshot unread state before starting the page render`);
+  assert(source.indexOf(markMarker)>source.indexOf('const html=await'),`${label} must acknowledge unread state only after the page render has completed`);
+}
+
 assert(adminOrders.includes("const readCursors=require('./operator-read-cursors');"),'Orders must own a server-side read-cursor fallback');
-assert(adminOrders.includes("readCursors.markSeen(req.session.authUserId,'orders',seenThrough)"),'opening Orders must persist the order read cursor server-side');
-assert(adminOrders.includes('const seenThrough=await readCursors.captureSeenThrough')&&adminOrders.includes('await markOrdersSeen(req,seenThrough);return res.send(html);'),'Orders must snapshot the read watermark before rendering and acknowledge only after the page has rendered successfully');
 assert(!client.includes('/admin/api/operator-state/read'),'the browser must not acknowledge unread state itself; each admin page snapshots and advances its own read cursor server-side around rendering, so a click-vs-navigation race can never leave a false-cleared badge');
 assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before deciding which sidebar/signal badges to suppress for the current page');
 assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
