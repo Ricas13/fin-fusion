@@ -10,6 +10,8 @@ require('./free-places-discord-notification-smoke');
 const provision = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
 const dash = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
 const view = fs.readFileSync('views/customer/dashboard.ejs', 'utf8');
+const onboarding = fs.readFileSync('views/customer/onboarding.ejs', 'utf8');
+const cleanupReturn = fs.readFileSync('src/entitlements/jellyfin-cleanup-return.js', 'utf8');
 const nav = fs.readFileSync('views/customer/_nav.ejs', 'utf8');
 const pendingRegistration = fs.readFileSync('src/security/pending-registration.js', 'utf8');
 const publicAuth = fs.readFileSync('src/platform/customer-public-auth.js', 'utf8');
@@ -33,6 +35,18 @@ assert(/Free Server, Premium Jellyfin, Stremio and Emby Shares can stay active i
 assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jellyfin_username/.test(view),'dashboard must expose each ready Jellyfin server and username');
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');
+
+assert(/declineDeletedFreeAccess/.test(cleanupReturn),'returning Free Access flow must expose an explicit decline mutation');
+assert(/subscriptionTermination\.terminateLocal\(status\.freeSubscriptionId/.test(cleanupReturn),'declining restore must cancel the retained Free Access subscription');
+assert(/type:INACTIVITY_HOLD_TYPE/.test(cleanupReturn)&&/releasedInactivityHold/.test(cleanupReturn),'declining restore must release the matching inactivity hold');
+assert(/freeSubscriptionId:freeEntitlement\?\.subscription_id/.test(cleanupReturn),'restore inspection must retain the exact Free Access subscription identity');
+assert(/\/account\/jellyfin\/free-access\/decline/.test(dash)&&/cleanupReturn\.declineDeletedFreeAccess/.test(dash),'customer portal must wire the explicit Free Access decline route');
+assert(/csrf\.verify\(req\)/.test(dash),'Free Access decline route must remain CSRF protected');
+assert(/Free Access was removed\. You can join again whenever a spot is available\./.test(dash),'decline flow must explain that re-application depends on capacity');
+assert(/action="\/account\/jellyfin\/free-access\/decline"/.test(dash)&&/Continue without restoring/.test(dash),'deleted Free Access restore prompt must submit the destructive decline action rather than silently retain the plan');
+assert(/<button class="button free full" type="submit">Join<\/button>/.test(onboarding),'available Free Access must expose a Join action after the old plan is released');
+assert(/aria-disabled="true">Full<\/span>/.test(onboarding),'sold-out Free Access must render as Full');
+assert(!/Free Access is full\. Join the Discord/.test(onboarding),'sold-out Free Access must not replace the Full state with a Discord subscription action');
 
 assert(/const FREE_INTENT_MINUTES=10;/.test(pendingRegistration),'anonymous Free Server signup intent must stay bounded to 10 minutes');
 assert(/free_access_registration_intents/.test(pendingRegistration)&&/holder_session_hash/.test(pendingRegistration),'Free Server signup start must create a session-bound intent rather than a capacity hold');
