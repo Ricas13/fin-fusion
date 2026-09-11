@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const accessHolds=require('./access-holds');
 const subscriptionState=require('./subscription-state');
+const subscriptionTermination=require('../payments/subscription-termination');
 const CLEANUP_HOLD_TYPE='jellyfin_cleanup';
 const INACTIVITY_HOLD_TYPE='inactivity_policy';
 
@@ -22,7 +23,7 @@ async function returningCustomerStatus(customerId){
   const canRestoreDeletedFree=Boolean(freeEntitlement&&inactivityHold.rowCount);
   const cleanupSources=cleanupHolds.rows.map(row=>row.source_key);
   if(!cleanupSources.length&&!canRestoreDeletedFree){
-    return{eligible:false,cleanupSources:[],canRestoreDeletedFree:false,inactivitySource:null,freePlanId:freeEntitlement?.plan_id||null};
+    return{eligible:false,cleanupSources:[],canRestoreDeletedFree:false,inactivitySource:null,freePlanId:freeEntitlement?.plan_id||null,freeSubscriptionId:freeEntitlement?.subscription_id||null};
   }
 
   // Generic cleanup holds intentionally make normal entitlement lookup blocked.
@@ -32,7 +33,7 @@ async function returningCustomerStatus(customerId){
     const genericEntitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
     const delivery=String(genericEntitlement?.service_type_snapshot||genericEntitlement?.service_type||'jellyfin');
     if(!genericEntitlement||!['jellyfin','bundle'].includes(delivery)){
-      return{eligible:false,reason:'no_jellyfin_entitlement',cleanupSources,canRestoreDeletedFree,inactivitySource,freePlanId:freeEntitlement?.plan_id||null};
+      return{eligible:false,reason:'no_jellyfin_entitlement',cleanupSources,canRestoreDeletedFree,inactivitySource,freePlanId:freeEntitlement?.plan_id||null,freeSubscriptionId:freeEntitlement?.subscription_id||null};
     }
   }
 
@@ -41,8 +42,36 @@ async function returningCustomerStatus(customerId){
     cleanupSources,
     canRestoreDeletedFree,
     inactivitySource,
-    freePlanId:freeEntitlement?.plan_id||null
+    freePlanId:freeEntitlement?.plan_id||null,
+    freeSubscriptionId:freeEntitlement?.subscription_id||null
   };
+}
+
+async function declineDeletedFreeAccess(customerId,{actorUserId=null}={}){
+  const status=await returningCustomerStatus(customerId);
+  if(!status.canRestoreDeletedFree||!status.freeSubscriptionId){
+    return{removed:false,reason:'no_restorable_free_access'};
+  }
+
+  const reason='Customer declined Free Access restoration after inactivity';
+  await subscriptionTermination.terminateLocal(status.freeSubscriptionId,customerId,{
+    actorUserId,
+    reason,
+    reference:`free-access-inactivity-decline:${status.freeSubscriptionId}`
+  });
+  const released=await accessHolds.releaseHold({
+    customerId,
+    type:INACTIVITY_HOLD_TYPE,
+    sourceKey:status.inactivitySource,
+    actorUserId,
+    resolutionReason:reason
+  });
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'jellyfin.cleanup.decline_free_restore','customer',$2,$3::jsonb)`,[
+    actorUserId,
+    customerId,
+    JSON.stringify({subscriptionId:status.freeSubscriptionId,freePlanId:status.freePlanId,releasedInactivityHold:Boolean(released),portalReturn:true,explicitDecline:true})
+  ]);
+  return{removed:true,subscriptionId:status.freeSubscriptionId,freePlanId:status.freePlanId,releasedInactivityHold:Boolean(released)};
 }
 
 async function restoreReturningCustomer(customerId,{reconcile}={}){
@@ -75,4 +104,4 @@ async function restoreReturningCustomer(customerId,{reconcile}={}){
   await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({releasedCleanupHolds:status.cleanupSources.length,releasedInactivityHold:status.canRestoreDeletedFree,portalReturn:true,explicitRestore:true,freePlanId:status.freePlanId,reprovisionPending:false})]);
   return{restored:true,released:Number(status.cleanupSources.length)+Number(status.canRestoreDeletedFree),freeLifecycleRestored:status.canRestoreDeletedFree};
 }
-module.exports={CLEANUP_HOLD_TYPE,INACTIVITY_HOLD_TYPE,returningCustomerStatus,restoreReturningCustomer};
+module.exports={CLEANUP_HOLD_TYPE,INACTIVITY_HOLD_TYPE,returningCustomerStatus,declineDeletedFreeAccess,restoreReturningCustomer};
