@@ -71,7 +71,7 @@ assert(managedIndex.includes('managedLibraries.indexFilter(serverId)')&&managedI
 assert(managedIndex.includes('if(!filter.configured)return[null]'),'upgrades must preserve all-library managed indexing until an operator establishes explicit selections');
 assert(managedIndex.includes('clearAndReset'),'managed rows must support a clean local re-index without touching Jellyfin media');
 
-assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must clear only CAPTaINFiN managed/external lookup indexes');
+assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must clear only CAPTAiNFiN managed/external lookup indexes');
 assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes('Wait for active indexing'),'global destructive index cleanup must refuse to run while indexing is active');
 assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source clean rebuild');
 
