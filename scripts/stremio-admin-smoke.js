@@ -71,7 +71,7 @@ assert(managedIndex.includes('managedLibraries.indexFilter(serverId)')&&managedI
 assert(managedIndex.includes('if(!filter.configured)return[null]'),'upgrades must preserve all-library managed indexing until an operator establishes explicit selections');
 assert(managedIndex.includes('clearAndReset'),'managed rows must support a clean local re-index without touching Jellyfin media');
 
-assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must clear only CAPTAiNFiN managed/external lookup indexes');
+assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must clear only CAPTaINFiN managed/external lookup indexes');
 assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes('Wait for active indexing'),'global destructive index cleanup must refuse to run while indexing is active');
 assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source clean rebuild');
 
@@ -97,13 +97,13 @@ assert(sourceIndex.includes('INCREMENTAL_HOURS=3')&&sourceIndex.includes('FULL_R
 assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'External indexing must remain incremental and low-footprint');
 assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(automationJobs.includes('stremio_external_tokens')&&automationJobs.includes('stremioExternalTokens.maintain'),'External token maintenance must remain a dedicated automation job');
-assert(automationWorker.includes('stremio_external_tokens:300')&&automationWorker.includes('stremio_media_index:10800'),'Worker defaults must retain five-minute token housekeeping and three-hour indexing');
+assert(automationWorker.includes('stremio_external_tokens:300')&&automationWorker.includes('stremio_media_index:300'),'Worker defaults must retain five-minute token housekeeping and use a five-minute bounded external-index sweep cadence');
 assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(explicit)return mapped.rows'),'Explicit plan mappings must be strict external source allow-lists');
 assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own external source selection');
 
 for(const table of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources'])assert(migration.includes(`CREATE TABLE public.${table}`)||migration.includes(`CREATE TABLE IF NOT EXISTS ${table}`),`Migration missing ${table}`);
 assert(runtimeSettings.includes('externalSources')&&runtimeSettings.includes('externalReadyIndexes')&&runtimeSettings.includes('eligibleSources'),'Runtime readiness must account for external and managed Stremio sources');
 assert(rotationMigration.includes('password_encrypted')&&rotationMigration.includes('token_rotation_enabled'),'Token rotation migration must retain encrypted password storage');
-assert(maintenanceMigration.includes('stremio_source_retired_tokens')&&maintenanceMigration.includes("'stremio_external_tokens',TRUE,300")&&maintenanceMigration.includes("'stremio_media_index',TRUE,10800"),'External maintenance migration must persist token grace and automation cadences');
+assert(maintenanceMigration.includes('stremio_source_retired_tokens')&&maintenanceMigration.includes("'stremio_external_tokens',TRUE,300")&&maintenanceMigration.includes("'stremio_media_index',TRUE,10800"),'External maintenance migration must retain the historical three-hour default that the bounded-sweep migration upgrades safely');
 
 console.log('stremio admin sources smoke: ok');
