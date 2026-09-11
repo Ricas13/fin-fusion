@@ -5,7 +5,7 @@
   const labelByKey={customers:['Customers','New customers since you last reviewed Customers'],orders:['Orders','New paid orders since you last reviewed Orders'],tickets:['Tickets','New tickets or customer replies since you last reviewed Tickets']};
   const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
   function businessAreaForPath(path){if(path==='/admin/users'||path==='/admin/users/dashboard'||/^\/admin\/users\/[0-9a-f-]{36}$/i.test(path))return'customers';if(path==='/admin/commerce/orders'||path==='/admin/orders')return'orders';if(path==='/admin/tickets')return'tickets';if(path==='/admin/payments')return'payments';return null;}
-  const areaForCurrentPage=businessAreaForPath(normalizedPath);let latestSnapshot=null;
+  const areaForCurrentPage=businessAreaForPath(normalizedPath);
 
   function ensureStyles(){if(document.querySelector('link[href="/css/operator-business-indicators.css"]'))return;const link=document.createElement('link');link.rel='stylesheet';link.href='/css/operator-business-indicators.css';document.head.appendChild(link);}
   ensureStyles();
@@ -60,7 +60,7 @@
   }
 
   function apply(data){
-    if(!data?.counts)return;latestSnapshot=data;applyMetrics(data.metrics);
+    if(!data?.counts)return;applyMetrics(data.metrics);
     Object.keys(hrefByKey).forEach(key=>{const count=Number(data.counts[key]||0);if(count<=0||key===areaForCurrentPage)clearSidebarBadge(key);else addSidebarBadge(key,count);});
     const customers=Number(data.counts.customers||0),attention=Number(data.counts.attention||0),servers=Number(data.counts.servers||0),payments=areaForCurrentPage==='payments'?0:Number(data.counts.payments||0),tickets=Number(data.counts.tickets||0),orders=Number(data.counts.orders||0);
     setSignal('new',areaForCurrentPage==='customers'?0:customers);
