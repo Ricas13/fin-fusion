@@ -46,8 +46,11 @@ assert(!checkout.includes("querySelector('#stremio-access')"),'Home must not rel
 // My Access owns the setup experience and loads the same recovered installation
 // state used by the server. The rich setup is rendered there after a no-store read.
 assert(access.includes('id="stremio-access"')&&access.includes('data-stremio-access'),'My Access must contain the Stremio setup mount');
-for(const copy of ['Household access','Use a different household connection','Installation manifest'])assert(accessJs.includes(copy),`My Access Stremio section missing task-focused copy: ${copy}`);
-for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.','Keep this link private.'])assert(accessJs.includes(instructions),`My Access Stremio setup instructions missing: ${instructions}`);
+for(const copy of ['Household access','Use a different household connection','Copy URL'])assert(accessJs.includes(copy),`My Access Stremio section missing task-focused copy: ${copy}`);
+for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.'])assert(accessJs.includes(instructions),`My Access Stremio setup instructions missing: ${instructions}`);
+assert(!accessJs.includes('Installation manifest'),'My Access must not render a duplicate installation-manifest section below the setup steps');
+assert(!accessJs.includes('Copy manifest'),'My Access must use the single Copy URL action inside step 4');
+assert(accessJs.indexOf('data-stremio-copy')<accessJs.indexOf('data-stremio-manifest'),'the Copy URL action must appear before the manifest URL field in step 4');
 for(const route of ['/account/stremio/installation.json','/account/stremio/install','/account/stremio/reset-household','/account/stremio/revoke'])assert(accessJs.includes(route),`My Access Stremio UI missing ${route}`);
 assert(accessJs.includes("cache:'no-store'"),'My Access must fetch fresh installation-link state');
 assert(accessJs.includes("name=\"returnTo\" value=\"access\""),'My Access Stremio mutations must return to My Access');
