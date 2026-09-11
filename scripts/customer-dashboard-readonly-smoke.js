@@ -31,13 +31,14 @@ assert(retryBlock.includes('reconcile:provisioning.reconcileCustomer'),'explicit
 assert(retryBlock.includes('provisioning.reconcileCustomer(customerId)'),'ordinary retry must continue to reconcile customers without restoration state');
 
 const inspectStart=cleanup.indexOf('async function returningCustomerStatus');
-const mutateStart=cleanup.indexOf('async function restoreReturningCustomer');
-assert(inspectStart>=0&&mutateStart>inspectStart,'cleanup-return service must separate inspection from mutation');
-const inspectBlock=cleanup.slice(inspectStart,mutateStart);
+const firstMutationStart=cleanup.indexOf('async function declineDeletedFreeAccess');
+const restoreMutationStart=cleanup.indexOf('async function restoreReturningCustomer');
+assert(inspectStart>=0&&firstMutationStart>inspectStart&&restoreMutationStart>firstMutationStart,'cleanup-return service must separate read-only inspection from explicit decline/restore mutations');
+const inspectBlock=cleanup.slice(inspectStart,firstMutationStart);
 assert(!inspectBlock.includes('releaseHold('),'read-only restoration inspection must not release access holds');
 assert(!inspectBlock.includes('UPDATE jellyfin_account_lifecycle'),'read-only restoration inspection must not mutate lifecycle history');
 assert(!inspectBlock.includes('INSERT INTO audit_log'),'read-only restoration inspection must not append mutation audit events');
-assert(cleanup.slice(mutateStart).includes('await returningCustomerStatus(customerId)'),'restoration mutation must re-check eligibility instead of trusting stale GET state');
+assert(cleanup.slice(restoreMutationStart).includes('await returningCustomerStatus(customerId)'),'restoration mutation must re-check eligibility instead of trusting stale GET state');
 
 // Admin impersonation is an owner-only "act on behalf of" mode. Ordinary
 // account/service changes are allowed, while anything that can create or

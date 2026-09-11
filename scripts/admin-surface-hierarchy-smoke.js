@@ -57,7 +57,7 @@ assert(density.includes('align-items:start!important') && density.includes('heig
 assert(density.includes('@media(max-width:1180px)') && density.includes('@media(max-width:720px)'), 'card density must collapse safely for tablet and mobile widths');
 
 assert(operations.includes('.topBar')&&operations.includes('position:relative!important'),'admin top bar must stay in document flow rather than overlay page titles and controls');
-assert(operations.includes('.serverGrid>.automationJobCard')&&operations.includes('grid-column:span 3!important'),'automation configuration cards must use deliberate two-up density even when only one job is unhealthy');
+assert(operations.includes('.page-automation .automationGroup .serverGrid')&&operations.includes('grid-template-columns:repeat(3,minmax(0,1fr))!important')&&operations.includes('.page-automation .serverGrid>.automationJobCard')&&operations.includes('grid-column:auto!important'),'automation configuration cards must match the current three-up Automation layout owner');
 assert(operations.includes('.automationJobCard .kvList')&&operations.includes('grid-template-columns:repeat(2,minmax(0,1fr))'),'automation metadata must compact into a readable two-column grid');
 assert(operations.includes('.operatorDetailsBody>.section:only-child')&&operations.includes('980px'),'single expanded settings editors must not stretch into empty full-width canvases');
 assert(operations.includes('.ordersTable')&&operations.includes('.provisioningTable'),'problematic operational tables must have explicit responsive sizing contracts');

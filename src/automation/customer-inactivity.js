@@ -74,6 +74,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       FROM playback_history ph
       WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
         AND (ph.jellyfin_account_id=ja.id OR ph.jellyfin_account_id IS NULL)
+        AND ph.started_at>=ja.access_lane_changed_at
     ) historical ON TRUE
     LEFT JOIN LATERAL (
       SELECT CASE

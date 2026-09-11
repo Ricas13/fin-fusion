@@ -9,6 +9,9 @@ const provisioning=require('../jellyfin/provisioning');
 const jellyfinAdminControl=require('../jellyfin/admin-control');
 const serverMigration=require('../jellyfin/server-migration');
 const deletion=require('./customer-deletion');
+const manualEntitlement=require('./admin-manual-entitlement');
+const subscriptionRevoke=require('./admin-subscription-revoke');
+const forceAccess=require('./admin-customer-force-access');
 
 async function actorFor(item){
   const r=await query('SELECT created_by FROM background_jobs WHERE id=$1',[item.job_id]);
@@ -17,6 +20,59 @@ async function actorFor(item){
 async function audit(action,customerId,actorUserId,metadata={}){
   await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,action,customerId,JSON.stringify(metadata)]);
 }
+
+bulkWorker.registerHandler('add_plan',async item=>{
+  const actor=await actorFor(item),planId=String(item.params?.planId||''),reason=String(item.params?.reason||'Manual bulk plan grant').trim().slice(0,500);
+  if(!planId)throw new Error('Plan is required');
+  if(reason.length<3)throw new Error('Reason must be at least 3 characters');
+  const planResult=await query(`SELECT id,name,duration_days,currency,COALESCE(service_type,'jellyfin') AS service_type FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planId]);
+  if(!planResult.rowCount)throw new Error('Target plan is not available for a manual bulk grant');
+  const plan=planResult.rows[0],operationRef=`bulk:${item.job_id}:${item.id}`;
+  // createManualGrant commits the subscription before service reconciliation.
+  // Anchor the bulk item in its canonical grant audit so a worker crash after
+  // that commit can retry without creating (or falsely failing on) a second plan.
+  const prior=await query(`SELECT s.id FROM audit_log a JOIN subscriptions s ON s.id::text=a.entity_id::text WHERE a.action='admin.customer.manual_grant' AND s.customer_id=$1 AND s.plan_id=$2 AND a.metadata->>'externalReference'=$3 ORDER BY a.created_at DESC LIMIT 1`,[item.customer_id,plan.id,operationRef]);
+  if(prior.rowCount){
+    try{await provisioning.reconcileCustomer(item.customer_id);}
+    catch(error){throw new Error(`Plan is already granted, but service reconciliation still failed: ${String(error?.message||error).slice(0,300)}`);}
+    return{planId:plan.id,planName:plan.name,serviceType:plan.service_type,subscriptionId:prior.rows[0].id,reconciled:true,chargedProvider:false,recurringBillingCreated:false,reason,jobItemId:item.id,reused:true};
+  }
+  const startAt=new Date(),endAt=new Date(startAt);
+  endAt.setUTCDate(endAt.getUTCDate()+Math.max(1,Number(plan.duration_days||30)));
+  const result=await manualEntitlement.createManualGrant(item.customer_id,actor,{planId:plan.id,method:'other',currency:String(plan.currency||'GBP').toUpperCase(),amountMinor:0,startAt,endAt,externalReference:operationRef,note:reason,returnTab:'access'});
+  if(!result.reconciled)throw new Error('Plan was granted, but service reconciliation did not complete. Retry this failed bulk item; the existing grant will be reused safely.');
+  return{planId:plan.id,planName:plan.name,serviceType:plan.service_type,subscriptionId:result.subscriptionId,reconciled:true,chargedProvider:false,recurringBillingCreated:false,reason,jobItemId:item.id,reused:false};
+});
+
+bulkWorker.registerHandler('cancel_plan',async item=>{
+  const actor=await actorFor(item),reason=String(item.params?.reason||'Plan cancelled by administrator').trim().slice(0,500);
+  if(reason.length<3)throw new Error('Reason must be at least 3 characters');
+  const rows=await subscriptionRevoke.subscriptions(item.customer_id);
+  const primary=rows.find(row=>!row.is_addon);
+  if(!primary){
+    // A prior attempt may have committed the cancellation before failing in
+    // downstream cleanup/reconciliation. Converge those effects before marking
+    // this retry successful; cleanupStremio preserves any still-valid Stremio plan.
+    const stremioCleanup=await subscriptionRevoke.cleanupStremio(item.customer_id);
+    const outcome=await provisioning.reconcileCustomer(item.customer_id);
+    await audit('admin.bulk.cancel_plan.already_absent',item.customer_id,actor,{reason,jobItemId:item.id,stremioCleanup,reconciledActive:Boolean(outcome?.active)});
+    return {cancelled:true,alreadyAbsent:true,stremioCleanup,reconciledActive:Boolean(outcome?.active)};
+  }
+  const result=await subscriptionRevoke.revokeSelected(primary,{actorUserId:actor,reason});
+  const payload={...result,reason,jobItemId:item.id};
+  await audit('admin.bulk.cancel_plan',item.customer_id,actor,payload);
+  return payload;
+});
+
+bulkWorker.registerHandler('force_server',async item=>{
+  const actor=await actorFor(item),targetServerId=String(item.params?.serverId||''),reason=String(item.params?.reason||'Forced Jellyfin server assignment').trim().slice(0,500);
+  if(!targetServerId)throw new Error('Target server is required');
+  if(reason.length<3)throw new Error('Reason must be at least 3 characters');
+  const result=await forceAccess.forceAccess(item.customer_id,targetServerId,{actorUserId:actor});
+  const payload={serverId:result.server?.id||targetServerId,serverName:result.server?.name||null,accountId:result.account?.id||null,forceAction:result.action||null,persistentAdminOverride:true,automationProtected:true,reason,jobItemId:item.id};
+  await audit('admin.bulk.force_server',item.customer_id,actor,payload);
+  return payload;
+});
 
 bulkWorker.registerHandler('ban',async item=>{
   const actor=await actorFor(item),reason=String(item.params?.reason||'Administrative ban').slice(0,500);
