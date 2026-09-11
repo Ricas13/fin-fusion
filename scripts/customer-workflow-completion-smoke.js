@@ -67,7 +67,7 @@ const bulkCustomersSource=fs.readFileSync(path.join(root,'src/platform/admin-bul
 const bulkOperationsSource=fs.readFileSync(path.join(root,'src/platform/bulk-operations.js'),'utf8');
 const requestUsersSource=fs.readFileSync(path.join(root,'src/platform/admin-request-users.js'),'utf8');
 const accessCardsSource=fs.readFileSync(path.join(root,'src/platform/customer-360-access-cards.js'),'utf8');
-assert(bulkCustomersSource.includes("['plan_change','Manual entitlement edit',"),'the plan_change bulk-action catalog must label itself as a manual entitlement edit at the source, not via a rendering-time patch');
+assert(bulkCustomersSource.includes("['plan_change','Move Plan',"),'the customer-list bulk-action catalog must expose plan_change as Move Plan');
 assert(!bulkCustomersSource.includes("'Change plan'"),'no bulk-action catalog entry should still say "Change plan"');
 assert(accessCardsSource.includes("bulkPreviewForm(token,customerId,'plan_change','Manual entitlement edit'"),'Customer 360 overview must label plan_change as a manual entitlement edit at the source door');
 assert(!requestUsersSource.includes('Change plan'),'the request-users bulk plan-change button must not still say "Change plan"');
