@@ -2,7 +2,7 @@
   "name": "steam-fusion",
   "version": "2.0.0",
   "private": true,
-  "description": "CAPTAiNFiN: Jellyfin customer, subscription, affiliate and fleet management platform",
+  "description": "CAPTaINFiN: Jellyfin customer, subscription, affiliate and fleet management platform",
   "license": "MIT",
   "main": "src/application.js",
   "scripts": {
@@ -55,6 +55,7 @@
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^10.0.0",
     "dotenv": "^16.6.1",
+    "ejs": "^3.1.10",
     "express": "^4.21.2",
     "express-rate-limit": "8.6.1",
     "express-session": "^1.18.1",
