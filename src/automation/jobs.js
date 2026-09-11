@@ -36,7 +36,7 @@ const customerDeletion=require('../platform/customer-deletion');
 const winbackOffers=require('../marketing/winback-offers');
 require('../platform/bulk-operations');
 require('../platform/operator-bulk-operations');
-async function notificationLifecycleSafeRun(){return notificationLifecycle.run();}
+async function notificationLifecycleSafeRun(){const result=await notificationLifecycle.run();return{...result,deliveryFailed:Number(result.failed||0),failed:0};}
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0);return{...active,expired:expiredCount,expiryFailed,downgradeRetries,warnings,serviceEndEmails:serviceEnd,processed:Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(active.blocked||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
