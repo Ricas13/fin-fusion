@@ -21,7 +21,7 @@ function staticContracts(){
   assert(dashboard.includes('Your active access')&&dashboard.includes('accessRows.forEach'),'customer home must render all live subscriptions instead of one plan');
   assert(dashboard.includes("if(s&&s.is_free_tier)return'Free Server'")&&dashboard.includes("return String(s&&s.billing_interval_snapshot||s&&s.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin'"),'customer Home active-access summary must identify Free and Premium Jellyfin lanes');
   assert(!dashboard.includes('id="stremio-access"')&&!dashboard.includes('Installation manifest'),'customer Home must not expose Stremio setup or the recovered bearer link');
-  assert(accessJs.includes('/account/stremio/installation.json')&&accessJs.includes('Installation manifest')&&customerStremio.includes('installationLinks.current(req,customerId)'),'My Access must expose the recovered Stremio installation link from the authoritative setup-state endpoint');
+  assert(accessJs.includes('/account/stremio/installation.json')&&accessJs.includes('Copy URL')&&accessJs.includes('data-stremio-manifest')&&!accessJs.includes('Installation manifest')&&customerStremio.includes('installationLinks.current(req,customerId)'),'My Access must expose the recovered Stremio installation link once, with the Copy URL action inside setup step 4');
   assert((dashboard.match(/data-promo-input/g)||[]).length>=1,'customer home must expose a promo field on each paid plan card');
   assert(dashboard.includes('data-promo-target')&&checkoutJs.includes('data-promo-input'),'promo code must be copied into whichever provider form is submitted');
   assert(!dashboard.includes('discountField'),'provider-specific promo inputs must not return');
