@@ -40,6 +40,13 @@ assert(attention.includes('FROM customer_provisioning_state cps'),'Needs Attenti
 assert(!attention.includes("FROM provisioning_runs WHERE started_at>NOW()-INTERVAL '7 days'"),'historical provisioning runs must not be the live problem authority');
 assert(attention.includes("key:key('provisioning',row.customer_id)"),'provisioning attention fingerprint must stay stable across retries');
 assert(attention.includes('/admin/provisioning?customer='),'provisioning attention must deep-link to focused recovery rather than the giant customer access form');
+assert(attention.includes('FROM provider_operations po'),'Needs Attention must include provider operations that exhausted automatic recovery');
+assert(attention.includes('po.manual_review_required=TRUE'),'retryable provider operations must stay out of Needs Attention until automatic recovery declares manual review');
+assert(attention.includes("key:key('provider-operation',row.id)"),'provider-operation attention fingerprints must remain stable across operator review');
+assert(attention.includes('FROM customer_deletion_jobs j'),'Needs Attention must include persistently failing hard-deletion sagas');
+assert(attention.includes("j.status='failed' AND j.attempt_count>=3"),'customer deletion must receive automatic retry tolerance before dashboard escalation');
+assert(attention.includes("INTERVAL '15 minutes'"),'stale running customer deletions must become visible once the deletion lease is stale');
+assert(attention.includes("key:key('customer-deletion',row.id)"),'customer-deletion attention fingerprints must remain stable across retries');
 assert(!attention.includes('protectedActivations'),'protected stale activation tokens are lifecycle hygiene, not operator intervention');
 assert(!attention.includes("status IN('failed','dead')"),'retryable notification failures must not be emitted individually');
 assert(attention.includes('attempts>=5')&&attention.includes("INTERVAL '6 hours'"),'email failures must get a long automatic retry tolerance before aggregate warning');

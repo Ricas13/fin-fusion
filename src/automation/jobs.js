@@ -13,8 +13,10 @@ const notificationOutbox=require('../integrations/notification-outbox');
 const discordRoleReconciliation=require('../integrations/discord-role-reconciliation');
 const billingControl=require('../payments/billing-control');
 const providerOperationRecovery=require('../payments/provider-operation-recovery');
+const providerCheckoutRecovery=require('../payments/provider-checkout-recovery');
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
+const subscriptionDiscovery=require('../payments/subscription-discovery');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
 const customerInactivity=require('./customer-inactivity-scoped');
@@ -68,6 +70,8 @@ const jobs={
  async discord_roles(){return discordRoleReconciliation.reconcileLinkedCustomers()},
  async request_users(){await requestServiceSettings.ensureLoaded();const config=await requestUserSync.configuration();if(!config.configured)return{processed:0,skipped:'request_service_not_configured'};const result=await requestUserSync.syncAll();return{...result,processed:Number(result.total||0)}},
  async billing(){return billingControl.syncDue({all:false,limit:100})},
+ async subscription_discovery(){const result=await subscriptionDiscovery.apply(null),unresolved=Number(result.unresolved||0);return{...result,processed:Number(result.safeFound||0),failed:Number(result.failed||0),...(unresolved?{warning:`${unresolved} provider subscription match${unresolved===1?'':'es'} require operator review.`}:{})}},
+ async provider_checkout_recovery(){return providerCheckoutRecovery.run({limit:25})},
  async provider_operation_recovery(){return providerOperationRecovery.run({limit:25})},
  async payment_events(){return paymentEventRetry.run({limit:25})},
  async plan_changes(){const stripe=await customerPlanChange.applyDueStripe(),paypalExpiry=await customerPlanChange.expireDuePaypal();return{...stripe,paypalExpiry,processed:Number(stripe.succeeded||0)+Number(paypalExpiry.notified||0),waiting:Number(stripe.pending||0),failed:Number(stripe.failed||0)+Number(paypalExpiry.failed||0)}},

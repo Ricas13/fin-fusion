@@ -30,6 +30,8 @@ const DEFAULT_JOB_INTERVALS=Object.freeze({
     creation_intent_recovery:60,
     customer_service_recovery:60,
     revenue_integrity:60,
+    provider_checkout_recovery:300,
+    subscription_discovery:21600,
     data_retention:3600,
     discord_roles:43200,
     stremio_external_tokens:300,

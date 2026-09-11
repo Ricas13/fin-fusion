@@ -29,7 +29,7 @@ function workerLabel(workerKey){
 async function sourceItems(){
  const out=[];
  const now=Date.now();
- const[incidents,jobs,workers,servers,provisioning,notifications,backups,stremioSources]=await Promise.all([
+ const[incidents,jobs,workers,servers,provisioning,notifications,backups,stremioSources,providerOperations,deletionJobs]=await Promise.all([
   query(`SELECT id,incident_type,incident_status,provider,provider_event_id,provider_case_id,customer_id,scope,access_action,created_at FROM payment_incidents WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
   jobHealth.list().then(rows=>({rows})).catch(()=>({rows:[]})),
   query(`SELECT worker_key,last_heartbeat_at,draining_at,metadata FROM operational_worker_state ORDER BY worker_key`).catch(()=>({rows:[]})),
@@ -65,7 +65,20 @@ async function sourceItems(){
       WHERE s.verified_at IS NULL AND s.started_at<NOW()-INTERVAL '2 days'
         AND NOT EXISTS(SELECT 1 FROM latest_failure f WHERE f.started_at>s.started_at)
     ORDER BY started_at DESC`).catch(()=>({rows:[]})),
-  query(`SELECT id,name,auth_state,last_error,updated_at FROM stremio_sources WHERE enabled=TRUE AND auth_state='reconnect_required' ORDER BY updated_at DESC LIMIT 100`).catch(()=>({rows:[]}))
+  query(`SELECT id,name,auth_state,last_error,updated_at FROM stremio_sources WHERE enabled=TRUE AND auth_state='reconnect_required' ORDER BY updated_at DESC LIMIT 100`).catch(()=>({rows:[]})),
+  query(`SELECT po.id,po.owner_id customer_id,po.provider,po.operation_type,po.state,po.failure_kind,po.last_error,po.attempt_count,po.updated_at,po.created_at,
+      COALESCE(NULLIF(c.display_name,''),u.username,c.email,'Customer') customer_name
+    FROM provider_operations po
+    LEFT JOIN customers c ON c.id=po.owner_id
+    LEFT JOIN app_users u ON u.id=c.user_id
+    WHERE po.manual_review_required=TRUE
+      AND po.state IN('planned','provider_applied','local_applied','failed')
+    ORDER BY po.updated_at DESC LIMIT 100`).catch(()=>({rows:[]})),
+  query(`SELECT j.id,j.customer_id,j.customer_name,j.status,j.attempt_count,j.last_error,j.next_attempt_at,j.access_held_at,j.updated_at,j.created_at
+    FROM customer_deletion_jobs j
+    WHERE (j.status='failed' AND j.attempt_count>=3)
+       OR (j.status='running' AND j.updated_at<NOW()-INTERVAL '15 minutes')
+    ORDER BY j.updated_at DESC LIMIT 100`).catch(()=>({rows:[]}))
  ]);
 
  // Payment events are not all incidents requiring human intervention. Refunds
@@ -75,6 +88,28 @@ async function sourceItems(){
    const decision=policy.paymentDecision(row);if(!decision.visible)continue;
    const type=humanize(row.incident_type),provider=humanize(row.provider||'Payment');
    out.push(item({key:key('payment',row.id),title:`${provider} ${type} needs review`,area:'Payments',severity:decision.severity,detail:row.scope==='unresolved'?`CAPTAiNFiN could not safely match this ${String(row.incident_type||'payment event').replace(/_/g,' ')} to a customer.`:`${humanize(row.incident_status||'open')} · ${row.provider_case_id||row.provider_event_id||row.id}`,href:`/admin/commerce?incident=${encodeURIComponent(row.id)}#incident-${encodeURIComponent(row.id)}`,createdAt:row.created_at,actionLabel:'Review payment case'}));
+ }
+
+ // Durable provider operations normally repair themselves. Only operations that
+ // exhausted automatic recovery or were classified unsafe to reconcile are
+ // surfaced here; these represent a provider/local billing mismatch that now
+ // needs a person rather than another blind retry.
+ for(const row of providerOperations.rows){
+   const provider=humanize(row.provider||'Payment'),operation=humanize(row.operation_type||'operation');
+   const partial=['provider_applied','local_applied'].includes(String(row.state));
+   const detail=`${row.customer_name||'Customer'} · ${operation} · ${humanize(row.state||row.failure_kind||'failed')}. ${row.last_error||'Automatic provider reconciliation cannot continue safely.'}`.slice(0,1400);
+   out.push(item({key:key('provider-operation',row.id),title:`${provider} operation needs manual reconciliation`,area:'Payments',severity:partial?'critical':'warning',detail,href:'/admin/commerce',createdAt:row.updated_at||row.created_at,actionLabel:'Review provider operation'}));
+ }
+
+ // Hard deletion is a durable saga and transient remote failures keep retrying.
+ // Escalate only after several failed attempts or when a running lease is stale,
+ // so an access-held customer cannot remain half-deleted without visibility.
+ for(const row of deletionJobs.rows){
+   const stale=String(row.status)==='running';
+   const next=row.next_attempt_at?` Next automatic retry ${new Date(row.next_attempt_at).toLocaleString('en-GB')}.`:'';
+   const held=row.access_held_at?' Customer access is already held while deletion completes.':'';
+   const detail=`${row.last_error||(stale?'Deletion worker stopped making progress.':'Customer deletion has repeatedly failed.')} Attempt ${Number(row.attempt_count||0)}.${held}${next}`.slice(0,1400);
+   out.push(item({key:key('customer-deletion',row.id),title:`Customer deletion is stuck: ${row.customer_name||row.customer_id}`,area:'Customers',severity:row.access_held_at?'critical':'warning',detail,href:`/admin/provisioning?customer=${encodeURIComponent(row.customer_id)}`,createdAt:row.updated_at||row.created_at,actionLabel:'Review deletion recovery'}));
  }
 
  const workerByKey=new Map(workers.rows.map(row=>[String(row.worker_key),row]));

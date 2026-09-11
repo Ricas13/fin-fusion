@@ -6,6 +6,7 @@
 const {query}=require('../db');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const provisioning=require('../jellyfin/provisioning');
+const jellyfinAdminControl=require('../jellyfin/admin-control');
 const serverMigration=require('../jellyfin/server-migration');
 const deletion=require('./customer-deletion');
 
@@ -33,9 +34,13 @@ bulkWorker.registerHandler('ban',async item=>{
 
 bulkWorker.registerHandler('jellyfin_delete',async item=>{
   const actor=await actorFor(item),reason=String(item.params?.reason||'Jellyfin access deleted by administrator').slice(0,500);
-  const result=await deletion.deleteJellyfinAccounts(item.customer_id,{actorUserId:actor,reason,holdAccess:true,removeLocal:true,continueOnMissing:true});
-  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true});
-  return {...result,portalAccountPreserved:true,serviceHold:true};
+  // The destructive intent is Jellyfin-specific. Persist that authority before
+  // touching the remote account so a retry/reconcile cannot recreate Jellyfin,
+  // while independently valid Stremio/Emby access remains untouched.
+  await jellyfinAdminControl.remove(item.customer_id,null,{actorUserId:actor,reason});
+  const result=await deletion.deleteJellyfinAccounts(item.customer_id,{actorUserId:actor,reason,holdAccess:false,removeLocal:true,continueOnMissing:true});
+  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true,service:'jellyfin',serviceControl:'admin_removed'});
+  return {...result,portalAccountPreserved:true,serviceHold:false,serviceControl:'admin_removed'};
 });
 
 bulkWorker.registerHandler('migrate_server',async item=>{
