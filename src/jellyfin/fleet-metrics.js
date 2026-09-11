@@ -54,6 +54,27 @@ function activityRows(users) {
     return [...byUser.values()];
 }
 
+function expectedUserEvidence(users, expectedUserIds = []) {
+    const expected = new Set((expectedUserIds || []).filter(Boolean).map(value => String(value).toLowerCase()));
+    const evidence = {};
+    for (const id of expected) {
+        evidence[id] = { present: false, lastActivityDate: null, lastLoginDate: null, activityAt: null };
+    }
+    for (const user of Array.isArray(users) ? users : []) {
+        if (!user?.Id) continue;
+        const id = String(user.Id).toLowerCase();
+        if (!expected.has(id)) continue;
+        const activityAt = userActivityDate(user);
+        evidence[id] = {
+            present: true,
+            lastActivityDate: user.LastActivityDate || null,
+            lastLoginDate: user.LastLoginDate || null,
+            activityAt: activityAt ? activityAt.toISOString() : null
+        };
+    }
+    return evidence;
+}
+
 async function persistUserActivity(serverId, users) {
     const incoming = activityRows(users);
     if (!incoming.length) return { observed: 0, updated: 0 };
@@ -81,11 +102,16 @@ async function persistUserActivity(serverId, users) {
     return { observed: incoming.length, updated: Number(result.rowCount || 0) };
 }
 
-async function refreshServerUserActivity(serverId) {
+async function refreshServerUserActivity(serverId, { expectedUserIds = [] } = {}) {
     const users = await registry.request(serverId, '/Users', { timeoutMs: 10000 });
     if (!Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
     const activity = await persistUserActivity(serverId, users);
-    return { totalUsers: users.length, observedActivity: activity.observed, updatedAccounts: activity.updated };
+    return {
+        totalUsers: users.length,
+        observedActivity: activity.observed,
+        updatedAccounts: activity.updated,
+        expectedUsers: expectedUserEvidence(users, expectedUserIds)
+    };
 }
 
 async function inventory() {
@@ -259,6 +285,7 @@ module.exports = {
     userActivityDate,
     isNewerActivity,
     activityRows,
+    expectedUserEvidence,
     persistUserActivity,
     refreshServerUserActivity,
     inventory,
