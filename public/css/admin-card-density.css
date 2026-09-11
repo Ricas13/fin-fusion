@@ -73,6 +73,69 @@
 .settings-card .buttonRow,
 .settings-card .cardActions{margin-top:8px!important}
 
+/* Automation control room: keep the operational cards genuinely compact.
+   This page has many jobs, so desktop should scan three jobs per row instead
+   of stretching every card across the full content width. */
+.page-automation .automationGroup .serverGrid,
+.page-automation #automation-problems .serverGrid{
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:12px!important;
+  align-items:start!important;
+}
+.page-automation .automationGroup .serverGrid>*,
+.page-automation #automation-problems .serverGrid>*{
+  grid-column:auto!important;
+  min-width:0;
+}
+.page-automation .automationJobCard{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  min-height:0;
+  padding:12px!important;
+}
+.page-automation .automationJobCard .serverTop{margin:0}
+.page-automation .automationJobCard .serverStats{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:7px;
+  margin:0;
+}
+.page-automation .automationJobCard .serverStats>div{
+  min-width:0;
+  padding:7px 8px;
+}
+.page-automation .automationJobCard .metricMini{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.page-automation .automationJobCard .kvList{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:0 10px;
+  margin:0;
+}
+.page-automation .automationJobCard .kvRow{min-width:0}
+.page-automation .automationJobCard .kvValue{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.page-automation .automationJobCard .securityNote,
+.page-automation .automationJobCard .notice{margin:0}
+.page-automation .automationJobCard .formPanel{
+  margin:0;
+  padding:9px!important;
+}
+.page-automation .automationJobCard .formGrid{
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:8px;
+  align-items:end;
+}
+.page-automation .automationJobCard .inlineHelp{display:none}
+.page-automation .automationJobCard form:last-child{margin-top:auto}
+.page-automation .automationJobCard form:last-child .button{width:100%}
+
 @media(max-width:1180px){
   .adminCardDensityGrid,
   .settings-grid,
@@ -90,6 +153,8 @@
   [data-card-density="1"]{grid-column:1/-1!important}
   .settings-grid>:has(.dataTable,.tableWrap,.booleanMatrix,.capabilityLibraryGrid){grid-column:1/-1!important}
   .notificationIdentityGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .page-automation .automationGroup .serverGrid,
+  .page-automation #automation-problems .serverGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
 
 @media(max-width:720px){
@@ -105,4 +170,8 @@
   .adminCardDensity--2,
   .adminCardDensity--3,
   [data-card-density]{grid-column:1/-1!important}
+  .page-automation .automationGroup .serverGrid,
+  .page-automation #automation-problems .serverGrid{grid-template-columns:1fr!important}
+  .page-automation .automationJobCard .kvList{grid-template-columns:1fr}
+  .page-automation .automationJobCard .formGrid{grid-template-columns:1fr}
 }
