@@ -14,6 +14,7 @@ const access=read('views/customer/jellyfin.ejs');
 const accessJs=read('public/js/customer-jellyfin.js');
 const components=read('src/access/plan-components.js');
 const household=read('src/stremio/household-access.js');
+const networkLeases=read('src/access/network-leases.js');
 const adminJourney=read('public/js/admin-stremio-journey.js');
 const adminCss=read('public/css/admin-stremio-journey.css');
 const capabilityCss=read('public/css/admin-capability.css');
@@ -31,6 +32,23 @@ assert(customer.includes('module.exports={createCustomerStremioRouter,issueCusto
 assert(customer.includes('installationLinks.current(req,customerId)'),'My Access must recover the authoritative current installation credential');
 assert(customer.includes("res.setHeader('Cache-Control','no-store, private, max-age=0')"),'installation state endpoint must remain no-store');
 
+// Trial timing is returned only for a genuinely trialing Stremio subscription.
+// Paid/free/ordinary active access gets trial:null and therefore no countdown.
+assert(customer.includes("String(row.status||'').toLowerCase()!=='trialing'"),'Stremio trial countdown data must be gated by subscription trial status');
+assert(customer.includes('return{startsAt:startsAt.toISOString(),endsAt:endsAt.toISOString()}'),'trial state must carry authoritative start/end timestamps');
+assert(customer.includes('if(!entitlement)return{...links,household:null,trial:null}'),'customers without Stremio entitlement must never receive a trial countdown payload');
+assert(accessJs.includes('stremioTrialCountdown')&&accessJs.includes('Time remaining'),'My Access must render the live trial countdown at the top of the Stremio card');
+assert(accessJs.includes('trialBanner(data?.trial)'),'non-trial access must omit the countdown entirely');
+assert(accessJs.includes('window.setInterval(update,1000)'),'trial countdown must update live rather than showing a stale page-load value');
+
+// Household lease details remain privacy-preserving at rest. The portal may reveal
+// the current public address only when this authenticated request itself hashes to
+// an active lease; the DB still stores only the one-way network hash.
+assert(customer.includes('networkLeases.activeForSubject')&&customer.includes('networkIdentity.requestAddress(req)')&&customer.includes('networkIdentity.hashNetwork(address)'),'My Access must compare the current portal connection with the active Stremio household lease');
+assert(customer.includes('address:matching?address:null'),'raw household IP must only be returned when the current request matches the lease');
+assert(!networkLeases.includes('network_address')&&!networkLeases.includes('raw_ip'),'network lease persistence must remain hash-only');
+assert(accessJs.includes('Current leased IP:'),'My Access must display the current leased-IP row in Household access');
+
 // Home must be a summary/navigation surface. This is server-rendered behavior,
 // not a client-side hide, so cached JavaScript cannot bring the setup panel back.
 assert(dashboard.includes('class="multiAccessSummary"'),'Home must keep the active access summary');
@@ -46,8 +64,12 @@ assert(!checkout.includes("querySelector('#stremio-access')"),'Home must not rel
 // My Access owns the setup experience and loads the same recovered installation
 // state used by the server. The rich setup is rendered there after a no-store read.
 assert(access.includes('id="stremio-access"')&&access.includes('data-stremio-access'),'My Access must contain the Stremio setup mount');
-for(const copy of ['Household access','Use a different household connection','Installation manifest'])assert(accessJs.includes(copy),`My Access Stremio section missing task-focused copy: ${copy}`);
-for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.','Keep this link private.'])assert(accessJs.includes(instructions),`My Access Stremio setup instructions missing: ${instructions}`);
+for(const copy of ['Household access','Use a different household connection','Copy URL'])assert(accessJs.includes(copy),`My Access Stremio section missing task-focused copy: ${copy}`);
+for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.'])assert(accessJs.includes(instructions),`My Access Stremio setup instructions missing: ${instructions}`);
+assert(!accessJs.includes('Installation manifest'),'My Access must not render a duplicate installation-manifest section below the setup steps');
+assert(!accessJs.includes('Copy manifest'),'My Access must use the single Copy URL action inside step 4');
+assert(accessJs.indexOf('data-stremio-copy')<accessJs.indexOf('data-stremio-manifest'),'the Copy URL action must appear before the manifest URL field in step 4');
+assert(accessJs.includes('stremioHeadActions')&&accessJs.includes('flex-wrap:nowrap'),'Install in Stremio and Revoke link must remain side-by-side');
 for(const route of ['/account/stremio/installation.json','/account/stremio/install','/account/stremio/reset-household','/account/stremio/revoke'])assert(accessJs.includes(route),`My Access Stremio UI missing ${route}`);
 assert(accessJs.includes("cache:'no-store'"),'My Access must fetch fresh installation-link state');
 assert(accessJs.includes("name=\"returnTo\" value=\"access\""),'My Access Stremio mutations must return to My Access');
