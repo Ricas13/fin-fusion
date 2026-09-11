@@ -57,8 +57,12 @@ function discoveryAutomationContract(){
 
 function independentServiceRecoveryContract(){
   const text=source('src/automation/customer-service-recovery.js');
-  for(const marker of ['recoverStremio','recoverEmby','recoverDiscord'])assert.match(text,new RegExp(`async function ${marker}\\b`),`${marker} must remain independently recoverable`);
-  assert.match(text,/customer_service_recovery|recoverCustomer/,'customer service recovery must remain independently executable');
+  assert.match(text,/async function recoverCustomer\b/,'customer service recovery must remain independently executable');
+  assert.match(text,/const capture\s*=\s*async\s*\(name,\s*fn\)\s*=>/,'service recovery must isolate individual service failures');
+  for(const service of ['stremio','emby','discord']){
+    assert.match(text,new RegExp(`await capture\\('${service}'`),`${service} must remain independently recoverable`);
+  }
+  assert.match(text,/failures\.push\(\{\s*service:\s*name,/,'one service failure must be recorded without aborting the remaining service repairs');
 }
 
 paypalPaidThroughCancellation();
