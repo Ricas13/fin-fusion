@@ -81,12 +81,15 @@ function createAdminOperatorStateRouter(){
   router.use('/admin/api/operator-state/read',readBurstLimit,readPersistentLimit,gate);
   router.post('/admin/api/operator-state/read',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).json({ok:false,error:'invalid_csrf'});
+    const seenThrough=req.body?.seenThrough;
+    if(seenThrough===undefined||seenThrough===null||seenThrough==='')return res.status(400).json({ok:false,error:'missing_seen_through'});
     try{
-      const saved=await readCursors.markSeen(res.locals.operatorActorUserId,req.body.area);
+      const saved=await readCursors.markSeen(res.locals.operatorActorUserId,req.body.area,seenThrough);
       res.setHeader('Cache-Control','no-store, private');
       return res.json({ok:true,area:saved.area,seenAt:epoch(saved.seen_at)});
     }catch(error){
       if(error.message==='Invalid operator read area.')return res.status(400).json({ok:false,error:'invalid_area'});
+      if(error.message==='Invalid operator read watermark.')return res.status(400).json({ok:false,error:'invalid_seen_through'});
       console.error('operator read cursor update failed:',error.message);
       return res.status(500).json({ok:false,error:'cursor_update_failed'});
     }

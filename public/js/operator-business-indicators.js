@@ -5,7 +5,7 @@
   const labelByKey={customers:['Customers','New customers since you last reviewed Customers'],orders:['Orders','New paid orders since you last reviewed Orders'],tickets:['Tickets','New tickets or customer replies since you last reviewed Tickets']};
   const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
   function businessAreaForPath(path){if(path==='/admin/users'||path==='/admin/users/dashboard'||/^\/admin\/users\/[0-9a-f-]{36}$/i.test(path))return'customers';if(path==='/admin/commerce/orders'||path==='/admin/orders')return'orders';if(path==='/admin/tickets')return'tickets';if(path==='/admin/payments')return'payments';return null;}
-  const areaForCurrentPage=businessAreaForPath(normalizedPath);let latestSnapshot=null;
+  const areaForCurrentPage=businessAreaForPath(normalizedPath);
 
   function ensureStyles(){if(document.querySelector('link[href="/css/operator-business-indicators.css"]'))return;const link=document.createElement('link');link.rel='stylesheet';link.href='/css/operator-business-indicators.css';document.head.appendChild(link);}
   ensureStyles();
@@ -41,16 +41,15 @@
     const persistent=tone==='alert';
     const summaryTitle=persistent?'Operational alerts. Attention and server health persist until resolved; provider callback notifications clear after you review Payments.':'';
     const headStatus=persistent?'<small>Health persists · provider callbacks clear after review</small>':'';
-    return `<div class="operatorSignal operatorSignal--${tone}${persistent?' operatorSignal--persistent':''}" data-operator-signal="${key}" hidden><button class="operatorSignalSummary" type="button" aria-expanded="false"${summaryTitle?` title="${summaryTitle}"`:''}><span>${label}</span><strong data-operator-signal-count>0</strong></button><div class="operatorSignalMenu operatorSignalMenu--${tone}" hidden><div class="operatorSignalMenuHead"><span><strong>${headLabel}</strong>${headStatus}</span><a href="${primaryHref}">${primaryLabel}</a></div><div class="operatorSignalMenuBody">${items.map(item=>`<a class="operatorSignalRow operatorSignalRow--${tone}" href="${item.href}" data-signal-source="${item.key}"${item.business?` data-business-read="${item.key}"`:''}><span><strong>${item.label}</strong><small>${item.meta}</small></span><em data-signal-count="${item.key}">0</em></a>`).join('')}</div></div></div>`;
+    return `<div class="operatorSignal operatorSignal--${tone}${persistent?' operatorSignal--persistent':''}" data-operator-signal="${key}" hidden><button class="operatorSignalSummary" type="button" aria-expanded="false"${summaryTitle?` title="${summaryTitle}"`:''}><span>${label}</span><strong data-operator-signal-count>0</strong></button><div class="operatorSignalMenu operatorSignalMenu--${tone}" hidden><div class="operatorSignalMenuHead"><span><strong>${headLabel}</strong>${headStatus}</span><a href="${primaryHref}">${primaryLabel}</a></div><div class="operatorSignalMenuBody">${items.map(item=>`<a class="operatorSignalRow operatorSignalRow--${tone}" href="${item.href}" data-signal-source="${item.key}"><span><strong>${item.label}</strong><small>${item.meta}</small></span><em data-signal-count="${item.key}">0</em></a>`).join('')}</div></div></div>`;
   }
   function ensureSignalNodes(){
     const wrap=document.querySelector('.topStatusWrap');if(!wrap)return null;
     if(wrap.dataset.operatorSignalsReady==='1')return wrap;
     wrap.dataset.operatorSignalsReady='1';wrap.classList.add('operatorSignalStrip');
-    wrap.innerHTML=`<a class="operatorSignal operatorSignal--new operatorSignalSummary" data-operator-signal="new" href="/admin/users" data-business-read="customers" hidden><span>New</span><strong data-operator-signal-count>0</strong></a>${signalMenuMarkup({key:'alerts',tone:'alert',label:'Alerts',headLabel:'Operational alerts',primaryHref:'/admin/attention',primaryLabel:'Review attention',items:[{key:'attention',label:'Attention',meta:'Unacknowledged items — acknowledge after review',href:'/admin/attention'},{key:'servers',label:'Servers',meta:'Unresolved health state — clears when recovered',href:'/admin/servers'},{key:'payments',label:'Payments',meta:'New provider callback issues — clears after review',href:'/admin/payments',business:true}]})}${signalMenuMarkup({key:'inbox',tone:'inbox',label:'Inbox',primaryHref:'/admin/tickets',items:[{key:'tickets',label:'Tickets',meta:'New tickets or customer replies',href:'/admin/tickets',business:true},{key:'orders',label:'Orders',meta:'New paid orders',href:'/admin/commerce/orders',business:true}]})}`;
+    wrap.innerHTML=`<a class="operatorSignal operatorSignal--new operatorSignalSummary" data-operator-signal="new" href="/admin/users" hidden><span>New</span><strong data-operator-signal-count>0</strong></a>${signalMenuMarkup({key:'alerts',tone:'alert',label:'Alerts',headLabel:'Operational alerts',primaryHref:'/admin/attention',primaryLabel:'Review attention',items:[{key:'attention',label:'Attention',meta:'Unacknowledged items — acknowledge after review',href:'/admin/attention'},{key:'servers',label:'Servers',meta:'Unresolved health state — clears when recovered',href:'/admin/servers'},{key:'payments',label:'Payments',meta:'New provider callback issues — clears after review',href:'/admin/payments'}]})}${signalMenuMarkup({key:'inbox',tone:'inbox',label:'Inbox',primaryHref:'/admin/tickets',items:[{key:'tickets',label:'Tickets',meta:'New tickets or customer replies',href:'/admin/tickets'},{key:'orders',label:'Orders',meta:'New paid orders',href:'/admin/commerce/orders'}]})}`;
     wrap.querySelectorAll('button.operatorSignalSummary').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const owner=button.closest('.operatorSignal');const menu=owner?.querySelector('.operatorSignalMenu');if(!menu)return;const open=menu.hidden;wrap.querySelectorAll('.operatorSignalMenu').forEach(other=>{other.hidden=true;other.closest('.operatorSignal')?.querySelector('button')?.setAttribute('aria-expanded','false');});menu.hidden=!open;button.setAttribute('aria-expanded',open?'true':'false');}));
     document.addEventListener('click',event=>{if(wrap.contains(event.target))return;wrap.querySelectorAll('.operatorSignalMenu').forEach(menu=>{menu.hidden=true;menu.closest('.operatorSignal')?.querySelector('button')?.setAttribute('aria-expanded','false');});});
-    wrap.querySelectorAll('[data-business-read]').forEach(link=>link.addEventListener('click',()=>{const area=link.getAttribute('data-business-read');if(area&&latestSnapshot?.csrfToken)markAreaRead(area,latestSnapshot).catch(()=>{});}));
     return wrap;
   }
   function setSignal(key,total,sourceCounts={}){
@@ -61,7 +60,7 @@
   }
 
   function apply(data){
-    if(!data?.counts)return;latestSnapshot=data;applyMetrics(data.metrics);
+    if(!data?.counts)return;applyMetrics(data.metrics);
     Object.keys(hrefByKey).forEach(key=>{const count=Number(data.counts[key]||0);if(count<=0||key===areaForCurrentPage)clearSidebarBadge(key);else addSidebarBadge(key,count);});
     const customers=Number(data.counts.customers||0),attention=Number(data.counts.attention||0),servers=Number(data.counts.servers||0),payments=areaForCurrentPage==='payments'?0:Number(data.counts.payments||0),tickets=Number(data.counts.tickets||0),orders=Number(data.counts.orders||0);
     setSignal('new',areaForCurrentPage==='customers'?0:customers);
@@ -70,11 +69,8 @@
   }
 
   function fetchSnapshot(){return fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'}).then(response=>response.ok?response.json():null);}
-  function markAreaRead(area,data){if(!area||!data?.csrfToken)return Promise.reject(new Error('Read acknowledgement token unavailable'));const body=new URLSearchParams({area,_csrf:data.csrfToken});return fetch('/admin/api/operator-state/read',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-CSRF-Token':data.csrfToken,Accept:'application/json'},body:body.toString(),keepalive:true}).then(response=>{if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`);return response.json();});}
-  function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
-  async function markAreaReadWithRetry(area,seed){let data=seed,lastError=null;const delays=[0,200,500,1000,2000,4000];for(let attempt=0;attempt<delays.length;attempt+=1){if(delays[attempt])await wait(delays[attempt]);try{await markAreaRead(area,data);return await fetchSnapshot();}catch(error){lastError=error;if(attempt<delays.length-1)data=await fetchSnapshot().catch(()=>null)||data;}}throw lastError||new Error('Read acknowledgement failed');}
   async function refresh(){const data=await fetchSnapshot().catch(()=>null);if(data)apply(data);return data;}
   ensureSignalNodes();
-  setTimeout(()=>refresh().then(data=>{if(!data||!areaForCurrentPage)return;return markAreaReadWithRetry(areaForCurrentPage,data).then(fresh=>apply(fresh||data)).catch(()=>{});}).catch(()=>{}),80);
+  setTimeout(()=>refresh().catch(()=>{}),80);
   setInterval(()=>refresh().catch(()=>{}),15000);
 })();

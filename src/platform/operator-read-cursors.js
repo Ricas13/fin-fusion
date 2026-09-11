@@ -27,6 +27,14 @@ function navKey(value) {
     return `${NAV_PREFIX}${area(value)}`;
 }
 
+function readWatermark(value) {
+    if (value === undefined || value === null || value === '') throw new Error('Operator read watermark is required.');
+    const numeric = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+    const parsed = numeric instanceof Date ? new Date(numeric.getTime()) : new Date(numeric);
+    if (Number.isNaN(parsed.getTime())) throw new Error('Invalid operator read watermark.');
+    return parsed;
+}
+
 async function list(adminUserId) {
     if (!adminUserId) return {};
     const keys = [...AREAS].map(key => `${NAV_PREFIX}${key}`);
@@ -50,12 +58,17 @@ async function latestFor(client, key) {
     return (await client.query(`SELECT COALESCE(MAX(COALESCE(last_customer_reply_at,created_at)),NOW()) seen_at FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0].seen_at;
 }
 
-async function markSeen(adminUserId, value) {
+async function captureSeenThrough(value) {
+    const key = area(value);
+    return transaction(async client => latestFor(client, key));
+}
+
+async function markSeen(adminUserId, value, seenThrough) {
     if (!adminUserId) throw new Error('Administrator identity is required.');
     const key = area(value);
     const keyName = navKey(key);
+    const seenAt = readWatermark(seenThrough);
     return transaction(async client => {
-        const seenAt = await latestFor(client, key);
         const result = await client.query(`
             INSERT INTO admin_nav_read_state(admin_user_id,nav_key,last_seen_at)
             VALUES($1,$2,$3)
@@ -67,4 +80,4 @@ async function markSeen(adminUserId, value) {
     });
 }
 
-module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, area, navKey, list, markSeen, latestFor };
+module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };

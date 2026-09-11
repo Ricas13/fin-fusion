@@ -10,6 +10,7 @@ const {sendCsv}=require('./export');
 const {BULK_ACTIONS}=require('./admin-bulk-customers');
 const {customerIdentity}=require('./customer-list-identity');
 const supportTickets=require('../support/tickets');
+const readCursors=require('./operator-read-cursors');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
@@ -193,15 +194,17 @@ function serviceCell(x,state){
     return `<div class="customerServiceState"><span class="customerStateDot"></span><strong>Not linked</strong></div><div class="subText">No Jellyfin account</div>`;
 }
 function serverCell(x){return x.server_names?`<strong>${esc(x.server_names)}</strong>`:'<span class="muted">—</span>'}
-function row(x){
+function row(x,previousSeenAt=null){
     const identity=customerIdentity(x),customerName=identity.primary,state=rowState(x),expiry=expiryInfo(x);
     const portalNote=x.login_active===false?'<div class="subText customerPortalWarning">Portal sign-in disabled</div>':'';
     const last=x.last_activity_at?{primary:relativeTime(x.last_activity_at),secondary:formatDate(x.last_activity_at)}:{primary:'Never',secondary:''};
     const expiryColour=({good:'#5ae0a0',warn:'#e6bd62',bad:'#ff6f78'})[expiry.tone]||'';
     const expiryStyle=expiryColour?` style="color:${expiryColour}!important"`:'';
+    const sinceMs=previousSeenAt?new Date(previousSeenAt).getTime():null;
+    const isNew=sinceMs!=null&&Number.isFinite(sinceMs)&&x.created_at&&new Date(x.created_at).getTime()>sinceMs;
     return `<tr data-customer-row>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
-        <td data-label="Customer"><div class="customerIdentityCell"><span class="customerAvatar" aria-hidden="true">${esc(initials(customerName))}</span><div><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</div></div></td>
+        <td data-label="Customer"><div class="customerIdentityCell"><span class="customerAvatar" aria-hidden="true">${esc(initials(customerName))}</span><div><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${isNew?' <span class="pill accent" title="Registered since you last viewed Customers">New</span>':''}${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</div></div></td>
         <td data-label="Plan / product"><strong>${esc(x.plan_name||'No plan')}</strong><div class="subText">${esc(planMeta(x))}</div></td>
         <td data-label="Access status">${pill(state.access,state.tone)}<div class="subText customerAccessReason">${esc(state.reason)}</div></td>
         <td data-label="Jellyfin / service">${serviceCell(x,state)}</td>
@@ -319,16 +322,18 @@ function tableToolbar(filters,sort,pageSize,total){
 async function listPage(req){
     const filters=parseFilters(req.query),page=Math.max(parseInt(req.query.page,10)||1,1),pageSize=[25,50,100].includes(parseInt(req.query.pageSize,10))?parseInt(req.query.pageSize,10):100;
     const requestedSort=req.query.sort?req.query:{sort:'recent',dir:'desc'},sort=customerFilters.normalizeCustomerSort(requestedSort);
-    const [options,result,overview]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize,sort}),filters.service?Promise.resolve(null):customerOverview()]);
+    const [options,result,overview,previousSeen]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize,sort}),filters.service?Promise.resolve(null):customerOverview(),readCursors.list(req.session?.authUserId).then(seen=>seen.customers||null).catch(()=>null)]);
     const rows=result.rows,sortState=result.sort,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users',counts=overview?.presets||{};
     const headers=`<th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th>${sortHeader(filters,sortState,'Customer','name',pageSize)}${sortHeader(filters,sortState,'Plan','plan',pageSize)}${sortHeader(filters,sortState,'Access','access',pageSize)}<th>Jellyfin</th>${sortHeader(filters,sortState,'Server','server',pageSize)}${sortHeader(filters,sortState,'Renews / expires','expiring',pageSize)}${sortHeader(filters,sortState,'Last active','recent',pageSize)}<th>Action</th>`;
     const resultMeta=`Showing ${rows.length?((result.page-1)*result.pageSize)+1:0}–${Math.min(result.page*result.pageSize,result.total)} of ${number(result.total)} customers`;
-    const body=`<link rel="stylesheet" href="/css/admin-customers-list.css">${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options,sortState,counts)}<section class="section customerResults">${tableToolbar(filters,sortState,result.pageSize,result.total)}${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable customerTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr>${headers}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div><div class="customerTableFooter"><span class="muted">${esc(resultMeta)}</span>${pagination(filters,sortState,result.page,result.pageSize,result.total)}</div>`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-customers-bulk.js" defer></script>`;
+    const body=`<link rel="stylesheet" href="/css/admin-customers-list.css">${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options,sortState,counts)}<section class="section customerResults">${tableToolbar(filters,sortState,result.pageSize,result.total)}${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable customerTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr>${headers}</tr></thead><tbody>${rows.map(x=>row(x,previousSeen)).join('')}</tbody></table></div><div class="customerTableFooter"><span class="muted">${esc(resultMeta)}</span>${pagination(filters,sortState,result.page,result.pageSize,result.total)}</div>`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-customers-bulk.js" defer></script>`;
     const common='<a class="button" href="/admin/users/new">+ Add customer</a>',jellyfinAction=filters.service==='stremio'?'':` <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a>`;
     return layout({siteName:site(),active,title:context?`${context} customers`:'Customers',subtitle:context?`Shared customer records in ${context} context`:'Manage customers, subscriptions and service access',body,action:`${common}${jellyfinAction} <a class="button secondary" href="/admin/users/export?${queryStringFor(filters)}">Export CSV</a>`});
 }
+async function captureCustomersSeenThrough(){try{return await readCursors.captureSeenThrough('customers');}catch(error){console.warn('Customer read cursor snapshot failed:',error.message);return null;}}
+async function markCustomersSeen(req,seenThrough){if(!seenThrough)return null;try{return await readCursors.markSeen(req.session?.authUserId,'customers',seenThrough);}catch(error){console.warn('Customer read cursor update failed:',error.message);return null;}}
 
 function createAdminCustomersListRouter(){
-    const r=express.Router();r.use('/admin/users',gate,noStore);r.get('/admin/users',async(req,res,next)=>{try{return res.send(await listPage(req))}catch(e){next(e)}});r.get('/admin/users/export',async(req,res,next)=>{try{const filters=parseFilters(req.query),rows=await customerFilters.exportRows(filters,null);return sendCsv(res,'customers.csv',[{key:'display_name',label:'Name'},{key:'login_username',label:'Username'},{key:'email',label:'Email'},{key:'plan_name',label:'Plan'},{key:'subscription_status',label:'Status'},{key:'service_type',label:'Service'},{label:'Expires',value:x=>x.access_expires_at||x.current_period_end||''},{key:'server_names',label:'Server'},{key:'last_activity_at',label:'Last activity'}],rows)}catch(e){next(e)}});return r;
+    const r=express.Router();r.use('/admin/users',gate,noStore);r.get('/admin/users',async(req,res,next)=>{try{const seenThrough=await captureCustomersSeenThrough();const html=await listPage(req);await markCustomersSeen(req,seenThrough);return res.send(html)}catch(e){next(e)}});r.get('/admin/users/export',async(req,res,next)=>{try{const filters=parseFilters(req.query),rows=await customerFilters.exportRows(filters,null);return sendCsv(res,'customers.csv',[{key:'display_name',label:'Name'},{key:'login_username',label:'Username'},{key:'email',label:'Email'},{key:'plan_name',label:'Plan'},{key:'subscription_status',label:'Status'},{key:'service_type',label:'Service'},{label:'Expires',value:x=>x.access_expires_at||x.current_period_end||''},{key:'server_names',label:'Server'},{key:'last_activity_at',label:'Last activity'}],rows)}catch(e){next(e)}});return r;
 }
 module.exports={createAdminCustomersListRouter,parseFilters,queryStringFor,filterHiddenFields,sortHeader};
