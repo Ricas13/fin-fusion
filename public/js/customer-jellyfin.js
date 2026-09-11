@@ -8,6 +8,36 @@
     form.querySelector('[data-library-none]')?.addEventListener('click',()=>setAll(false));
   }
 
+  let serviceTrialTimer=null;
+  function startServiceTrialCountdowns(){
+    const nodes=[...document.querySelectorAll('[data-service-trial-start][data-service-trial-end]')];
+    if(!nodes.length)return;
+    const fmt=value=>new Date(value).toLocaleString(undefined,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+    const update=()=>{
+      const now=Date.now();
+      let hasActive=false;
+      for(const node of nodes){
+        if(!node.isConnected)continue;
+        const startMs=new Date(node.dataset.serviceTrialStart||'').getTime();
+        const endMs=new Date(node.dataset.serviceTrialEnd||'').getTime();
+        if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs){node.remove();continue;}
+        const remaining=Math.max(0,endMs-now),total=endMs-startMs,elapsed=Math.min(total,Math.max(0,now-startMs));
+        const days=Math.floor(remaining/86400000),hours=Math.floor((remaining%86400000)/3600000),minutes=Math.floor((remaining%3600000)/60000),seconds=Math.floor((remaining%60000)/1000);
+        const remainingNode=node.querySelector('[data-service-trial-remaining]');
+        const progressNode=node.querySelector('[data-service-trial-progress]');
+        const rangeNode=node.querySelector('[data-service-trial-range]');
+        if(rangeNode&&!rangeNode.textContent)rangeNode.textContent=`${fmt(startMs)} → ${fmt(endMs)}`;
+        if(remainingNode)remainingNode.textContent=remaining<=0?'Trial ended':`${days?`${days}d `:''}${hours}h ${minutes}m ${seconds}s`;
+        if(progressNode)progressNode.style.width=`${Math.max(0,Math.min(100,(elapsed/total)*100))}%`;
+        if(remaining>0)hasActive=true;
+      }
+      if(!hasActive&&serviceTrialTimer){window.clearInterval(serviceTrialTimer);serviceTrialTimer=null;}
+      return hasActive;
+    };
+    if(update())serviceTrialTimer=window.setInterval(update,1000);
+  }
+  startServiceTrialCountdowns();
+
   const stremio=document.querySelector('[data-stremio-access]');
   if(!stremio)return;
   const csrfToken=stremio.querySelector('input[name="_csrf"]')?.value||document.querySelector('input[name="_csrf"]')?.value||'';
