@@ -13,7 +13,7 @@ const planPolicy=require('../src/entitlements/plan-lifecycle-policy');
 expect(scoped.includes("require('../jellyfin/activity-trust')"),'Inactivity must use the per-server activity trust owner.');
 expect(!inactivity.includes("health_status='offline'")&&!inactivity.includes("last_health_check<NOW()-INTERVAL '10 minutes'"),'Free Server inactivity must not gate on fleet-wide server health.');
 expect(scoped.includes('activityTrust.serverTelemetry(candidateServerIds(rows))'),'Scoped inactivity must request playback telemetry only for candidate servers.');
-expect(scoped.includes('fleetMetrics.refreshServerUserActivity(serverId)'),'Inactivity must retain the authoritative Jellyfin /Users freshness check.');
+expect(scoped.includes('fleetMetrics.refreshServerUserActivity(serverId'),'Inactivity must retain the authoritative Jellyfin /Users freshness check, including scoped expected-user verification.');
 expect(scoped.includes('if (!poll?.ready) continue;'),'A /Users refresh must never promote a failed/stale /Sessions poll back to trusted.');
 const finalEligibilityIndex=scoped.indexOf('async function finalEligibility');
 const finalTrustIndex=scoped.indexOf('let serverTelemetry = await refreshCandidateServers([row]);',finalEligibilityIndex);
