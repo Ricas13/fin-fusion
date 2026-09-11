@@ -15,8 +15,13 @@ function clampLimit(value) {
     return Math.max(1, Math.min(MAX_LIMIT, Number(value) || DEFAULT_LIMIT));
 }
 
-async function candidates({ limit = DEFAULT_LIMIT } = {}) {
+async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = {}) {
     const safeLimit = clampLimit(limit);
+    const scopedIds = Array.isArray(checkoutIntentIds)
+        ? checkoutIntentIds.map(value => String(value || '').trim()).filter(Boolean)
+        : [];
+    const scopeSql = scopedIds.length ? 'AND id=ANY($3::uuid[])' : '';
+    const params = scopedIds.length ? [safeLimit, LOOKBACK_DAYS, scopedIds] : [safeLimit, LOOKBACK_DAYS];
     const result = await query(`
         SELECT id,customer_id,plan_id,provider,provider_checkout_id,state,
                provider_terminal_at,created_at,updated_at
@@ -29,9 +34,10 @@ async function candidates({ limit = DEFAULT_LIMIT } = {}) {
               state IN ('open','failed','expired')
               OR (state='cancelled' AND provider_terminal_at IS NULL)
           )
+          ${scopeSql}
         ORDER BY created_at DESC,id DESC
         LIMIT $1
-    `, [safeLimit, LOOKBACK_DAYS]);
+    `, params);
     return result.rows;
 }
 
@@ -95,8 +101,8 @@ async function recoverPayPal(row, handlers) {
     return { state: 'waiting', detail: providerStatus || 'provider_pending' };
 }
 
-async function run({ limit = DEFAULT_LIMIT, handlers = null } = {}) {
-    const rows = await candidates({ limit });
+async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds = null } = {}) {
+    const rows = await candidates({ limit, checkoutIntentIds });
     const activeHandlers = handlers || defaultHandlers();
     const summary = {
         total: rows.length,
