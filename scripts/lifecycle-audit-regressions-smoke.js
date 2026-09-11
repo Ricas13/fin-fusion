@@ -6,6 +6,8 @@ const path=require('path');
 const paypal=require('../src/payments/paypal');
 const providerHttp=require('../src/payments/provider-http');
 const providerCheckoutRecovery=require('../src/payments/provider-checkout-recovery');
+const inactivityScoped=require('../src/automation/customer-inactivity-scoped');
+const fleetMetrics=require('../src/jellyfin/fleet-metrics');
 
 const root=path.resolve(__dirname,'..');
 const source=file=>fs.readFileSync(path.join(root,file),'utf8');
@@ -66,6 +68,38 @@ function jellyfinDeletionScope(){
   assert.match(text,/deleteJellyfinAccounts\(item\.customer_id,\{[^}]*holdAccess:false/,'Jellyfin delete must not create a customer-wide access hold');
 }
 
+function freeInactivitySafetyContract(){
+  const inactivity=source('src/automation/customer-inactivity.js');
+  const scoped=source('src/automation/customer-inactivity-scoped.js');
+  const lifecycle=source('src/entitlements/jellyfin-lifecycle-policy.js');
+  const fleet=source('src/jellyfin/fleet-metrics.js');
+
+  assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/,'Free inactivity must preserve current and orphaned same-customer/server playback continuity');
+  const historical=inactivity.match(/SELECT MIN\(ph\.started_at\) historical_first_playback_at[\s\S]*?\) historical ON TRUE/);
+  assert(historical,'historical playback continuity query must exist');
+  assert(!historical[0].includes('ph.started_at>=ja.access_lane_changed_at'),'access-lane changes must never erase established playback activation');
+
+  assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must have an explicit fail-closed state');
+  assert.match(lifecycle,/if\(!r\.rowCount\)return\{\.\.\.normalize\(DEFAULTS\),\.\.\.SAFE_UNCONFIGURED,configurationMissing:true\}/,'missing lifecycle settings row must disable live enforcement');
+
+  const observed=fleetMetrics.expectedUserEvidence([
+    {Id:'ABC',LastActivityDate:'2026-09-11T12:00:00Z'}
+  ],['abc','missing']);
+  assert.equal(observed.abc.present,true,'fresh Jellyfin /Users evidence must identify the exact candidate');
+  assert.equal(observed.missing.present,false,'a missing candidate must remain explicitly unobserved');
+  assert.match(scoped,/candidate_user_not_observed_in_fresh_users_response/,'destructive inactivity action must fail closed when the exact candidate is absent from the fresh Jellyfin user inventory');
+  assert.match(scoped,/activityObservedForCandidate/,'removal audit evidence must record exact-candidate observation');
+  assert.match(scoped,/jellyfinLastActivityDate/,'removal audit evidence must retain final Jellyfin activity evidence');
+  assert.match(scoped,/jellyfinLastLoginDate/,'removal audit evidence must retain final Jellyfin login evidence');
+
+  const clean=inactivityScoped.massRemovalRisk(new Array(100).fill({}),[{}]);
+  assert.equal(clean.tripped,false,'a single eligible user must not trip the mass-removal breaker');
+  const ratioCount=Math.max(inactivityScoped.CIRCUIT_BREAKER_MIN_ELIGIBLE,Math.floor(100*inactivityScoped.CIRCUIT_BREAKER_MAX_RATIO)+1);
+  const spike=inactivityScoped.massRemovalRisk(new Array(100).fill({}),new Array(ratioCount).fill({}));
+  assert.equal(spike.tripped,true,'an anomalous eligible ratio must force the mass-removal circuit breaker');
+  assert.match(scoped,/configuredDryRun \|\| circuitBreaker\.tripped/,'a tripped mass-removal circuit breaker must force dry-run even when policy is live');
+}
+
 function deferredWebhookContract(){
   const text=source('src/platform/webhooks.js');
   assert.match(text,/result\?\.processingError/,'payment webhooks must inspect durable business-processing failure');
@@ -111,6 +145,7 @@ paypalPaidThroughCancellation();
 legacyPayPalProfileRecovery();
 providerCheckoutRecoveryDiagnostics();
 jellyfinDeletionScope();
+freeInactivitySafetyContract();
 deferredWebhookContract();
 discoveryAutomationContract();
 independentServiceRecoveryContract();
