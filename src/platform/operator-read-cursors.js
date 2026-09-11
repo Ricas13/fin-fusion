@@ -28,7 +28,7 @@ function navKey(value) {
 }
 
 function readWatermark(value) {
-    if (value === undefined || value === null || value === '') return null;
+    if (value === undefined || value === null || value === '') throw new Error('Operator read watermark is required.');
     const numeric = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
     const parsed = numeric instanceof Date ? new Date(numeric.getTime()) : new Date(numeric);
     if (Number.isNaN(parsed.getTime())) throw new Error('Invalid operator read watermark.');
@@ -63,13 +63,12 @@ async function captureSeenThrough(value) {
     return transaction(async client => latestFor(client, key));
 }
 
-async function markSeen(adminUserId, value, seenThrough = null) {
+async function markSeen(adminUserId, value, seenThrough) {
     if (!adminUserId) throw new Error('Administrator identity is required.');
     const key = area(value);
     const keyName = navKey(key);
-    const explicitWatermark = readWatermark(seenThrough);
+    const seenAt = readWatermark(seenThrough);
     return transaction(async client => {
-        const seenAt = explicitWatermark || await latestFor(client, key);
         const result = await client.query(`
             INSERT INTO admin_nav_read_state(admin_user_id,nav_key,last_seen_at)
             VALUES($1,$2,$3)
