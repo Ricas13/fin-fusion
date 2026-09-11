@@ -7,7 +7,9 @@ const billingMode = require('../payments/subscription-billing-mode');
 const automaticFreeDowngradeRetry = require('./automatic-free-downgrade-retry');
 
 const DEFAULT_WARNING_DAYS = Math.max(...expiryPolicy.DEFAULT_POLICY.milestones);
+const DEFAULT_PROVIDER_VERIFICATION_GRACE_HOURS = 48;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MS_PER_HOUR = 60 * 60 * 1000;
 
 function recurringAutoRenewal(row) {
     const status = String(row?.status || '').toLowerCase();
@@ -41,8 +43,33 @@ function expiryDedupeKey({ subscriptionId, accessExpiresAt, milestone }) {
     return `subscription-expiring:${subscriptionId}:${periodEnd}:${milestone}`;
 }
 
-function providerExpiryProtected(row, syncResult) {
-    if (!syncResult || syncResult.ok !== true) return true;
+function providerVerificationGraceHours(value = process.env.RECURRING_EXPIRY_VERIFICATION_GRACE_HOURS) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return DEFAULT_PROVIDER_VERIFICATION_GRACE_HOURS;
+    return Math.max(1, Math.min(168, Math.round(parsed)));
+}
+
+function localAccessEnd(row) {
+    const periodEnd = new Date(row?.current_period_end);
+    if (Number.isNaN(periodEnd.getTime())) return null;
+    const extensionDays = Math.max(0, Number(row?.service_extension_days || 0));
+    return new Date(periodEnd.getTime() + extensionDays * MS_PER_DAY);
+}
+
+function failedProviderVerificationProtected(row, { now = new Date(), graceHours = providerVerificationGraceHours() } = {}) {
+    const end = localAccessEnd(row);
+    const current = new Date(now);
+    if (!end || Number.isNaN(current.getTime())) return false;
+    return current.getTime() < end.getTime() + Math.max(1, Number(graceHours) || DEFAULT_PROVIDER_VERIFICATION_GRACE_HOURS) * MS_PER_HOUR;
+}
+
+function providerExpiryProtected(row, syncResult, options = {}) {
+    // Provider outages are allowed a bounded grace period so a brief Stripe or
+    // PayPal incident does not switch off customers whose renewal may really
+    // have succeeded. The old behavior protected a due row forever whenever
+    // provider verification kept failing, which could turn a missed webhook +
+    // provider outage into indefinite unpaid access.
+    if (!syncResult || syncResult.ok !== true) return failedProviderVerificationProtected(row, options);
     const remote = syncResult.remote || {};
     if (remote.cancelAtPeriodEnd === true) return false;
     const source = String(row?.source || '').toLowerCase();
@@ -121,8 +148,8 @@ async function notifyExpiringSubscriptions({ days = null, milestones = null, dis
     for (const row of rows) {
         const milestone = selectExpiryMilestone(row.access_expires_at, reminderMilestones, now);
         if (milestone == null) continue;
-        result.candidates += 1;
         const planName = String(row.plan_name || 'Your subscription').trim() || 'Your subscription';
+        result.candidates += 1;
         try {
             const delivery = await dispatch({
                 eventType: 'subscription.expiring',
@@ -150,20 +177,69 @@ async function notifyExpiringSubscriptions({ days = null, milestones = null, dis
     return result;
 }
 
-async function expireDueSubscriptions({ syncRecurring = null } = {}) {
+function expiryVerificationEventId(row) {
+    const end = localAccessEnd(row);
+    const marker = end ? end.toISOString() : String(row?.current_period_end || 'unknown').slice(0, 80);
+    return `expiry-verification:${row.id}:${marker}`;
+}
+
+async function recordExpiryVerificationFailure(row, error, { incidentRecorder = null, graceHours = providerVerificationGraceHours() } = {}) {
+    if (!row?.provider_subscription_id || !['stripe', 'paypal'].includes(String(row.source || '').toLowerCase())) return null;
+    const record = incidentRecorder || require('../payments/incidents').record;
+    const end = localAccessEnd(row);
+    return record({
+        provider: String(row.source).toLowerCase(),
+        eventId: expiryVerificationEventId(row),
+        kind: 'failed_renewal',
+        status: 'open',
+        providerSubscriptionId: row.provider_subscription_id,
+        metadata: {
+            reason: 'expiry_provider_verification_exhausted',
+            localAccessEndedAt: end ? end.toISOString() : null,
+            verificationGraceHours: Number(graceHours),
+            verificationError: String(error?.message || error || 'Provider verification unavailable').replace(/\s+/g, ' ').trim().slice(0, 500)
+        }
+    });
+}
+
+async function expireDueSubscriptions({ syncRecurring = null, now = new Date(), graceHours = providerVerificationGraceHours(), incidentRecorder = null } = {}) {
     const dueRecurring = await dueRecurringSubscriptions();
     const protectedIds = [];
     for (const row of dueRecurring) {
+        let syncResult = null;
+        let verificationError = null;
         if (typeof syncRecurring !== 'function') {
+            verificationError = new Error('Recurring provider verification callback is unavailable.');
+        } else {
+            try {
+                syncResult = await syncRecurring(row.id);
+                if (!syncResult || syncResult.ok !== true) verificationError = new Error(syncResult?.error || 'Provider verification did not complete successfully.');
+            } catch (error) {
+                verificationError = error;
+            }
+        }
+
+        if (providerExpiryProtected(row, syncResult, { now, graceHours })) {
             protectedIds.push(row.id);
+            if (verificationError) {
+                console.warn('Recurring subscription expiry verification failed closed within bounded grace:', { subscriptionId: row.id, provider: row.source, graceHours, error: String(verificationError?.message || verificationError).slice(0, 300) });
+            }
             continue;
         }
-        try {
-            const syncResult = await syncRecurring(row.id);
-            if (providerExpiryProtected(row, syncResult)) protectedIds.push(row.id);
-        } catch (error) {
-            protectedIds.push(row.id);
-            console.warn('Recurring subscription expiry verification failed closed:', { subscriptionId: row.id, provider: row.source, error: String(error?.message || error).slice(0, 300) });
+
+        if (verificationError) {
+            // Once the bounded safety grace has elapsed, local contract truth is
+            // allowed to expire rather than granting access indefinitely. Record
+            // a durable operator-visible incident first so a provider outage or
+            // missed webhook cannot become a silent commercial-state decision.
+            try {
+                await recordExpiryVerificationFailure(row, verificationError, { incidentRecorder, graceHours });
+            } catch (incidentError) {
+                // If we cannot durably surface the commercial ambiguity, fail
+                // this run rather than expiring access silently.
+                throw new Error(`Could not record exhausted ${row.source} expiry verification for subscription ${row.id}: ${incidentError.message}`);
+            }
+            console.warn('Recurring subscription expiry verification grace exhausted; local term will expire:', { subscriptionId: row.id, provider: row.source, graceHours, error: String(verificationError?.message || verificationError).slice(0, 300) });
         }
     }
 
@@ -226,4 +302,23 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onA
     return detail ? { expired: expired.length, failed } : expired.length;
 }
 
-module.exports = { DEFAULT_WARNING_DAYS, recurringAutoRenewal, expiryDate, daysUntilExpiry, selectExpiryMilestone, expiryDedupeKey, providerExpiryProtected, dueRecurringSubscriptions, expiringSubscriptions, notifyExpiringSubscriptions, expireDueSubscriptions, expireAndReconcile };
+module.exports = {
+    DEFAULT_WARNING_DAYS,
+    DEFAULT_PROVIDER_VERIFICATION_GRACE_HOURS,
+    recurringAutoRenewal,
+    expiryDate,
+    daysUntilExpiry,
+    selectExpiryMilestone,
+    expiryDedupeKey,
+    providerVerificationGraceHours,
+    localAccessEnd,
+    failedProviderVerificationProtected,
+    providerExpiryProtected,
+    expiryVerificationEventId,
+    recordExpiryVerificationFailure,
+    dueRecurringSubscriptions,
+    expiringSubscriptions,
+    notifyExpiringSubscriptions,
+    expireDueSubscriptions,
+    expireAndReconcile
+};

@@ -132,13 +132,18 @@ async function testDeletionBillingControl() {
 }
 
 function testProviderOwnedExpirySafety() {
-  const stripeRow = { source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_expiry' };
-  const paypalRow = { source: 'paypal', billing_mode: 'subscription', provider_subscription_id: 'I-EXPIRY' };
-  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: false }), true, 'failed provider verification must preserve local access');
-  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }), true, 'healthy auto-renewing Stripe access must not be locally expired');
-  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(paypalRow, { ok: true, remote: { status: 'ACTIVE', cancelAtPeriodEnd: false } }), true, 'healthy auto-renewing PayPal access must not be locally expired');
-  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: true } }), false, 'verified end-of-term cancellation may expire locally when due');
-  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'past_due', cancelAtPeriodEnd: false } }), false, 'delinquent provider state must retain the existing local expiry/grace policy');
+  const now = new Date('2026-09-11T06:00:00.000Z');
+  const recentEnd = new Date(now.getTime() - 60 * 60 * 1000);
+  const staleEnd = new Date(now.getTime() - 72 * 60 * 60 * 1000);
+  const stripeRow = { source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_expiry', current_period_end: recentEnd, service_extension_days: 0 };
+  const paypalRow = { source: 'paypal', billing_mode: 'subscription', provider_subscription_id: 'I-EXPIRY', current_period_end: recentEnd, service_extension_days: 0 };
+  const staleStripeRow = { ...stripeRow, current_period_end: staleEnd };
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: false }, { now, graceHours: 48 }), true, 'failed provider verification must preserve local access inside the bounded safety grace');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(staleStripeRow, { ok: false }, { now, graceHours: 48 }), false, 'failed provider verification must not preserve access forever after the bounded safety grace');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }, { now }), true, 'healthy auto-renewing Stripe access must not be locally expired');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(paypalRow, { ok: true, remote: { status: 'ACTIVE', cancelAtPeriodEnd: false } }, { now }), true, 'healthy auto-renewing PayPal access must not be locally expired');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: true } }, { now }), false, 'verified end-of-term cancellation may expire locally when due');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'past_due', cancelAtPeriodEnd: false } }, { now }), false, 'delinquent provider state must retain the existing local expiry/grace policy');
   const source = fs.readFileSync(path.join(__dirname, '../src/entitlements/subscription-expiry.js'), 'utf8');
   assert.match(source, /dueRecurringSubscriptions\(\)/, 'expiry must identify provider-owned due subscriptions before the destructive update');
   assert.match(source, /billing-control'\)\.syncSubscription/, 'normal expiry execution must refresh current provider truth through canonical billing control');
