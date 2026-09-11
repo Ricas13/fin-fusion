@@ -17,7 +17,7 @@ const REQUIRED_ENABLED_JOBS = new Set(['payment_events', 'plan_changes']);
 for (const jobKey of [
     'entitlements', 'billing', 'provider_operation_recovery', 'customer_deletions',
     'creation_intent_recovery', 'customer_service_recovery', 'revenue_integrity',
-    'discord_roles', 'email_outbox', 'notification_outbox'
+    'discord_roles', 'email_outbox', 'notification_outbox', 'notification_lifecycle'
 ]) REQUIRED_ENABLED_JOBS.add(jobKey);
 const IMMEDIATE_CRITICAL_JOBS = new Set(['revenue_integrity']);
 const IMMEDIATE_WARNING_JOBS = new Set([
