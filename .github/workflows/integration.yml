@@ -73,4 +73,6 @@ jobs:
           node --check scripts/production-readiness.js
 
       - name: Isolated feature database contracts
-        run: node scripts/ci-integration-suite.js
+        run: |
+          node scripts/ci-integration-suite.js
+          node scripts/notification-lifecycle-retry-db-smoke.js
