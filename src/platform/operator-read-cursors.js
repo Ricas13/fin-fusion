@@ -29,7 +29,8 @@ function navKey(value) {
 
 function readWatermark(value) {
     if (value === undefined || value === null || value === '') return null;
-    const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    const numeric = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+    const parsed = numeric instanceof Date ? new Date(numeric.getTime()) : new Date(numeric);
     if (Number.isNaN(parsed.getTime())) throw new Error('Invalid operator read watermark.');
     return parsed;
 }
