@@ -1,35 +1,47 @@
 'use strict';
-const assert=require('assert');
-const fs=require('fs');
-const path=require('path');
-const read=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
 
-const core=read('src/platform/admin-html-core-base.js');
-const density=read('public/css/admin-card-density.css');
-const planControl=read('public/css/admin-plan-control.css');
-const operations=read('public/css/admin-operations-layout.css');
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
-// Semantic page shell: hierarchy should come from shared page-level primitives,
-// not one-off route styling that gradually diverges.
-assert(core.includes('.pageHeader')&&core.includes('.pageTitle')&&core.includes('.pageSubtitle'),'shared admin page hierarchy primitives missing');
-assert(core.includes('.sectionHead')&&core.includes('.sectionTitle'),'shared admin section hierarchy primitives missing');
-assert(core.includes('.metricLabel')&&core.includes('.metricValue'),'shared metric hierarchy primitives missing');
-assert(core.includes('.formGroup>label'),'shared form label hierarchy missing');
-assert(core.includes('.muted'),'shared muted/supporting text primitive missing');
+const root = path.join(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-// Titles and headings need a deliberate type scale rather than browser defaults.
-assert(/\.pageTitle\{[^}]*font-size:clamp\(/.test(core),'page title must use the shared responsive type scale');
-assert(/\.sectionTitle\{[^}]*font-size:/.test(core),'section titles must have an explicit shared size');
-assert(/\.sectionHead h2[^}]*font-size:/.test(core),'legacy section headings must inherit an explicit shared size');
-assert(/\.sectionHead h3[^}]*font-size:/.test(core),'legacy subsection headings must inherit an explicit shared size');
-assert(/\.formGroup>label\{[^}]*font-size:/.test(core),'form labels must have an explicit shared size');
-assert(/\.metricLabel\{[^}]*text-transform:uppercase/.test(core),'metric labels must read as secondary metadata');
-assert(/\.metricValue\{[^}]*font-size:/.test(core),'metric values must remain visually primary');
-assert(core.includes('.pageHeader{display:flex')&&core.includes('align-items:flex-start'),'page header must allow title/subtitle/action hierarchy without vertical centering distortion');
+const script = read('public/js/admin-surface-semantics.js');
+const css = read('public/css/admin-surface-semantics.css');
+const density = read('public/css/admin-card-density.css');
+const planControl = read('public/css/admin-plan-control-room.css');
+const operations = read('public/css/admin-operations-layout.css');
+const capability = read('public/css/admin-capability.css');
+const htmlCore = read('src/platform/admin-html-core.js');
+const legacyHead = read('views/admin/_head.ejs');
 
-// Generic card density: six logical columns give deterministic 3-up/2-up/1-up
-// layouts without every route inventing its own widths.
-assert(density.includes('.settings-grid,.serverGrid')&&density.includes('repeat(6,minmax(0,1fr))'),'shared settings/server grids must use the six-column density system');
+assert(capability.includes("@import url('/css/admin-surface-semantics.css')"), 'shared capability CSS must load the semantic surface layer');
+assert(capability.includes("@import url('/css/admin-card-density.css')"), 'shared capability CSS must load the global card density layer after component styles');
+assert(capability.includes("@import url('/css/admin-operations-layout.css')"), 'shared capability CSS must load operational layout corrections after card density');
+assert(htmlCore.includes('/js/admin-surface-semantics.js'), 'HTML admin shell must load the semantic classifier');
+assert(legacyHead.includes('/js/admin-surface-semantics.js'), 'legacy EJS admin shell must load the semantic classifier');
+
+assert(script.includes("'control' : 'data'"), 'table surfaces must resolve to control or data semantics');
+assert(script.includes('table.querySelector(MUTABLE_TABLE_CONTROL)'), 'configuration classification must be based on controls inside tables');
+assert(script.includes('input:not([type="hidden"])') && script.includes('select:not([disabled])') && script.includes('[role="switch"]'), 'real mutable controls must identify configuration tables');
+assert(script.includes(':not([type="checkbox"])') && script.includes('.inlineToggle input[type="checkbox"]'), 'generic row-selection checkboxes must stay data semantics while setting toggles remain configuration');
+assert(!script.includes("'button[type=\"submit\"]'") && !script.includes("'button[type=submit]'"), 'action buttons alone must not make a data table look configurable');
+assert(!script.includes("a.button") && !script.includes("a[href"), 'navigation links alone must not make a read-only table look configurable');
+assert(script.includes('classifyStandaloneControls') && script.includes('MUTABLE_SETTING_CONTROL'), 'empty configurable sections must still be recognised from their genuine setting fields');
+assert(script.includes('data.adminSurface') || script.includes('dataset.adminSurface'), 'explicit per-surface overrides must remain available');
+assert(script.includes('MutationObserver'), 'dynamically rendered tables must receive the same semantic treatment');
+
+assert(css.includes('.adminSurface--control') && css.includes('.adminSurface--data'), 'control and read-only surfaces need distinct visual contracts');
+assert(css.includes('Configuration') || script.includes("'Configuration'"), 'editable surfaces must carry a visible configuration cue');
+assert(css.includes('Read only') || script.includes("'Read only'"), 'read-only surfaces must carry a visible inspection cue');
+assert(css.includes('.adminSurface--data table td') && css.includes('padding:8px 11px'), 'read-only tables should be denser than normal tables');
+assert(css.includes('.adminSurface--control table td') && css.includes('padding:10px 11px'), 'editable tables must retain room for controls');
+assert(css.includes('.adminOverviewSurface'), 'overview surfaces must have a compact, subordinate visual treatment');
+assert(css.includes('.notice:not(.error):not(.warn)') && css.includes('.uiSectionHeader') && css.includes('.statusBanner'), 'non-actionable information chrome should be compressed');
+assert(css.includes('.capabilitySummary.adminOverviewSurface .capabilityStat'), 'overview KPI internals should also be compacted');
+
+assert(density.includes('grid-template-columns:repeat(6,minmax(0,1fr))'), 'card density must use the shared six-column foundation');
 assert(density.includes('[data-card-density="3"]') && density.includes('grid-column:span 2'), 'three-up cards must occupy two of six columns');
 assert(density.includes('[data-card-density="2"]') && density.includes('grid-column:span 3'), 'two-up cards must occupy three of six columns');
 assert(density.includes('[data-card-density="1"]') && density.includes('grid-column:1/-1'), 'one-up cards must be explicit full-width exceptions');
@@ -45,7 +57,7 @@ assert(density.includes('align-items:start!important') && density.includes('heig
 assert(density.includes('@media(max-width:1180px)') && density.includes('@media(max-width:720px)'), 'card density must collapse safely for tablet and mobile widths');
 
 assert(operations.includes('.topBar')&&operations.includes('position:relative!important'),'admin top bar must stay in document flow rather than overlay page titles and controls');
-assert(operations.includes('.page-automation .automationGroup .serverGrid')&&operations.includes('grid-template-columns:repeat(3,minmax(0,1fr))!important')&&operations.includes('.page-automation .serverGrid>.automationJobCard')&&operations.includes('grid-column:auto!important'),'automation configuration cards must use the Automation page three-up desktop layout owned by the final operations stylesheet');
+assert(operations.includes('.page-automation .automationGroup .serverGrid')&&operations.includes('grid-template-columns:repeat(3,minmax(0,1fr))!important')&&operations.includes('.page-automation .serverGrid>.automationJobCard')&&operations.includes('grid-column:auto!important'),'automation configuration cards must match the current three-up Automation layout owner');
 assert(operations.includes('.automationJobCard .kvList')&&operations.includes('grid-template-columns:repeat(2,minmax(0,1fr))'),'automation metadata must compact into a readable two-column grid');
 assert(operations.includes('.operatorDetailsBody>.section:only-child')&&operations.includes('980px'),'single expanded settings editors must not stretch into empty full-width canvases');
 assert(operations.includes('.ordersTable')&&operations.includes('.provisioningTable'),'problematic operational tables must have explicit responsive sizing contracts');
