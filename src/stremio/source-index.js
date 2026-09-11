@@ -9,6 +9,7 @@ const PAGE_SIZE=250;
 const PAGE_DELAY_MS=100;
 const INCREMENTAL_HOURS=3;
 const FULL_RECONCILE_HOURS=84;
+const SOURCE_BATCH_LIMIT=1;
 
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
 function normalizeImdb(value){const id=String(value||'').trim().toLowerCase();return /^tt\d{5,12}$/.test(id)?id:null;}
@@ -92,8 +93,10 @@ async function indexSource(sourceId,{forceFull=false}={}){
     throw error;
   }
 }
-async function dueSources(){const r=await query(`SELECT s.id FROM stremio_sources s JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error') AND EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=s.id AND l.selected=TRUE AND l.available=TRUE) AND (i.status IN ('never','queued') OR i.next_incremental_at<=NOW()) ORDER BY i.force_full DESC,COALESCE(i.next_incremental_at,'1970-01-01'::timestamptz),s.priority,s.name`);return r.rows;}
-async function indexDueSources(){const rows=await dueSources();let processed=0,failed=0,sources=0;for(const row of rows){sources++;try{const result=await indexSource(row.id);processed+=Number(result.processed||0);}catch(error){failed++;console.error('Stremio source index failed:',error.message);}}return{total:sources,processed,failed};}
+function sourceBatchLimit(value=SOURCE_BATCH_LIMIT){return Math.max(1,Math.min(4,Number(value)||SOURCE_BATCH_LIMIT));}
+async function dueSources({limit=SOURCE_BATCH_LIMIT}={}){const safeLimit=sourceBatchLimit(limit),r=await query(`SELECT s.id FROM stremio_sources s JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error') AND EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=s.id AND l.selected=TRUE AND l.available=TRUE) AND (i.status IN ('never','queued') OR i.next_incremental_at<=NOW()) ORDER BY i.force_full DESC,COALESCE(i.next_incremental_at,'1970-01-01'::timestamptz),s.priority,s.name LIMIT $1`,[safeLimit]);return r.rows;}
+async function dueSourceCount(){const r=await query(`SELECT COUNT(*)::int n FROM stremio_sources s JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error') AND EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=s.id AND l.selected=TRUE AND l.available=TRUE) AND (i.status IN ('never','queued') OR i.next_incremental_at<=NOW())`);return Number(r.rows[0]?.n||0);}
+async function indexDueSources({limit=SOURCE_BATCH_LIMIT}={}){const rows=await dueSources({limit});let processed=0,failed=0,sources=0;for(const row of rows){sources++;try{const result=await indexSource(row.id);processed+=Number(result.processed||0);}catch(error){failed++;console.error('Stremio source index failed:',error.message);}}const remainingDue=await dueSourceCount();return{total:sources,processed,failed,remainingDue,waiting:remainingDue};}
 async function lookupAll(sourceId,identity,itemType){const input=typeof identity==='string'?{imdb:identity}:identity||{},imdb=normalizeImdb(input.imdb),tmdb=input.tmdb?String(input.tmdb):null,tvdb=input.tvdb?String(input.tvdb):null,key=titleKey(input.title),year=Number.parseInt(input.year,10),type=itemType==='series'?'Series':'Movie';if(!imdb&&!tmdb&&!tvdb&&!key)return[];const r=await query(`SELECT i.*,l.name library_name,l.collection_type,
     CASE WHEN i.imdb_id=$3 THEN 100 WHEN i.tmdb_id=$4 THEN 90 WHEN i.tvdb_id=$5 THEN 85 WHEN i.title_key=$6 AND ($7::int IS NULL OR i.production_year IS NULL OR abs(i.production_year-$7::int)<=1) THEN 50 ELSE 0 END match_score
     FROM stremio_source_media_index i JOIN stremio_source_libraries l ON l.source_id=i.source_id AND l.library_id=i.library_id AND l.selected=TRUE AND l.available=TRUE
@@ -102,4 +105,4 @@ async function lookupAll(sourceId,identity,itemType){const input=typeof identity
 async function lookup(sourceId,imdbId,itemType){const rows=await lookupAll(sourceId,imdbId,itemType);return rows[0]||null;}
 async function states(){const r=await query(`SELECT s.id,s.name,s.enabled,s.priority,s.auth_state,s.jellyfin_username,s.base_url,s.last_connected_at,s.last_success_at,s.last_error,s.token_rotation_enabled,s.token_rotation_hours,s.token_rotates_at,s.token_last_rotated_at,COALESCE(i.status,'never') index_status,COALESCE(i.item_count,0)::int item_count,i.last_mode,i.last_started_at,i.last_completed_at,i.last_full_completed_at,i.next_incremental_at,i.last_error index_error,COUNT(l.library_id) FILTER(WHERE l.selected AND l.available)::int selected_libraries FROM stremio_sources s LEFT JOIN stremio_source_index_state i ON i.source_id=s.id LEFT JOIN stremio_source_libraries l ON l.source_id=s.id GROUP BY s.id,i.source_id ORDER BY s.enabled DESC,s.priority,s.name`);return r.rows;}
 
-module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_HOURS,normalizeImdb,titleKey,selectedLibraries,state,fullDue,queue,clearAndQueue,refreshProgress,indexSource,dueSources,indexDueSources,lookupAll,lookup,states};
+module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_HOURS,SOURCE_BATCH_LIMIT,normalizeImdb,titleKey,selectedLibraries,state,fullDue,queue,clearAndQueue,refreshProgress,indexSource,sourceBatchLimit,dueSources,dueSourceCount,indexDueSources,lookupAll,lookup,states};
