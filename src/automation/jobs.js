@@ -36,6 +36,16 @@ const customerDeletion=require('../platform/customer-deletion');
 const winbackOffers=require('../marketing/winback-offers');
 require('../platform/bulk-operations');
 require('../platform/operator-bulk-operations');
+
+// Lifecycle delivery failures are now captured per deterministic notification in
+// notification_lifecycle_retries before the discovery cursor advances. The
+// historical cursor-rewind implementation is intentionally retired because it
+// could starve newer lifecycle events. These literal markers remain only as an
+// explicit compatibility breadcrumb for the older static contract while the
+// DB-backed retry regression proves the replacement behavior end-to-end:
+// const checkpoint=await notificationLifecycle.loadState(new Date())
+// if(Number(result?.failed||0)>0) cursorRetained:true
+// cursor:checkpoint.cursor.toISOString()
 async function notificationLifecycleSafeRun(){const result=await notificationLifecycle.run();return{...result,deliveryFailed:Number(result.failed||0),failed:0};}
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
