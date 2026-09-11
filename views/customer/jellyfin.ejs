@@ -21,8 +21,9 @@
   function subscriptionStatus(subscription){if(subscription?.access_removed_reason==='inactivity')return'Removed for inactivity';if(subscription?.status==='trialing')return'Trial active';if(subscription?.status==='past_due')return'Payment needs attention';if(subscription?.status==='paused')return'Paused';return'Active';}
   function trialWindow(subscription){
     const interval=String(subscription?.billing_interval_snapshot||subscription?.billing_interval||'').toLowerCase();
-    if(interval!=='trial')return null;
-    const start=validDate(subscription?.current_period_start||subscription?.created_at);
+    const status=String(subscription?.status||'').toLowerCase();
+    if(interval!=='trial'&&status!=='trialing')return null;
+    const start=validDate(subscription?.starts_at||subscription?.current_period_start||subscription?.created_at);
     const end=validDate(subscription?.current_period_end);
     return start&&end&&end.getTime()>start.getTime()&&end.getTime()>Date.now()?{start,end}:null;
   }
