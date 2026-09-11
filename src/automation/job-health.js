@@ -106,7 +106,34 @@ async function runSingleton(jobKey, fn, { force = false } = {}) {
 
 async function list() {
     const result = await query('SELECT * FROM automation_job_state ORDER BY job_key');
-    return result.rows;
+    const rows = result.rows;
+    try {
+        const backlog = await query(`
+            SELECT COUNT(*)::int AS count,MIN(created_at) AS oldest_at,MAX(attempts)::int AS max_attempts
+            FROM notification_lifecycle_retries
+            WHERE attempts>=3 OR created_at<NOW()-INTERVAL '1 hour'
+        `);
+        const pending = Number(backlog.rows[0]?.count || 0);
+        if (pending > 0) {
+            const index = rows.findIndex(row => row.job_key === 'notification_lifecycle');
+            if (index >= 0 && rows[index].last_outcome !== 'failed') {
+                const original = rows[index];
+                const oldest = backlog.rows[0]?.oldest_at ? new Date(backlog.rows[0].oldest_at).toLocaleString('en-GB') : 'unknown';
+                rows[index] = {
+                    ...original,
+                    last_outcome: 'degraded',
+                    last_warning: `${pending} lifecycle notification${pending === 1 ? '' : 's'} remain undelivered after durable retry. Oldest: ${oldest}.`,
+                    last_failed_count: pending,
+                    consecutive_failures: Math.max(3, Number(original.consecutive_failures || 0)),
+                    lifecycle_retry_backlog: true
+                };
+            }
+        }
+    } catch (_) {
+        // During rolling migration / clean install the retry table may not exist
+        // yet. Base job health remains available rather than hiding all automation.
+    }
+    return rows;
 }
 
 async function update(jobKey, { enabled, intervalSeconds }) {

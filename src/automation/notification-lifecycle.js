@@ -6,6 +6,7 @@ const notificationDispatch = require('../integrations/notification-dispatch');
 const STATE_KEY = 'notification_lifecycle_cursor_v1';
 const INITIAL_LOOKBACK_MS = 15 * 60 * 1000;
 const MAX_CATCHUP_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_RETRY_LIMIT = 50;
 
 function validDate(value) {
     const date = value ? new Date(value) : null;
@@ -49,21 +50,144 @@ async function saveState(cursor, servers) {
     `, [STATE_KEY, JSON.stringify(value)]);
 }
 
+function retryDelaySeconds(attempts) {
+    const attempt = Math.max(1, Number(attempts) || 1);
+    return Math.min(6 * 60 * 60, 60 * Math.pow(3, Math.min(5, attempt - 1)));
+}
+
+function retryFailureMessage(value) {
+    if (Array.isArray(value)) return clean(value.join('; '), 1500) || 'Lifecycle notification delivery failed.';
+    return clean(value?.message || value || 'Lifecycle notification delivery failed.', 1500);
+}
+
+function retryKey(input) {
+    const key = clean(input?.dedupeKey, 500);
+    if (!key) throw new Error('Lifecycle notifications require a stable dedupe key for durable retry.');
+    return key;
+}
+
+async function queueRetry(input, failure) {
+    const key = retryKey(input);
+    await query(`
+        INSERT INTO notification_lifecycle_retries(
+            dedupe_key,event_type,payload,attempts,next_attempt_at,last_error,created_at,updated_at
+        ) VALUES($1,$2,$3::jsonb,0,NOW(),$4,NOW(),NOW())
+        ON CONFLICT(dedupe_key) DO UPDATE
+        SET event_type=EXCLUDED.event_type,
+            payload=EXCLUDED.payload,
+            last_error=EXCLUDED.last_error,
+            next_attempt_at=LEAST(notification_lifecycle_retries.next_attempt_at,NOW()),
+            updated_at=NOW()
+    `, [key, clean(input.eventType, 160) || 'unknown', JSON.stringify(input), retryFailureMessage(failure)]);
+    return key;
+}
+
+async function clearRetry(dedupeKey) {
+    const key = clean(dedupeKey, 500);
+    if (!key) return false;
+    const result = await query('DELETE FROM notification_lifecycle_retries WHERE dedupe_key=$1', [key]);
+    return result.rowCount > 0;
+}
+
+async function dueRetries(limit = DEFAULT_RETRY_LIMIT) {
+    const bounded = Math.max(1, Math.min(200, Number(limit) || DEFAULT_RETRY_LIMIT));
+    const result = await query(`
+        SELECT dedupe_key,event_type,payload,attempts,next_attempt_at,last_error,created_at,updated_at
+        FROM notification_lifecycle_retries
+        WHERE next_attempt_at<=NOW()
+        ORDER BY next_attempt_at,created_at,dedupe_key
+        LIMIT $1
+    `, [bounded]);
+    return result.rows;
+}
+
+async function markRetryFailure(row, failure) {
+    const attempts = Math.max(0, Number(row?.attempts || 0)) + 1;
+    const delay = retryDelaySeconds(attempts);
+    await query(`
+        UPDATE notification_lifecycle_retries
+        SET attempts=$2,last_attempt_at=NOW(),last_error=$3,
+            next_attempt_at=NOW()+($4::int*INTERVAL '1 second'),updated_at=NOW()
+        WHERE dedupe_key=$1
+    `, [row.dedupe_key, attempts, retryFailureMessage(failure), delay]);
+    return delay;
+}
+
+async function retryPendingCount() {
+    const result = await query('SELECT COUNT(*)::int AS count FROM notification_lifecycle_retries');
+    return Number(result.rows[0]?.count || 0);
+}
+
+function deliveryQueued(delivery) {
+    return Boolean(delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp));
+}
+
 async function emit(summary, input) {
     summary.processed += 1;
     try {
         const delivery = await notificationDispatch.dispatch(input);
-        if (delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp)) summary.queued += 1;
+        if (deliveryQueued(delivery)) summary.queued += 1;
         if (Array.isArray(delivery?.errors) && delivery.errors.length) {
+            try {
+                await queueRetry(input, delivery.errors);
+            } catch (retryError) {
+                throw new Error(`Lifecycle notification delivery failed and durable retry could not be recorded: ${retryError.message}`);
+            }
             summary.failed += 1;
-            console.warn('Lifecycle notification had delivery errors:', { eventType: input.eventType, errors: delivery.errors.slice(0, 4) });
+            summary.retryQueued = Number(summary.retryQueued || 0) + 1;
+            console.warn('Lifecycle notification had delivery errors; durable retry queued:', { eventType: input.eventType, errors: delivery.errors.slice(0, 4) });
+            return delivery;
         }
+        await clearRetry(input.dedupeKey);
         return delivery;
     } catch (error) {
+        if (String(error?.message || '').includes('durable retry could not be recorded')) throw error;
+        try {
+            await queueRetry(input, error);
+        } catch (retryError) {
+            throw new Error(`Lifecycle notification dispatch failed and durable retry could not be recorded: ${retryError.message}`);
+        }
         summary.failed += 1;
-        console.warn('Lifecycle notification dispatch failed:', { eventType: input.eventType, error: clean(error?.message || error, 500) });
+        summary.retryQueued = Number(summary.retryQueued || 0) + 1;
+        console.warn('Lifecycle notification dispatch failed; durable retry queued:', { eventType: input.eventType, error: clean(error?.message || error, 500) });
         return null;
     }
+}
+
+async function processRetries(summary, { limit = DEFAULT_RETRY_LIMIT } = {}) {
+    const rows = await dueRetries(limit);
+    summary.retryAttempted = rows.length;
+    summary.retryResolved = 0;
+    summary.retryFailed = 0;
+    for (const row of rows) {
+        summary.processed += 1;
+        const input = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : null;
+        if (!input || retryKey(input) !== row.dedupe_key) {
+            const error = new Error('Stored lifecycle retry payload is invalid or its dedupe key changed.');
+            await markRetryFailure(row, error);
+            summary.failed += 1;
+            summary.retryFailed += 1;
+            continue;
+        }
+        try {
+            const delivery = await notificationDispatch.dispatch(input);
+            if (deliveryQueued(delivery)) summary.queued += 1;
+            if (Array.isArray(delivery?.errors) && delivery.errors.length) {
+                await markRetryFailure(row, delivery.errors);
+                summary.failed += 1;
+                summary.retryFailed += 1;
+                continue;
+            }
+            await clearRetry(row.dedupe_key);
+            summary.retryResolved += 1;
+        } catch (error) {
+            await markRetryFailure(row, error);
+            summary.failed += 1;
+            summary.retryFailed += 1;
+        }
+    }
+    summary.retryPending = await retryPendingCount();
+    return rows.length;
 }
 
 async function subscriptionEvents(since, until, summary) {
@@ -390,10 +514,19 @@ async function run() {
         processed: 0,
         queued: 0,
         failed: 0,
+        retryQueued: 0,
+        retryAttempted: 0,
+        retryResolved: 0,
+        retryFailed: 0,
+        retryPending: 0,
         windowStart: state.cursor.toISOString(),
         windowEnd: until.toISOString()
     };
 
+    // Retry previously failed deterministic notifications first. A retry that
+    // still fails degrades this run but no longer rewinds the global discovery
+    // cursor or causes an ever-growing historical rescan.
+    await processRetries(summary);
     await subscriptionEvents(state.cursor, until, summary);
     await paymentReceiptEvents(state.cursor, until, summary);
     await paymentIncidentEvents(state.cursor, until, summary);
@@ -401,7 +534,11 @@ async function run() {
     await inactivityEvents(state.cursor, until, summary);
     await operationalEvents(state.cursor, until, summary);
     const servers = await serverEvents(state.servers, summary);
+    // If durable retry persistence itself failed, emit/processRetries throws and
+    // we deliberately do not advance the cursor. Ordinary channel failures are
+    // already represented durably and must never pin this global cursor.
     await saveState(until, servers);
+    summary.retryPending = await retryPendingCount();
     return summary;
 }
 
@@ -409,10 +546,21 @@ module.exports = {
     STATE_KEY,
     INITIAL_LOOKBACK_MS,
     MAX_CATCHUP_MS,
+    DEFAULT_RETRY_LIMIT,
     validDate,
     dateKey,
     money,
     loadState,
+    saveState,
+    retryDelaySeconds,
+    retryFailureMessage,
+    retryKey,
+    queueRetry,
+    clearRetry,
+    dueRetries,
+    markRetryFailure,
+    retryPendingCount,
+    processRetries,
     paymentReceiptKey,
     run
 };
