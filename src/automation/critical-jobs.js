@@ -13,6 +13,7 @@ const CUSTOMER_ACCESS_CRITICAL_JOBS = Object.freeze([
     'customer_service_recovery',
     'revenue_integrity',
     'billing',
+    'subscription_discovery',
     'provider_operation_recovery',
     'payment_events',
     'plan_changes',
