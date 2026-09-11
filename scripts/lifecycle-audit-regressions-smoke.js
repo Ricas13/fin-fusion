@@ -65,9 +65,24 @@ function independentServiceRecoveryContract(){
   assert.match(text,/failures\.push\(\{\s*service:\s*name,/,'one service failure must be recorded without aborting the remaining service repairs');
 }
 
+function obsoleteRenewalIntegrityContract(){
+  const text=source('src/automation/revenue-integrity.js');
+  assert.match(text,/async function retireObsoleteManualRenewalOperations/,'integrity scan must actively retire obsolete renewal failures');
+  assert.match(text,/po\.operation_type IN\('renewal_stop','renewal_resume'\)/,'only renewal-control operations may use automatic stale retirement');
+  assert.match(text,/po\.manual_review_required=TRUE/,'only already-escalated provider operations may be auto-retired');
+  assert.match(text,/po\.failure_kind='terminal'/,'only terminal historical renewal failures may be auto-retired');
+  assert.match(text,/COALESCE\(s\.billing_mode,''\)<>'subscription'/,'a subscription that became manual must make its old recurring operation obsolete');
+  assert.match(text,/COALESCE\(s\.source,''\)<>po\.provider/,'a subscription that changed provider identity must make its old recurring operation obsolete');
+  assert.match(text,/s\.provider_subscription_id IS DISTINCT FROM po\.request_snapshot->>'providerSubscriptionId'/,'provider subscription replacement must make the old operation obsolete');
+  assert.match(text,/failure_kind='superseded'/,'obsolete renewal failures must remain as audit history but stop requiring manual review');
+  assert.match(text,/manual_review_required=FALSE/,'superseded renewal failures must leave the active attention set');
+  assert.match(text,/await retireObsoleteManualRenewalOperations\(\);[\s\S]*FROM provider_operations[\s\S]*manual_review_required=TRUE/,'stale renewal retirement must happen before integrity findings are read');
+}
+
 paypalPaidThroughCancellation();
 jellyfinDeletionScope();
 deferredWebhookContract();
 discoveryAutomationContract();
 independentServiceRecoveryContract();
+obsoleteRenewalIntegrityContract();
 console.log('Lifecycle audit regression smoke passed.');
