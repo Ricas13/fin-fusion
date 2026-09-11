@@ -33,7 +33,7 @@ const DEFAULT_JOB_INTERVALS=Object.freeze({
     data_retention:3600,
     discord_roles:43200,
     stremio_external_tokens:300,
-    stremio_media_index:10800
+    stremio_media_index:300
 });
 const CRITICAL_JOB_KEYS=Object.freeze(criticalJobs.names());
 let stopping = false;
@@ -57,12 +57,18 @@ function assertCriticalJobRegistry() {
 }
 
 function resultMetrics(jobKey, value = {}) {
-    if (jobKey !== 'free_capacity_backfill') return '';
-    const assigned = Number(value.assigned || 0);
-    const waiting = Number(value.waiting || 0);
-    const skipped = Number(value.skipped || 0);
-    if (!assigned && !waiting && !skipped) return '';
-    return ` assigned=${assigned} waiting=${waiting} skipped=${skipped}`;
+    if (jobKey === 'free_capacity_backfill') {
+        const assigned = Number(value.assigned || 0);
+        const waiting = Number(value.waiting || 0);
+        const skipped = Number(value.skipped || 0);
+        if (!assigned && !waiting && !skipped) return '';
+        return ` assigned=${assigned} waiting=${waiting} skipped=${skipped}`;
+    }
+    if (jobKey === 'stremio_media_index') {
+        const waiting = Number(value.remainingDue ?? value.waiting ?? 0);
+        return waiting ? ` waiting=${waiting}` : '';
+    }
+    return '';
 }
 
 async function ensureRows() {
