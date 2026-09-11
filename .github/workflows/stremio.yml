@@ -38,3 +38,4 @@ jobs:
           node scripts/stremio-rate-limit-smoke.js
           node scripts/stremio-edge-auth-smoke.js
           node scripts/stremio-managed-sweep-scale-smoke.js
+          node scripts/stremio-external-index-bounded-smoke.js
