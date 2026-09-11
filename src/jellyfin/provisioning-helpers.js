@@ -235,17 +235,20 @@ async function notifyNewJellyfinAccess(customerId, account) {
     const found = await query(`
       SELECT COALESCE(c.email,u.email) email,
              COALESCE(c.display_name,u.username,'Customer') customer_name,
-             u.username portal_username,u.role user_role,c.registration_source
+             u.username portal_username,u.role user_role,c.registration_source,
+             js.name server_name,js.public_url server_public_url
       FROM customers c
       LEFT JOIN app_users u ON u.id=c.user_id
+      LEFT JOIN jellyfin_servers js ON js.id=$2
       WHERE c.id=$1
-    `, [customerId]);
+    `, [customerId, account.server_id || null]);
     if (!found.rowCount) return;
 
     const row = found.rows[0];
     const site = runtimeSettings.siteName();
-    const serverUrl = String(account.public_url || '').trim();
-    const username = row.portal_username || account.jellyfin_username || 'your Jellyfin username';
+    const serverUrl = String(account.public_url || row.server_public_url || '').trim();
+    const serverName = String(account.server_name || row.server_name || '').trim();
+    const username = account.jellyfin_username || row.portal_username || 'your Jellyfin username';
     const personalAdmin = row.user_role === 'admin' && row.registration_source === 'admin_personal';
     const passwordStep = account.password_setup_required
       ? personalAdmin
@@ -264,6 +267,13 @@ async function notifyNewJellyfinAccess(customerId, account) {
       text: steps,
       adminSubject: `${site}: Jellyfin access provisioned`,
       adminText: `${row.customer_name} (${row.email || customerId}) was provisioned as ${account.jellyfin_username || username}${serverUrl ? ` on ${serverUrl}` : ''}.`,
+      templatePayload: {
+        service: 'Jellyfin',
+        serverName,
+        serverUrl: serverUrl || serverStep,
+        jellyfinUsername: username,
+        passwordSetupRequired: Boolean(account.password_setup_required)
+      },
       dedupeKey: `jellyfin-provisioned:${account.id}`,
       forceEmail: true
     });
