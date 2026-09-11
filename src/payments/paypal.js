@@ -37,7 +37,28 @@ async function activateSubscription(subscriptionId){const subscription=await get
 function paypalStatus(value){return String(value||'').trim().toUpperCase();}
 function paypalHealthy(status){return paypalStatus(status)==='ACTIVE';}
 function paypalTerminal(status){return ['CANCELLED','CANCELED','EXPIRED'].includes(paypalStatus(status));}
-async function syncCurrentSubscription(subscriptionId,{activateMissing=true}={}){const subscription=await getSubscription(subscriptionId),providerStatus=paypalStatus(subscription.status),row=await lifecycle.updateProviderSubscription({provider:'paypal',providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodEnd:subscription.billing_info?.next_billing_time||null,cancelAtPeriodEnd:null});if(row)return{row,subscription,providerStatus};const intent=await checkoutIntents.findProviderIntent('paypal',subscription.id);if(intent&&activateMissing){const activated=await activateSubscription(subscription.id);return{row:activated,subscription,providerStatus};}if(!intent)console.warn('PayPal subscription update has no local subscription or checkout intent:',subscription.id);return{row:null,subscription,providerStatus};}
+function paidThroughCancellationUpdate(existing,subscription,now=new Date()){
+  const providerStatus=paypalStatus(subscription?.status),nextBilling=subscription?.billing_info?.next_billing_time||null;
+  const end=existing?.current_period_end?new Date(existing.current_period_end):null;
+  const paidThrough=Boolean(existing&&existing.billing_mode==='subscription'&&!existing.refund_terminated_at&&end&&!Number.isNaN(end.getTime())&&end>now);
+  if(!['CANCELLED','CANCELED'].includes(providerStatus)||!paidThrough)return{providerStatus:subscription?.status,periodEnd:nextBilling,cancelAtPeriodEnd:null,preserved:false};
+  let effectiveProviderStatus='ACTIVE';
+  if(existing.status==='trialing')effectiveProviderStatus='APPROVED';
+  else if(existing.status==='paused')effectiveProviderStatus='SUSPENDED';
+  else if(existing.status==='past_due')effectiveProviderStatus=null;
+  return{providerStatus:effectiveProviderStatus,periodEnd:end,cancelAtPeriodEnd:true,preserved:true};
+}
+async function syncCurrentSubscription(subscriptionId,{activateMissing=true}={}){
+  const subscription=await getSubscription(subscriptionId),providerStatus=paypalStatus(subscription.status);
+  const local=await query(`SELECT status,billing_mode,current_period_end,refund_terminated_at FROM subscriptions WHERE source='paypal' AND provider_subscription_id=$1 LIMIT 1`,[subscription.id]);
+  const update=paidThroughCancellationUpdate(local.rows[0]||null,subscription);
+  const row=await lifecycle.updateProviderSubscription({provider:'paypal',providerSubscriptionId:subscription.id,providerStatus:update.providerStatus,periodEnd:update.periodEnd,cancelAtPeriodEnd:update.cancelAtPeriodEnd});
+  if(row)return{row,subscription,providerStatus,preservedPaidThrough:update.preserved};
+  const intent=await checkoutIntents.findProviderIntent('paypal',subscription.id);
+  if(intent&&activateMissing){const activated=await activateSubscription(subscription.id);return{row:activated,subscription,providerStatus,preservedPaidThrough:false};}
+  if(!intent)console.warn('PayPal subscription update has no local subscription or checkout intent:',subscription.id);
+  return{row:null,subscription,providerStatus,preservedPaidThrough:false};
+}
 async function syncSubscription(subscriptionId){return(await syncCurrentSubscription(subscriptionId)).row;}
 async function verifyWebhook(headers,event){const config=await providerSettings.get('paypal');if(!config.webhookId)throw new Error('PayPal webhook ID is not configured');const result=await api('/v1/notifications/verify-webhook-signature',{method:'POST',body:{auth_algo:headers['paypal-auth-algo'],cert_url:headers['paypal-cert-url'],transmission_id:headers['paypal-transmission-id'],transmission_sig:headers['paypal-transmission-sig'],transmission_time:headers['paypal-transmission-time'],webhook_id:config.webhookId,webhook_event:event}});return result.verification_status==='SUCCESS';}
 function paypalAmount(resource){const value=resource?.amount?.total??resource?.amount?.value??resource?.seller_payable_breakdown?.total_refunded_amount?.value;const currency=resource?.amount?.currency??resource?.amount?.currency_code??resource?.seller_payable_breakdown?.total_refunded_amount?.currency_code;return{minor:value!=null&&Number.isFinite(Number(value))?Math.round(Number(value)*100):null,currency:currency||null};}
@@ -88,4 +109,4 @@ async function handleWebhookEvent(event){const eventId=event.id,eventType=event.
 async function processClaimedEvent(eventRow,event){try{await handleWebhookEvent(event);await lifecycle.finishPaymentEvent(eventRow);return{processed:true};}catch(error){await lifecycle.finishPaymentEvent(eventRow,error);console.error('PayPal webhook processing deferred to internal retry:',error.message);return{processed:false,error};}}
 async function processWebhook(rawBody,headers){let event;try{event=JSON.parse(Buffer.isBuffer(rawBody)?rawBody.toString('utf8'):String(rawBody));}catch{throw new Error('Invalid PayPal webhook JSON.');}if(!(await verifyWebhook(headers,event)))throw new Error('Invalid PayPal webhook signature');const eventId=event.id,eventType=event.event_type,eventRow=await lifecycle.beginPaymentEvent({provider:'paypal',eventId,eventType,payload:event});if(!eventRow)return{duplicate:true};const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:eventType,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};}
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='paypal')throw new Error('PayPal retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored PayPal payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,captureOrder,activateCompletedOrder,captureOrderId,activateSubscription,syncSubscription,syncCurrentSubscription,paypalStatus,paypalHealthy,paypalTerminal,immutableSubscriptionContract,storedSubscriptionSnapshot,processWebhook,retryPaymentEvent,handleWebhookEvent,parseCustomId,paypalAmount,paypalRefundContext,paypalMinor,disputeIdentity,reverseReferralForDirectIdentity,captureRefundAmounts,paypalCaptureRefundContext,recordCaptureLoss};
+module.exports={enabled,createCheckout,captureOrder,activateCompletedOrder,captureOrderId,activateSubscription,syncSubscription,syncCurrentSubscription,paypalStatus,paypalHealthy,paypalTerminal,paidThroughCancellationUpdate,immutableSubscriptionContract,storedSubscriptionSnapshot,processWebhook,retryPaymentEvent,handleWebhookEvent,parseCustomId,paypalAmount,paypalRefundContext,paypalMinor,disputeIdentity,reverseReferralForDirectIdentity,captureRefundAmounts,paypalCaptureRefundContext,recordCaptureLoss};
