@@ -27,6 +27,9 @@ const parsed=plisio.parseCallback(Buffer.from(JSON.stringify(signed)),'applicati
 expect(parsed.txn_id==='txn-1','Plisio JSON callback parsing failed.');
 let rejected=false;try{plisio.parseCallback(Buffer.from('txn_id=x'),'application/x-www-form-urlencoded');}catch(_){rejected=true;}expect(rejected,'Plisio callbacks must require JSON mode so signed serialization is deterministic.');
 
+expect(plisio.storedEventProviderId({provider_event_id:'operation:txn-fallback:expired:legacy'}, {})==='txn-fallback','Stored Plisio recovery must recover the provider transaction from the durable event ID.');
+expect(plisio.storedEventProviderId({provider_event_id:'operation:txn-fallback:expired:legacy'}, {txn_id:'txn-payload'})==='txn-payload','Stored Plisio recovery must prefer the persisted payload transaction ID when present.');
+
 const moduleSource=source('src/payments/plisio.js');
 expect(moduleSource.includes("'/api/v1/invoices/new'"),'Plisio checkout must use invoices/new.');
 expect(moduleSource.includes('source_currency')&&moduleSource.includes('source_amount'),'Plisio checkout must anchor invoices to the local fiat contract.');
@@ -36,6 +39,12 @@ expect(moduleSource.includes('verifiedProviderContract'),'Plisio completion must
 expect(moduleSource.includes("fields.status === 'completed'"),'Only completed Plisio operations may activate access.');
 expect(moduleSource.includes('timingSafeEqual'),'Plisio callback comparison must use timingSafeEqual.');
 expect(!moduleSource.includes('.sort('),'Plisio callback signing must not reorder JSON keys before JSON.stringify.');
+expect(moduleSource.includes("findProviderIntent('plisio', providerId)"),'Historical Plisio event recovery must bind provider truth to the stored local checkout identity.');
+expect(moduleSource.includes('TERMINAL_UNPAID_STATUSES.has(fields.status)'),'Historical terminal unpaid Plisio events must be safely closable after provider re-verification.');
+expect(moduleSource.includes('Completed Plisio transaction has no local checkout intent and requires manual reconciliation.'),'Orphan completed Plisio revenue must remain operator-visible rather than being discarded.');
+const retrySource=moduleSource.match(/async function retryPaymentEvent\([\s\S]*?\n\}/)?.[0]||'';
+expect(retrySource.includes('reconcileStoredPaymentEvent(eventRow, payload)'),'Durable Plisio retries must recover from authenticated merchant API truth.');
+expect(!retrySource.includes('authenticateCallback'),'Durable Plisio retries must not permanently depend on a historical callback signature.');
 
 const settings=source('src/payments/provider-settings.js');
 expect(settings.includes("const PROVIDERS = ['stripe', 'paypal', 'plisio']"),'Provider settings must contain only the supported gateways.');
