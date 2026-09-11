@@ -32,7 +32,7 @@ assert(/operator\/move/.test(customerOperator)&&/forceMove\.move/.test(customerO
 assert(!/marketing\/withdraw|Marketing consent|marketingConsentChanged|name=\"marketingOptIn\"/.test(customer+view),'Customer administration must not retain retired Marketing consent controls');
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
 assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');
-assert(/portal_delete/.test(bulkCustomers)&&/Delete portal customer \+ all local data/.test(bulkCustomers),'Customer bulk actions must expose permanent portal deletion');
+assert(/portal_delete/.test(bulkCustomers)&&/Delete user and data from the portal\.\.\./.test(bulkCustomers),'Customer bulk actions must expose permanent portal deletion');
 assert(/confirmWord:'DELETE'/.test(bulkCustomers)&&/meta\.immediate/.test(bulkCustomers),'Permanent portal deletion must require a distinct confirmation and must not run as an async customer-referencing job');
 assert(/name=\"planId\" required><option/.test(bulkCustomers)&&!/Use the plan UUID/.test(bulkCustomers),'bulk plan changes must use human plan choices, not UUID entry');
 assert(/name=\"serverId\" required><option/.test(bulkCustomers)&&!/Use the server UUID/.test(bulkCustomers),'bulk server moves must use human server choices, not UUID entry');
