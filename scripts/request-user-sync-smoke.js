@@ -15,7 +15,7 @@ const remote = {
             email: 'existing@example.test',
             username: 'existing-user',
             permissions: 32,
-            settings: { username: 'existing-user', locale: 'en', movieQuotaLimit: 0, movieQuotaDays: 30, tvQuotaLimit: 0, tvQuotaDays: 30 }
+            settings: { username: 'existing-user', email: 'existing@example.test', locale: 'en', movieQuotaLimit: 0, movieQuotaDays: 30, tvQuotaLimit: 0, tvQuotaDays: 30 }
         }
     ],
     createCalls: 0,
@@ -56,8 +56,9 @@ const server = http.createServer(async (req,res)=>{
             const body=await readJson(req);
             if(!body.email||!body.username||!body.password)throw new Error('missing local-user fields');
             await synchronizeRaceCreate(body.email);
-            if(remote.users.some(user=>String(user.email).toLowerCase()===String(body.email).toLowerCase())){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'User already exists with submitted email.'}));}
-            const created={id:100+remote.createCalls,email:body.email,username:body.username,permissions:32,settings:{username:body.username,locale:null,region:null,originalLanguage:null,movieQuotaLimit:0,movieQuotaDays:30,tvQuotaLimit:0,tvQuotaDays:30}};
+            const normalizedEmail=String(body.email).toLowerCase();
+            if(remote.users.some(user=>String(user.email).toLowerCase()===normalizedEmail)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'User already exists with submitted email.'}));}
+            const created={id:100+remote.createCalls,email:normalizedEmail,username:body.username,permissions:32,settings:{username:body.username,email:normalizedEmail,locale:null,region:null,originalLanguage:null,movieQuotaLimit:0,movieQuotaDays:30,tvQuotaLimit:0,tvQuotaDays:30}};
             remote.createCalls++;
             remote.users.push(created);
             res.writeHead(201,{'Content-Type':'application/json'});
@@ -67,7 +68,7 @@ const server = http.createServer(async (req,res)=>{
         const permissions=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/permissions$/);
         if(permissions){const user=userById(permissions[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}if(req.method==='POST'){const body=await readJson(req);user.permissions=Number(body.permissions)||0;remote.permissionCalls.push({id:user.id,permissions:user.permissions});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}}
         const main=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/main$/);
-        if(main){const user=userById(main[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}if(req.method==='POST'){if(Number(remote.failMainForId)===Number(user.id)){res.writeHead(503,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'forced request-user mutation failure'}));}const body=await readJson(req);if(body.locale==null||!String(body.locale).trim()){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'SQLITE_CONSTRAINT: NOT NULL constraint failed: user_settings.locale'}));}user.settings={...user.settings,...body};user.username=body.username||user.username;remote.quotaCalls.push({id:user.id,...body});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}}
+        if(main){const user=userById(main[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}if(req.method==='POST'){if(Number(remote.failMainForId)===Number(user.id)){res.writeHead(503,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'forced request-user mutation failure'}));}const body=await readJson(req);if(body.locale==null||!String(body.locale).trim()){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'SQLITE_CONSTRAINT: NOT NULL constraint failed: user_settings.locale'}));}const normalizedBody={...body,email:String(body.email||'').toLowerCase()};user.settings={...user.settings,...normalizedBody};user.username=normalizedBody.username||user.username;user.email=normalizedBody.email||user.email;remote.quotaCalls.push({id:user.id,...normalizedBody});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(user.settings));}}
         const password=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/password$/);
         if(req.method==='POST'&&password){const body=await readJson(req);remote.passwordCalls.push({id:Number(password[1]),newPassword:body.newPassword});res.writeHead(204);return res.end();}
         res.writeHead(404,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:`unexpected ${req.method} ${url.pathname}`}));
@@ -95,10 +96,10 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     const fixtureCustomerIdSet=new Set(fixtureCustomerIds.map(String));
     const requestSync=require('../src/integrations/request-user-sync'),candidates=(await requestSync.syncCandidates()).filter(row=>fixtureCustomerIdSet.has(String(row.customer_id)));
     assert.strictEqual(candidates.length,3,'multi-server Jellyfin accounts must collapse to one CAPTAiNFiN request user');const multi=candidates.find(row=>String(row.customer_id)===String(multiServerCustomer));assert.strictEqual(multi.active_server_count,2);assert.strictEqual(multi.request_movie_quota_limit,2);assert.strictEqual(multi.request_tv_quota_limit,2);
-    const first=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(first,{total:3,created:2,linked:1,suspended:0,failed:0},{updated:3,unchanged:0});assert.strictEqual(remote.createCalls,2);assert.strictEqual(remote.users.length,3);for(const user of remote.users){assert.strictEqual(user.settings.locale,'en','request sync must never submit a null Seerr locale');assert.strictEqual(user.settings.movieQuotaLimit,2);assert.strictEqual(user.settings.movieQuotaDays,30);assert.strictEqual(user.settings.tvQuotaLimit,2);assert.strictEqual(user.settings.tvQuotaDays,30);assert.strictEqual(user.permissions,32);}
-    const linked=await requestSync.requestAccessForCustomer(existingCustomer);assert.strictEqual(Number(linked.external_user_id),41,'existing request user should be linked by email rather than duplicated');assert.strictEqual(linked.password_reset_required,false,'pre-existing request account password must not be reset');
-    const noEmail=await requestSync.requestAccessForCustomer(noEmailCustomer);assert(/@captainfin\.invalid$/.test(noEmail.external_email),'email-optional CAPTAiNFiN user needs a deterministic request login');assert.strictEqual(noEmail.password_reset_required,true);assert.strictEqual(noEmail.external_email,requestSync.fallbackEmail(noEmailCustomer));
-    const multiAccess=await requestSync.requestAccessForCustomer(multiServerCustomer);assert.strictEqual(multiAccess.password_reset_required,true);
+    const first=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(first,{total:3,created:2,linked:1,suspended:0,failed:0},{updated:3,unchanged:0});assert.strictEqual(remote.createCalls,2);assert.strictEqual(remote.users.length,3);for(const user of remote.users){assert.strictEqual(user.email,String(user.username).toLowerCase(),'Seerr local login identity must be the lowercase portal username');assert.strictEqual(user.settings.email,String(user.username).toLowerCase(),'Seerr main settings must retain the lowercase login identity');assert.strictEqual(user.settings.locale,'en','request sync must never submit a null Seerr locale');assert.strictEqual(user.settings.movieQuotaLimit,2);assert.strictEqual(user.settings.movieQuotaDays,30);assert.strictEqual(user.settings.tvQuotaLimit,2);assert.strictEqual(user.settings.tvQuotaDays,30);assert.strictEqual(user.permissions,32);}
+    const linked=await requestSync.requestAccessForCustomer(existingCustomer);assert.strictEqual(Number(linked.external_user_id),41,'existing request user should be adopted by its legacy email rather than duplicated');assert.strictEqual(linked.external_email,'existing-user','adopted request users must migrate their Seerr login to the portal username');assert.strictEqual(linked.password_reset_required,false,'pre-existing request account password must not be reset');
+    const noEmail=await requestSync.requestAccessForCustomer(noEmailCustomer);assert.strictEqual(noEmail.external_email,'no-email-user','email-optional CAPTAiNFiN users must use their portal username as the Seerr login');assert.strictEqual(noEmail.password_reset_required,true);
+    const multiAccess=await requestSync.requestAccessForCustomer(multiServerCustomer);assert.strictEqual(multiAccess.external_email,'multi-user');assert.strictEqual(multiAccess.password_reset_required,true);
     const mutationCallsBeforeUnchanged=remote.quotaCalls.length,permissionCallsBeforeUnchanged=remote.permissionCalls.length;
     const second=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(second,{total:3,created:0,linked:3,suspended:0,failed:0},{updated:0,unchanged:3});assert.strictEqual(remote.createCalls,2);assert.strictEqual(remote.quotaCalls.length,mutationCallsBeforeUnchanged,'unchanged users must generate zero main-settings mutation calls');assert.strictEqual(remote.permissionCalls.length,permissionCallsBeforeUnchanged,'unchanged users must generate zero permission mutation calls');assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).password_reset_required,true);
     await query(`UPDATE plans SET request_movie_quota_limit=4,request_tv_quota_limit=4 WHERE id=$1`,[planId]);remote.failMainForId=41;const partial=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(partial,{total:3,created:0,linked:2,suspended:0,failed:1},{updated:2,failed:1});assert(remote.users.filter(user=>user.id!==41).every(user=>user.settings.movieQuotaLimit===4&&user.settings.tvQuotaLimit===4),'one failed user must not prevent other users from converging');remote.failMainForId=null;const recovered=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(recovered,{total:3,created:0,linked:3,suspended:0,failed:0},{updated:1,unchanged:2});assert.strictEqual(userById(41).settings.movieQuotaLimit,4);
@@ -107,8 +108,26 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     await query(`UPDATE plans SET request_movie_quota_limit=10,request_tv_quota_limit=15 WHERE id=$1`,[planId]);await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '30 days',status='active' WHERE customer_id=$1`,[multiServerCustomer]);const renewed=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(renewed,{total:3,created:0,linked:3,suspended:0,failed:0});assert.strictEqual(multiRemote.permissions,32,'renewal must restore remembered request permissions');assert.strictEqual(multiRemote.settings.movieQuotaLimit,10);assert.strictEqual(multiRemote.settings.tvQuotaLimit,15);assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).access_suspended,false);
     await query(`UPDATE plans SET request_movie_quota_limit=NULL,request_tv_quota_limit=NULL WHERE id=$1`,[planId]);await requestSync.syncSelected(fixtureCustomerIds);assert.strictEqual(multiRemote.settings.movieQuotaLimit,0);assert.strictEqual(multiRemote.settings.tvQuotaLimit,0);
 
-    const raceCustomer=await makeCustomer({username:'race-user',email:'race@example.test',serverIds:[firstServer],planId});
-    remote.raceEmail='race@example.test';
+    const mixedCaseCustomer=await makeCustomer({username:'MixedCaseUser',email:'mixed-case@example.test',serverIds:[firstServer],planId});
+    const createCallsBeforeMixed=remote.createCalls;
+    const mixedFirst=await requestSync.syncOneCustomer(mixedCaseCustomer);
+    assert.strictEqual(mixedFirst.status,'synced');assert.strictEqual(mixedFirst.created,true);assert.strictEqual(remote.createCalls,createCallsBeforeMixed+1);
+    const mixedAccess=await requestSync.requestAccessForCustomer(mixedCaseCustomer),mixedRemote=userById(mixedAccess.external_user_id);
+    assert.strictEqual(mixedAccess.external_email,'mixedcaseuser','persisted Seerr login must be lowercase');assert.strictEqual(mixedAccess.external_username,'MixedCaseUser','display username casing must be preserved');assert.strictEqual(mixedRemote.email,'mixedcaseuser');assert.strictEqual(mixedRemote.username,'MixedCaseUser');
+    const mixedQuotaCalls=remote.quotaCalls.length,mixedPermissionCalls=remote.permissionCalls.length;
+    const mixedSecond=await requestSync.syncOneCustomer(mixedCaseCustomer);
+    assert.strictEqual(mixedSecond.status,'synced');assert.strictEqual(mixedSecond.created,false);assert.strictEqual(mixedSecond.remoteChanged,false,'repeat sync must be idempotent after Seerr lowercases the login email');assert.strictEqual(remote.quotaCalls.length,mixedQuotaCalls);assert.strictEqual(remote.permissionCalls.length,mixedPermissionCalls);
+
+    const collisionRemote={id:777,email:'collisionuser',username:'unrelated-user',permissions:64,settings:{username:'unrelated-user',email:'collisionuser',locale:'en',movieQuotaLimit:7,movieQuotaDays:30,tvQuotaLimit:9,tvQuotaDays:30}};
+    remote.users.push(collisionRemote);
+    const collisionCustomer=await makeCustomer({username:'CollisionUser',email:'collision-owner@example.test',serverIds:[firstServer],planId});
+    const collisionCreates=remote.createCalls,collisionQuotaCalls=remote.quotaCalls.length,collisionPermissionCalls=remote.permissionCalls.length;
+    const collision=await requestSync.syncOneCustomer(collisionCustomer);
+    assert.strictEqual(collision.status,'failed','an unrelated account occupying the desired login must fail closed');assert.match(collision.error,/already used by another Seerr account/);assert.strictEqual(remote.createCalls,collisionCreates,'collision must not attempt a create');assert.strictEqual(remote.quotaCalls.length,collisionQuotaCalls,'collision must not mutate request settings');assert.strictEqual(remote.permissionCalls.length,collisionPermissionCalls,'collision must not mutate permissions');assert.strictEqual(collisionRemote.permissions,64);assert.strictEqual(collisionRemote.settings.movieQuotaLimit,7);
+    const collisionAccess=await requestSync.requestAccessForCustomer(collisionCustomer);assert.strictEqual(collisionAccess.external_user_id,null,'collision must not adopt the unrelated Seerr user id');assert.strictEqual(collisionAccess.status,'failed');
+
+    const raceCustomer=await makeCustomer({username:'RaceUser',email:'race@example.test',serverIds:[firstServer],planId});
+    remote.raceEmail='raceuser';
     remote.raceArrivals=0;
     const createCallsBeforeRace=remote.createCalls;
     const raceResults=await Promise.all([requestSync.syncOneCustomer(raceCustomer),requestSync.syncOneCustomer(raceCustomer)]);
@@ -116,12 +135,15 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     assert.strictEqual(raceResults.filter(result=>result.created).length,1,'only one concurrent sync may create the remote request user');
     assert.strictEqual(raceResults.filter(result=>result.recoveredConcurrentCreate).length,1,'the losing create must adopt the concurrently-created remote user');
     assert.strictEqual(remote.createCalls,createCallsBeforeRace+1,'concurrent sync must create exactly one remote request user');
-    const raceUsers=remote.users.filter(user=>String(user.email).toLowerCase()==='race@example.test');
-    assert.strictEqual(raceUsers.length,1,'concurrent sync must not duplicate external identities');
+    const raceUsers=remote.users.filter(user=>String(user.email).toLowerCase()==='raceuser');
+    assert.strictEqual(raceUsers.length,1,'concurrent sync must not duplicate username-based external identities');
+    assert.strictEqual(raceUsers[0].username,'RaceUser','concurrent recovery must preserve display casing');
     const raceAccess=await requestSync.requestAccessForCustomer(raceCustomer);
     assert.strictEqual(Number(raceAccess.external_user_id),Number(raceUsers[0].id),'both sync paths must persist the same external identity');
+    assert.strictEqual(raceAccess.external_email,'raceuser');
+    assert.strictEqual(raceAccess.external_username,'RaceUser');
     assert.strictEqual(raceAccess.status,'synced');
     remote.raceEmail=null;
 
     const{compactRuns}=require('../src/platform/admin-provisioning'),grouped=compactRuns([{customer_id:multiServerCustomer,customer_name:'multi-user',action:'reconcile',status:'succeeded',detail:{},started_at:'2026-08-14T20:00:00Z'},{customer_id:multiServerCustomer,customer_name:'multi-user',action:'reconcile',status:'succeeded',detail:{},started_at:'2026-08-14T19:55:00Z'},{customer_id:multiServerCustomer,customer_name:'multi-user',action:'reconcile',status:'succeeded',detail:{},started_at:'2026-08-14T19:50:00Z'}]);assert.strictEqual(grouped.length,1);assert.strictEqual(grouped[0].repeat_count,3);console.log('request user sync smoke: ok');
-})().finally(async()=>{await closeServer().catch(()=>{});await getPool().end();}).catch(error=>{console.error(error);process.exitCode=1;});
+})().finally(async()=>{await closeServer().catch(()=>{});await getPool().end();}).catch(()=>{console.error('request user sync smoke failed');process.exitCode=1;});
