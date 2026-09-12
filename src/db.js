@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('./db-locks');
 
 const DEFAULT_WEB_DATABASE_ROLE = 'steamfusion_app';
-const DEFAULT_POOL_SIZE = 20;
+const DEFAULT_POOL_SIZE = 10;
 const POOL_PRESSURE_LOG_INTERVAL_MS = 5000;
 let pool;
 let lastPoolPressureLogAt = 0;
@@ -52,14 +52,19 @@ function poolSize(value = process.env.DB_POOL_SIZE) {
     return Math.max(1, Math.min(80, Math.floor(parsed)));
 }
 
-function poolMaxWaiting(value = process.env.DB_POOL_MAX_WAITING, max = poolSize()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed) && parsed >= 0) return Math.max(0, Math.min(1000, Math.floor(parsed)));
-    return Math.max(2, Math.ceil(max * 0.25));
+// Queue protection is intentionally opt-in. The web Compose service enables it
+// with DB_POOL_MAX_WAITING; automation/activity/backup and one-shot tooling keep
+// their established pool semantics unless explicitly configured otherwise.
+function poolMaxWaiting(value = process.env.DB_POOL_MAX_WAITING) {
+    const raw = value == null ? '' : String(value).trim();
+    if (!raw) return null;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return Math.max(0, Math.min(1000, Math.floor(parsed)));
 }
 
 function connectionTimeoutMs(value = process.env.DB_CONNECTION_TIMEOUT_MS) {
-    return boundedTimeout(value, 3000, { min: 500, max: 30000 });
+    return boundedTimeout(value, 10000, { min: 500, max: 30000 });
 }
 
 function queryTimeoutMs(value = process.env.DB_QUERY_TIMEOUT_MS) {
@@ -100,20 +105,26 @@ function getPool() {
     return pool;
 }
 
-function poolStats(target = pool, maxWaitingOverride) {
+function poolStats(target = pool, maxWaitingOverride = process.env.DB_POOL_MAX_WAITING) {
     const max = target ? Number(target.options?.max || poolSize()) : poolSize();
     const total = target ? Number(target.totalCount || 0) : 0;
     const idle = target ? Number(target.idleCount || 0) : 0;
     const waiting = target ? Number(target.waitingCount || 0) : 0;
-    const maxWaiting = poolMaxWaiting(maxWaitingOverride, max);
+    const maxWaiting = poolMaxWaiting(maxWaitingOverride);
+    const saturated = waiting > 0 || (total >= max && idle === 0);
+    const overloaded = maxWaiting == null
+        ? false
+        : maxWaiting === 0
+            ? total >= max && idle === 0
+            : waiting >= maxWaiting;
     return {
         max,
         total,
         idle,
         waiting,
         maxWaiting,
-        saturated: waiting > 0 || (total >= max && idle === 0),
-        overloaded: waiting >= maxWaiting && waiting > 0
+        saturated,
+        overloaded
     };
 }
 
@@ -152,14 +163,22 @@ function rejectIfPoolOverloaded(context) {
     throw error;
 }
 
+function wrapAcquisitionTimeout(error, context) {
+    logPoolPressure(error, context);
+    // Only the explicitly protected runtime gets controlled overload semantics.
+    // Other workers/tools retain the original pg error contract.
+    if (connectionAcquisitionTimedOut(error) && poolMaxWaiting() != null) {
+        throw poolOverloadError(context);
+    }
+    throw error;
+}
+
 async function acquireClient(context) {
     rejectIfPoolOverloaded(context);
     try {
         return await getPool().connect();
     } catch (error) {
-        logPoolPressure(error, context);
-        if (connectionAcquisitionTimedOut(error)) throw poolOverloadError(context);
-        throw error;
+        return wrapAcquisitionTimeout(error, context);
     }
 }
 
@@ -177,9 +196,7 @@ async function readQuery(text, params = []) {
     try {
         return await getPool().query(text, params);
     } catch (error) {
-        logPoolPressure(error, 'readQuery');
-        if (connectionAcquisitionTimedOut(error)) throw poolOverloadError('readQuery');
-        throw error;
+        return wrapAcquisitionTimeout(error, 'readQuery');
     }
 }
 
