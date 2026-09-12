@@ -12,6 +12,7 @@ FAILURE_THRESHOLD="${WATCHDOG_FAILURE_THRESHOLD:-3}"
 CURL_TIMEOUT="${WATCHDOG_CURL_TIMEOUT_SECONDS:-4}"
 RESTART_COOLDOWN="${WATCHDOG_RESTART_COOLDOWN_SECONDS:-300}"
 POST_RESTART_WAIT="${WATCHDOG_POST_RESTART_WAIT_SECONDS:-12}"
+DEPLOY_LOCK="$ROOT/.deploy-production.lock"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 chmod 700 "$STATE_DIR" 2>/dev/null || true
@@ -36,6 +37,19 @@ POST_RESTART_WAIT="$(number_or_default "$POST_RESTART_WAIT" 12)"
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$STATE_DIR/watchdog.lock"
   flock -n 9 || exit 0
+fi
+
+deployment_active() {
+  command -v flock >/dev/null 2>&1 || return 1
+  # The deployer holds this lock for the entire production rollout. Probe it
+  # without retaining the lock: recovery automation must never bring the old
+  # web process back while migrations intentionally have the runtime stopped.
+  ! flock -n "$DEPLOY_LOCK" -c true >/dev/null 2>&1
+}
+
+if deployment_active; then
+  log 'Production deployment is active; automatic recovery is suspended for this watchdog pass.'
+  exit 0
 fi
 
 read_int() {
@@ -97,6 +111,10 @@ wait_for_postgres() {
 
 recover_app() {
   local reason="$1"
+  if deployment_active; then
+    log "Web recovery suppressed because a production deployment started (${reason})."
+    return 1
+  fi
   if ! cooldown_allows_restart; then
     log "Web recovery suppressed by restart cooldown (${reason})."
     return 1
@@ -105,6 +123,10 @@ recover_app() {
   mark_restart
   log "Recovering customer web app: ${reason}."
   if ! docker compose restart app >>"$LOG_FILE" 2>&1; then
+    if deployment_active; then
+      log 'Deployment became active while web recovery was running; refusing forced app recreation.'
+      return 1
+    fi
     log 'docker compose restart app failed; forcing the current app service definition back up.'
     docker compose up -d --no-deps --force-recreate app >>"$LOG_FILE" 2>&1 || return 1
   fi
@@ -126,6 +148,10 @@ app_state="$(container_state steam-fusion)"
 if [[ "$app_state" != 'running' ]]; then
   failures="$(increment "$STATE_DIR/live-failures")"
   log "Web container state=${app_state}; recovery count=${failures}."
+  if deployment_active; then
+    log 'Production deployment is active; leaving the intentionally stopped web container alone.'
+    exit 0
+  fi
   if cooldown_allows_restart; then
     mark_restart
     docker compose up -d --no-deps app >>"$LOG_FILE" 2>&1 || true
@@ -162,6 +188,10 @@ postgres_health="$(container_health steam-fusion-postgres)"
 log "Readiness probe failed (${ready_failures}/${FAILURE_THRESHOLD}); postgres=${postgres_state}/${postgres_health}."
 
 if [[ "$postgres_state" != 'running' ]]; then
+  if deployment_active; then
+    log 'Production deployment became active; refusing watchdog PostgreSQL/app recovery.'
+    exit 0
+  fi
   log 'PostgreSQL container is not running; asking Compose to start the existing database container/volume.'
   docker compose up -d postgres >>"$LOG_FILE" 2>&1 || exit 0
   if wait_for_postgres; then
@@ -183,6 +213,10 @@ fi
 # first and give PostgreSQL/storage pressure a chance to clear.
 backup_health="$(container_health steam-fusion-backup)"
 if [[ "$backup_health" == 'unhealthy' ]]; then
+  if deployment_active; then
+    log 'Production deployment became active; watchdog will not mutate worker state.'
+    exit 0
+  fi
   log 'Backup worker is unhealthy during a storefront readiness incident; stopping backup-worker as an availability circuit breaker.'
   docker compose stop backup-worker >>"$LOG_FILE" 2>&1 || true
   sleep 8
