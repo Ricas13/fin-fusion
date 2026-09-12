@@ -44,7 +44,6 @@ async function waitingCandidates(limit = 100) {
              s.created_at
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
-      JOIN customers c ON c.id=s.customer_id
       LEFT JOIN customer_entitlement_overrides o
         ON o.customer_id=s.customer_id AND o.subscription_id=s.id
       WHERE p.is_free_tier=TRUE
@@ -52,7 +51,6 @@ async function waitingCandidates(limit = 100) {
         AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
         AND s.superseded_by IS NULL
         AND s.starts_at<=NOW()
-        AND c.access_paused_at IS NULL
         AND (
           (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
           OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
@@ -147,6 +145,11 @@ async function run({ limit = 100 } = {}) {
       continue;
     }
 
+    // The candidate query intentionally does not trust customers.access_paused_at:
+    // that column is only a compatibility summary of the canonical hold/authority
+    // state and can lag it. Re-read the authoritative entitlement immediately
+    // before provisioning so admin authority, permanent access and service-scoped
+    // holds always win.
     const entitlement = await subscriptionState.liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true });
     if (!entitlement || entitlement.blocked) {
       skipped += 1;
