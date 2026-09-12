@@ -40,8 +40,8 @@ async function enqueue({ type, to, subject, text, html = '', dedupeKey = null })
     const key = dedupeKey ? cleanText(dedupeKey, 300) : null;
     const nextAttemptAt = freshness.nextAttemptAt(key);
     const result = await query(`
-        INSERT INTO notification_outbox(channel,message_type,event_type,recipient_email,payload,payload_encrypted,dedupe_key,status,next_attempt_at)
-        VALUES('email',$1,$1,$2,'{}'::jsonb,$3,$4,'pending',$5)
+        INSERT INTO notification_outbox(channel,message_type,recipient_email,payload_encrypted,dedupe_key,status,next_attempt_at)
+        VALUES('email',$1,$2,$3,$4,'pending',$5)
         ON CONFLICT(dedupe_key) DO UPDATE SET updated_at=notification_outbox.updated_at
         RETURNING id,status,created_at
     `, [cleanText(type || 'transactional', 100), recipient, encryptPayload(payload), key, nextAttemptAt]);
