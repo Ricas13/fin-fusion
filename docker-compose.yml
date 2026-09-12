@@ -21,6 +21,7 @@ services:
     build: .
     container_name: steam-fusion
     restart: unless-stopped
+    stop_grace_period: ${APP_STOP_GRACE_PERIOD:-45s}
     mem_limit: ${APP_MEMORY_LIMIT:-2g}
     cpus: ${APP_CPU_LIMIT:-2.0}
     pids_limit: ${APP_PIDS_LIMIT:-256}
