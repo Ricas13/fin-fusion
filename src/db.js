@@ -3,7 +3,9 @@ const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('./db-locks');
 
 const DEFAULT_WEB_DATABASE_ROLE = 'steamfusion_app';
+const POOL_PRESSURE_LOG_INTERVAL_MS = 5000;
 let pool;
+let lastPoolPressureLogAt = 0;
 
 function databaseUsername(databaseUrl) {
     const raw = String(databaseUrl || '').trim();
@@ -85,6 +87,54 @@ function getPool() {
     return pool;
 }
 
+function poolStats(target = pool) {
+    if (!target) {
+        return {
+            max: Number(process.env.DB_POOL_SIZE || 10),
+            total: 0,
+            idle: 0,
+            waiting: 0,
+            saturated: false
+        };
+    }
+    const max = Number(target.options?.max || process.env.DB_POOL_SIZE || 10);
+    const total = Number(target.totalCount || 0);
+    const idle = Number(target.idleCount || 0);
+    const waiting = Number(target.waitingCount || 0);
+    return {
+        max,
+        total,
+        idle,
+        waiting,
+        saturated: waiting > 0 || (total >= max && idle === 0)
+    };
+}
+
+function connectionAcquisitionTimedOut(error) {
+    return String(error?.message || error || '').toLowerCase().includes('timeout exceeded when trying to connect');
+}
+
+function logPoolPressure(error, context) {
+    if (!connectionAcquisitionTimedOut(error)) return;
+    const now = Date.now();
+    if (now - lastPoolPressureLogAt < POOL_PRESSURE_LOG_INTERVAL_MS) return;
+    lastPoolPressureLogAt = now;
+    console.error('PostgreSQL pool pressure:', {
+        context,
+        error: String(error?.message || error),
+        ...poolStats(getPool())
+    });
+}
+
+async function acquireClient(context) {
+    try {
+        return await getPool().connect();
+    } catch (error) {
+        logPoolPressure(error, context);
+        throw error;
+    }
+}
+
 function isMutationSql(text) {
     const sql = String(text || '').replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, '').trim();
     if (/^(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COMMENT|REFRESH|REINDEX|CLUSTER|CALL|DO)\b/i.test(sql)) return true;
@@ -95,11 +145,16 @@ async function readQuery(text, params = []) {
     if (isMutationSql(text)) {
         throw new Error('readQuery cannot execute SQL classified as a mutation; use mutationQuery or transaction.');
     }
-    return getPool().query(text, params);
+    try {
+        return await getPool().query(text, params);
+    } catch (error) {
+        logPoolPressure(error, 'readQuery');
+        throw error;
+    }
 }
 
 async function mutationQuery(text, params = []) {
-    const client = await getPool().connect();
+    const client = await acquireClient('mutationQuery');
     try {
         await client.query('BEGIN');
         await client.query('SELECT pg_advisory_xact_lock_shared($1::bigint)', [RESTORE_MAINTENANCE_LOCK]);
@@ -119,7 +174,7 @@ async function query(text, params = []) {
 }
 
 async function transaction(fn) {
-    const client = await getPool().connect();
+    const client = await acquireClient('transaction');
     try {
         await client.query('BEGIN');
         await client.query('SELECT pg_advisory_xact_lock_shared($1::bigint)', [RESTORE_MAINTENANCE_LOCK]);
@@ -137,7 +192,7 @@ async function transaction(fn) {
 async function healthcheck() {
     const started = Date.now();
     const result = await readQuery('SELECT NOW() AS now');
-    return { ok: true, latencyMs: Date.now() - started, now: result.rows[0].now };
+    return { ok: true, latencyMs: Date.now() - started, now: result.rows[0].now, pool: poolStats() };
 }
 
 async function closePool() {
@@ -149,6 +204,8 @@ async function closePool() {
 
 module.exports = {
     getPool,
+    poolStats,
+    connectionAcquisitionTimedOut,
     query,
     readQuery,
     mutationQuery,
