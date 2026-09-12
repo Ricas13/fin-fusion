@@ -54,6 +54,11 @@ async function main() {
         /COALESCE\(jsonb_typeof\(metadata\),''\)='object'/,
         'watchdog must fail open to an alert when metadata shape is absent or malformed'
     );
+    assert.match(
+        revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
+        /NULLIF\(metadata->>'legacyActorMarkedAt',''\) IS NOT NULL/,
+        'watchdog must require the complete migration marker before suppressing a historical finding'
+    );
 
     const pool = getPool();
     const client = await pool.connect();
@@ -83,6 +88,17 @@ async function main() {
                 legacyActorlessAdmin: true,
                 legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR,
                 legacyActorMarkedAt: '2026-09-12T09:00:00.000Z'
+            }
+        });
+
+        const incompleteMarkerCustomer = await createCustomer(client, 'incomplete-marker');
+        const incompleteMarkerOld = await insertHold(client, {
+            customerId: incompleteMarkerCustomer,
+            holdType: 'admin_suspended',
+            createdAt: '2026-09-11T13:00:00.000Z',
+            metadata: {
+                legacyActorlessAdmin: true,
+                legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR
             }
         });
 
@@ -116,7 +132,8 @@ async function main() {
             createdAt: revenueIntegrity.ADMIN_ACTOR_ENFORCED_AT,
             metadata: {
                 legacyActorlessAdmin: true,
-                legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR
+                legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR,
+                legacyActorMarkedAt: '2026-09-12T09:00:00.000Z'
             }
         });
 
@@ -142,6 +159,7 @@ async function main() {
         assert(eligibleRows.rows.every(row => row.actor_user_id === null), 'repair must not fabricate an administrator actor');
         assert(eligibleRows.rows.every(row => row.metadata?.legacyActorlessAdmin === true), 'eligible historical holds must receive the legacy marker');
         assert(eligibleRows.rows.every(row => row.metadata?.legacyActorRepair === revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR), 'eligible historical holds must receive the versioned repair marker');
+        assert(eligibleRows.rows.every(row => Boolean(row.metadata?.legacyActorMarkedAt)), 'eligible historical holds must receive a marker timestamp');
         assert.deepStrictEqual(
             eligibleRows.rows.map(row => row.metadata?.preserveMe).sort(),
             ['disabled', 'suspended'],
@@ -161,6 +179,8 @@ async function main() {
         assert(audit.rows.every(row => row.metadata?.preservedBlockingState === true), 'repair audit must record preserved blocking state');
         assert(audit.rows.every(row => row.metadata?.preservedAuthorityIdentity === true), 'repair audit must record preserved authority identity');
 
+        const incompleteMarkerAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [incompleteMarkerOld]);
+        assert.strictEqual(incompleteMarkerAfter.rows[0].metadata.legacyActorMarkedAt, undefined, 'repair must not complete a pre-existing ambiguous marker');
         const wrongMarkerAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [wrongMarkerOld]);
         assert.strictEqual(wrongMarkerAfter.rows[0].metadata.legacyActorRepair, 'wrong-repair', 'repair must not overwrite ambiguous pre-existing repair metadata');
         const malformedAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [malformedMetadataOld]);
@@ -174,11 +194,12 @@ async function main() {
 
         assert(!findingIds.has(String(eligibleDisabled)), 'migration-marked pre-enforcement disabled hold must be exempt');
         assert(!findingIds.has(String(eligibleSuspended)), 'migration-marked pre-enforcement suspended hold must be exempt');
-        assert(!findingIds.has(String(alreadyMarked)), 'already-marked pre-enforcement hold must remain exempt');
+        assert(!findingIds.has(String(alreadyMarked)), 'complete pre-enforcement marker must remain exempt');
+        assert(findingIds.has(String(incompleteMarkerOld)), 'incomplete pre-enforcement marker must still alert');
         assert(findingIds.has(String(wrongMarkerOld)), 'ambiguous/wrong repair marker must still alert');
         assert(findingIds.has(String(malformedMetadataOld)), 'non-object metadata must never qualify for historical suppression');
         assert(findingIds.has(String(postCutoff)), 'post-enforcement actorless hold must still alert');
-        assert(findingIds.has(String(exactCutoff)), 'hold created exactly at enforcement cutoff must still alert');
+        assert(findingIds.has(String(exactCutoff)), 'hold created exactly at enforcement cutoff must still alert even with a complete marker');
 
         const blocked = await client.query(`
             SELECT EXISTS(
