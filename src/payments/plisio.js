@@ -138,11 +138,91 @@ async function authenticateCallback(payload) {
     return { intent, providerId };
 }
 
-async function verifiedRemoteOperation(providerId, intent) {
+function verifiedFieldsFromEvidence(remote, payload, intent, providerId) {
+    const fields = operationFields(remote);
+    const evidence = operationFields(payload);
+    const expectedProviderId = String(providerId || '');
+    const expectedIntentId = String(intent?.id || '');
+
+    // The merchant API remains authoritative for transaction identity/status.
+    // Plisio invoice operations can omit order_number/source_amount/currency,
+    // so an already-authenticated callback may fill only omitted metadata.
+    if (fields.id !== expectedProviderId) {
+        throw new Error('Plisio transaction ID verification failed.');
+    }
+
+    if (!storedIntentEvidenceMatches(payload, intent, providerId)) {
+        throw new Error('Plisio callback evidence does not match the local checkout intent.');
+    }
+
+    if (fields.orderNumber && fields.orderNumber !== expectedIntentId) {
+        throw new Error('Plisio merchant order number verification failed.');
+    }
+
+    const remoteAmountMinor = fields.sourceAmount == null
+        ? null
+        : moneyMinor(fields.sourceAmount);
+
+    const evidenceAmountMinor = evidence.sourceAmount == null
+        ? null
+        : moneyMinor(evidence.sourceAmount);
+
+    if (
+        remoteAmountMinor != null &&
+        evidenceAmountMinor != null &&
+        remoteAmountMinor !== evidenceAmountMinor
+    ) {
+        throw new Error('Plisio merchant API amount conflicts with authenticated callback evidence.');
+    }
+
+    if (
+        fields.sourceCurrency &&
+        evidence.sourceCurrency &&
+        fields.sourceCurrency !== evidence.sourceCurrency
+    ) {
+        throw new Error('Plisio merchant API currency conflicts with authenticated callback evidence.');
+    }
+
+    return {
+        ...fields,
+        orderNumber: fields.orderNumber || evidence.orderNumber,
+        sourceAmount: fields.sourceAmount ?? evidence.sourceAmount,
+        sourceCurrency: fields.sourceCurrency || evidence.sourceCurrency
+    };
+}
+
+async function verifiedRemoteOperation(
+    providerId,
+    intent,
+    { evidence = null, allowMissingOrderNumber = false } = {}
+) {
     const remote = await getOperation(providerId);
     const fields = operationFields(remote);
-    if (fields.id !== String(providerId)) throw new Error('Plisio transaction ID verification failed.');
-    if (fields.orderNumber !== String(intent.id)) throw new Error('Plisio merchant order number verification failed.');
+
+    if (fields.id !== String(providerId)) {
+        throw new Error('Plisio transaction ID verification failed.');
+    }
+
+    if (fields.orderNumber && fields.orderNumber !== String(intent.id)) {
+        throw new Error('Plisio merchant order number verification failed.');
+    }
+
+    if (evidence) {
+        return {
+            remote,
+            fields: verifiedFieldsFromEvidence(
+                remote,
+                evidence,
+                intent,
+                providerId
+            )
+        };
+    }
+
+    if (!fields.orderNumber && !allowMissingOrderNumber) {
+        throw new Error('Plisio merchant order number verification failed.');
+    }
+
     return { remote, fields };
 }
 
@@ -191,8 +271,12 @@ async function recordActivatedProviderLoss(fields, { eventId = null } = {}) {
     return { matched: true, incidentId: result?.incident?.id || null, duplicate: Boolean(result?.duplicate) };
 }
 
-async function applyRemoteOperation(remote, intent, { eventId = null } = {}) {
-    const fields = operationFields(remote);
+async function applyRemoteOperation(
+    remote,
+    intent,
+    { eventId = null, verifiedFields = null } = {}
+) {
+    const fields = verifiedFields || operationFields(remote);
     if (fields.status === 'completed') return activateCompleted(remote, fields, intent);
     if (WAITING_STATUSES.has(fields.status)) return { status: fields.status, completed: false, waiting: true };
     if (['expired', 'cancelled', 'cancelled duplicate'].includes(fields.status)) {
@@ -211,8 +295,15 @@ async function applyRemoteOperation(remote, intent, { eventId = null } = {}) {
 async function processClaimedCallback(eventRow, payload) {
     try {
         const { intent, providerId } = await authenticateCallback(payload);
-        const { remote } = await verifiedRemoteOperation(providerId, intent);
-        const result = await applyRemoteOperation(remote, intent, { eventId: eventRow.provider_event_id });
+        const { remote, fields } = await verifiedRemoteOperation(
+            providerId,
+            intent,
+            { evidence: payload }
+        );
+        const result = await applyRemoteOperation(remote, intent, {
+            eventId: eventRow.provider_event_id,
+            verifiedFields: fields
+        });
         await lifecycle.finishPaymentEvent(eventRow);
         return { processed: true, ...result };
     } catch (error) {
@@ -270,13 +361,31 @@ function storedIntentEvidenceMatches(payload, intent, providerId) {
 
 function storedEventIntentMatches(fields, payload, intent, providerId) {
     const remoteOrderNumber = String(fields?.orderNumber || '').trim();
-    if (remoteOrderNumber) return remoteOrderNumber === String(intent?.id || '');
-    // Plisio's operations endpoint can omit order_number after an invoice becomes
-    // terminal. That is safe to recover only for a provider-confirmed terminal
-    // unpaid state and only when the originally authenticated callback, persisted
-    // before retry, exactly binds the same txn_id to the same checkout intent.
-    return TERMINAL_UNPAID_STATUSES.has(String(fields?.status || '').toLowerCase())
-        && storedIntentEvidenceMatches(payload, intent, providerId);
+
+    if (remoteOrderNumber) {
+        return remoteOrderNumber === String(intent?.id || '');
+    }
+
+    // payment_events contains callbacks only after authenticateCallback()
+    // validated their HMAC and exact txn/order binding.
+    if (!storedIntentEvidenceMatches(payload, intent, providerId)) {
+        return false;
+    }
+
+    const status = String(fields?.status || '').toLowerCase();
+
+    if (TERMINAL_UNPAID_STATUSES.has(status)) {
+        return true;
+    }
+
+    if (status === 'completed') {
+        const evidence = operationFields(payload);
+        const amountMinor = moneyMinor(evidence.sourceAmount);
+
+        return amountMinor != null && Boolean(evidence.sourceCurrency);
+    }
+
+    return false;
 }
 
 async function reconcileStoredPaymentEvent(eventRow, payload) {
@@ -311,12 +420,25 @@ async function reconcileStoredPaymentEvent(eventRow, payload) {
             throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
         }
 
-        if (!storedEventIntentMatches(fields, payload, intent, providerId)) throw new Error('Plisio operation does not match the local checkout intent.');
+        if (!storedEventIntentMatches(fields, payload, intent, providerId)) {
+            throw new Error('Plisio operation does not match the local checkout intent.');
+        }
+
         if (!(fields.status === 'completed' || WAITING_STATUSES.has(fields.status) || TERMINAL_UNPAID_STATUSES.has(fields.status))) {
             throw new Error(`Plisio operation has unsupported status ${fields.status || 'unknown'} during stored-event reconciliation.`);
         }
 
-        const result = await applyRemoteOperation(remote, intent, { eventId: eventRow.provider_event_id });
+        const verifiedFields = verifiedFieldsFromEvidence(
+            remote,
+            payload,
+            intent,
+            providerId
+        );
+
+        const result = await applyRemoteOperation(remote, intent, {
+            eventId: eventRow.provider_event_id,
+            verifiedFields
+        });
         await lifecycle.finishPaymentEvent(eventRow);
         return { processed: true, ...result };
     } catch (error) {
@@ -334,8 +456,34 @@ async function retryPaymentEvent(eventRow) {
 }
 
 async function confirmCheckout(providerTxnId, intent) {
-    const { remote } = await verifiedRemoteOperation(providerTxnId, intent);
-    return applyRemoteOperation(remote, intent, { eventId: `operation-confirm:${providerTxnId}:${operationFields(remote).status || 'unknown'}` });
+    const { remote, fields } = await verifiedRemoteOperation(
+        providerTxnId,
+        intent,
+        { allowMissingOrderNumber: true }
+    );
+
+    // The browser may return before the signed callback has been reconciled.
+    // If Plisio confirms completion but omits invoice metadata, report waiting
+    // instead of falsely telling the customer that payment failed.
+    if (
+        fields.status === 'completed' &&
+        (
+            !fields.orderNumber ||
+            fields.sourceAmount == null ||
+            !fields.sourceCurrency
+        )
+    ) {
+        return {
+            status: 'completed',
+            completed: false,
+            waiting: true
+        };
+    }
+
+    return applyRemoteOperation(remote, intent, {
+        eventId: `operation-confirm:${providerTxnId}:${fields.status || 'unknown'}`,
+        verifiedFields: fields
+    });
 }
 
 module.exports = {
