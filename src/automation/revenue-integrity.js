@@ -22,6 +22,7 @@ const ACTORLESS_ADMIN_HOLDS_SQL = `
           'legacyActorlessAdmin', TRUE,
           'legacyActorRepair', $2::text
         )
+        AND NULLIF(metadata->>'legacyActorMarkedAt','') IS NOT NULL
       )
     ORDER BY created_at
     LIMIT 100
