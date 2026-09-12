@@ -68,7 +68,7 @@ SELECT
     NULL,
     'customer.access_hold.legacy_actorless_marked',
     'customer',
-    m.customer_id,
+    m.customer_id::text,
     jsonb_build_object(
         'holdId', m.id,
         'holdType', m.hold_type,
