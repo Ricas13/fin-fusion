@@ -24,6 +24,7 @@ services:
     stop_grace_period: ${APP_STOP_GRACE_PERIOD:-45s}
     mem_limit: ${APP_MEMORY_LIMIT:-2g}
     cpus: ${APP_CPU_LIMIT:-2.0}
+    cpu_shares: ${APP_CPU_SHARES:-2048}
     pids_limit: ${APP_PIDS_LIMIT:-256}
     environment:
       NODE_ENV: ${NODE_ENV:-production}
@@ -38,7 +39,8 @@ services:
       SERVER_HEALTH_INTERVAL_MS: ${SERVER_HEALTH_INTERVAL_MS:-300000}
       RECONCILIATION_MAX_CONCURRENCY: ${RECONCILIATION_MAX_CONCURRENCY:-4}
       DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL in .env}
-      DB_POOL_SIZE: ${APP_DB_POOL_SIZE:-10}
+      DB_POOL_SIZE: ${APP_DB_POOL_SIZE:-20}
+      DB_POOL_MAX_WAITING: ${APP_DB_POOL_MAX_WAITING:-5}
       DB_CONNECTION_TIMEOUT_MS: ${APP_DB_CONNECTION_TIMEOUT_MS:-3000}
       DB_QUERY_TIMEOUT_MS: ${APP_DB_QUERY_TIMEOUT_MS:-30000}
       READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-6000}
@@ -111,10 +113,10 @@ services:
       - /tmp:size=32m,mode=1777
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3030/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 8s
-      retries: 3
-      start_period: 20s
+      interval: 10s
+      timeout: 4s
+      retries: 2
+      start_period: 15s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -126,6 +128,7 @@ services:
     restart: unless-stopped
     mem_limit: ${AUTOMATION_MEMORY_LIMIT:-2g}
     cpus: ${AUTOMATION_CPU_LIMIT:-1.5}
+    cpu_shares: ${AUTOMATION_CPU_SHARES:-512}
     pids_limit: ${AUTOMATION_PIDS_LIMIT:-256}
     command: ["node", "scripts/automation-worker.js"]
     environment:
@@ -194,6 +197,7 @@ services:
     restart: unless-stopped
     mem_limit: ${ACTIVITY_MEMORY_LIMIT:-1g}
     cpus: ${ACTIVITY_CPU_LIMIT:-1.0}
+    cpu_shares: ${ACTIVITY_CPU_SHARES:-512}
     pids_limit: ${ACTIVITY_PIDS_LIMIT:-192}
     command: ["node", "scripts/activity-worker.js"]
     depends_on:
@@ -242,6 +246,7 @@ services:
     restart: unless-stopped
     mem_limit: ${BACKUP_MEMORY_LIMIT:-1g}
     cpus: ${BACKUP_CPU_LIMIT:-0.75}
+    cpu_shares: ${BACKUP_CPU_SHARES:-256}
     pids_limit: ${BACKUP_PIDS_LIMIT:-128}
     user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"
     command: ["node", "scripts/backup-worker.js"]
@@ -328,6 +333,7 @@ services:
     image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     container_name: steam-fusion-postgres
     restart: unless-stopped
+    cpu_shares: ${POSTGRES_CPU_SHARES:-2048}
     environment:
       POSTGRES_DB: steamfusion
       POSTGRES_USER: steamfusion
