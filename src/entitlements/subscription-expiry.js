@@ -104,9 +104,15 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
         JOIN plans p ON p.id=s.plan_id
         JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
         WHERE s.superseded_by IS NULL
-          AND s.status IN('active','trialing','past_due','paused','cancelled')
+          AND s.status IN('active','past_due','paused','cancelled')
           AND s.current_period_end IS NOT NULL
           AND COALESCE(p.is_free_tier,FALSE)=FALSE
+          AND COALESCE(s.billing_interval_snapshot,p.billing_interval,'')<>'trial'
+          AND (
+            s.billing_mode='payment'
+            OR s.status='cancelled'
+            OR (s.billing_mode='subscription' AND COALESCE(s.cancel_at_period_end,FALSE)=TRUE)
+          )
           AND NOT EXISTS (
             SELECT 1 FROM customer_entitlement_overrides o
             WHERE o.customer_id=s.customer_id AND o.subscription_id=s.id
