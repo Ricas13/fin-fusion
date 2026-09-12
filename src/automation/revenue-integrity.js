@@ -17,7 +17,8 @@ const ACTORLESS_ADMIN_HOLDS_SQL = `
       AND hold_type IN('admin_disabled','admin_suspended','admin_hold')
       AND NOT (
         created_at < $1::timestamptz
-        AND COALESCE(metadata,'{}'::jsonb) @> jsonb_build_object(
+        AND jsonb_typeof(metadata)='object'
+        AND metadata @> jsonb_build_object(
           'legacyActorlessAdmin', TRUE,
           'legacyActorRepair', $2::text
         )
