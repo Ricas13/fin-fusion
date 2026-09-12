@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { getPool } = require('../src/db');
 const revenueIntegrity = require('../src/automation/revenue-integrity');
+const { releaseHold, isBlocked } = require('../src/entitlements/access-holds');
 
 const suffix = crypto.randomBytes(5).toString('hex');
 
@@ -51,13 +52,23 @@ async function main() {
     assert.match(migration, /NOT \(h\.metadata \? 'legacyActorRepair'\)/, 'repair migration must not overwrite ambiguous pre-existing repair keys');
     assert.match(
         revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
-        /COALESCE\(jsonb_typeof\(metadata\),''\)='object'/,
+        /COALESCE\(jsonb_typeof\(h\.metadata\),''\)='object'/,
         'watchdog must fail open to an alert when metadata shape is absent or malformed'
     );
     assert.match(
         revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
-        /NULLIF\(metadata->>'legacyActorMarkedAt',''\) IS NOT NULL/,
+        /NULLIF\(h\.metadata->>'legacyActorMarkedAt',''\) IS NOT NULL/,
         'watchdog must require the complete migration marker before suppressing a historical finding'
+    );
+    assert.match(
+        revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
+        /EXISTS\s*\(\s*SELECT 1\s*FROM audit_log a/i,
+        'watchdog suppression must require durable audit evidence from the repair migration'
+    );
+    assert.match(
+        revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
+        /a\.metadata->>'holdId'=h\.id::text/,
+        'watchdog audit evidence must be tied to the exact hold'
     );
 
     const pool = getPool();
@@ -79,9 +90,9 @@ async function main() {
             metadata: { preserveMe: 'suspended' }
         });
 
-        const alreadyMarkedCustomer = await createCustomer(client, 'already-marked');
-        const alreadyMarked = await insertHold(client, {
-            customerId: alreadyMarkedCustomer,
+        const forgedMarkerCustomer = await createCustomer(client, 'metadata-only-marker');
+        const forgedMarker = await insertHold(client, {
+            customerId: forgedMarkerCustomer,
             holdType: 'admin_disabled',
             createdAt: '2026-09-11T12:30:00.000Z',
             metadata: {
@@ -179,6 +190,8 @@ async function main() {
         assert(audit.rows.every(row => row.metadata?.preservedBlockingState === true), 'repair audit must record preserved blocking state');
         assert(audit.rows.every(row => row.metadata?.preservedAuthorityIdentity === true), 'repair audit must record preserved authority identity');
 
+        const forgedMarkerAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [forgedMarker]);
+        assert.strictEqual(forgedMarkerAfter.rows[0].metadata.legacyActorMarkedAt, '2026-09-12T09:00:00.000Z', 'repair must not rewrite a pre-existing complete marker');
         const incompleteMarkerAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [incompleteMarkerOld]);
         assert.strictEqual(incompleteMarkerAfter.rows[0].metadata.legacyActorMarkedAt, undefined, 'repair must not complete a pre-existing ambiguous marker');
         const wrongMarkerAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [wrongMarkerOld]);
@@ -192,22 +205,32 @@ async function main() {
         );
         const findingIds = new Set(findings.rows.map(row => String(row.id)));
 
-        assert(!findingIds.has(String(eligibleDisabled)), 'migration-marked pre-enforcement disabled hold must be exempt');
-        assert(!findingIds.has(String(eligibleSuspended)), 'migration-marked pre-enforcement suspended hold must be exempt');
-        assert(!findingIds.has(String(alreadyMarked)), 'complete pre-enforcement marker must remain exempt');
+        assert(!findingIds.has(String(eligibleDisabled)), 'migration-marked pre-enforcement disabled hold with audit evidence must be exempt');
+        assert(!findingIds.has(String(eligibleSuspended)), 'migration-marked pre-enforcement suspended hold with audit evidence must be exempt');
+        assert(findingIds.has(String(forgedMarker)), 'metadata-only marker without migration audit evidence must still alert');
         assert(findingIds.has(String(incompleteMarkerOld)), 'incomplete pre-enforcement marker must still alert');
         assert(findingIds.has(String(wrongMarkerOld)), 'ambiguous/wrong repair marker must still alert');
         assert(findingIds.has(String(malformedMetadataOld)), 'non-object metadata must never qualify for historical suppression');
         assert(findingIds.has(String(postCutoff)), 'post-enforcement actorless hold must still alert');
         assert(findingIds.has(String(exactCutoff)), 'hold created exactly at enforcement cutoff must still alert even with a complete marker');
 
-        const blocked = await client.query(`
-            SELECT EXISTS(
-                SELECT 1 FROM customer_access_holds
-                WHERE customer_id=$1 AND released_at IS NULL
-            ) AS blocked
-        `, [eligibleCustomer]);
-        assert.strictEqual(blocked.rows[0].blocked, true, 'marked historical holds must continue blocking access');
+        assert.strictEqual(await isBlocked(eligibleCustomer, client), true, 'marked historical holds must continue blocking access');
+        const disabledReleased = await releaseHold({
+            customerId: eligibleCustomer,
+            type: 'admin_disabled',
+            sourceKey: 'admin',
+            resolutionReason: 'regression-test release'
+        }, client);
+        assert.strictEqual(disabledReleased, 1, 'targeted admin_disabled release must still find the historical hold by its original identity');
+        assert.strictEqual(await isBlocked(eligibleCustomer, client), true, 'remaining admin_suspended hold must continue blocking access');
+        const suspendedReleased = await releaseHold({
+            customerId: eligibleCustomer,
+            type: 'admin_suspended',
+            sourceKey: 'admin',
+            resolutionReason: 'regression-test release'
+        }, client);
+        assert.strictEqual(suspendedReleased, 1, 'targeted admin_suspended release must still find the historical hold by its original identity');
+        assert.strictEqual(await isBlocked(eligibleCustomer, client), false, 'customer must unblock only after both original authorities are released');
 
         await client.query('ROLLBACK');
         console.log('legacy actorless admin holds DB smoke: ok');
