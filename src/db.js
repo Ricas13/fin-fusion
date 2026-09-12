@@ -3,6 +3,7 @@ const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('./db-locks');
 
 const DEFAULT_WEB_DATABASE_ROLE = 'steamfusion_app';
+const DEFAULT_POOL_SIZE = 20;
 const POOL_PRESSURE_LOG_INTERVAL_MS = 5000;
 let pool;
 let lastPoolPressureLogAt = 0;
@@ -45,8 +46,20 @@ function boundedTimeout(value, fallback, { min = 250, max = 120000 } = {}) {
     return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
+function poolSize(value = process.env.DB_POOL_SIZE) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_POOL_SIZE;
+    return Math.max(1, Math.min(80, Math.floor(parsed)));
+}
+
+function poolMaxWaiting(value = process.env.DB_POOL_MAX_WAITING, max = poolSize()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return Math.max(0, Math.min(1000, Math.floor(parsed)));
+    return Math.max(2, Math.ceil(max * 0.25));
+}
+
 function connectionTimeoutMs(value = process.env.DB_CONNECTION_TIMEOUT_MS) {
-    return boundedTimeout(value, 10000, { min: 500, max: 30000 });
+    return boundedTimeout(value, 3000, { min: 500, max: 30000 });
 }
 
 function queryTimeoutMs(value = process.env.DB_QUERY_TIMEOUT_MS) {
@@ -73,7 +86,7 @@ function getPool() {
 
     pool = new Pool({
         connectionString: process.env.DATABASE_URL,
-        max: Number(process.env.DB_POOL_SIZE || 10),
+        max: poolSize(),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: connectionTimeoutMs(),
         query_timeout: queryTimeoutMs(),
@@ -88,25 +101,19 @@ function getPool() {
 }
 
 function poolStats(target = pool) {
-    if (!target) {
-        return {
-            max: Number(process.env.DB_POOL_SIZE || 10),
-            total: 0,
-            idle: 0,
-            waiting: 0,
-            saturated: false
-        };
-    }
-    const max = Number(target.options?.max || process.env.DB_POOL_SIZE || 10);
-    const total = Number(target.totalCount || 0);
-    const idle = Number(target.idleCount || 0);
-    const waiting = Number(target.waitingCount || 0);
+    const max = target ? Number(target.options?.max || poolSize()) : poolSize();
+    const total = target ? Number(target.totalCount || 0) : 0;
+    const idle = target ? Number(target.idleCount || 0) : 0;
+    const waiting = target ? Number(target.waitingCount || 0) : 0;
+    const maxWaiting = poolMaxWaiting(undefined, max);
     return {
         max,
         total,
         idle,
         waiting,
-        saturated: waiting > 0 || (total >= max && idle === 0)
+        maxWaiting,
+        saturated: waiting > 0 || (total >= max && idle === 0),
+        overloaded: waiting >= maxWaiting
     };
 }
 
@@ -114,23 +121,44 @@ function connectionAcquisitionTimedOut(error) {
     return String(error?.message || error || '').toLowerCase().includes('timeout exceeded when trying to connect');
 }
 
-function logPoolPressure(error, context) {
-    if (!connectionAcquisitionTimedOut(error)) return;
+function poolOverloadError(context, stats = poolStats(getPool())) {
+    const error = new Error('Database is temporarily busy. Please retry shortly.');
+    error.status = 503;
+    error.statusCode = 503;
+    error.code = 'DB_POOL_SATURATED';
+    error.pool = stats;
+    error.context = context;
+    return error;
+}
+
+function logPoolPressure(error, context, stats = poolStats(getPool())) {
+    if (!connectionAcquisitionTimedOut(error) && error?.code !== 'DB_POOL_SATURATED') return;
     const now = Date.now();
     if (now - lastPoolPressureLogAt < POOL_PRESSURE_LOG_INTERVAL_MS) return;
     lastPoolPressureLogAt = now;
     console.error('PostgreSQL pool pressure:', {
         context,
+        code: error?.code || null,
         error: String(error?.message || error),
-        ...poolStats(getPool())
+        ...stats
     });
 }
 
+function rejectIfPoolOverloaded(context) {
+    const stats = poolStats(getPool());
+    if (!stats.overloaded) return;
+    const error = poolOverloadError(context, stats);
+    logPoolPressure(error, context, stats);
+    throw error;
+}
+
 async function acquireClient(context) {
+    rejectIfPoolOverloaded(context);
     try {
         return await getPool().connect();
     } catch (error) {
         logPoolPressure(error, context);
+        if (connectionAcquisitionTimedOut(error)) throw poolOverloadError(context);
         throw error;
     }
 }
@@ -145,10 +173,12 @@ async function readQuery(text, params = []) {
     if (isMutationSql(text)) {
         throw new Error('readQuery cannot execute SQL classified as a mutation; use mutationQuery or transaction.');
     }
+    rejectIfPoolOverloaded('readQuery');
     try {
         return await getPool().query(text, params);
     } catch (error) {
         logPoolPressure(error, 'readQuery');
+        if (connectionAcquisitionTimedOut(error)) throw poolOverloadError('readQuery');
         throw error;
     }
 }
@@ -205,6 +235,10 @@ async function closePool() {
 module.exports = {
     getPool,
     poolStats,
+    poolSize,
+    poolMaxWaiting,
+    poolOverloadError,
+    rejectIfPoolOverloaded,
     connectionAcquisitionTimedOut,
     query,
     readQuery,
@@ -219,5 +253,6 @@ module.exports = {
     boundedTimeout,
     connectionTimeoutMs,
     queryTimeoutMs,
-    DEFAULT_WEB_DATABASE_ROLE
+    DEFAULT_WEB_DATABASE_ROLE,
+    DEFAULT_POOL_SIZE
 };
