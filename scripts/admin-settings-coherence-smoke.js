@@ -12,6 +12,8 @@ const capability=read('public/css/admin-capability.css');
 const capabilityBase=read('public/css/admin-capability-base.css');
 const controls=read('public/css/admin-setting-controls.css');
 const providerControls=read('public/css/admin-provider-controls.css');
+const cardDensity=read('public/css/admin-card-density.css');
+const visualRefinement=read('public/css/admin-visual-refinement.css');
 const controlRenderer=read('src/platform/admin-setting-controls.js');
 const enhancer=read('public/js/admin-setting-controls.js');
 const settings=read('src/platform/admin-original-settings.js');
@@ -35,6 +37,9 @@ assert(shell.includes('/js/admin-setting-controls.js'),'compact setting enhancer
 assert(shellBase.includes('/css/admin-capability.css'),'base admin shell must load the shared capability stylesheet');
 assert(capability.includes("@import url('/css/admin-capability-base.css')")&&capability.includes("@import url('/css/admin-setting-controls.css')")&&capability.includes("@import url('/css/admin-provider-controls.css')"),'capability entrypoint must load layout, setting-control and provider-disclosure layers');
 assert(capabilityBase.includes('.capabilityPage')&&capabilityBase.includes('.capabilityLibraryGrid'),'capability-page layout must remain available');
+assert(cardDensity.includes('.adminCardDensityGrid,\n.settings-grid,\n.serverGrid')&&cardDensity.includes('grid-template-columns:repeat(6,minmax(0,1fr))!important'),'admin-card-density must remain the canonical generic settings/server grid owner');
+assert(!/\.settings-grid\s*\{/.test(visualRefinement),'visual refinement must not redeclare generic settings-grid columns owned by admin-card-density');
+assert(visualRefinement.includes('.formGrid{grid-template-columns:repeat(3,minmax(0,1fr))}')&&visualRefinement.includes('.formGrid{grid-template-columns:repeat(2,minmax(0,1fr))}')&&visualRefinement.includes('.formGrid{grid-template-columns:1fr}'),'formGrid must keep its intentional 3/2/1 responsive refinement contract');
 
 for(const token of ['.settingToggleGrid','.settingToggleInput','.settingSwitchInput','.settingInlineSwitch','.settingSecretDisclosure','.settingChannelDisclosure','.settingEventDisclosure','.booleanMatrix','.notificationIdentityGrid'])assert(controls.includes(token),`shared setting CSS missing ${token}`);
 assert(providerControls.includes('.settingProviderDisclosure')&&providerControls.includes('.settingProviderBody'),'provider/integration configuration must use the shared summary/expand philosophy');
