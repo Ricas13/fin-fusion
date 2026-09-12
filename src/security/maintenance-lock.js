@@ -2,6 +2,7 @@
 
 const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('../db-locks');
+const { poolStats } = require('../db');
 const {
     AUTOMATION_ROLE,
     boundedInteger,
@@ -125,6 +126,18 @@ async function withMaintenanceSharedLock(fn, { skipIfBusy = true } = {}) {
 }
 
 async function requestMaintenanceGuard(req, res, next) {
+    // This middleware is deliberately mounted before express-session. The
+    // session store uses the raw application pg Pool, so rejecting here is what
+    // stops authenticated GET/POST traffic from bypassing the bounded queue and
+    // recreating the very request avalanche this circuit breaker is meant to
+    // prevent. Workers do not configure DB_POOL_MAX_WAITING, so their poolStats
+    // can report pressure but will never become overloaded here.
+    const pressure = poolStats();
+    if (pressure.overloaded) {
+        res.setHeader('Retry-After', '1');
+        return res.status(503).send('CAPTAiNFiN is temporarily busy. Please retry shortly.');
+    }
+
     if (['GET','HEAD','OPTIONS'].includes(req.method)) return next();
 
     let handle;
