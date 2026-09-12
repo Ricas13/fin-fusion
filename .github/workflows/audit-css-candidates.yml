@@ -1,0 +1,19 @@
+name: CSS candidate audit
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/audit-css-candidates.js'
+      - '.github/workflows/audit-css-candidates.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Scan repository references
+        run: node scripts/audit-css-candidates.js
