@@ -15,6 +15,10 @@
 // while the lock is held elsewhere, then releases the lock and confirms the
 // call completes and the mutation lands.
 //
+// It also proves the operator FORCE semantics: a deliberate manual assignment
+// must still create the account on the selected server when max_users has
+// already been reached. Capacity protects automatic placement, not admin force.
+//
 // reconciliation-lock.js acquires via pg_try_advisory_lock in a poll loop
 // (never a blocking pg_advisory_lock), so a contended attempt never shows as a
 // "waiting" row in pg_locks - each try is instantaneous, granted or not. The
@@ -97,6 +101,23 @@ async function main() {
     assert.strictEqual(after.rowCount > 0, true, 'assign() must actually create the account once the lock clears');
   }
 
+  // --- assign(): explicit admin FORCE must ignore max_users on the selected server ---
+  {
+    await query(`UPDATE jellyfin_servers SET max_users=1 WHERE id=$1`, [server]);
+    const before = await query(`SELECT COUNT(*)::int AS n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE AND account_purpose='jellyfin'`, [server]);
+    assert(Number(before.rows[0]?.n || 0) >= 1, 'force-capacity regression fixture did not make the selected server full');
+
+    const customerId = await customerWithActivePlan(`${tag}-force-full-server`);
+    const outcome = await manualAssignment.assign(customerId, server, {});
+    assert.strictEqual(String(outcome.server.id), String(server), 'forced assignment changed the administrator-selected server');
+    assert.strictEqual(outcome.capacityOverride, true, 'forced assignment did not report the capacity override');
+
+    const created = await query(`SELECT server_id,disabled FROM jellyfin_accounts WHERE customer_id=$1 AND account_purpose='jellyfin' ORDER BY updated_at DESC LIMIT 1`, [customerId]);
+    assert.strictEqual(created.rowCount, 1, 'forced assignment did not create the Jellyfin account on a full server');
+    assert.strictEqual(String(created.rows[0].server_id), String(server), 'forced assignment created the account on a different server');
+    assert.strictEqual(created.rows[0].disabled, false, 'forced assignment created a disabled Jellyfin account');
+  }
+
   // --- move(): must not touch the account's server while the customer's lock is held elsewhere ---
   {
     const customerId = await customerWithActivePlan(`${tag}-move`);
@@ -121,7 +142,7 @@ async function main() {
     assert.strictEqual(String(after.rows[0]?.server_id), String(otherServer), 'move() must actually move the account once the lock clears');
   }
 
-  console.log('admin jellyfin assignment/move reconciliation lock db smoke: ok');
+  console.log('admin jellyfin assignment/move reconciliation lock + force capacity db smoke: ok');
 }
 
 main().catch(error => {
