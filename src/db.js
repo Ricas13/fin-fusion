@@ -100,12 +100,12 @@ function getPool() {
     return pool;
 }
 
-function poolStats(target = pool) {
+function poolStats(target = pool, maxWaitingOverride) {
     const max = target ? Number(target.options?.max || poolSize()) : poolSize();
     const total = target ? Number(target.totalCount || 0) : 0;
     const idle = target ? Number(target.idleCount || 0) : 0;
     const waiting = target ? Number(target.waitingCount || 0) : 0;
-    const maxWaiting = poolMaxWaiting(undefined, max);
+    const maxWaiting = poolMaxWaiting(maxWaitingOverride, max);
     return {
         max,
         total,
@@ -113,7 +113,7 @@ function poolStats(target = pool) {
         waiting,
         maxWaiting,
         saturated: waiting > 0 || (total >= max && idle === 0),
-        overloaded: waiting >= maxWaiting
+        overloaded: waiting >= maxWaiting && waiting > 0
     };
 }
 
