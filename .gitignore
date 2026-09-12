@@ -21,6 +21,7 @@ npm-debug.log*
 
 # Deployment runtime state
 .deploy-production.lock
+.runtime/
 
 # Dependencies
 node_modules/

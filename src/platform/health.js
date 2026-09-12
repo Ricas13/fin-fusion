@@ -6,9 +6,11 @@ const {query}=require('../db');
 const runtimeSettings=require('./runtime-settings');
 const operationsSettings=require('./operations-settings');
 const IS_PRODUCTION=String(process.env.NODE_ENV||'').toLowerCase()==='production';
+function boundedReadinessTimeout(value=process.env.READINESS_TIMEOUT_MS){const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0)return 6000;return Math.max(1000,Math.min(15000,Math.floor(parsed)))}
+const READINESS_TIMEOUT_MS=boundedReadinessTimeout();
 function latestMigration(){try{const dir=path.join(__dirname,'..','..','db','migrations');return fs.readdirSync(dir).filter(f=>f.endsWith('.sql')).sort().at(-1)||null}catch{return null}}
 function validPublicOrigin(value){try{const url=new URL(String(value||''));return url.protocol==='https:'&&Boolean(url.hostname)&&url.pathname.replace(/\/+$/,'')===''}catch{return false}}
-async function readiness(){
+async function readinessChecks(){
  const checks={database:false,migrations:false,runtimeSettings:false,publicOrigin:!IS_PRODUCTION};let detail={};
  try{await query('SELECT 1');checks.database=true}catch(e){detail.database=e.message}
  if(checks.database){
@@ -21,8 +23,18 @@ async function readiness(){
  // storefront from the reverse proxy. Those features already fail closed when
  // operationsSettings.absoluteUrl() requires a canonical production origin.
  const ok=checks.database&&checks.migrations&&checks.runtimeSettings;
- return{ok,degraded:ok&&!checks.publicOrigin,checks,detail};
+ return{ok,degraded:ok&&!checks.publicOrigin,checks,detail,timedOut:false};
 }
-function publicResult(result){return{ok:Boolean(result.ok),degraded:Boolean(result.degraded),checks:{database:Boolean(result.checks?.database),migrations:Boolean(result.checks?.migrations),runtimeSettings:Boolean(result.checks?.runtimeSettings),publicOrigin:Boolean(result.checks?.publicOrigin)}}}
+function timeoutResult(){return{ok:false,degraded:false,timedOut:true,checks:{database:false,migrations:false,runtimeSettings:false,publicOrigin:!IS_PRODUCTION},detail:{readiness:`Readiness exceeded ${READINESS_TIMEOUT_MS}ms.`}}}
+async function readiness(){
+ let timer;
+ try{
+  return await Promise.race([
+   readinessChecks(),
+   new Promise(resolve=>{timer=setTimeout(()=>resolve(timeoutResult()),READINESS_TIMEOUT_MS);timer.unref?.()})
+  ]);
+ }finally{if(timer)clearTimeout(timer)}
+}
+function publicResult(result){return{ok:Boolean(result.ok),degraded:Boolean(result.degraded),timedOut:Boolean(result.timedOut),checks:{database:Boolean(result.checks?.database),migrations:Boolean(result.checks?.migrations),runtimeSettings:Boolean(result.checks?.runtimeSettings),publicOrigin:Boolean(result.checks?.publicOrigin)}}}
 function createHealthRouter(){const r=express.Router();r.get('/health/live',(_req,res)=>res.status(200).json({ok:true,service:'steam-fusion',process:'web'}));r.get('/health/ready',async(_req,res)=>{const result=await readiness();return res.status(result.ok?200:503).json(publicResult(result))});return r}
-module.exports={createHealthRouter,readiness,latestMigration,publicResult,validPublicOrigin};
+module.exports={createHealthRouter,readiness,readinessChecks,timeoutResult,latestMigration,publicResult,validPublicOrigin,boundedReadinessTimeout,READINESS_TIMEOUT_MS};
