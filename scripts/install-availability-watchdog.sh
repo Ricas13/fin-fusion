@@ -11,6 +11,9 @@ log() { printf '\n==> %s\n' "$*"; }
 
 command -v systemctl >/dev/null 2>&1 || fail 'systemd/systemctl is required for the watchdog installer'
 command -v docker >/dev/null 2>&1 || fail 'docker is required'
+docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required'
+command -v curl >/dev/null 2>&1 || fail 'curl is required for HTTP health probes'
+command -v flock >/dev/null 2>&1 || fail 'flock is required so recovery cannot race a production deployment'
 [[ -x "$ROOT/scripts/availability-watchdog.sh" ]] || chmod +x "$ROOT/scripts/availability-watchdog.sh"
 
 if [[ "$(id -u)" != '0' ]]; then
@@ -19,6 +22,12 @@ if [[ "$(id -u)" != '0' ]]; then
 fi
 
 id "$RUN_AS_USER" >/dev/null 2>&1 || fail "Deployment user $RUN_AS_USER does not exist"
+
+# The watchdog runs as the deployment account and therefore needs the same
+# non-root Docker access used by the normal production deployment command.
+if ! runuser -u "$RUN_AS_USER" -- docker info >/dev/null 2>&1; then
+  fail "Deployment user $RUN_AS_USER cannot access Docker. Fix Docker-group/rootless access before enabling automatic recovery."
+fi
 
 log "Installing CAPTAiNFiN availability watchdog for $ROOT"
 cat >"$SYSTEMD_DIR/$SERVICE_NAME.service" <<EOF
