@@ -67,9 +67,10 @@ assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'b
 assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
 assert((compose.match(/STREMIO_JELLYFIN_TOKEN_KEY: \$\{STREMIO_JELLYFIN_TOKEN_KEY:-\}/g) || []).length === 2, 'app and automation-worker must receive the same managed Stremio token key');
-assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must include operation failure state, not heartbeat only');
-assert(verifyDeployment.includes("add('backup worker', backupHealthy"), 'deployment verification must include the backup worker');
-assert(verifyDeployment.includes('backupWorker.last_error'), 'deployment verification must fail on an active backup error');
+assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must prove worker liveness');
+assert(verifyDeployment.includes("add('backup worker', backupWorkerAlive"), 'deployment verification must require backup worker liveness');
+assert(verifyDeployment.includes('degraded_error=${backupWorker.last_error}'), 'deployment verification must surface backup operation errors diagnostically');
+assert(!verifyDeployment.includes('&& (!backupWorker.last_error || backupWorker.next_run_at === null)'), 'backup operation errors must not block storefront deployment');
 assert(backupWorker.includes('SELECT last_success_at,next_run_at,last_error FROM backup_worker_state'), 'backup due logic must inspect persisted failure state');
 assert(backupWorker.indexOf('if (row.next_run_at)') < backupWorker.indexOf('if (row.last_error)'), 'a worker restart must honor persisted retry backoff after a failed backup');
 
