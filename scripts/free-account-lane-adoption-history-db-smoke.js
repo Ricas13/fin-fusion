@@ -17,13 +17,17 @@
 // The fix adds jellyfin_accounts.access_lane_changed_at (set by
 // adoptExistingFreeAccount whenever it performs the lane flip) and scopes the
 // historical lookback to playback recorded at-or-after that timestamp, so
-// only genuine same-lane history counts as evidence.
+// only genuine same-lane history counts as evidence. A later corrective
+// migration marks only pre-column Free rows whose historical lane boundary was
+// inherently ambiguous; those rows receive a full retention observation window
+// without rewriting access_lane_changed_at.
 
 require('dotenv').config();
 const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const inactivity = require('../src/automation/customer-inactivity');
+const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace');
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
@@ -61,11 +65,16 @@ async function candidateFor(customerId) {
     return rows.find(row => String(row.customer_id) === String(customerId)) || null;
 }
 
+async function candidateWithGrace(customerId) {
+    const rows = await inactivityGrace.applyRestorationGrace(await inactivity.candidates(GLOBAL_CFG, { customerId }));
+    return rows.find(row => String(row.customer_id) === String(customerId)) || null;
+}
+
 (async () => {
     const serverId = await makeServer('a');
     // Only one is_free_tier=TRUE plan may exist at a time
-    // (plans_single_free_tier_idx) -- both cases reuse the seeded canonical
-    // Free plan rather than inserting a second one.
+    // (plans_single_free_tier_idx) -- all cases reuse the seeded canonical
+    // Free plan rather than inserting another one.
     const planId = await canonicalFreePlanId();
 
     // Case 1: account reused from the PAID (primary) lane via
@@ -117,6 +126,43 @@ async function candidateFor(customerId) {
     assert(always, 'an always-Free customer with real playback history must still surface as a scan candidate');
     assert.strictEqual(always.has_playback, true, 'established same-lane Free playback history must still count as activation evidence');
     assert.strictEqual(always.eligible, false, 'a Free customer with recent same-lane playback must not be removal-eligible');
+
+    // Case 3: pre-column Free rows can have an access_lane_changed_at backfill
+    // newer than their genuine Free playback. The base scanner would therefore
+    // classify this established user as "never played" and, once the 3-day
+    // first-play threshold passes, make them eligible. The corrective marker
+    // must suppress that destructive decision for the FULL 7-day retention
+    // window; rewriting access_lane_changed_at to NOW() would only restart the
+    // shorter 3-day first-play clock and recreate the same class of bug later.
+    const legacyCustomerId = await makeCustomer('legacy-backfill');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '90 days',NOW()+INTERVAL '3650 days')
+    `, [legacyCustomerId, planId]);
+    const legacyAccount = (await query(`
+        INSERT INTO jellyfin_accounts(
+            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,
+            created_at,access_lane_changed_at,inactivity_observation_reset_at
+        )
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE,NOW()-INTERVAL '90 days',NOW()-INTERVAL '4 days',NOW())
+        RETURNING id
+    `, [legacyCustomerId, serverId, `lane-legacy-${suffix}`, `lane-legacy-${suffix}`])).rows[0];
+    await query(`
+        INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
+        VALUES($1,$2,$3,$4,$5,'Smoke Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '5 days',NOW()-INTERVAL '5 days'+INTERVAL '20 minutes',NOW()-INTERVAL '5 days'+INTERVAL '20 minutes')
+    `, [legacyCustomerId, serverId, legacyAccount.id, `lane-legacy-play-${suffix}`, `lane-legacy-session-${suffix}`]);
+
+    const legacyBase = await candidateFor(legacyCustomerId);
+    assert(legacyBase, 'legacy backfilled Free account must surface as a scan candidate');
+    assert.strictEqual(legacyBase.has_playback, false, 'playback before the ambiguous backfilled lane boundary must remain excluded by the normal scanner');
+    assert.strictEqual(legacyBase.eligible, true, 'fixture must prove the old 3-day first-play path would otherwise remove this established legacy user');
+
+    const legacyProtected = await candidateWithGrace(legacyCustomerId);
+    assert(legacyProtected, 'legacy backfilled Free account must remain visible after safety grace decoration');
+    assert.strictEqual(legacyProtected.eligible, false, 'legacy safety window must suppress destructive inactivity enforcement');
+    assert.strictEqual(legacyProtected.restoration_grace_source, 'legacy_lane_backfill', 'legacy safety must be distinguishable from an administrator restore');
+    const remainingMs = new Date(legacyProtected.restoration_grace_until).getTime() - Date.now();
+    assert(remainingMs > 6 * 86400000, `legacy safety must use the full retention window, not the 3-day first-play window; remaining=${remainingMs}`);
 
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
