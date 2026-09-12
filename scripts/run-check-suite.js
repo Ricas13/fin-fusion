@@ -1,9 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
-const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const scripts = packageJson.scripts || {};
 const scriptName = process.argv[2] || 'check:fast';
 const timeoutArg = process.argv.find(arg => arg.startsWith('--timeout-ms='));
