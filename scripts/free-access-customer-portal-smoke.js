@@ -54,12 +54,14 @@ assert(/planCapacity\.lockAndAssert\(client,freePlan\.id/.test(pendingRegistrati
 assert(/DELETE FROM free_access_registration_intents WHERE id=\$1/.test(pendingRegistration),'validated Free Server registration must consume the anonymous signup intent after a real reservation is created');
 assert(/expires_at=GREATEST\(expires_at,NOW\(\)\+\(\$3::int\*INTERVAL '1 minute'\)\)/.test(pendingRegistration),'verified Free Server registration must retain a bounded post-verification retry window');
 assert(/FREE_ACCESS_CAPACITY_EXHAUSTED/.test(pendingRegistration)&&/No free places currently available/.test(pendingRegistration),'last-place loser must receive the canonical no-capacity result');
-assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server signup intent must be created only by the explicit registration POST');
-assert(/method=\"post\" action=\"\/account\/register\"/.test(storefront)&&/name=\"reserveFree\" value=\"1\"/.test(storefront),'storefront Free Server CTA must explicitly start the Free signup intent');
+assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server reservation must be created only by the explicit registration POST');
+assert(/href="\/account\/register\?intent=free">Start Free Access signup/.test(storefront),'storefront Free Server CTA must link into registration without mutating the anonymous storefront session');
+assert(!/method="post" action="\/account\/register"/.test(storefront)&&!/name="reserveFree" value="1"/.test(storefront),'storefront Free Server CTA must not POST or reserve capacity before the user reaches registration');
 assert(/Start Free Access signup/.test(register)&&/hasFreeSignupIntent/.test(register)&&/It does not consume or reserve a Free place yet/.test(register),'Free registration page must distinguish the signup window from a real capacity reservation');
 assert(/Capacity is checked atomically at submission/.test(register)&&/Create account & reserve available place/.test(register),'Free registration page must explain that scarce capacity is reserved only after valid account submission');
 assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'signup-intent registration must carry the same Turnstile protection as account creation');
-assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/cf-turnstile/.test(storefront),'storefront signup-intent POST must remain Turnstile fail-closed when CAPTCHA is enabled');
+assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/turnstileScript=turnstileEnabled/.test(storefront),'storefront may preload Turnstile assets while registration owns the challenge widget');
+assert(!/cf-turnstile/.test(storefront),'storefront itself must not render the registration Turnstile widget after the Free CTA became a GET link');
 assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrogate-Control','no-store/.test(storefront),'storefront capacity must be no-store at browser and surrogate caches');
 assert(!/public, max-age=60/.test(storefront),'storefront must not retain the old one-minute public capacity cache');
 
