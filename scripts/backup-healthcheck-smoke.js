@@ -8,8 +8,8 @@ const { dueFromRow } = require('./backup-worker');
 
 assert.strictEqual(rowHealthy(null), false, 'missing worker state must be unhealthy');
 assert.strictEqual(rowHealthy({ age: 20, last_error: null, next_run_at: new Date() }), true, 'fresh worker without errors must be healthy');
-assert.strictEqual(rowHealthy({ age: 20, last_error: 'permission denied', next_run_at: new Date() }), false, 'fresh heartbeat with an active failed backup must be unhealthy');
-assert.strictEqual(rowHealthy({ age: 20, last_error: 'old failure', next_run_at: null }), true, 'disabled backup policy may retain historical error text without being operationally unhealthy');
+assert.strictEqual(rowHealthy({ age: 20, last_error: 'permission denied', next_run_at: new Date() }), true, 'a live worker with an operation error must remain container-healthy while recovery health reports the failure');
+assert.strictEqual(rowHealthy({ age: 20, last_error: 'old failure', next_run_at: null }), true, 'disabled backup policy may retain historical error text without making the worker process unhealthy');
 assert.strictEqual(rowHealthy({ age: 181, last_error: null, next_run_at: new Date() }), false, 'stale worker heartbeat must be unhealthy');
 
 const cfg = { intervalHours: 24 };
