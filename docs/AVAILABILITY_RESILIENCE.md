@@ -107,7 +107,7 @@ At minimum monitor:
 - certificate expiry;
 - DNS/public origin reachability.
 
-Alert independently of CAPTAÏNFiN email/Discord delivery so a portal outage cannot also suppress its own alert.
+Alert independently of CAPTAiNFiN email/Discord delivery so a portal outage cannot also suppress its own alert.
 
 ## Resource isolation
 
