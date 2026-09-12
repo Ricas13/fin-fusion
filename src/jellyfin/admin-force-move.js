@@ -64,7 +64,10 @@ async function moveLocked(customerId,targetServerId,{actorUserId=null}={}){
     targetAccount=await provisioning.createJellyfinAccount(customerId,target,effective,{
       preferredUsername:current.jellyfin_username,
       requireExactUsername:true,
-      makePrimary:false
+      makePrimary:false,
+      // Moving from the admin force control is an imperative operator command.
+      // Do not let automatic placement capacity veto the selected destination.
+      allowOverCapacity:true
     });
     created=true;
   }
