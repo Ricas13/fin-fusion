@@ -114,16 +114,25 @@ async function growthMovement(range) {
       SELECT date_trunc('${grain}',t.occurred_at) bucket,
         COUNT(*) FILTER(WHERE t.transition='activation' AND t.occurred_at=f.first_at)::int new_customers,
         COUNT(*) FILTER(WHERE t.transition='activation' AND t.occurred_at<>f.first_at)::int reactivations,
-        COUNT(*) FILTER(WHERE t.transition='churn')::int churned
+        COUNT(*) FILTER(WHERE t.transition='churn')::int churned,
+        COUNT(DISTINCT t.customer_id) FILTER(
+          WHERE t.transition='churn'
+            AND EXISTS (
+              SELECT 1 FROM paid_intervals pi
+              WHERE pi.customer_id=t.customer_id
+                AND pi.starts_at<GREATEST(date_trunc('${grain}',t.occurred_at),$1::timestamptz)
+                AND pi.access_end>GREATEST(date_trunc('${grain}',t.occurred_at),$1::timestamptz)
+            )
+        )::int opening_churned
       FROM transitions t JOIN first_activation f USING(customer_id)
       WHERE t.occurred_at>=$1 AND t.occurred_at<$2
       GROUP BY 1 ORDER BY 1`,[range.start,range.end])
   ]);
   let active=Number(baselineResult.rows[0]?.active||0);
-  const rows=fillSeries(range,movementResult.rows,['new_customers','reactivations','churned']).map(row=>{
+  const rows=fillSeries(range,movementResult.rows,['new_customers','reactivations','churned','opening_churned']).map(row=>{
     const opening=active,net=Number(row.new_customers)+Number(row.reactivations)-Number(row.churned);
     active=Math.max(0,active+net);
-    return{...row,opening_active:opening,net_growth:net,active_subscribers:active,churn_rate:opening?Number(row.churned)/opening*100:null};
+    return{...row,opening_active:opening,net_growth:net,active_subscribers:active,churn_rate:opening?Number(row.opening_churned)/opening*100:null};
   });
   return{grain,baseline:Number(baselineResult.rows[0]?.active||0),rows,current:rows.at(-1)?.active_subscribers??active};
 }
@@ -219,9 +228,14 @@ async function playbackTrend(range) {
     FROM playback_overlap
     WHERE seconds>0
     GROUP BY bucket ORDER BY bucket`,[range.start,range.end]);
-  const rows=fillPlaybackSeries(range,grain,result.rows,['bucket_seconds','avg_concurrent','session_starts','directplay_seconds','directstream_seconds','transcode_seconds','unknown_seconds']).map(row=>{
+  const filled=fillPlaybackSeries(range,grain,result.rows,['bucket_seconds','avg_concurrent','session_starts','directplay_seconds','directstream_seconds','transcode_seconds','unknown_seconds']);
+  const rows=filled.map((row,index)=>{
+    const bucketStart=Math.max(new Date(row.bucket).getTime(),range.start.getTime());
+    const nextBoundary=index+1<filled.length?new Date(filled[index+1].bucket).getTime():range.end.getTime();
+    const bucketEnd=Math.min(nextBoundary,range.end.getTime());
+    const bucketSeconds=Math.max(0,(bucketEnd-bucketStart)/1000);
     const total=row.directplay_seconds+row.directstream_seconds+row.transcode_seconds+row.unknown_seconds;
-    return{...row,directplay_pct:total?row.directplay_seconds/total*100:0,directstream_pct:total?row.directstream_seconds/total*100:0,transcode_pct:total?row.transcode_seconds/total*100:0,unknown_pct:total?row.unknown_seconds/total*100:0};
+    return{...row,bucket_seconds:bucketSeconds,directplay_pct:total?row.directplay_seconds/total*100:0,directstream_pct:total?row.directstream_seconds/total*100:0,transcode_pct:total?row.transcode_seconds/total*100:0,unknown_pct:total?row.unknown_seconds/total*100:0};
   });
   return{grain,rows,current:rows.at(-1)?.avg_concurrent||0};
 }
@@ -243,9 +257,13 @@ function normalizePlayer(client,device) {
 async function playerUsage(range) {
   const result=await query(`SELECT client_name,device_name,COUNT(*)::int sessions,
       COUNT(DISTINCT customer_id)::int users,
-      COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)))),0)::bigint seconds
+      COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (
+        LEAST(COALESCE(ended_at,last_seen_at,$2::timestamptz),$2::timestamptz)
+        - GREATEST(started_at,$1::timestamptz)
+      )))),0)::bigint seconds
     FROM playback_history
-    WHERE started_at>=$1 AND started_at<$2
+    WHERE started_at<$2::timestamptz
+      AND COALESCE(ended_at,last_seen_at,$2::timestamptz)>$1::timestamptz
     GROUP BY client_name,device_name`,[range.start,range.end]);
   const grouped=new Map();
   for(const row of result.rows){const name=normalizePlayer(row.client_name,row.device_name),current=grouped.get(name)||{name,sessions:0,seconds:0};current.sessions+=Number(row.sessions||0);current.seconds+=Number(row.seconds||0);grouped.set(name,current);}
