@@ -11,7 +11,9 @@
 /* Control-room navigation is navigation, not content. Keep it compact. The
    shared workflow tabs used to be sticky with a high z-index, which meant
    form fields scrolled underneath and were visually covered. Keep contextual
-   navigation in normal flow so it always reserves its own space. */
+   navigation in normal flow so it always reserves its own space. Settings
+   keep their 3/2/1 responsibility-card fallback here; admin-card-density.css
+   owns the final generic settings/server card density where that layer loads. */
 .settings-grid{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
 .settings-card{min-width:0}
 .settings-card .card-body{min-width:0}
