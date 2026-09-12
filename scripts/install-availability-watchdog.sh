@@ -14,6 +14,7 @@ command -v docker >/dev/null 2>&1 || fail 'docker is required'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required'
 command -v curl >/dev/null 2>&1 || fail 'curl is required for HTTP health probes'
 command -v flock >/dev/null 2>&1 || fail 'flock is required so recovery cannot race a production deployment'
+command -v runuser >/dev/null 2>&1 || fail 'runuser is required to verify non-root Docker access safely'
 [[ -x "$ROOT/scripts/availability-watchdog.sh" ]] || chmod +x "$ROOT/scripts/availability-watchdog.sh"
 
 if [[ "$(id -u)" != '0' ]]; then
