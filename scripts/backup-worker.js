@@ -1,30 +1,314 @@
 'use strict';
 
 require('dotenv').config();
-const fs=require('fs');
-const path=require('path');
-const {spawn}=require('child_process');
-const crypto=require('crypto');
-const {query,getPool}=require('../src/db');
-const {RESTORE_MAINTENANCE_LOCK,BACKUP_OPERATION_LOCK}=require('../src/db-locks');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+const crypto = require('crypto');
+const { query, getPool } = require('../src/db');
+const { RESTORE_MAINTENANCE_LOCK, BACKUP_OPERATION_LOCK } = require('../src/db-locks');
 
-const INSTANCE_ID=String(process.env.HOSTNAME||`backup-${crypto.randomUUID()}`).slice(0,200);
-const POLL_MS=Math.max(30000,Math.min(15*60*1000,Number(process.env.BACKUP_WORKER_POLL_MS||60000)));
-let stopping=false,sleepTimer=null,sleepResolve=null,running=null;
-function sleep(ms){return new Promise(resolve=>{sleepResolve=resolve;sleepTimer=setTimeout(()=>{sleepTimer=null;sleepResolve=null;resolve();},ms);});}
-function runScript(script,args=[]){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[path.join(__dirname,script),...args],{stdio:'inherit',env:{...process.env,BACKUP_DIR:process.env.BACKUP_DIR||'/backups'}});child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`${script} exited ${code}`)));});}
-async function policy(){const r=await query(`SELECT setting_value FROM platform_settings WHERE setting_key='backup_policy_v1'`),v=r.rows[0]?.setting_value||{};return{enabled:v.enabled!==false,intervalHours:Math.max(1,Math.min(24*30,Number(v.intervalHours)||24)),retentionDays:Math.max(1,Math.min(3650,Number(v.retentionDays)||30)),minimumCopies:Math.max(1,Math.min(365,Number(v.minimumCopies)||7)),verifyAfterBackup:v.verifyAfterBackup!==false};}
-async function heartbeat(extra={}){await query(`INSERT INTO backup_worker_state(worker_key,instance_id,last_heartbeat_at,next_run_at,updated_at) VALUES('database_backup',$1,NOW(),$2,NOW()) ON CONFLICT(worker_key) DO UPDATE SET instance_id=EXCLUDED.instance_id,last_heartbeat_at=NOW(),next_run_at=COALESCE($2,backup_worker_state.next_run_at),updated_at=NOW()`,[INSTANCE_ID,extra.nextRunAt||null]);}
-async function due(cfg){const r=await query(`SELECT last_success_at,next_run_at,last_error FROM backup_worker_state WHERE worker_key='database_backup'`),row=r.rows[0]||{};if(row.last_error)return true;if(row.next_run_at)return new Date(row.next_run_at)<=new Date();if(!row.last_success_at)return true;return Date.now()-new Date(row.last_success_at).getTime()>=cfg.intervalHours*3600000;}
-async function acquireOperationLock(){const client=await getPool().connect();try{const maintenance=await client.query('SELECT pg_try_advisory_lock_shared($1::bigint) AS acquired',[RESTORE_MAINTENANCE_LOCK]);if(maintenance.rows[0]?.acquired!==true){client.release();return null;}const operation=await client.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[BACKUP_OPERATION_LOCK]);if(operation.rows[0]?.acquired!==true){await client.query('SELECT pg_advisory_unlock_shared($1::bigint)',[RESTORE_MAINTENANCE_LOCK]).catch(()=>{});client.release();return null;}return client;}catch(error){client.release();throw error;}}
-async function releaseOperationLock(client){if(!client)return;try{await client.query('SELECT pg_advisory_unlock($1::bigint)',[BACKUP_OPERATION_LOCK]).catch(()=>{});await client.query('SELECT pg_advisory_unlock_shared($1::bigint)',[RESTORE_MAINTENANCE_LOCK]).catch(()=>{});}finally{client.release();}}
-async function claimVerification(){const r=await query(`WITH candidate AS (SELECT id FROM backup_verification_requests WHERE status='queued' ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE backup_verification_requests v SET status='running',started_at=NOW(),worker_instance_id=$1,error=NULL FROM candidate c WHERE v.id=c.id RETURNING v.id,v.backup_run_id`,[INSTANCE_ID]);if(!r.rowCount)return null;const request=r.rows[0],backup=(await query(`SELECT id,file_path,file_name,status FROM backup_runs WHERE id=$1`,[request.backup_run_id])).rows[0];return{...request,backup};}
-async function finishVerification(request,status,error=null){await query(`UPDATE backup_verification_requests SET status=$2,completed_at=NOW(),error=$3 WHERE id=$1`,[request.id,status,error?String(error.message||error).slice(0,2000):null]);}
-async function processVerification(request){if(!request.backup||request.backup.status!=='succeeded'||!request.backup.file_path)throw new Error('Selected backup is no longer available for verification.');await runScript('verify-backup.js',[request.backup.file_path]);await finishVerification(request,'succeeded');await query(`UPDATE backup_worker_state SET last_error=NULL,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`);console.log(`Verified existing backup ${request.backup.file_name||request.backup.id}.`);}
-async function runBackup(cfg){await query(`INSERT INTO backup_worker_state(worker_key,instance_id,last_heartbeat_at,last_attempt_at,updated_at) VALUES('database_backup',$1,NOW(),NOW(),NOW()) ON CONFLICT(worker_key) DO UPDATE SET instance_id=EXCLUDED.instance_id,last_heartbeat_at=NOW(),last_attempt_at=NOW(),last_error=NULL,updated_at=NOW()`,[INSTANCE_ID]);try{await runScript('backup-db.js');if(cfg.verifyAfterBackup)await runScript('verify-backup.js');const next=new Date(Date.now()+cfg.intervalHours*3600000);await query(`UPDATE backup_worker_state SET last_success_at=NOW(),last_error=NULL,next_run_at=$1,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`,[next]);return next;}catch(error){const next=new Date(Date.now()+Math.min(cfg.intervalHours,1)*3600000);await query(`UPDATE backup_worker_state SET last_error=$1,next_run_at=$2,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`,[String(error.message||error).slice(0,2000),next]).catch(()=>{});throw error;}}
-async function applyRetention(cfg){const dir=path.resolve(process.env.BACKUP_DIR||'/backups');if(!fs.existsSync(dir))return{deleted:0};const files=fs.readdirSync(dir).filter(name=>/^captainfin-.*\.pgdump\.enc$/.test(name)).map(name=>{const file=path.join(dir,name),stat=fs.statSync(file);return{name,file,mtime:stat.mtimeMs};}).sort((a,b)=>b.mtime-a.mtime);const cutoff=Date.now()-cfg.retentionDays*86400000,protectedNames=new Set(files.slice(0,cfg.minimumCopies).map(x=>x.name)),victims=files.filter(x=>x.mtime<cutoff&&!protectedNames.has(x.name));let deleted=0;for(const victim of victims){try{fs.unlinkSync(victim.file);deleted++;await query(`UPDATE backup_runs SET status='deleted',metadata=metadata||$2::jsonb WHERE file_name=$1 AND status='succeeded'`,[victim.name,JSON.stringify({deletedByRetentionAt:new Date().toISOString()})]);}catch(error){console.warn(`Backup retention could not delete ${victim.name}:`,error.message);}}return{deleted};}
-async function performOneOperation(cfg){const lock=await acquireOperationLock();if(!lock)return false;try{const verification=await claimVerification();if(verification){running=processVerification(verification);try{await running;}catch(error){await finishVerification(verification,'failed',error).catch(()=>{});await query(`UPDATE backup_worker_state SET last_error=$1,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`,[`Backup verification failed: ${String(error.message||error).slice(0,1900)}`]).catch(()=>{});throw error;}finally{running=null;}return true;}if(cfg.enabled&&await due(cfg)){running=runBackup(cfg);try{const next=await running;console.log(`Backup and verification completed; next ${next.toISOString()}`);}finally{running=null;}const retention=await applyRetention(cfg);if(retention.deleted)console.log(`Backup retention deleted ${retention.deleted} old file(s).`);return true;}return false;}finally{await releaseOperationLock(lock);}}
-async function loop(){await heartbeat();console.log(`CAPTAiNFiN backup worker ready; instance=${INSTANCE_ID}`);while(!stopping){try{const cfg=await policy();await heartbeat();const worked=await performOneOperation(cfg);if(!worked&&!cfg.enabled){await query(`UPDATE backup_worker_state SET next_run_at=NULL,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`);}}catch(error){console.error('Backup worker iteration failed:',error.message);}if(!stopping)await sleep(POLL_MS);}if(running)await Promise.allSettled([running]);try{await getPool().end();}catch(_){}}
-function shutdown(signal){if(stopping)return;stopping=true;console.log(`Backup worker draining (${signal})`);if(sleepTimer){clearTimeout(sleepTimer);sleepTimer=null;const resolve=sleepResolve;sleepResolve=null;resolve?.();}}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-loop().catch(error=>{console.error('Backup worker fatal error:',error);process.exit(1);});
+const INSTANCE_ID = String(process.env.HOSTNAME || `backup-${crypto.randomUUID()}`).slice(0, 200);
+const POLL_MS = Math.max(30000, Math.min(15 * 60 * 1000, Number(process.env.BACKUP_WORKER_POLL_MS || 60000)));
+let stopping = false;
+let sleepTimer = null;
+let sleepResolve = null;
+let running = null;
+
+function sleep(ms) {
+  return new Promise(resolve => {
+    sleepResolve = resolve;
+    sleepTimer = setTimeout(() => {
+      sleepTimer = null;
+      sleepResolve = null;
+      resolve();
+    }, ms);
+  });
+}
+
+function runScript(script, args = []) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(__dirname, script), ...args], {
+      stdio: 'inherit',
+      env: { ...process.env, BACKUP_DIR: process.env.BACKUP_DIR || '/backups' }
+    });
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve() : reject(new Error(`${script} exited ${code}`)));
+  });
+}
+
+async function policy() {
+  const r = await query(`SELECT setting_value FROM platform_settings WHERE setting_key='backup_policy_v1'`);
+  const v = r.rows[0]?.setting_value || {};
+  return {
+    enabled: v.enabled !== false,
+    intervalHours: Math.max(1, Math.min(24 * 30, Number(v.intervalHours) || 24)),
+    retentionDays: Math.max(1, Math.min(3650, Number(v.retentionDays) || 30)),
+    minimumCopies: Math.max(1, Math.min(365, Number(v.minimumCopies) || 7)),
+    verifyAfterBackup: v.verifyAfterBackup !== false
+  };
+}
+
+async function heartbeat(extra = {}) {
+  await query(
+    `INSERT INTO backup_worker_state(worker_key,instance_id,last_heartbeat_at,next_run_at,updated_at)
+     VALUES('database_backup',$1,NOW(),$2,NOW())
+     ON CONFLICT(worker_key) DO UPDATE
+     SET instance_id=EXCLUDED.instance_id,
+         last_heartbeat_at=NOW(),
+         next_run_at=COALESCE($2,backup_worker_state.next_run_at),
+         updated_at=NOW()`,
+    [INSTANCE_ID, extra.nextRunAt || null]
+  );
+}
+
+function dueFromRow(cfg, row, now = new Date()) {
+  if (!row) return true;
+
+  // next_run_at is authoritative, including after failures. Previously last_error
+  // short-circuited this check, so a failed verification retried every poll even
+  // though runBackup() had persisted a one-hour backoff.
+  if (row.next_run_at) return new Date(row.next_run_at).getTime() <= now.getTime();
+  if (row.last_error) return true;
+  if (!row.last_success_at) return true;
+  return now.getTime() - new Date(row.last_success_at).getTime() >= cfg.intervalHours * 3600000;
+}
+
+async function due(cfg) {
+  const r = await query(`SELECT last_success_at,next_run_at,last_error FROM backup_worker_state WHERE worker_key='database_backup'`);
+  return dueFromRow(cfg, r.rows[0] || null);
+}
+
+async function acquireOperationLock() {
+  const client = await getPool().connect();
+  try {
+    const maintenance = await client.query('SELECT pg_try_advisory_lock_shared($1::bigint) AS acquired', [RESTORE_MAINTENANCE_LOCK]);
+    if (maintenance.rows[0]?.acquired !== true) {
+      client.release();
+      return null;
+    }
+    const operation = await client.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired', [BACKUP_OPERATION_LOCK]);
+    if (operation.rows[0]?.acquired !== true) {
+      await client.query('SELECT pg_advisory_unlock_shared($1::bigint)', [RESTORE_MAINTENANCE_LOCK]).catch(() => {});
+      client.release();
+      return null;
+    }
+    return client;
+  } catch (error) {
+    client.release();
+    throw error;
+  }
+}
+
+async function releaseOperationLock(client) {
+  if (!client) return;
+  try {
+    await client.query('SELECT pg_advisory_unlock($1::bigint)', [BACKUP_OPERATION_LOCK]).catch(() => {});
+    await client.query('SELECT pg_advisory_unlock_shared($1::bigint)', [RESTORE_MAINTENANCE_LOCK]).catch(() => {});
+  } finally {
+    client.release();
+  }
+}
+
+async function claimVerification() {
+  const r = await query(
+    `WITH candidate AS (
+       SELECT id FROM backup_verification_requests
+       WHERE status='queued'
+       ORDER BY requested_at
+       FOR UPDATE SKIP LOCKED
+       LIMIT 1
+     )
+     UPDATE backup_verification_requests v
+     SET status='running',started_at=NOW(),worker_instance_id=$1,error=NULL
+     FROM candidate c
+     WHERE v.id=c.id
+     RETURNING v.id,v.backup_run_id`,
+    [INSTANCE_ID]
+  );
+  if (!r.rowCount) return null;
+  const request = r.rows[0];
+  const backup = (await query(`SELECT id,file_path,file_name,status FROM backup_runs WHERE id=$1`, [request.backup_run_id])).rows[0];
+  return { ...request, backup };
+}
+
+async function finishVerification(request, status, error = null) {
+  await query(
+    `UPDATE backup_verification_requests SET status=$2,completed_at=NOW(),error=$3 WHERE id=$1`,
+    [request.id, status, error ? String(error.message || error).slice(0, 2000) : null]
+  );
+}
+
+async function processVerification(request) {
+  if (!request.backup || request.backup.status !== 'succeeded' || !request.backup.file_path) {
+    throw new Error('Selected backup is no longer available for verification.');
+  }
+  await runScript('verify-backup.js', [request.backup.file_path]);
+  await finishVerification(request, 'succeeded');
+  await query(`UPDATE backup_worker_state SET last_error=NULL,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`);
+  console.log(`Verified existing backup ${request.backup.file_name || request.backup.id}.`);
+}
+
+async function latestSucceededBackup() {
+  return (await query(
+    `SELECT id,file_path,file_name FROM backup_runs
+     WHERE status='succeeded' AND file_path IS NOT NULL
+     ORDER BY started_at DESC LIMIT 1`
+  )).rows[0] || null;
+}
+
+async function runBackup(cfg) {
+  await query(
+    `INSERT INTO backup_worker_state(worker_key,instance_id,last_heartbeat_at,last_attempt_at,updated_at)
+     VALUES('database_backup',$1,NOW(),NOW(),NOW())
+     ON CONFLICT(worker_key) DO UPDATE
+     SET instance_id=EXCLUDED.instance_id,
+         last_heartbeat_at=NOW(),
+         last_attempt_at=NOW(),
+         last_error=NULL,
+         updated_at=NOW()`,
+    [INSTANCE_ID]
+  );
+
+  try {
+    await runScript('backup-db.js');
+    if (cfg.verifyAfterBackup) {
+      // Verify the artifact this operation just created rather than asking the
+      // verifier to rediscover "latest" independently.
+      const backup = await latestSucceededBackup();
+      if (!backup?.file_path) throw new Error('Backup completed but its managed artifact could not be located for verification.');
+      await runScript('verify-backup.js', [backup.file_path]);
+    }
+    const next = new Date(Date.now() + cfg.intervalHours * 3600000);
+    await query(
+      `UPDATE backup_worker_state
+       SET last_success_at=NOW(),last_error=NULL,next_run_at=$1,last_heartbeat_at=NOW(),updated_at=NOW()
+       WHERE worker_key='database_backup'`,
+      [next]
+    );
+    return next;
+  } catch (error) {
+    const next = new Date(Date.now() + Math.min(cfg.intervalHours, 1) * 3600000);
+    await query(
+      `UPDATE backup_worker_state
+       SET last_error=$1,next_run_at=$2,last_heartbeat_at=NOW(),updated_at=NOW()
+       WHERE worker_key='database_backup'`,
+      [String(error.message || error).slice(0, 2000), next]
+    ).catch(() => {});
+    throw error;
+  }
+}
+
+async function applyRetention(cfg) {
+  const dir = path.resolve(process.env.BACKUP_DIR || '/backups');
+  if (!fs.existsSync(dir)) return { deleted: 0 };
+  const files = fs.readdirSync(dir)
+    .filter(name => /^captainfin-.*\.pgdump\.enc$/.test(name))
+    .map(name => {
+      const file = path.join(dir, name);
+      const stat = fs.statSync(file);
+      return { name, file, mtime: stat.mtimeMs };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+  const cutoff = Date.now() - cfg.retentionDays * 86400000;
+  const protectedNames = new Set(files.slice(0, cfg.minimumCopies).map(x => x.name));
+  const victims = files.filter(x => x.mtime < cutoff && !protectedNames.has(x.name));
+  let deleted = 0;
+  for (const victim of victims) {
+    try {
+      fs.unlinkSync(victim.file);
+      deleted++;
+      await query(
+        `UPDATE backup_runs SET status='deleted',metadata=metadata||$2::jsonb WHERE file_name=$1 AND status='succeeded'`,
+        [victim.name, JSON.stringify({ deletedByRetentionAt: new Date().toISOString() })]
+      );
+    } catch (error) {
+      console.warn(`Backup retention could not delete ${victim.name}:`, error.message);
+    }
+  }
+  return { deleted };
+}
+
+async function performOneOperation(cfg) {
+  const lock = await acquireOperationLock();
+  if (!lock) return false;
+  try {
+    const verification = await claimVerification();
+    if (verification) {
+      running = processVerification(verification);
+      try {
+        await running;
+      } catch (error) {
+        await finishVerification(verification, 'failed', error).catch(() => {});
+        await query(
+          `UPDATE backup_worker_state SET last_error=$1,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`,
+          [`Backup verification failed: ${String(error.message || error).slice(0, 1900)}`]
+        ).catch(() => {});
+        throw error;
+      } finally {
+        running = null;
+      }
+      return true;
+    }
+
+    if (cfg.enabled && await due(cfg)) {
+      running = runBackup(cfg);
+      try {
+        const next = await running;
+        console.log(`Backup and verification completed; next ${next.toISOString()}`);
+      } finally {
+        running = null;
+      }
+      const retention = await applyRetention(cfg);
+      if (retention.deleted) console.log(`Backup retention deleted ${retention.deleted} old file(s).`);
+      return true;
+    }
+    return false;
+  } finally {
+    await releaseOperationLock(lock);
+  }
+}
+
+async function loop() {
+  await heartbeat();
+  console.log(`CAPTAiNFiN backup worker ready; instance=${INSTANCE_ID}`);
+  while (!stopping) {
+    try {
+      const cfg = await policy();
+      await heartbeat();
+      const worked = await performOneOperation(cfg);
+      if (!worked && !cfg.enabled) {
+        await query(`UPDATE backup_worker_state SET next_run_at=NULL,last_heartbeat_at=NOW(),updated_at=NOW() WHERE worker_key='database_backup'`);
+      }
+    } catch (error) {
+      console.error('Backup worker iteration failed:', error.message);
+    }
+    if (!stopping) await sleep(POLL_MS);
+  }
+  if (running) await Promise.allSettled([running]);
+  try { await getPool().end(); } catch (_) {}
+}
+
+function shutdown(signal) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`Backup worker draining (${signal})`);
+  if (sleepTimer) {
+    clearTimeout(sleepTimer);
+    sleepTimer = null;
+    const resolve = sleepResolve;
+    sleepResolve = null;
+    resolve?.();
+  }
+}
+
+if (require.main === module) {
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  loop().catch(error => {
+    console.error('Backup worker fatal error:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { dueFromRow };
