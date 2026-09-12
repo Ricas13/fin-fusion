@@ -72,8 +72,22 @@ const jellyfinJobs = source('src/jellyfin/jobs.js');
 assert(jellyfinJobs.includes('ensureFailureBackoff'), 'entitlement reconciliation must persist backoff for pre-state failures');
 
 const creationRecovery = source('src/automation/jellyfin-creation-intent-recovery.js');
-assert(creationRecovery.includes("admin?.mode === 'admin_present'"), 'creation-intent recovery must preserve explicit admin-present authority');
-assert(creationRecovery.includes('beforeDelete'), 'creation-intent cleanup must re-check authority before remote deletion');
+const compactCreationRecovery = creationRecovery.replace(/\s+/g, '');
+assert(
+    creationRecovery.includes("admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin'"),
+    'creation-intent recovery must preserve explicit admin-present/server-pin authority'
+);
+const creationCustomerLockAt = compactCreationRecovery.indexOf('SELECTidFROMcustomersWHEREid=$1FORUPDATE');
+const creationIntentLockAt = compactCreationRecovery.indexOf('SELECT*FROMjellyfin_account_creation_intentsWHEREid=$1FORUPDATE');
+const creationAuthorityRecheckAt = compactCreationRecovery.indexOf('constauthoritative=awaitentitlementStillOwnsJellyfin(intent.customer_id,{client})');
+const creationRemoteDeleteAt = compactCreationRecovery.indexOf('awaitcompensation.removeCreatedUser({');
+assert(
+    creationCustomerLockAt >= 0
+    && creationIntentLockAt > creationCustomerLockAt
+    && creationAuthorityRecheckAt > creationIntentLockAt
+    && creationRemoteDeleteAt > creationAuthorityRecheckAt,
+    'creation-intent cleanup must lock customer+intent and re-check authority before remote deletion'
+);
 
 const inactivity = source('src/automation/customer-inactivity-scoped.js');
 assert(inactivity.includes('MAX_ENFORCEMENTS_PER_RUN'), 'inactivity automation must have a destructive-run safety cap');
