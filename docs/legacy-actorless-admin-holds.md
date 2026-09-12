@@ -13,11 +13,12 @@ Migration `20260912113000` therefore adds only an explicit JSON metadata marker:
 }
 ```
 
-The integrity watchdog suppresses `actorless_administrative_hold` only when **both** conditions are true:
+The integrity watchdog suppresses `actorless_administrative_hold` only when **all** of these conditions are true:
 
-1. the hold was created before `2026-09-12 08:32:17 UTC`; and
-2. the hold carries the exact migration marker above.
+1. the hold was created before `2026-09-12 08:32:17 UTC`;
+2. its metadata is a JSON object; and
+3. it carries the exact migration marker above.
 
-A pre-enforcement row without the marker still alerts. A post-enforcement actorless row still alerts even if it somehow carries the marker. This keeps the exception narrow and preserves detection of genuinely new attribution failures.
+A pre-enforcement row without the marker still alerts. A row created exactly at or after the enforcement cutoff still alerts even if it somehow carries the marker. Non-object historical metadata is deliberately left untouched and continues to alert for manual review rather than being normalised or discarded.
 
-The migration also writes an audit event for each row it marks. Existing metadata is retained, the hold remains active, and its original authority identity is unchanged.
+The migration locks eligible rows before updating them so a concurrent release or attribution change cannot race the repair. It also writes an audit event for each row it marks. Existing metadata is retained, the hold remains active, and its original authority identity is unchanged.
