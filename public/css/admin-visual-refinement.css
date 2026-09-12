@@ -11,8 +11,10 @@
 /* Control-room navigation is navigation, not content. Keep it compact. The
    shared workflow tabs used to be sticky with a high z-index, which meant
    form fields scrolled underneath and were visually covered. Keep contextual
-   navigation in normal flow so it always reserves its own space. Generic
-   settings/server grid density is owned by admin-card-density.css. */
+   navigation in normal flow so it always reserves its own space. Settings
+   keep their 3/2/1 responsibility-card fallback here; admin-card-density.css
+   owns the final generic settings/server card density where that layer loads. */
+.settings-grid{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
 .settings-card{min-width:0}
 .settings-card .card-body{min-width:0}
 .workflowCardGrid{position:relative;top:auto;z-index:auto;display:flex!important;grid-template-columns:none!important;flex-wrap:nowrap;align-items:center;gap:6px;max-width:100%;margin:0 0 18px;padding:6px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;border:1px solid rgba(55,70,84,.78);border-radius:10px;background:rgba(12,17,23,.94);box-shadow:0 7px 18px rgba(0,0,0,.12)}
@@ -56,6 +58,7 @@
 .quick-action strong{display:flex;align-items:center;gap:6px}
 
 @media(max-width:1250px){
+  .settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .formGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .compactFilterForm>.formGrid{grid-template-columns:repeat(4,minmax(130px,1fr))}
   .planListToolbar{grid-template-columns:minmax(240px,2fr) repeat(2,minmax(150px,1fr));align-items:end}
@@ -67,6 +70,7 @@
 }
 
 @media(max-width:760px){
+  .settings-grid{grid-template-columns:1fr}
   .formGrid{grid-template-columns:1fr}
   .compactFilterForm>.formGrid{grid-template-columns:1fr}
   .planListToolbar{grid-template-columns:1fr}
