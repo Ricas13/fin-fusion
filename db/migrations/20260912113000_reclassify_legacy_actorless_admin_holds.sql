@@ -14,6 +14,8 @@ BEGIN;
 -- Metadata written by the application is an object. If a historical row has a
 -- malformed/scalar/array metadata value, leave it untouched and visible to the
 -- watchdog for manual review rather than normalising potentially meaningful data.
+-- Likewise, do not overwrite pre-existing repair-like keys: those rows stay
+-- visible for manual review instead of having ambiguous provenance normalised.
 -- Lock selected rows in deterministic order so a concurrent release/attribution
 -- cannot race between eligibility selection and the metadata update.
 
@@ -31,10 +33,9 @@ WITH target AS (
       AND h.hold_type IN ('admin_disabled','admin_suspended','admin_hold')
       AND h.created_at < TIMESTAMPTZ '2026-09-12 08:32:17+00'
       AND jsonb_typeof(h.metadata)='object'
-      AND NOT (
-          h.metadata @>
-          '{"legacyActorlessAdmin": true, "legacyActorRepair": "20260912113000"}'::jsonb
-      )
+      AND NOT (h.metadata ? 'legacyActorlessAdmin')
+      AND NOT (h.metadata ? 'legacyActorRepair')
+      AND NOT (h.metadata ? 'legacyActorMarkedAt')
     ORDER BY h.id
     FOR UPDATE OF h
 ), marked AS (
@@ -52,10 +53,9 @@ WITH target AS (
        AND h.hold_type IN ('admin_disabled','admin_suspended','admin_hold')
        AND h.created_at < TIMESTAMPTZ '2026-09-12 08:32:17+00'
        AND jsonb_typeof(h.metadata)='object'
-       AND NOT (
-           h.metadata @>
-           '{"legacyActorlessAdmin": true, "legacyActorRepair": "20260912113000"}'::jsonb
-       )
+       AND NOT (h.metadata ? 'legacyActorlessAdmin')
+       AND NOT (h.metadata ? 'legacyActorRepair')
+       AND NOT (h.metadata ? 'legacyActorMarkedAt')
      RETURNING
          h.id,
          h.customer_id,
