@@ -5,23 +5,27 @@ const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { query, getPool } = require('../src/db');
+const { getPool } = require('../src/db');
 const revenueIntegrity = require('../src/automation/revenue-integrity');
 
 const suffix = crypto.randomBytes(5).toString('hex');
-const createdCustomers = [];
 
-async function createCustomer(label) {
-    const result = await query(
+function unwrapMigration(sql) {
+    return sql
+        .replace(/^\s*BEGIN\s*;\s*/i, '')
+        .replace(/\s*COMMIT\s*;\s*$/i, '');
+}
+
+async function createCustomer(db, label) {
+    const result = await db.query(
         'INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id',
         [`Legacy actorless ${label} ${suffix}`, `legacy-actorless-${label}-${suffix}@example.invalid`]
     );
-    createdCustomers.push(result.rows[0].id);
     return result.rows[0].id;
 }
 
-async function insertHold({ customerId, holdType, createdAt, metadata = {} }) {
-    const result = await query(`
+async function insertHold(db, { customerId, holdType, createdAt, metadata = {} }) {
+    const result = await db.query(`
         INSERT INTO customer_access_holds(
             customer_id,hold_type,source_key,reason,metadata,actor_user_id,created_at
         ) VALUES($1,$2,'admin','legacy actor attribution smoke',$3::jsonb,NULL,$4::timestamptz)
@@ -43,112 +47,159 @@ async function main() {
     assert.match(migration, /legacyActorRepair/, 'repair migration must version the explicit historical marker');
     assert.match(migration, /jsonb_typeof\(h\.metadata\)='object'/, 'repair migration must leave malformed/non-object metadata for manual review');
     assert.match(migration, /FOR UPDATE OF h/, 'repair migration must lock eligible holds before marking them');
-
-    const marker = {
-        legacyActorlessAdmin: true,
-        legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR
-    };
-
-    const markedCustomer = await createCustomer('marked-old');
-    const markedDisabled = await insertHold({
-        customerId: markedCustomer,
-        holdType: 'admin_disabled',
-        createdAt: '2026-09-11T12:00:00.000Z',
-        metadata: marker
-    });
-    const markedSuspended = await insertHold({
-        customerId: markedCustomer,
-        holdType: 'admin_suspended',
-        createdAt: '2026-09-11T12:01:00.000Z',
-        metadata: marker
-    });
-
-    const unmarkedCustomer = await createCustomer('unmarked-old');
-    const unmarkedOld = await insertHold({
-        customerId: unmarkedCustomer,
-        holdType: 'admin_disabled',
-        createdAt: '2026-09-11T13:00:00.000Z'
-    });
-
-    const postCutoffCustomer = await createCustomer('marked-new');
-    const markedNew = await insertHold({
-        customerId: postCutoffCustomer,
-        holdType: 'admin_suspended',
-        createdAt: '2026-09-12T08:32:18.000Z',
-        metadata: marker
-    });
-
-    const cutoffCustomer = await createCustomer('exact-cutoff');
-    const exactCutoff = await insertHold({
-        customerId: cutoffCustomer,
-        holdType: 'admin_disabled',
-        createdAt: revenueIntegrity.ADMIN_ACTOR_ENFORCED_AT,
-        metadata: marker
-    });
-
-    const wrongMarkerCustomer = await createCustomer('wrong-marker');
-    const wrongMarkerOld = await insertHold({
-        customerId: wrongMarkerCustomer,
-        holdType: 'admin_hold',
-        createdAt: '2026-09-11T14:00:00.000Z',
-        metadata: { legacyActorlessAdmin: true, legacyActorRepair: 'wrong-repair' }
-    });
-
-    const malformedMetadataCustomer = await createCustomer('malformed-metadata');
-    const malformedMetadataOld = await insertHold({
-        customerId: malformedMetadataCustomer,
-        holdType: 'admin_disabled',
-        createdAt: '2026-09-11T15:00:00.000Z',
-        metadata: [marker]
-    });
-
-    const findings = await query(
+    assert.match(migration, /m\.customer_id::text/, 'repair audit must explicitly cast customer UUIDs to audit_log.entity_id text');
+    assert.match(migration, /NOT \(h\.metadata \? 'legacyActorRepair'\)/, 'repair migration must not overwrite ambiguous pre-existing repair keys');
+    assert.match(
         revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
-        [revenueIntegrity.ADMIN_ACTOR_ENFORCED_AT, revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR]
+        /COALESCE\(jsonb_typeof\(metadata\),''\)='object'/,
+        'watchdog must fail open to an alert when metadata shape is absent or malformed'
     );
-    const findingIds = new Set(findings.rows.map(row => String(row.id)));
 
-    assert(!findingIds.has(String(markedDisabled)), 'marked pre-enforcement disabled hold must be exempt');
-    assert(!findingIds.has(String(markedSuspended)), 'marked pre-enforcement suspended hold must be exempt');
-    assert(findingIds.has(String(unmarkedOld)), 'unmarked pre-enforcement hold must still alert');
-    assert(findingIds.has(String(markedNew)), 'post-enforcement actorless hold must still alert even with marker');
-    assert(findingIds.has(String(exactCutoff)), 'hold created exactly at enforcement cutoff must still alert');
-    assert(findingIds.has(String(wrongMarkerOld)), 'wrong repair marker must not suppress an actorless hold');
-    assert(findingIds.has(String(malformedMetadataOld)), 'non-object metadata must never qualify for historical suppression');
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
 
-    const preserved = await query(`
-        SELECT hold_type,source_key,released_at,actor_user_id
-        FROM customer_access_holds
-        WHERE customer_id=$1
-        ORDER BY hold_type
-    `, [markedCustomer]);
-    assert.deepStrictEqual(
-        preserved.rows.map(row => row.hold_type).sort(),
-        ['admin_disabled', 'admin_suspended'],
-        'historical dual authorities must retain their exact hold types'
-    );
-    assert(preserved.rows.every(row => row.source_key === 'admin'), 'historical holds must retain source_key=admin');
-    assert(preserved.rows.every(row => row.released_at === null), 'repair marker must not release historical holds');
-    assert(preserved.rows.every(row => row.actor_user_id === null), 'repair must not fabricate an administrator actor');
+        const eligibleCustomer = await createCustomer(client, 'eligible-old');
+        const eligibleDisabled = await insertHold(client, {
+            customerId: eligibleCustomer,
+            holdType: 'admin_disabled',
+            createdAt: '2026-09-11T12:00:00.000Z',
+            metadata: { preserveMe: 'disabled' }
+        });
+        const eligibleSuspended = await insertHold(client, {
+            customerId: eligibleCustomer,
+            holdType: 'admin_suspended',
+            createdAt: '2026-09-11T12:01:00.000Z',
+            metadata: { preserveMe: 'suspended' }
+        });
 
-    const blocked = await query(`
-        SELECT EXISTS(
-            SELECT 1 FROM customer_access_holds
-            WHERE customer_id=$1 AND released_at IS NULL
-        ) AS blocked
-    `, [markedCustomer]);
-    assert.strictEqual(blocked.rows[0].blocked, true, 'marked historical holds must continue blocking access');
+        const alreadyMarkedCustomer = await createCustomer(client, 'already-marked');
+        const alreadyMarked = await insertHold(client, {
+            customerId: alreadyMarkedCustomer,
+            holdType: 'admin_disabled',
+            createdAt: '2026-09-11T12:30:00.000Z',
+            metadata: {
+                legacyActorlessAdmin: true,
+                legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR,
+                legacyActorMarkedAt: '2026-09-12T09:00:00.000Z'
+            }
+        });
 
-    console.log('legacy actorless admin holds DB smoke: ok');
+        const wrongMarkerCustomer = await createCustomer(client, 'wrong-marker');
+        const wrongMarkerOld = await insertHold(client, {
+            customerId: wrongMarkerCustomer,
+            holdType: 'admin_hold',
+            createdAt: '2026-09-11T14:00:00.000Z',
+            metadata: { legacyActorlessAdmin: true, legacyActorRepair: 'wrong-repair' }
+        });
+
+        const malformedMetadataCustomer = await createCustomer(client, 'malformed-metadata');
+        const malformedMetadataOld = await insertHold(client, {
+            customerId: malformedMetadataCustomer,
+            holdType: 'admin_disabled',
+            createdAt: '2026-09-11T15:00:00.000Z',
+            metadata: [{ legacyActorlessAdmin: true, legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR }]
+        });
+
+        const postCutoffCustomer = await createCustomer(client, 'post-cutoff');
+        const postCutoff = await insertHold(client, {
+            customerId: postCutoffCustomer,
+            holdType: 'admin_suspended',
+            createdAt: '2026-09-12T08:32:18.000Z'
+        });
+
+        const cutoffCustomer = await createCustomer(client, 'exact-cutoff');
+        const exactCutoff = await insertHold(client, {
+            customerId: cutoffCustomer,
+            holdType: 'admin_disabled',
+            createdAt: revenueIntegrity.ADMIN_ACTOR_ENFORCED_AT,
+            metadata: {
+                legacyActorlessAdmin: true,
+                legacyActorRepair: revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR
+            }
+        });
+
+        const migrationBody = unwrapMigration(migration);
+        await client.query(migrationBody);
+        // Applying the body twice in one rollback-only test transaction proves the
+        // repair is idempotent and cannot append duplicate audit rows.
+        await client.query(migrationBody);
+
+        const eligibleRows = await client.query(`
+            SELECT id,hold_type,source_key,released_at,actor_user_id,metadata
+            FROM customer_access_holds
+            WHERE customer_id=$1
+            ORDER BY hold_type
+        `, [eligibleCustomer]);
+        assert.deepStrictEqual(
+            eligibleRows.rows.map(row => row.hold_type).sort(),
+            ['admin_disabled', 'admin_suspended'],
+            'historical dual authorities must retain their exact hold types'
+        );
+        assert(eligibleRows.rows.every(row => row.source_key === 'admin'), 'historical holds must retain source_key=admin');
+        assert(eligibleRows.rows.every(row => row.released_at === null), 'repair must not release historical holds');
+        assert(eligibleRows.rows.every(row => row.actor_user_id === null), 'repair must not fabricate an administrator actor');
+        assert(eligibleRows.rows.every(row => row.metadata?.legacyActorlessAdmin === true), 'eligible historical holds must receive the legacy marker');
+        assert(eligibleRows.rows.every(row => row.metadata?.legacyActorRepair === revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR), 'eligible historical holds must receive the versioned repair marker');
+        assert.deepStrictEqual(
+            eligibleRows.rows.map(row => row.metadata?.preserveMe).sort(),
+            ['disabled', 'suspended'],
+            'repair must preserve unrelated historical metadata'
+        );
+
+        const audit = await client.query(`
+            SELECT entity_id,metadata
+            FROM audit_log
+            WHERE action='customer.access_hold.legacy_actorless_marked'
+              AND entity_type='customer'
+              AND metadata->>'holdId' = ANY($1::text[])
+            ORDER BY metadata->>'holdId'
+        `, [[String(eligibleDisabled), String(eligibleSuspended)]]);
+        assert.strictEqual(audit.rowCount, 2, 'eligible dual holds must produce exactly one audit event each even if migration body is replayed');
+        assert(audit.rows.every(row => row.entity_id === String(eligibleCustomer)), 'repair audit entity_id must be the customer UUID serialized as text');
+        assert(audit.rows.every(row => row.metadata?.preservedBlockingState === true), 'repair audit must record preserved blocking state');
+        assert(audit.rows.every(row => row.metadata?.preservedAuthorityIdentity === true), 'repair audit must record preserved authority identity');
+
+        const wrongMarkerAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [wrongMarkerOld]);
+        assert.strictEqual(wrongMarkerAfter.rows[0].metadata.legacyActorRepair, 'wrong-repair', 'repair must not overwrite ambiguous pre-existing repair metadata');
+        const malformedAfter = await client.query('SELECT metadata FROM customer_access_holds WHERE id=$1', [malformedMetadataOld]);
+        assert(Array.isArray(malformedAfter.rows[0].metadata), 'repair must not normalize non-object historical metadata');
+
+        const findings = await client.query(
+            revenueIntegrity.ACTORLESS_ADMIN_HOLDS_SQL,
+            [revenueIntegrity.ADMIN_ACTOR_ENFORCED_AT, revenueIntegrity.LEGACY_ACTORLESS_ADMIN_REPAIR]
+        );
+        const findingIds = new Set(findings.rows.map(row => String(row.id)));
+
+        assert(!findingIds.has(String(eligibleDisabled)), 'migration-marked pre-enforcement disabled hold must be exempt');
+        assert(!findingIds.has(String(eligibleSuspended)), 'migration-marked pre-enforcement suspended hold must be exempt');
+        assert(!findingIds.has(String(alreadyMarked)), 'already-marked pre-enforcement hold must remain exempt');
+        assert(findingIds.has(String(wrongMarkerOld)), 'ambiguous/wrong repair marker must still alert');
+        assert(findingIds.has(String(malformedMetadataOld)), 'non-object metadata must never qualify for historical suppression');
+        assert(findingIds.has(String(postCutoff)), 'post-enforcement actorless hold must still alert');
+        assert(findingIds.has(String(exactCutoff)), 'hold created exactly at enforcement cutoff must still alert');
+
+        const blocked = await client.query(`
+            SELECT EXISTS(
+                SELECT 1 FROM customer_access_holds
+                WHERE customer_id=$1 AND released_at IS NULL
+            ) AS blocked
+        `, [eligibleCustomer]);
+        assert.strictEqual(blocked.rows[0].blocked, true, 'marked historical holds must continue blocking access');
+
+        await client.query('ROLLBACK');
+        console.log('legacy actorless admin holds DB smoke: ok');
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw error;
+    } finally {
+        client.release();
+        await pool.end();
+    }
 }
 
-main().finally(async () => {
-    for (const customerId of createdCustomers.reverse()) {
-        await query('DELETE FROM customer_access_holds WHERE customer_id=$1', [customerId]).catch(() => {});
-        await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
-    }
-    await getPool().end();
-}).catch((error) => {
+main().catch((error) => {
     console.error('legacy actorless admin holds DB smoke failed:', error);
     process.exit(1);
 });
