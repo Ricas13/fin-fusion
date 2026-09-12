@@ -23,9 +23,14 @@ function normalizePolicy(value, { fallback = DEFAULT_POLICY } = {}) {
     return { milestones: normalizeMilestones(value?.milestones ?? value, { fallback: fallback.milestones }) };
 }
 
+async function load() {
+    return { milestones: [...SUPPORTED_MILESTONES] };
+}
+
 module.exports = {
     SUPPORTED_MILESTONES,
     DEFAULT_POLICY,
     normalizeMilestones,
-    normalizePolicy
+    normalizePolicy,
+    load
 };
