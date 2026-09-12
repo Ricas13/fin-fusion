@@ -23,6 +23,19 @@ async function customer(label) {
   return row.rows[0].id;
 }
 
+async function adminActor(label) {
+  const row = await query(`
+    INSERT INTO app_users(email,username,password_hash,role,email_verified_at)
+    VALUES($1,$2,$3,'admin',NOW())
+    RETURNING id
+  `, [
+    `state-machine-admin-${label}-${suffix}@example.invalid`,
+    `state-machine-admin-${label}-${suffix}`,
+    '$2b$12$LQv3c1yqBW3CEQY5eZq6.O0L3tT1j7gBQXpUM3jqsfDZ84QXyW.2i'
+  ]);
+  return row.rows[0].id;
+}
+
 async function plan(label, options = {}) {
   const row = await query(`
     INSERT INTO plans(
@@ -194,15 +207,16 @@ async function testConcurrentRecurringSettlement() {
 
 async function testEnableDoesNotUndoDestructiveAuthority() {
   const customerId = await customer('admin-holds');
-  await accessHolds.addHold({ customerId, type: 'admin_disabled', sourceKey: 'admin', reason: 'disabled' });
-  await accessHolds.addHold({ customerId, type: 'admin_hold', sourceKey: 'admin', reason: 'Administrative ban' });
-  await accessHolds.addHold({ customerId, type: 'admin_hold', sourceKey: 'admin', reason: 'jellyfin_deleted' });
+  const actorUserId = await adminActor('admin-holds');
+  await accessHolds.addHold({ customerId, type: 'admin_disabled', sourceKey: 'admin', reason: 'disabled', actorUserId });
+  await accessHolds.addHold({ customerId, type: 'admin_hold', sourceKey: 'admin', reason: 'Administrative ban', actorUserId });
+  await accessHolds.addHold({ customerId, type: 'admin_hold', sourceKey: 'admin', reason: 'jellyfin_deleted', actorUserId });
 
   const before = await accessHolds.activeHolds(customerId);
   assert(before.some(row => row.hold_type === 'administrative_ban'), 'ban must have its own hold type');
   assert(before.some(row => row.hold_type === 'jellyfin_identity_removed'), 'identity removal must have its own hold type');
 
-  await accessHolds.releaseAllAdminHolds(customerId);
+  await accessHolds.releaseAllAdminHolds(customerId, actorUserId);
   const after = await accessHolds.activeHolds(customerId);
   assert(!after.some(row => row.hold_type === 'admin_disabled'), 'routine Enable should release ordinary admin-disabled state');
   assert(after.some(row => row.hold_type === 'administrative_ban'), 'routine Enable must not release a ban');
