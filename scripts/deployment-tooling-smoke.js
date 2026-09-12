@@ -70,6 +70,7 @@ for (const token of [
 assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety copies must be ignored by git');
 assert(gitignore.includes('.env.before-*'), 'older env safety copies must be ignored by git');
 assert(gitignore.includes('.deploy-production.lock'), 'deployment lock state must be ignored by git');
+assert(gitignore.includes('.runtime/'), 'watchdog runtime counters/locks must never be committed');
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
 assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
 assert(/another CAPTAiNFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
@@ -88,6 +89,7 @@ assert(backupWorker.indexOf('if (row.next_run_at)') < backupWorker.indexOf('if (
 // services have explicit CPU/memory ceilings. A maintenance runaway must lose
 // capacity before it can starve the storefront or PostgreSQL host.
 for (const token of [
+  'stop_grace_period: ${APP_STOP_GRACE_PERIOD:-45s}',
   'DB_CONNECTION_TIMEOUT_MS: ${APP_DB_CONNECTION_TIMEOUT_MS:-3000}',
   'READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-6000}',
   'mem_limit: ${APP_MEMORY_LIMIT:-2g}',
@@ -96,6 +98,8 @@ for (const token of [
   'mem_limit: ${BACKUP_MEMORY_LIMIT:-1g}',
   'cpus: ${BACKUP_CPU_LIMIT:-0.75}'
 ]) assert(compose.includes(token), `Compose resilience contract missing ${token}`);
+assert(application.includes('pool: getPool()'), 'PostgreSQL session storage must share the bounded web pool instead of creating a second independent pool');
+assert(!/new PgStore\(\{\s*conString:/s.test(application), 'session store must not bypass the bounded web database pool with its own conString pool');
 
 // Host watchdog is deliberately outside the app container so it can recover an
 // event-loop hang. It must be conservative with PostgreSQL and sacrifice
@@ -105,6 +109,8 @@ assert(watchdog.includes("docker compose stop backup-worker"), 'unhealthy backup
 assert(watchdog.includes("postgres_state") && watchdog.includes("postgres_health"), 'watchdog must inspect PostgreSQL state and health separately');
 assert(watchdog.includes('refusing automatic DB restart'), 'running-but-unhealthy PostgreSQL must not be blindly restart-looped');
 assert(watchdog.includes('WATCHDOG_RESTART_COOLDOWN_SECONDS'), 'watchdog recovery must have restart-storm protection');
+assert(watchdog.includes('DEPLOY_LOCK="$ROOT/.deploy-production.lock"') && watchdog.includes('deployment_active()'), 'watchdog must honor the production deployment lock');
+assert(watchdog.includes('automatic recovery is suspended for this watchdog pass'), 'watchdog must stand down while deployment owns the runtime');
 assert(watchdogInstaller.includes('OnUnitActiveSec=30s'), 'systemd watchdog timer must run frequently enough for short recovery time');
 assert(watchdogInstaller.includes('User=$RUN_AS_USER'), 'watchdog must run as the existing deployment account rather than root');
 
