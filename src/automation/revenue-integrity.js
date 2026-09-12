@@ -100,8 +100,21 @@ async function retireObsoleteManualRenewalOperations({ limit = 100 } = {}) {
 
 async function scan() {
     const findings = [];
+    // A terminal renewal operation is only actionable while its original local
+    // subscription is still the same live recurring provider contract. If the
+    // subscription has since been migrated/manualised/replaced, preserving the
+    // operation as audit history is useful but continuing to page an operator is
+    // not. Retire those rows before reading the active manual-review set.
     await retireObsoleteManualRenewalOperations();
 
+    // These reads deliberately fail the job if PostgreSQL/schema permissions are
+    // broken. A watchdog that silently turns query failures into "0 findings"
+    // would recreate the exact failure mode this job exists to prevent.
+    //
+    // The customer-access invariants intentionally do NOT reuse reconciliation
+    // candidate functions. They query durable desired-state authority and actual
+    // account state independently, so a bug in the worker cannot teach the
+    // watchdog the same wrong answer.
     const [
         permanentRefunds,
         manualProviderOps,
