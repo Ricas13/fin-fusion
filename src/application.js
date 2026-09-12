@@ -8,7 +8,7 @@ const express = require('express');
 const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 
-const { query, closePool } = require('./db');
+const { query, getPool, closePool } = require('./db');
 const firstRun = require('./auth/first-run-setup');
 const controller = require('./auth/staff-controller');
 const { guardSession } = require('./auth/session-guard');
@@ -145,8 +145,12 @@ function sessionMiddleware() {
     }
   };
   if (process.env.DATABASE_URL) {
+    // Reuse the application pool instead of allowing connect-pg-simple to
+    // create a second independent connection pool. Session reads/writes now
+    // share the same DB_POOL_SIZE and bounded connection/query deadlines as
+    // every other revenue-facing request.
     options.store = new PgStore({
-      conString: process.env.DATABASE_URL,
+      pool: getPool(),
       createTableIfMissing: false,
       tableName: 'user_sessions',
       pruneSessionInterval: 900

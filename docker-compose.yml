@@ -21,6 +21,10 @@ services:
     build: .
     container_name: steam-fusion
     restart: unless-stopped
+    stop_grace_period: ${APP_STOP_GRACE_PERIOD:-45s}
+    mem_limit: ${APP_MEMORY_LIMIT:-2g}
+    cpus: ${APP_CPU_LIMIT:-2.0}
+    pids_limit: ${APP_PIDS_LIMIT:-256}
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${PORT:-3030}
@@ -35,6 +39,9 @@ services:
       RECONCILIATION_MAX_CONCURRENCY: ${RECONCILIATION_MAX_CONCURRENCY:-4}
       DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL in .env}
       DB_POOL_SIZE: ${APP_DB_POOL_SIZE:-10}
+      DB_CONNECTION_TIMEOUT_MS: ${APP_DB_CONNECTION_TIMEOUT_MS:-3000}
+      DB_QUERY_TIMEOUT_MS: ${APP_DB_QUERY_TIMEOUT_MS:-30000}
+      READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-6000}
       DB_SSL: ${DB_SSL:-false}
       DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?set DATA_ENCRYPTION_KEY in .env}
@@ -117,11 +124,16 @@ services:
     build: .
     container_name: steam-fusion-automation
     restart: unless-stopped
+    mem_limit: ${AUTOMATION_MEMORY_LIMIT:-2g}
+    cpus: ${AUTOMATION_CPU_LIMIT:-1.5}
+    pids_limit: ${AUTOMATION_PIDS_LIMIT:-256}
     command: ["node", "scripts/automation-worker.js"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       DATABASE_URL: ${AUTOMATION_DATABASE_URL:?set AUTOMATION_DATABASE_URL in .env}
       DB_POOL_SIZE: ${AUTOMATION_DB_POOL_SIZE:-6}
+      DB_CONNECTION_TIMEOUT_MS: ${AUTOMATION_DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_QUERY_TIMEOUT_MS: ${AUTOMATION_DB_QUERY_TIMEOUT_MS:-90000}
       AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: ${AUTOMATION_RECONCILIATION_MAX_CONCURRENCY:-2}
       AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: ${AUTOMATION_MAINTENANCE_LOCK_POOL_MAX:-3}
       ENTITLEMENT_RECONCILE_CONCURRENCY: ${ENTITLEMENT_RECONCILE_CONCURRENCY:-2}
@@ -180,6 +192,9 @@ services:
     build: .
     container_name: steam-fusion-activity
     restart: unless-stopped
+    mem_limit: ${ACTIVITY_MEMORY_LIMIT:-1g}
+    cpus: ${ACTIVITY_CPU_LIMIT:-1.0}
+    pids_limit: ${ACTIVITY_PIDS_LIMIT:-192}
     command: ["node", "scripts/activity-worker.js"]
     depends_on:
       postgres:
@@ -191,6 +206,8 @@ services:
       JELLYFIN_ENCRYPTION_KEY: ${JELLYFIN_ENCRYPTION_KEY:?set JELLYFIN_ENCRYPTION_KEY in .env}
       ACTIVITY_ENCRYPTION_KEY: ${ACTIVITY_ENCRYPTION_KEY:?set ACTIVITY_ENCRYPTION_KEY in .env}
       DB_POOL_SIZE: ${ACTIVITY_DB_POOL_SIZE:-3}
+      DB_CONNECTION_TIMEOUT_MS: ${ACTIVITY_DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_QUERY_TIMEOUT_MS: ${ACTIVITY_DB_QUERY_TIMEOUT_MS:-15000}
       DB_SSL: ${DB_SSL:-false}
       DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
       STREAM_POLICY_MODE: ${STREAM_POLICY_MODE:-observe}
@@ -223,6 +240,9 @@ services:
     build: .
     container_name: steam-fusion-backup
     restart: unless-stopped
+    mem_limit: ${BACKUP_MEMORY_LIMIT:-1g}
+    cpus: ${BACKUP_CPU_LIMIT:-0.75}
+    pids_limit: ${BACKUP_PIDS_LIMIT:-128}
     user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"
     command: ["node", "scripts/backup-worker.js"]
     environment:
@@ -230,6 +250,8 @@ services:
       DATABASE_URL: ${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL in .env}
       BACKUP_VERIFY_DATABASE_URL: ${BACKUP_VERIFY_DATABASE_URL:?set BACKUP_VERIFY_DATABASE_URL in .env}
       DB_POOL_SIZE: ${BACKUP_DB_POOL_SIZE:-3}
+      DB_CONNECTION_TIMEOUT_MS: ${BACKUP_DB_CONNECTION_TIMEOUT_MS:-10000}
+      DB_QUERY_TIMEOUT_MS: ${BACKUP_DB_QUERY_TIMEOUT_MS:-120000}
       DB_SSL: ${DB_SSL:-false}
       DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
       BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY in .env}

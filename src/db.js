@@ -37,6 +37,26 @@ function directWebRuntime(argv = process.argv) {
     return path.resolve(entry) === path.resolve(__dirname, 'application.js');
 }
 
+function boundedTimeout(value, fallback, { min = 250, max = 120000 } = {}) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function connectionTimeoutMs(value = process.env.DB_CONNECTION_TIMEOUT_MS) {
+    return boundedTimeout(value, 10000, { min: 500, max: 30000 });
+}
+
+function queryTimeoutMs(value = process.env.DB_QUERY_TIMEOUT_MS) {
+    return boundedTimeout(value, 30000, { min: 1000, max: 120000 });
+}
+
+function sslConfig() {
+    return process.env.DB_SSL === 'true'
+        ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
+        : false;
+}
+
 // This runs before Express/session-store startup for the supported direct web
 // entrypoint. It prevents a manual production launch from accidentally using
 // the owner/deploy DATABASE_URL instead of the least-privilege app role.
@@ -53,8 +73,9 @@ function getPool() {
         connectionString: process.env.DATABASE_URL,
         max: Number(process.env.DB_POOL_SIZE || 10),
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-        ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' } : false
+        connectionTimeoutMillis: connectionTimeoutMs(),
+        query_timeout: queryTimeoutMs(),
+        ssl: sslConfig()
     });
 
     pool.on('error', (err) => {
@@ -138,5 +159,8 @@ module.exports = {
     databaseUsername,
     assertWebDatabaseRole,
     directWebRuntime,
+    boundedTimeout,
+    connectionTimeoutMs,
+    queryTimeoutMs,
     DEFAULT_WEB_DATABASE_ROLE
 };
