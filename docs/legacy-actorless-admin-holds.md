@@ -18,9 +18,14 @@ The integrity watchdog suppresses `actorless_administrative_hold` only when **al
 
 1. the hold was created before `2026-09-12 08:32:17 UTC`;
 2. its metadata is a JSON object;
-3. it carries the exact repair flag and repair version above; and
-4. it has a non-empty `legacyActorMarkedAt` written by the repair.
+3. it carries the exact repair flag and repair version above;
+4. it has a non-empty `legacyActorMarkedAt`; and
+5. `audit_log` contains the matching `customer.access_hold.legacy_actorless_marked` repair event for that exact customer and hold, with the same repair version and explicit evidence that blocking state and authority identity were preserved.
 
-A pre-enforcement row without the complete marker still alerts. A row created exactly at or after the enforcement cutoff still alerts even if it somehow carries the marker. Non-object historical metadata is deliberately left untouched and continues to alert for manual review rather than being normalised or discarded. Rows that already contain any of the repair-owned metadata keys are also left untouched unless they already carry the complete valid marker; this prevents the migration from overwriting ambiguous provenance merely to make an alert disappear.
+The audit requirement is deliberate: metadata by itself is not trusted as proof that the migration authored the exemption. A pre-enforcement row with copied, forged, incomplete, or ambiguous marker metadata still alerts unless the matching migration audit evidence exists. A row created exactly at or after the enforcement cutoff still alerts even if it somehow carries both marker metadata and audit-like data.
 
-The migration locks eligible rows before updating them so a concurrent release or attribution change cannot race the repair. It also writes an audit event for each row it marks. Existing unrelated metadata is retained, the hold remains active, and its original authority identity is unchanged. The regression smoke executes the migration body inside a rollback-only transaction, verifies idempotence and audit evidence, and proves the watchdog continues to alert on cutoff, malformed-metadata, and ambiguous-marker edge cases.
+Non-object historical metadata is deliberately left untouched and continues to alert for manual review rather than being normalised or discarded. Rows that already contain any of the repair-owned metadata keys are also left untouched, so ambiguous provenance is never overwritten merely to make an alert disappear.
+
+The migration locks eligible rows before updating them so a concurrent release or attribution change cannot race the repair. It writes one audit event for each row it marks. Existing unrelated metadata is retained, the hold remains active, and its original authority identity is unchanged.
+
+The rollback-only regression smoke executes the migration body twice to prove idempotence, verifies the matching audit evidence, checks that marker-only rows still alert, covers cutoff and malformed-metadata cases, and exercises targeted `admin_disabled` / `admin_suspended` release semantics to prove the original authority identities still behave correctly.
