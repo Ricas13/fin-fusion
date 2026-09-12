@@ -96,7 +96,7 @@ The secondary origin should already be running and healthy. A backup that must f
 
 ### Layer 6 — external availability monitoring
 
-Monitoring must come from outside the CAPTaINFiN host. A process on the same VPS cannot report that the VPS itself is unreachable.
+Monitoring must come from outside the CAPTAiNFiN host. A process on the same VPS cannot report that the VPS itself is unreachable.
 
 At minimum monitor:
 
@@ -107,7 +107,7 @@ At minimum monitor:
 - certificate expiry;
 - DNS/public origin reachability.
 
-Alert independently of CAPTaINFiN email/Discord delivery so a portal outage cannot also suppress its own alert.
+Alert independently of CAPTAÏNFiN email/Discord delivery so a portal outage cannot also suppress its own alert.
 
 ## Resource isolation
 
