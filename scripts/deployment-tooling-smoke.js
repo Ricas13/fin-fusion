@@ -71,7 +71,7 @@ assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'
 assert(verifyDeployment.includes("add('backup worker', backupHealthy"), 'deployment verification must include the backup worker');
 assert(verifyDeployment.includes('backupWorker.last_error'), 'deployment verification must fail on an active backup error');
 assert(backupWorker.includes('SELECT last_success_at,next_run_at,last_error FROM backup_worker_state'), 'backup due logic must inspect persisted failure state');
-assert(backupWorker.includes('if(row.last_error)return true;'), 'a worker restart must immediately retry a previously failed backup');
+assert(backupWorker.indexOf('if (row.next_run_at)') < backupWorker.indexOf('if (row.last_error)'), 'a worker restart must honor persisted retry backoff after a failed backup');
 
 // Reverse-proxy identity is a security boundary for sessions, abuse limits and
 // household enforcement. Never regress to trusting a hop count or raw
