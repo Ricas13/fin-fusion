@@ -9,6 +9,14 @@ const operations = require('../platform/operations-settings');
 
 const KEY = 'activation_cleanup_v1';
 
+function cleanError(error) {
+    return String(error?.message || error || 'Unknown activation cleanup failure')
+        .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 500);
+}
+
 async function settings() {
     const r = await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1', [KEY]);
     const v = r.rows[0]?.setting_value || {};
@@ -146,9 +154,10 @@ async function recordProtected(row, cfg) {
 
 async function process() {
     const cfg = await settings();
-    if (!cfg.enabled) return { processed: 0, skipped: 'disabled' };
+    if (!cfg.enabled) return { processed: 0, failed: 0, skipped: 'disabled' };
     const rows = await candidates(cfg);
-    let warned = 0, removed = 0, protectedCount = 0;
+    let warned = 0, removed = 0, protectedCount = 0, failed = 0;
+    const failures = [];
     for (const row of rows) {
         try {
             if (row.protected) {
@@ -161,10 +170,17 @@ async function process() {
                 if (await remove(row, cfg)) removed++;
             } else if (await warn(row, cfg)) warned++;
         } catch (error) {
-            console.error(`Activation cleanup failed for ${row.user_id}:`, error.message);
+            failed++;
+            const message = cleanError(error);
+            failures.push({ userId: row.user_id, customerId: row.customer_id, error: message });
+            console.error(`Activation cleanup failed for ${row.user_id}:`, message);
         }
     }
-    return { processed: rows.length, warned, removed, protected: protectedCount };
+    const summary = { processed: rows.length, warned, removed, protected: protectedCount, failed, failures };
+    if (failed) {
+        summary.warning = `${failed} activation cleanup item${failed === 1 ? '' : 's'} failed: ${failures.slice(0, 3).map(item => item.error).join('; ')}`.slice(0, 1000);
+    }
+    return summary;
 }
 
-module.exports = { settings, candidates, process, remove, warn, recordProtected };
+module.exports = { cleanError, settings, candidates, process, remove, warn, recordProtected };

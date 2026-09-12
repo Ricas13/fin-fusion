@@ -78,7 +78,25 @@ async function scan() {
     // These reads deliberately fail the job if PostgreSQL/schema permissions are
     // broken. A watchdog that silently turns query failures into "0 findings"
     // would recreate the exact failure mode this job exists to prevent.
-    const [permanentRefunds, manualProviderOps, deletionFailures, staleCreationIntents, contaminatedPlans, strandedProvisioning, stalePaymentEvents, uncertainNotifications] = await Promise.all([
+    //
+    // The customer-access invariants intentionally do NOT reuse reconciliation
+    // candidate functions. They query durable desired-state authority and actual
+    // account state independently, so a bug in the worker cannot teach the
+    // watchdog the same wrong answer.
+    const [
+        permanentRefunds,
+        manualProviderOps,
+        deletionFailures,
+        staleCreationIntents,
+        contaminatedPlans,
+        strandedProvisioning,
+        stalePaymentEvents,
+        uncertainNotifications,
+        jellyfinAdminAuthorityViolations,
+        duplicateActiveJellyfinLanes,
+        actorlessAdministrativeHolds,
+        accessHoldSummaryDrift
+    ] = await Promise.all([
         query(`
             SELECT o.customer_id,o.subscription_id,s.source,s.provider_subscription_id
             FROM customer_entitlement_overrides o
@@ -149,6 +167,81 @@ async function scan() {
             )
             ORDER BY updated_at
             LIMIT 100
+        `),
+        query(`
+            SELECT ctl.customer_id,ctl.mode,ctl.server_id,ctl.reason,ctl.updated_at,
+                   CASE
+                     WHEN ctl.mode='admin_removed' THEN 'active_account_despite_admin_removed'
+                     WHEN ctl.mode='admin_server_pin' THEN 'pinned_account_missing_on_target_server'
+                     ELSE 'account_missing_despite_admin_present'
+                   END AS violation
+            FROM customer_service_admin_control ctl
+            WHERE ctl.service='jellyfin'
+              AND ctl.updated_at<NOW()-INTERVAL '2 minutes'
+              AND (
+                (ctl.mode='admin_present' AND NOT EXISTS(
+                    SELECT 1 FROM jellyfin_accounts ja
+                    WHERE ja.customer_id=ctl.customer_id
+                      AND ja.account_purpose='jellyfin'
+                      AND ja.disabled=FALSE
+                ))
+                OR
+                (ctl.mode='admin_server_pin' AND NOT EXISTS(
+                    SELECT 1 FROM jellyfin_accounts ja
+                    WHERE ja.customer_id=ctl.customer_id
+                      AND ja.account_purpose='jellyfin'
+                      AND ja.disabled=FALSE
+                      AND ja.server_id=ctl.server_id
+                ))
+                OR
+                (ctl.mode='admin_removed' AND EXISTS(
+                    SELECT 1 FROM jellyfin_accounts ja
+                    WHERE ja.customer_id=ctl.customer_id
+                      AND ja.account_purpose='jellyfin'
+                      AND ja.disabled=FALSE
+                ))
+              )
+            ORDER BY ctl.updated_at
+            LIMIT 100
+        `),
+        query(`
+            SELECT customer_id,access_lane,COUNT(*)::int AS active_count,
+                   array_agg(id::text ORDER BY created_at) AS account_ids,
+                   array_agg(server_id::text ORDER BY created_at) AS server_ids
+            FROM jellyfin_accounts
+            WHERE account_purpose='jellyfin' AND disabled=FALSE
+            GROUP BY customer_id,access_lane
+            HAVING COUNT(*)>1 AND MAX(updated_at)<NOW()-INTERVAL '2 minutes'
+            ORDER BY COUNT(*) DESC,customer_id
+            LIMIT 100
+        `),
+        query(`
+            SELECT id,customer_id,hold_type,source_key,reason,created_at
+            FROM customer_access_holds
+            WHERE released_at IS NULL
+              AND actor_user_id IS NULL
+              AND source_key='admin'
+              AND hold_type IN('admin_disabled','admin_suspended','admin_hold')
+            ORDER BY created_at
+            LIMIT 100
+        `),
+        query(`
+            SELECT c.id AS customer_id,c.access_paused_at,c.access_hold_reason,
+                   EXISTS(
+                     SELECT 1 FROM customer_access_holds h
+                     WHERE h.customer_id=c.id AND h.released_at IS NULL
+                   ) AS has_active_hold
+            FROM customers c
+            WHERE (c.access_paused_at IS NULL AND EXISTS(
+                       SELECT 1 FROM customer_access_holds h
+                       WHERE h.customer_id=c.id AND h.released_at IS NULL
+                   ))
+               OR (c.access_paused_at IS NOT NULL AND NOT EXISTS(
+                       SELECT 1 FROM customer_access_holds h
+                       WHERE h.customer_id=c.id AND h.released_at IS NULL
+                   ))
+            ORDER BY c.updated_at
+            LIMIT 100
         `)
     ]);
 
@@ -160,6 +253,10 @@ async function scan() {
     for (const row of strandedProvisioning.rows) findings.push(finding('customer_access_not_converged', row, `Customer access is ${row.status} after ${row.consecutive_failures || 0} failure(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of stalePaymentEvents.rows) findings.push(finding('payment_event_stale', row, `${row.provider} ${row.event_type || 'payment event'} ${row.provider_event_id} has remained unprocessed${row.processing_error ? `: ${row.processing_error}` : ''}`));
     for (const row of uncertainNotifications.rows) findings.push(finding('notification_delivery_uncertain', row, `${row.channel} ${row.message_type || 'notification'} ${row.id} has an uncertain delivery outcome after ${row.attempts || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
+    for (const row of jellyfinAdminAuthorityViolations.rows) findings.push(finding('jellyfin_admin_authority_violation', row, `${row.violation} for ${row.mode}${row.server_id ? ` on server ${row.server_id}` : ''}${row.reason ? `: ${row.reason}` : ''}`));
+    for (const row of duplicateActiveJellyfinLanes.rows) findings.push(finding('jellyfin_duplicate_active_lane', row, `Customer has ${row.active_count} active Jellyfin accounts in ${row.access_lane || 'unknown'} lane across server(s) ${(row.server_ids || []).join(', ')}.`));
+    for (const row of actorlessAdministrativeHolds.rows) findings.push(finding('actorless_administrative_hold', row, `Active ${row.hold_type} hold ${row.id} was created without an administrator actor${row.reason ? `: ${row.reason}` : ''}`));
+    for (const row of accessHoldSummaryDrift.rows) findings.push(finding('access_hold_summary_drift', row, `Legacy access summary disagrees with canonical holds (access_paused_at=${row.access_paused_at || 'null'}, hasActiveHold=${Boolean(row.has_active_hold)}).`));
 
     return findings;
 }

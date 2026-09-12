@@ -28,16 +28,16 @@ async function due({ limit = 25 } = {}) {
     return result.rows;
 }
 
-async function entitlementStillOwnsJellyfin(customerId) {
+async function entitlementStillOwnsJellyfin(customerId, { client = null } = {}) {
     const [primary, free, admin] = await Promise.all([
-        subscriptionState.effectiveSubscription(customerId, { includeBlocked: true }),
-        subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true }),
-        serviceAdminControl.state(customerId, 'jellyfin')
+        subscriptionState.effectiveSubscription(customerId, { client, includeBlocked: true }),
+        subscriptionState.liveFreeJellyfinSubscription(customerId, { client, includeBlocked: true }),
+        serviceAdminControl.state(customerId, 'jellyfin', { client })
     ]);
     // Explicit administrator authority always wins. In particular, never let
     // orphan cleanup delete a remote identity while admin_present is active,
     // even during subscription churn when no ordinary entitlement row is live.
-    const adminOwns = admin?.mode === 'admin_present';
+    const adminOwns = admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin';
     const adminRemoved = admin?.mode === 'admin_removed';
     const primaryOwns = Boolean(primary && primary.admin_jellyfin_removed !== true);
     const freeOwns = Boolean(free && free.admin_jellyfin_removed !== true);
@@ -45,54 +45,66 @@ async function entitlementStillOwnsJellyfin(customerId) {
 }
 
 async function removeAbandonedIntent(intent) {
-    // Re-check authority immediately before a destructive remote call. A user
-    // can gain a plan or an admin can set present while this recovery job is
-    // waiting behind other automation work.
+    // Cheap preflight avoids taking a customer lock when authority has already
+    // been restored. It is NOT the destructive decision: that is repeated while
+    // holding the customer row lock below.
     const current = await entitlementStillOwnsJellyfin(intent.customer_id);
     if (current.owns) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
 
-    let remoteUserId = intent.remote_user_id || null;
-    if (!remoteUserId && ['attempting', 'uncertain'].includes(String(intent.status))) {
+    let discoveredRemoteUserId = intent.remote_user_id || null;
+    if (!discoveredRemoteUserId && ['attempting', 'uncertain'].includes(String(intent.status))) {
         const remote = await durableCreation.findRemoteByName(intent.server_id, intent.username);
-        remoteUserId = remote?.Id || null;
+        discoveredRemoteUserId = remote?.Id || null;
     }
 
-    // Check again after the remote discovery call before issuing DELETE.
-    const beforeDelete = await entitlementStillOwnsJellyfin(intent.customer_id);
-    if (beforeDelete.owns) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
-
-    if (remoteUserId) {
-        await compensation.removeCreatedUser({
-            customerId: intent.customer_id,
-            serverId: intent.server_id,
-            userId: remoteUserId,
-            stage: 'stale_creation_intent_recovery',
-            originalError: new Error('Creation intent no longer has a current Jellyfin entitlement')
-        });
-    }
-    await transaction(async client => {
-        // Serialize the final local cleanup against any new customer lifecycle
-        // transaction and re-check the canonical admin authority inside it.
+    return transaction(async client => {
+        // Every subscription/admin-authority mutation takes this customer-row
+        // lock. Holding it across the destructive remote DELETE closes the race
+        // where access could be restored after our last check but before Jellyfin
+        // was called. Lock the intent too so another recovery/adoption cannot
+        // consume it while this worker is deleting the remote identity.
         const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [intent.customer_id]);
-        if (!customer.rowCount) return;
-        const admin = await serviceAdminControl.state(intent.customer_id, 'jellyfin', { client });
-        if (admin?.mode === 'admin_present') throw new Error('Jellyfin creation-intent cleanup aborted because administrator-present authority became active.');
-        await client.query('DELETE FROM jellyfin_account_creation_intents WHERE id=$1', [intent.id]);
+        const locked = await client.query('SELECT * FROM jellyfin_account_creation_intents WHERE id=$1 FOR UPDATE', [intent.id]);
+        if (!locked.rowCount) return { action: 'preserved', reason: 'intent_already_resolved' };
+        const liveIntent = locked.rows[0];
+
+        if (customer.rowCount) {
+            const authoritative = await entitlementStillOwnsJellyfin(intent.customer_id, { client });
+            if (authoritative.owns) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
+        }
+
+        let remoteUserId = liveIntent.remote_user_id || discoveredRemoteUserId || null;
+        // If the intent changed while the preflight discovery was running, never
+        // trust a remote id belonging to an older snapshot of the intent.
+        if (String(liveIntent.username || '') !== String(intent.username || '')) remoteUserId = liveIntent.remote_user_id || null;
+
+        if (remoteUserId) {
+            await compensation.removeCreatedUser({
+                customerId: liveIntent.customer_id,
+                serverId: liveIntent.server_id,
+                userId: remoteUserId,
+                stage: 'stale_creation_intent_recovery',
+                originalError: new Error('Creation intent no longer has a current Jellyfin entitlement')
+            });
+        }
+
+        await client.query('DELETE FROM jellyfin_account_creation_intents WHERE id=$1', [liveIntent.id]);
         await client.query(`DELETE FROM jellyfin_server_placement_leases
-            WHERE customer_id=$1 AND server_id=$2`, [intent.customer_id, intent.server_id]);
+            WHERE customer_id=$1 AND server_id=$2`, [liveIntent.customer_id, liveIntent.server_id]);
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('jellyfin.creation_intent.abandoned_recovered','customer',$1,$2::jsonb)`, [
-            intent.customer_id,
+            liveIntent.customer_id,
             JSON.stringify({
-                intentId: intent.id,
-                serverId: intent.server_id,
-                username: intent.username,
+                intentId: liveIntent.id,
+                serverId: liveIntent.server_id,
+                username: liveIntent.username,
                 remoteUserId,
-                priorStatus: intent.status
+                priorStatus: liveIntent.status,
+                destructiveDecisionSerialized: true
             })
         ]);
+        return { action: 'removed', remoteUserId };
     });
-    return { action: 'removed', remoteUserId };
 }
 
 async function recoverOne(intent) {
@@ -105,9 +117,14 @@ async function recoverOne(intent) {
         const remaining = await durableCreation.loadIntent(intent.customer_id, intent.server_id);
         return { action: remaining ? 'retry_pending' : 'adopted', remaining: Boolean(remaining) };
     }
-    // No valid Jellyfin entitlement or admin-present authority remains. Now it
-    // is safe to compensate any orphaned remote user and release capacity.
-    return removeAbandonedIntent(intent);
+    // No valid Jellyfin entitlement or admin-present/server-pin authority remains.
+    // Take the same per-customer reconciliation lock used by provisioning before
+    // entering the destructive path. removeAbandonedIntent then repeats the
+    // authority check under the customer-row transaction lock before DELETE.
+    return provisioning.reconciliationLock.withCustomerReconciliationLock(
+        intent.customer_id,
+        () => removeAbandonedIntent(intent)
+    );
 }
 
 async function run({ limit = 25 } = {}) {

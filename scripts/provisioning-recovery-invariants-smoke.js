@@ -7,6 +7,7 @@ const criticalJobs = require('../src/automation/critical-jobs');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const compact = value => String(value || '').replace(/\s+/g, '');
 
 const worker = read('scripts/automation-worker.js');
 const jobs = read('src/automation/jobs.js');
@@ -20,8 +21,18 @@ const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
 const entitlementWakeup = read('db/migrations/20260908073500_entitlement_reconciliation_wakeup.sql');
+const freeObservationReset = read('db/migrations/20260912090000_free_inactivity_observation_safety_reset.sql');
+const serviceRecovery = read('src/automation/customer-service-recovery.js');
+const activationCleanup = read('src/automation/activation-cleanup.js');
+const freeBackfill = read('src/automation/free-capacity-backfill.js');
+const creationIntentRecovery = read('src/automation/jellyfin-creation-intent-recovery.js');
+const inactivity = read('src/automation/customer-inactivity.js');
+const scopedInactivity = read('src/automation/customer-inactivity-scoped.js');
+const inactivityGrace = read('src/entitlements/jellyfin-inactivity-grace.js');
+const accessHolds = read('src/entitlements/access-holds.js');
+const revenueIntegrity = read('src/automation/revenue-integrity.js');
 
-for (const jobKey of ['health','entitlements','free_capacity_backfill','customer_inactivity','billing','provider_operation_recovery','payment_events','plan_changes','stremio_managed_accounts','stremio_external_tokens']) {
+for (const jobKey of ['health','entitlements','free_capacity_backfill','customer_inactivity','customer_deletions','creation_intent_recovery','customer_service_recovery','revenue_integrity','billing','provider_operation_recovery','payment_events','plan_changes','activation_cleanup','stremio_managed_accounts','stremio_external_tokens']) {
     assert(criticalJobs.isCritical(jobKey), `${jobKey} must remain customer-access critical automation`);
 }
 
@@ -52,7 +63,7 @@ assert(adminManualEntitlement.includes(canonicalAdminPresent),
 assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jellyfin',s\.id\)/g)||[]).length >= 2,
     'Free and trial acquisition transaction guards must both honor administrator-present Jellyfin access');
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
-    'generic reconciliation must retry persisted provisioning problems independently of acquisition flows');
+    'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 
 assert(lifecycle.includes("await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan')"),
     'Free plan acquisition must attempt immediate canonical reconciliation');
@@ -89,5 +100,78 @@ assert(adminAutomation.includes("CORE_JOBS.has(req.params.job)") && adminAutomat
     'core recovery jobs must require explicit confirmation before an operator can disable them');
 assert(adminAutomation.includes("ORDER BY last_heartbeat_at DESC LIMIT 1"),
     'automation control room must display the newest worker instance rather than an arbitrary stale heartbeat row');
+
+// Automatic user-management safety invariants. These deliberately span
+// independent modules so a future refactor cannot silently reintroduce the
+// failure modes that caused valid customers to be removed or stranded.
+const compactRecovery = compact(serviceRecovery);
+assert(compactRecovery.includes("statusIN('failed','blocked')")
+    && compactRecovery.includes('(next_attempt_atISNULLORnext_attempt_at<=NOW())'),
+    'independent service recovery must respect persisted retry/backoff timestamps');
+
+assert(activationCleanup.includes('let warned = 0, removed = 0, protectedCount = 0, failed = 0')
+    && activationCleanup.includes('summary.warning')
+    && activationCleanup.includes('return summary'),
+    'activation cleanup must expose item failures to automation health instead of logging-and-hiding them');
+const compactJobs = compact(jobs);
+assert(!compactJobs.includes('failed:Number(active.failed||0)+Number(active.blocked||0)'),
+    'expected entitlement blockers must not be reported as execution failures');
+assert(compactJobs.includes('blocked:blockedCount'),
+    'entitlement job health must preserve blocked customers as a separate observable count');
+
+assert(!compact(freeBackfill).includes('c.access_paused_atISNULL'),
+    'Free capacity backfill must not trust the denormalized legacy access_paused_at summary');
+assert(freeBackfill.includes('liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true })')
+    && freeBackfill.includes('if (!entitlement || entitlement.blocked)'),
+    'Free capacity backfill must re-read canonical entitlement/hold authority immediately before provisioning');
+
+const compactIntentRecovery = compact(creationIntentRecovery);
+const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");
+const intentLockAt = compactIntentRecovery.indexOf("SELECT*FROMjellyfin_account_creation_intentsWHEREid=$1FORUPDATE");
+const authorityRecheckAt = compactIntentRecovery.indexOf('constauthoritative=awaitentitlementStillOwnsJellyfin(intent.customer_id,{client})');
+const remoteDeleteAt = compactIntentRecovery.indexOf('awaitcompensation.removeCreatedUser({');
+assert(customerLockAt >= 0 && intentLockAt > customerLockAt && authorityRecheckAt > intentLockAt && remoteDeleteAt > authorityRecheckAt,
+    'stale Jellyfin creation cleanup must lock customer+intent and re-check authority before remote deletion');
+assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin'"),
+    'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
+
+const compactScopedInactivity = compact(scopedInactivity);
+assert(compactScopedInactivity.includes('eligibleCount>=CIRCUIT_BREAKER_MAX_ABSOLUTE')
+    && compactScopedInactivity.includes('ratio>=CIRCUIT_BREAKER_MAX_RATIO'),
+    'mass-removal circuit breaker thresholds must be inclusive');
+assert((scopedInactivity.match(/liveFreeJellyfinSubscription\(row\.customer_id, \{ includeBlocked: true \}\)/g) || []).length >= 2,
+    'destructive inactivity enforcement must re-check canonical authority before and after telemetry I/O');
+assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'")
+    && scopedInactivity.includes("reason: 'admin_authority_added_during_check'"),
+    'inactivity enforcement must fail closed when permanent/admin authority protects Free access');
+assert(inactivity.includes('ph.started_at>=ja.access_lane_changed_at'),
+    'Free inactivity history must keep the paid-to-Free lane boundary so paid-era playback cannot satisfy a new Free allocation');
+assert(freeObservationReset.includes('ADD COLUMN IF NOT EXISTS inactivity_observation_reset_at')
+    && freeObservationReset.includes("access_lane_changed_at<=lt.applied_at")
+    && !freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
+    'legacy inactivity safety must mark ambiguous pre-column Free rows without rewriting their real lane boundary');
+assert(inactivityGrace.includes("source: 'legacy_lane_backfill'")
+    && inactivityGrace.includes('legacySafetyHours(row)')
+    && inactivityGrace.includes('inactivity_observation_reset_at IS NOT NULL'),
+    'ambiguous legacy Free rows must receive a full retention/usage observation window before destructive inactivity enforcement');
+
+assert(accessHolds.includes("error.code = 'ADMIN_ACCESS_HOLD_ACTOR_REQUIRED'")
+    && accessHolds.includes("['admin_disabled', 'admin_suspended', 'admin_hold'].includes(requestedType)"),
+    'legacy administrative holds must require an authenticated administrator actor');
+assert(accessHolds.includes("origin: actorUserId ? 'administrator' : 'automation'"),
+    'access-hold audit records must identify whether the mutation came from administrator authority or automation');
+
+for (const invariant of [
+    'jellyfin_admin_authority_violation',
+    'jellyfin_duplicate_active_lane',
+    'actorless_administrative_hold',
+    'access_hold_summary_drift'
+]) {
+    assert(revenueIntegrity.includes(invariant), `revenue-integrity watchdog must detect ${invariant}`);
+}
+assert(revenueIntegrity.includes("ctl.mode='admin_server_pin'")
+    && revenueIntegrity.includes('ja.server_id=ctl.server_id')
+    && revenueIntegrity.includes("ctl.mode='admin_removed'"),
+    'integrity watchdog must independently verify pinned/present/removed Jellyfin admin desired state');
 
 console.log('provisioning recovery invariants smoke: ok');

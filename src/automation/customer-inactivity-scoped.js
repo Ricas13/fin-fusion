@@ -4,6 +4,7 @@ const { query } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const restorationGrace = require('../entitlements/jellyfin-inactivity-grace');
+const subscriptionState = require('../entitlements/subscription-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
 const fleetMetrics = require('../jellyfin/fleet-metrics');
@@ -52,8 +53,11 @@ function massRemovalRisk(rows, eligible) {
     const population = Math.max(0, Number(rows?.length || 0));
     const eligibleCount = Math.max(0, Number(eligible?.length || 0));
     const ratio = population > 0 ? eligibleCount / population : 0;
+    // Thresholds are inclusive. If the operator says 20 is the maximum safe
+    // batch, the 20th simultaneous candidate is already suspicious and must
+    // force dry-run; do not allow an off-by-one batch of exactly 20 deletions.
     const tripped = eligibleCount >= CIRCUIT_BREAKER_MIN_ELIGIBLE
-        && (eligibleCount > CIRCUIT_BREAKER_MAX_ABSOLUTE || ratio > CIRCUIT_BREAKER_MAX_RATIO);
+        && (eligibleCount >= CIRCUIT_BREAKER_MAX_ABSOLUTE || ratio >= CIRCUIT_BREAKER_MAX_RATIO);
     return {
         tripped,
         population,
@@ -146,28 +150,75 @@ async function usageSatisfiedEarlierToday(row) {
     return Number(result.rows[0]?.playback_seconds || 0) >= minimumMinutes * 60;
 }
 
+function adminProtectedFreeEntitlement(entitlement) {
+    if (!entitlement) return false;
+    const mode = String(entitlement.admin_jellyfin_mode || '').toLowerCase();
+    return Boolean(
+        entitlement.permanent_access
+        || entitlement.admin_present
+        || mode === 'present'
+        || mode === 'forced_server'
+    );
+}
+
 async function finalEligibility(row, globalCfg) {
+    // Destructive policy enforcement gets an independent entitlement/authority
+    // check immediately before telemetry and usage checks. The base candidate
+    // query deliberately focuses on usage; this second source of truth prevents
+    // an explicit admin-present/server-pin/permanent directive, a newly-added
+    // hold, or a plan replacement from being raced by the inactivity worker.
+    const entitlement = await subscriptionState.liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true });
+    if (!entitlement) return { ready: false, reason: 'free_entitlement_no_longer_active', entitlement };
+    if (String(entitlement.plan_id || '') !== String(row.plan_id || '')) {
+        return { ready: false, reason: 'free_entitlement_changed', entitlement };
+    }
+    // A previously-created inactivity hold is allowed through so this worker can
+    // repair a prior reconciliation failure. Other blocked states fail closed.
+    // Admin-present/server-pin/permanent authority is checked independently below
+    // and therefore can never be bypassed by this repair exception.
+    if (entitlement.blocked && !row.repairExistingHold) {
+        return { ready: false, reason: 'free_entitlement_blocked', entitlement };
+    }
+    if (adminProtectedFreeEntitlement(entitlement)) {
+        return { ready: false, reason: 'admin_authority_protects_free_access', entitlement };
+    }
+
     const worker = await activityWorkerTelemetry();
-    if (!worker.ready) return { ready: false, reason: 'activity_worker_stale', worker, server: null };
+    if (!worker.ready) return { ready: false, reason: 'activity_worker_stale', worker, server: null, entitlement };
 
     let serverTelemetry = await refreshCandidateServers([row]);
     let server = serverTelemetry[String(row.server_id)] || null;
-    if (!server?.ready) return { ready: false, reason: server?.reason || 'server_poll_untrusted', worker, server };
+    if (!server?.ready) return { ready: false, reason: server?.reason || 'server_poll_untrusted', worker, server, entitlement };
 
     serverTelemetry = await refreshCandidateUserActivity([row], serverTelemetry);
     server = serverTelemetry[String(row.server_id)] || null;
-    if (!server?.ready) return { ready: false, reason: server?.reason || 'user_activity_refresh_failed', worker, server };
+    if (!server?.ready) return { ready: false, reason: server?.reason || 'user_activity_refresh_failed', worker, server, entitlement };
 
     const userEvidence = candidateUserEvidence(server, row);
     if (!userEvidence?.present) {
-        return { ready: false, reason: 'candidate_user_not_observed_in_fresh_users_response', worker, server, userEvidence };
+        return { ready: false, reason: 'candidate_user_not_observed_in_fresh_users_response', worker, server, userEvidence, entitlement };
     }
 
     const freshRows = await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg, { customerId: row.customer_id }));
     const fresh = freshRows.find(item => String(item.account_id) === String(row.account_id) && String(item.plan_id) === String(row.plan_id)) || null;
-    if (!fresh?.eligible) return { ready: false, reason: fresh?.restoration_grace ? 'admin_restore_observation_window' : 'usage_no_longer_eligible', worker, server, fresh, userEvidence };
-    if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh, userEvidence };
-    return { ready: true, worker, server, fresh, userEvidence };
+    if (!fresh?.eligible) return { ready: false, reason: fresh?.restoration_grace ? 'admin_restore_observation_window' : 'usage_no_longer_eligible', worker, server, fresh, userEvidence, entitlement };
+    if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh, userEvidence, entitlement };
+
+    // Re-read authority one final time after remote telemetry/usage I/O. This is
+    // intentionally redundant: those calls can take long enough for an admin or
+    // billing workflow to change the customer's desired state. The subsequent
+    // reconciliation lock still provides the final serialization boundary.
+    const finalEntitlement = await subscriptionState.liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true });
+    if (!finalEntitlement || String(finalEntitlement.plan_id || '') !== String(row.plan_id || '')) {
+        return { ready: false, reason: 'free_entitlement_changed_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
+    }
+    if (finalEntitlement.blocked && !fresh.repairExistingHold) {
+        return { ready: false, reason: 'free_entitlement_blocked_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
+    }
+    if (adminProtectedFreeEntitlement(finalEntitlement)) {
+        return { ready: false, reason: 'admin_authority_added_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
+    }
+    return { ready: true, worker, server, fresh, userEvidence, entitlement: finalEntitlement };
 }
 
 async function logTelemetrySkip(row, actorUserId, reason, server = null) {
@@ -313,7 +364,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     const telemetry = telemetrySummary(worker, serverTelemetry);
     const warnings = [];
     if (circuitBreaker.tripped) {
-        warnings.push(`Mass-removal circuit breaker forced dry-run: ${circuitBreaker.eligible}/${circuitBreaker.population} (${(circuitBreaker.ratio * 100).toFixed(1)}%) candidates were eligible; live removal is blocked above ${circuitBreaker.maxAbsolute} accounts or ${(circuitBreaker.maxRatio * 100).toFixed(1)}% once at least ${circuitBreaker.minEligible} accounts are eligible.`);
+        warnings.push(`Mass-removal circuit breaker forced dry-run: ${circuitBreaker.eligible}/${circuitBreaker.population} (${(circuitBreaker.ratio * 100).toFixed(1)}%) candidates were eligible; live removal is blocked at ${circuitBreaker.maxAbsolute} accounts or ${(circuitBreaker.maxRatio * 100).toFixed(1)}% once at least ${circuitBreaker.minEligible} accounts are eligible.`);
     }
     if (deferred) warnings.push(`${deferred} eligible inactivity removal${deferred === 1 ? '' : 's'} deferred by the ${MAX_ENFORCEMENTS_PER_RUN}-customer throughput cap; they will be reconsidered on the next run.`);
     const warning = warnings.length ? warnings.join(' ') : undefined;
@@ -367,6 +418,7 @@ module.exports = {
     activityAfterDisable,
     processPendingDeletions,
     usageSatisfiedEarlierToday,
+    adminProtectedFreeEntitlement,
     finalEligibility,
     runPlanRules,
     run,
