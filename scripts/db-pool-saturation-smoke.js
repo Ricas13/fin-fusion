@@ -5,12 +5,22 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../src/db');
 
-const compose = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
+const root = path.join(__dirname, '..');
+const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+const application = fs.readFileSync(path.join(root, 'src', 'application.js'), 'utf8');
+const maintenance = fs.readFileSync(path.join(root, 'src', 'security', 'maintenance-lock.js'), 'utf8');
+
 assert(compose.includes('DB_POOL_SIZE: ${APP_DB_POOL_SIZE:-20}'), 'web Compose service must default to a 20-connection primary pool');
 assert(compose.includes('DB_POOL_MAX_WAITING: ${APP_DB_POOL_MAX_WAITING:-5}'), 'web Compose service must opt into a bounded five-request DB wait queue');
 assert(!/automation-worker:[\s\S]*?DB_POOL_MAX_WAITING:/.test(compose), 'automation worker must not inherit the web circuit breaker');
 assert(!/activity-worker:[\s\S]*?DB_POOL_MAX_WAITING:/.test(compose), 'activity worker must not inherit the web circuit breaker');
 assert(!/backup-worker:[\s\S]*?DB_POOL_MAX_WAITING:/.test(compose), 'backup worker must not inherit the web circuit breaker');
+
+const maintenanceMount = application.indexOf('app.use(requestMaintenanceGuard);');
+const sessionMount = application.indexOf('app.use(sessionMiddleware());');
+assert(maintenanceMount >= 0 && sessionMount > maintenanceMount, 'DB overload admission guard must remain mounted before the PostgreSQL-backed session store');
+assert(maintenance.includes('const pressure = poolStats();') && maintenance.includes('if (pressure.overloaded)'), 'pre-session request guard must reject an overloaded application pool');
+assert(maintenance.indexOf('if (pressure.overloaded)') < maintenance.indexOf("if (['GET','HEAD','OPTIONS'].includes(req.method))"), 'pool overload guard must cover authenticated GET/HEAD traffic, not only mutations');
 
 assert.strictEqual(db.poolSize(undefined), 10, 'shared DB helper must retain its historical 10-connection fallback outside explicitly configured services');
 assert.strictEqual(db.poolSize('20'), 20, 'web pool size must accept the explicit production value');
