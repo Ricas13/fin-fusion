@@ -118,9 +118,13 @@ async function recoverOne(intent) {
         return { action: remaining ? 'retry_pending' : 'adopted', remaining: Boolean(remaining) };
     }
     // No valid Jellyfin entitlement or admin-present/server-pin authority remains.
-    // Destructive cleanup performs the same authority check again under the
-    // customer-row lock before touching Jellyfin.
-    return removeAbandonedIntent(intent);
+    // Take the same per-customer reconciliation lock used by provisioning before
+    // entering the destructive path. removeAbandonedIntent then repeats the
+    // authority check under the customer-row transaction lock before DELETE.
+    return provisioning.reconciliationLock.withCustomerReconciliationLock(
+        intent.customer_id,
+        () => removeAbandonedIntent(intent)
+    );
 }
 
 async function run({ limit = 25 } = {}) {
