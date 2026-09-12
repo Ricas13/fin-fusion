@@ -15,7 +15,7 @@ const healthy = db.poolStats({
   totalCount: 20,
   idleCount: 2,
   waitingCount: 0
-});
+}, undefined);
 assert.strictEqual(healthy.saturated, false, 'idle capacity is not saturation');
 assert.strictEqual(healthy.overloaded, false, 'idle capacity is not overload');
 
@@ -24,7 +24,7 @@ const saturated = db.poolStats({
   totalCount: 20,
   idleCount: 0,
   waitingCount: 1
-});
+}, undefined);
 assert.strictEqual(saturated.saturated, true, 'full pool with a waiter must report saturation');
 assert.strictEqual(saturated.overloaded, false, 'a short bounded queue must not trip the circuit breaker immediately');
 
@@ -33,7 +33,7 @@ const overloaded = db.poolStats({
   totalCount: 20,
   idleCount: 0,
   waitingCount: 5
-});
+}, undefined);
 assert.strictEqual(overloaded.overloaded, true, 'queue at the configured limit must trip the circuit breaker');
 
 const error = db.poolOverloadError('smoke', overloaded);
