@@ -38,4 +38,18 @@ assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entit
 assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
 assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf("mountCritical('customer360', createAdminCustomer360Router())"), 'manual entitlement injection must mount before Customer 360');
 
+// Administrative access holds must have real operator provenance going forward,
+// while pre-enforcement holds are preserved as blockers instead of being
+// released or assigned a fabricated administrator identity.
+const accessHolds = fs.readFileSync(path.join(root, 'src/entitlements/access-holds.js'), 'utf8');
+const revenueIntegrity = fs.readFileSync(path.join(root, 'src/automation/revenue-integrity.js'), 'utf8');
+const legacyHoldMigration = fs.readFileSync(path.join(root, 'db/migrations/20260912130000_grandfather_legacy_admin_holds.sql'), 'utf8');
+assert(accessHolds.includes('ADMIN_ACCESS_HOLD_ACTOR_REQUIRED'), 'application writes must reject actorless administrative access holds');
+assert(revenueIntegrity.includes("source_key='admin'") && revenueIntegrity.includes('actorless_administrative_hold'), 'revenue integrity must continue to flag novel actorless admin holds');
+assert(legacyHoldMigration.includes("source_key = 'legacy_admin_unattributed'"), 'legacy actorless admin holds must be reclassified with explicit provenance');
+assert(legacyHoldMigration.includes("'legacy_source_key', source_key") && legacyHoldMigration.includes("'provenance', 'legacy_unattributed_admin_hold'"), 'legacy reclassification must preserve original provenance in metadata');
+assert(legacyHoldMigration.includes('customer_access_holds_active_admin_actor_check'), 'database must enforce administrator provenance for future active admin holds');
+assert(legacyHoldMigration.includes('actor_user_id IS NOT NULL') && legacyHoldMigration.includes("source_key <> 'admin'"), 'database constraint must require an actor for source_key=admin administrative holds');
+assert(!legacyHoldMigration.includes('SET released_at'), 'legacy provenance repair must never release customer access holds');
+
 console.log('admin manual entitlement smoke: ok');
