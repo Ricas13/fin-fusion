@@ -255,15 +255,16 @@ function normalizePlayer(client,device) {
   return String(client||device||'Other').slice(0,42);
 }
 async function playerUsage(range) {
-  const result=await query(`SELECT client_name,device_name,COUNT(*)::int sessions,
+  const result=await query(`SELECT client_name,device_name,
+      COUNT(*) FILTER(WHERE started_at>=$1::timestamptz AND started_at<$2::timestamptz)::int sessions,
       COUNT(DISTINCT customer_id)::int users,
       COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (
-        LEAST(COALESCE(ended_at,last_seen_at,$2::timestamptz),$2::timestamptz)
+        LEAST(COALESCE(ended_at,last_seen_at),$2::timestamptz)
         - GREATEST(started_at,$1::timestamptz)
       )))),0)::bigint seconds
     FROM playback_history
     WHERE started_at<$2::timestamptz
-      AND COALESCE(ended_at,last_seen_at,$2::timestamptz)>$1::timestamptz
+      AND COALESCE(ended_at,last_seen_at)>$1::timestamptz
     GROUP BY client_name,device_name`,[range.start,range.end]);
   const grouped=new Map();
   for(const row of result.rows){const name=normalizePlayer(row.client_name,row.device_name),current=grouped.get(name)||{name,sessions:0,seconds:0};current.sessions+=Number(row.sessions||0);current.seconds+=Number(row.seconds||0);grouped.set(name,current);}
