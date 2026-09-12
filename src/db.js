@@ -1,5 +1,5 @@
 const path = require('path');
-const { Pool, Client } = require('pg');
+const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('./db-locks');
 
 const DEFAULT_WEB_DATABASE_ROLE = 'steamfusion_app';
@@ -140,39 +140,6 @@ async function healthcheck() {
     return { ok: true, latencyMs: Date.now() - started, now: result.rows[0].now };
 }
 
-// A direct probe deliberately bypasses the shared Pool. The web self-heal logic
-// uses this to distinguish "PostgreSQL itself is unavailable" from "this Node
-// process has a poisoned/exhausted pool". Only the latter should recycle the
-// web process; restarting an app repeatedly while the database is genuinely
-// offline just creates a restart storm and makes recovery harder.
-async function directHealthcheck({ timeoutMs = 2000 } = {}) {
-    if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required for PostgreSQL mode');
-    const bounded = boundedTimeout(timeoutMs, 2000, { min: 500, max: 10000 });
-    const client = new Client({
-        connectionString: process.env.DATABASE_URL,
-        connectionTimeoutMillis: bounded,
-        query_timeout: bounded,
-        ssl: sslConfig()
-    });
-    const started = Date.now();
-    try {
-        await client.connect();
-        await client.query({ text: 'SELECT 1 AS ok', query_timeout: bounded });
-        return { ok: true, latencyMs: Date.now() - started };
-    } finally {
-        await client.end().catch(() => {});
-    }
-}
-
-function poolSnapshot() {
-    const current = getPool();
-    return {
-        total: Number(current.totalCount || 0),
-        idle: Number(current.idleCount || 0),
-        waiting: Number(current.waitingCount || 0)
-    };
-}
-
 async function closePool() {
     if (!pool) return;
     const current = pool;
@@ -187,8 +154,6 @@ module.exports = {
     mutationQuery,
     transaction,
     healthcheck,
-    directHealthcheck,
-    poolSnapshot,
     closePool,
     isMutationSql,
     databaseUsername,
