@@ -63,7 +63,8 @@ function openBackupDescriptor(filePath) {
 }
 
 function staleCleanupEnabled() {
-    return String(process.env.BACKUP_VERIFY_CLEAN_STALE_DATABASES || '').trim().toLowerCase() === 'true';
+    const value = String(process.env.BACKUP_VERIFY_CLEAN_STALE_DATABASES || 'true').trim().toLowerCase();
+    return !['0', 'false', 'no', 'off'].includes(value);
 }
 
 async function cleanupStaleVerificationDatabases(admin) {
