@@ -19,6 +19,7 @@ const critical = require('../src/automation/critical-jobs');
 const jobs = require('../src/automation/jobs');
 const attentionPolicy = require('../src/platform/actionable-attention-policy');
 const integrity = require('../src/automation/revenue-integrity');
+const integrityFreshness = require('../src/integrations/integrity-alert-freshness');
 
 const requiredCritical = [
     'entitlements', 'billing', 'payment_events', 'provider_operation_recovery',
@@ -59,6 +60,9 @@ assert(emailClaim.includes("status IN ('pending','failed')"), 'email claim must 
 assert(!emailClaim.includes("(status='sending' AND last_attempt_at"), 'email claim must not automatically reclaim an ambiguous sending row');
 assert(!emailClaim.includes("OR (status='sending'"), 'email claim must not include sending rows in retry eligibility');
 assert(emailOutbox.includes("status='dead'"), 'email uncertain delivery must become operator-actionable');
+assert(emailOutbox.includes('freshness.nextAttemptAt'), 'integrity email alerts must receive a self-healing grace window before delivery');
+assert(emailOutbox.includes('freshness.cancelIfStale'), 'email delivery must revalidate integrity alerts before external send');
+assert(emailOutbox.includes("status<>'cancelled'"), 'suppressed integrity emails must not be manually revived by the generic retry action');
 
 const notificationOutbox = source('src/integrations/notification-outbox.js');
 const notificationClaim = between(notificationOutbox, 'async function claim(', 'function retryAt');
@@ -67,6 +71,9 @@ assert(notificationClaim.includes("status IN('pending','failed')"), 'notificatio
 assert(!notificationClaim.includes("OR status='sending'"), 'notification claim must not include sending rows in retry eligibility');
 assert(!notificationClaim.includes("status IN('pending','failed','sending')"), 'notification claim must never lease sending rows');
 assert(notificationOutbox.includes("status='dead'"), 'notification uncertain delivery must become operator-actionable');
+assert(notificationClaim.includes('dedupe_key'), 'chat notification claims must retain the integrity snapshot fingerprint for freshness checks');
+assert(notificationOutbox.includes('freshness.nextAttemptAt'), 'integrity Discord/Telegram alerts must receive a self-healing grace window before delivery');
+assert(notificationOutbox.includes('freshness.cancelIfStale'), 'Discord/Telegram delivery must revalidate integrity alerts before external send');
 
 const jellyfinJobs = source('src/jellyfin/jobs.js');
 assert(jellyfinJobs.includes('ensureFailureBackoff'), 'entitlement reconciliation must persist backoff for pre-state failures');
@@ -99,6 +106,19 @@ assert(deploymentVerification.includes("add('automation recovery probe'"), 'post
 const a = integrity.fingerprint([{ kind: 'b', id: '2' }, { kind: 'a', id: '1' }]);
 const b = integrity.fingerprint([{ kind: 'a', id: '1' }, { kind: 'b', id: '2' }]);
 assert.strictEqual(a, b, 'integrity alert fingerprint must be stable regardless of finding order');
+
+const integrityDedupe = `admin:test:discord:automation-integrity:${a}:12345`;
+assert.strictEqual(integrityFreshness.fingerprintFromDedupeKey(integrityDedupe), a, 'integrity delivery guard must recover the queued snapshot fingerprint');
+assert.strictEqual(integrityFreshness.fingerprintFromDedupeKey('ordinary-notification'), null, 'ordinary notifications must not be freshness-gated');
+const now = Date.now();
+const delayed = integrityFreshness.nextAttemptAt(integrityDedupe, now).getTime();
+assert.strictEqual(delayed - now, integrityFreshness.INTEGRITY_ALERT_GRACE_MS, 'integrity alerts must wait for the self-healing grace interval');
+assert(integrityFreshness.INTEGRITY_ALERT_GRACE_MS >= 30000, 'integrity alert grace must be long enough for a normal automation retry pass');
+
+const freshnessSource = source('src/integrations/integrity-alert-freshness.js');
+assert(freshnessSource.includes("status='cancelled'"), 'stale integrity alerts must become cancelled rather than sent or dead');
+assert(freshnessSource.includes('dedupe_key=NULL'), 'cancelled stale alerts must release their dedupe key so a genuinely recurring failure can alert again');
+assert(freshnessSource.includes('integrity.scan()'), 'delivery freshness must re-scan current integrity immediately before external send');
 
 const migration = source('db/migrations/20260910214500_automation_revenue_integrity.sql');
 assert(migration.includes("'automation.integrity.failed'"), 'integrity alert notification preference must be migrated');
