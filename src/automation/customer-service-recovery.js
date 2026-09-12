@@ -19,6 +19,7 @@ async function dueCustomers({ limit = 100 } = {}) {
         SELECT customer_id,status,last_error,next_attempt_at,updated_at
         FROM customer_provisioning_state
         WHERE status IN ('failed','blocked')
+          AND (next_attempt_at IS NULL OR next_attempt_at<=NOW())
         ORDER BY COALESCE(next_attempt_at,updated_at),updated_at
         LIMIT $1
     `, [safeLimit]);
