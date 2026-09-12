@@ -41,6 +41,8 @@ async function main() {
     assert.match(migration, /2026-09-12 08:32:17\+00/, 'repair migration must use the exact actor-enforcement cutoff');
     assert.match(migration, /legacyActorlessAdmin/, 'repair migration must add the explicit historical marker');
     assert.match(migration, /legacyActorRepair/, 'repair migration must version the explicit historical marker');
+    assert.match(migration, /jsonb_typeof\(h\.metadata\)='object'/, 'repair migration must leave malformed/non-object metadata for manual review');
+    assert.match(migration, /FOR UPDATE OF h/, 'repair migration must lock eligible holds before marking them');
 
     const marker = {
         legacyActorlessAdmin: true,
@@ -76,12 +78,28 @@ async function main() {
         metadata: marker
     });
 
+    const cutoffCustomer = await createCustomer('exact-cutoff');
+    const exactCutoff = await insertHold({
+        customerId: cutoffCustomer,
+        holdType: 'admin_disabled',
+        createdAt: revenueIntegrity.ADMIN_ACTOR_ENFORCED_AT,
+        metadata: marker
+    });
+
     const wrongMarkerCustomer = await createCustomer('wrong-marker');
     const wrongMarkerOld = await insertHold({
         customerId: wrongMarkerCustomer,
         holdType: 'admin_hold',
         createdAt: '2026-09-11T14:00:00.000Z',
         metadata: { legacyActorlessAdmin: true, legacyActorRepair: 'wrong-repair' }
+    });
+
+    const malformedMetadataCustomer = await createCustomer('malformed-metadata');
+    const malformedMetadataOld = await insertHold({
+        customerId: malformedMetadataCustomer,
+        holdType: 'admin_disabled',
+        createdAt: '2026-09-11T15:00:00.000Z',
+        metadata: [marker]
     });
 
     const findings = await query(
@@ -94,7 +112,9 @@ async function main() {
     assert(!findingIds.has(String(markedSuspended)), 'marked pre-enforcement suspended hold must be exempt');
     assert(findingIds.has(String(unmarkedOld)), 'unmarked pre-enforcement hold must still alert');
     assert(findingIds.has(String(markedNew)), 'post-enforcement actorless hold must still alert even with marker');
+    assert(findingIds.has(String(exactCutoff)), 'hold created exactly at enforcement cutoff must still alert');
     assert(findingIds.has(String(wrongMarkerOld)), 'wrong repair marker must not suppress an actorless hold');
+    assert(findingIds.has(String(malformedMetadataOld)), 'non-object metadata must never qualify for historical suppression');
 
     const preserved = await query(`
         SELECT hold_type,source_key,released_at,actor_user_id
