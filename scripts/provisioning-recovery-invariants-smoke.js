@@ -28,6 +28,7 @@ const freeBackfill = read('src/automation/free-capacity-backfill.js');
 const creationIntentRecovery = read('src/automation/jellyfin-creation-intent-recovery.js');
 const inactivity = read('src/automation/customer-inactivity.js');
 const scopedInactivity = read('src/automation/customer-inactivity-scoped.js');
+const inactivityGrace = read('src/entitlements/jellyfin-inactivity-grace.js');
 const accessHolds = read('src/entitlements/access-holds.js');
 const revenueIntegrity = read('src/automation/revenue-integrity.js');
 
@@ -62,7 +63,7 @@ assert(adminManualEntitlement.includes(canonicalAdminPresent),
 assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jellyfin',s\.id\)/g)||[]).length >= 2,
     'Free and trial acquisition transaction guards must both honor administrator-present Jellyfin access');
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
-    'generic reconciliation must retry persisted provisioning problems independently of acquisition flows');
+    'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 
 assert(lifecycle.includes("await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan')"),
     'Free plan acquisition must attempt immediate canonical reconciliation');
@@ -145,10 +146,14 @@ assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'
     'inactivity enforcement must fail closed when permanent/admin authority protects Free access');
 assert(inactivity.includes('ph.started_at>=ja.access_lane_changed_at'),
     'Free inactivity history must keep the paid-to-Free lane boundary so paid-era playback cannot satisfy a new Free allocation');
-assert(freeObservationReset.includes("access_lane='free'")
-    && freeObservationReset.includes('disabled=FALSE')
-    && freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
-    'pre-existing enabled Free accounts must receive one fresh observation window after the ambiguous historical lane-boundary backfill');
+assert(freeObservationReset.includes('ADD COLUMN IF NOT EXISTS inactivity_observation_reset_at')
+    && freeObservationReset.includes("access_lane_changed_at<=lt.applied_at")
+    && !freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
+    'legacy inactivity safety must mark ambiguous pre-column Free rows without rewriting their real lane boundary');
+assert(inactivityGrace.includes("source: 'legacy_lane_backfill'")
+    && inactivityGrace.includes('legacySafetyHours(row)')
+    && inactivityGrace.includes('inactivity_observation_reset_at IS NOT NULL'),
+    'ambiguous legacy Free rows must receive a full retention/usage observation window before destructive inactivity enforcement');
 
 assert(accessHolds.includes("error.code = 'ADMIN_ACCESS_HOLD_ACTOR_REQUIRED'")
     && accessHolds.includes("['admin_disabled', 'admin_suspended', 'admin_hold'].includes(requestedType)"),
