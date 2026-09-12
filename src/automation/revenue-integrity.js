@@ -177,6 +177,7 @@ async function scan() {
                    END AS violation
             FROM customer_service_admin_control ctl
             WHERE ctl.service='jellyfin'
+              AND ctl.updated_at<NOW()-INTERVAL '2 minutes'
               AND (
                 (ctl.mode='admin_present' AND NOT EXISTS(
                     SELECT 1 FROM jellyfin_accounts ja
@@ -205,12 +206,12 @@ async function scan() {
         `),
         query(`
             SELECT customer_id,access_lane,COUNT(*)::int AS active_count,
-                   array_agg(id ORDER BY created_at)::text[] AS account_ids,
-                   array_agg(server_id ORDER BY created_at)::text[] AS server_ids
+                   array_agg(id::text ORDER BY created_at) AS account_ids,
+                   array_agg(server_id::text ORDER BY created_at) AS server_ids
             FROM jellyfin_accounts
             WHERE account_purpose='jellyfin' AND disabled=FALSE
             GROUP BY customer_id,access_lane
-            HAVING COUNT(*)>1
+            HAVING COUNT(*)>1 AND MAX(updated_at)<NOW()-INTERVAL '2 minutes'
             ORDER BY COUNT(*) DESC,customer_id
             LIMIT 100
         `),
