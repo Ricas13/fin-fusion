@@ -31,10 +31,14 @@ function daysUntilExpiry(value, now = new Date()) {
 }
 
 function selectExpiryMilestone(value, milestones, now = new Date()) {
-    const daysLeft = daysUntilExpiry(value, now);
-    if (daysLeft == null) return null;
+    const end = new Date(value);
+    const current = new Date(now);
+    if (Number.isNaN(end.getTime()) || Number.isNaN(current.getTime()) || end <= current) return null;
     const configured = expiryPolicy.normalizeMilestones(milestones, { fallback: [] });
-    return configured.includes(daysLeft) ? daysLeft : null;
+    const remainingMs = end.getTime() - current.getTime();
+    if (remainingMs <= MS_PER_DAY && configured.includes(0)) return 0;
+    const daysRemaining = Math.ceil(remainingMs / MS_PER_DAY);
+    return configured.includes(daysRemaining) ? daysRemaining : null;
 }
 
 function expiryDedupeKey({ subscriptionId, accessExpiresAt, milestone }) {
@@ -107,11 +111,14 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
           AND s.status IN('active','past_due','paused','cancelled')
           AND s.current_period_end IS NOT NULL
           AND COALESCE(p.is_free_tier,FALSE)=FALSE
-          AND COALESCE(s.billing_interval_snapshot,p.billing_interval,'')<>'trial'
+          AND LOWER(COALESCE(s.billing_interval_snapshot,p.billing_interval,''))<>'trial'
           AND (
             s.billing_mode='payment'
-            OR s.status='cancelled'
-            OR (s.billing_mode='subscription' AND COALESCE(s.cancel_at_period_end,FALSE)=TRUE)
+            OR (
+              s.billing_mode='subscription'
+              AND s.source IN ('stripe','paypal')
+              AND (s.status='cancelled' OR COALESCE(s.cancel_at_period_end,FALSE)=TRUE)
+            )
           )
           AND NOT EXISTS (
             SELECT 1 FROM customer_entitlement_overrides o
