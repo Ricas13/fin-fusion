@@ -18,6 +18,7 @@ const automationReliabilityFastSmoke=require.resolve('./automation-reliability-a
 const automationReliabilityDbSmoke=require.resolve('./automation-reliability-audit-db-smoke');
 const postAuditSmoke=require.resolve('./post-audit-schema-hardening-db-smoke');
 const migrationRunnerSmoke=require.resolve('./migration-runner-hardening-smoke');
+const legacyActorlessAdminHoldsSmoke=require.resolve('./legacy-actorless-admin-holds-db-smoke');
 
 function assertIso(actual,expected,message){assert.strictEqual(actual.toISOString(),expected,message);}
 
@@ -36,7 +37,8 @@ async function main(){
   providerRecoverySmoke,
   automationReliabilityDbSmoke,
   postAuditSmoke,
-  migrationRunnerSmoke
+  migrationRunnerSmoke,
+  legacyActorlessAdminHoldsSmoke
  ]){
   execFileSync(process.execPath,[smoke],{stdio:'inherit',env:process.env});
  }
