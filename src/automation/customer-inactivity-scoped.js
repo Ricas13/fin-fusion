@@ -172,7 +172,13 @@ async function finalEligibility(row, globalCfg) {
     if (String(entitlement.plan_id || '') !== String(row.plan_id || '')) {
         return { ready: false, reason: 'free_entitlement_changed', entitlement };
     }
-    if (entitlement.blocked) return { ready: false, reason: 'free_entitlement_blocked', entitlement };
+    // A previously-created inactivity hold is allowed through so this worker can
+    // repair a prior reconciliation failure. Other blocked states fail closed.
+    // Admin-present/server-pin/permanent authority is checked independently below
+    // and therefore can never be bypassed by this repair exception.
+    if (entitlement.blocked && !row.repairExistingHold) {
+        return { ready: false, reason: 'free_entitlement_blocked', entitlement };
+    }
     if (adminProtectedFreeEntitlement(entitlement)) {
         return { ready: false, reason: 'admin_authority_protects_free_access', entitlement };
     }
@@ -206,7 +212,9 @@ async function finalEligibility(row, globalCfg) {
     if (!finalEntitlement || String(finalEntitlement.plan_id || '') !== String(row.plan_id || '')) {
         return { ready: false, reason: 'free_entitlement_changed_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
     }
-    if (finalEntitlement.blocked) return { ready: false, reason: 'free_entitlement_blocked_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
+    if (finalEntitlement.blocked && !fresh.repairExistingHold) {
+        return { ready: false, reason: 'free_entitlement_blocked_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
+    }
     if (adminProtectedFreeEntitlement(finalEntitlement)) {
         return { ready: false, reason: 'admin_authority_added_during_check', worker, server, fresh, userEvidence, entitlement: finalEntitlement };
     }
