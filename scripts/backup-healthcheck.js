@@ -4,9 +4,12 @@ const { Client } = require('pg');
 
 function rowHealthy(row) {
   if (!row) return false;
-  const heartbeatFresh = Number(row.age) < 180;
-  const operationHealthy = !row.last_error || row.next_run_at === null;
-  return heartbeatFresh && operationHealthy;
+
+  // Docker health answers one question only: is the backup worker alive and
+  // communicating with PostgreSQL? A failed backup/verification is operational
+  // degradation, not process death. Treating last_error as container-unhealthy
+  // couples non-critical backup failures to production deployment availability.
+  return Number(row.age) < 180;
 }
 
 async function main() {

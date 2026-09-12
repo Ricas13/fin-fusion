@@ -69,7 +69,13 @@
                 <ul class="featureList"><li><%= accessModel(p) %></li><li><%= pType==='stremio'?'Private Stremio installation':p.allow_downloads?'Downloads included':'Streaming only' %></li></ul>
                 <div class="planActions">
                   <% if(soldOut){ %>
-                    <span class="button secondary full" aria-disabled="true">Full</span>
+                    <% if(isFreePlan&&discordInviteUrl){ %>
+                      <div class="paymentNote">Free Access is full. Join Discord to be notified when places reopen.</div>
+                      <a class="button secondary full" href="<%= discordInviteUrl %>" target="_blank" rel="noopener noreferrer">Subscribe</a>
+                      <div class="accessMeta">Currently full</div>
+                    <% } else { %>
+                      <span class="button secondary full" aria-disabled="true">Full</span>
+                    <% } %>
                   <% } else if(isTrial){ %>
                     <form class="plainForm" method="post" action="/account/trial/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><button class="button primary full" type="submit">Start free trial</button></form>
                   <% } else if(isFreePlan){ %>

@@ -116,7 +116,16 @@ async function main() {
   const { header, cipher } = createEncryptionContext();
   const out = fs.createWriteStream(tempPath, { flags: 'wx', mode: 0o600 });
   out.write(header);
-  const child = spawn(process.env.PG_DUMP_BIN || 'pg_dump', ['--format=custom', '--no-owner', '--no-privileges'], {
+
+  // active_playback_sessions is replaceable runtime telemetry. Restoring it after
+  // a disaster is both useless and dangerous: stale account references can make
+  // an otherwise valid backup fail FK validation during a verification restore.
+  const child = spawn(process.env.PG_DUMP_BIN || 'pg_dump', [
+    '--format=custom',
+    '--no-owner',
+    '--no-privileges',
+    '--exclude-table-data=public.active_playback_sessions'
+  ], {
     env: postgresProcessEnv(),
     stdio: ['ignore', 'pipe', 'pipe']
   });

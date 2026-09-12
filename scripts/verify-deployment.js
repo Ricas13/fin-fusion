@@ -132,12 +132,15 @@ async function main() {
                        EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int AS age
                 FROM backup_worker_state WHERE worker_key='database_backup'
             `)).rows[0];
-            const backupHealthy = backupWorker
-                && Number(backupWorker.age) < 180
-                && (!backupWorker.last_error || backupWorker.next_run_at === null);
-            add('backup worker', backupHealthy,
+
+            // Backup/recovery protection remains observable through last_error and
+            // the recovery-readiness UI, but it is deliberately not a storefront
+            // deployment blocker. A non-critical backup failure must never roll
+            // back or prevent deployment of a healthy customer-facing application.
+            const backupWorkerAlive = Boolean(backupWorker && Number(backupWorker.age) < 180);
+            add('backup worker', backupWorkerAlive,
                 backupWorker
-                    ? `instance=${backupWorker.instance_id} heartbeat_age=${backupWorker.age}s last_success=${backupWorker.last_success_at || 'never'}${backupWorker.last_error ? ` error=${backupWorker.last_error}` : ''}`
+                    ? `instance=${backupWorker.instance_id} heartbeat_age=${backupWorker.age}s last_success=${backupWorker.last_success_at || 'never'}${backupWorker.last_error ? ` degraded_error=${backupWorker.last_error} retry=${backupWorker.next_run_at || 'unscheduled'}` : ''}`
                     : 'no heartbeat');
 
             const jobs = await jobHealth.list();

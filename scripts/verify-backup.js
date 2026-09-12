@@ -62,6 +62,39 @@ function openBackupDescriptor(filePath) {
     return { fd, stat };
 }
 
+function staleCleanupEnabled() {
+    const value = String(process.env.BACKUP_VERIFY_CLEAN_STALE_DATABASES || 'true').trim().toLowerCase();
+    return !['0', 'false', 'no', 'off'].includes(value);
+}
+
+async function cleanupStaleVerificationDatabases(admin) {
+    if (!staleCleanupEnabled()) return 0;
+    const result = await admin.query(`
+        SELECT d.datname
+        FROM pg_database d
+        WHERE d.datname LIKE 'captainfin_verify_%'
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_stat_activity a WHERE a.datname=d.datname
+          )
+        ORDER BY d.datname
+    `);
+    let dropped = 0;
+    for (const row of result.rows) {
+        const name = String(row.datname || '');
+        if (!/^captainfin_verify_[0-9a-f]{12}$/.test(name)) continue;
+        try {
+            await admin.query(`DROP DATABASE IF EXISTS "${name}"`);
+            dropped++;
+            console.warn(`Removed abandoned verification database ${name}.`);
+        } catch (error) {
+            // Cleanup is best-effort. A database that became active between the
+            // discovery query and DROP must never make a fresh verification fail.
+            console.warn(`Could not remove abandoned verification database ${name}: ${error.message}`);
+        }
+    }
+    return dropped;
+}
+
 async function main() {
     requireBackupKey();
     const verifierBase = String(process.env.BACKUP_VERIFY_DATABASE_URL || '').trim();
@@ -123,6 +156,7 @@ async function main() {
 
         await run(process.env.PG_RESTORE_BIN || 'pg_restore', ['--list', plain], process.env);
         await admin.connect();
+        await cleanupStaleVerificationDatabases(admin);
         await admin.query(`CREATE DATABASE ${databaseName}`);
         created = true;
 
