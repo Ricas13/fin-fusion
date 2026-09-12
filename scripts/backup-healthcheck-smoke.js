@@ -44,8 +44,9 @@ assert(
   'database backups must exclude ephemeral active playback rows so stale sessions cannot invalidate restore verification'
 );
 
-const composeSource = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
-assert(composeSource.includes('BACKUP_VERIFY_CLEAN_STALE_DATABASES: ${BACKUP_VERIFY_CLEAN_STALE_DATABASES:-true}'), 'backup worker must clean abandoned verification databases by default');
-assert(composeSource.includes('stop_grace_period: 2m'), 'backup worker must receive enough shutdown grace for verification cleanup');
+const verifySource = fs.readFileSync(path.join(__dirname, 'verify-backup.js'), 'utf8');
+assert(verifySource.includes('cleanupStaleVerificationDatabases'), 'verification must clean abandoned temporary verification databases');
+assert(verifySource.includes("/^captainfin_verify_[0-9a-f]{12}$/"), 'stale verification cleanup must be restricted to generated verification database names');
+assert(verifySource.includes('NOT EXISTS ('), 'stale verification cleanup must avoid databases with active sessions');
 
 console.log('backup healthcheck smoke: ok');
