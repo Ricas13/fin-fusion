@@ -9,9 +9,10 @@ const termination = require('../src/payments/subscription-termination');
 const paymentRetry = require('../src/payments/payment-event-retry');
 const providerOps = require('../src/payments/provider-operations');
 const integrity = require('../src/automation/revenue-integrity');
+const integrityFreshness = require('../src/integrations/integrity-alert-freshness');
 
 const suffix = crypto.randomBytes(5).toString('hex');
-const created = { customers: [], plans: [], paymentEvents: [], providerOps: [], deletionJobs: [] };
+const created = { customers: [], plans: [], paymentEvents: [], providerOps: [], deletionJobs: [], notificationOutbox: [] };
 
 async function createCustomer(label) {
     const result = await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`, [
@@ -151,7 +152,63 @@ async function testDeletionTargetRefreshesParentLease() {
     assert(new Date(after.rows[0].updated_at).getTime() > before, 'durable deletion target progress must refresh the parent deletion job lease');
 }
 
+async function testResolvedIntegrityAlertIsSuppressedBeforeDelivery() {
+    const event = await query(`
+        INSERT INTO payment_events(
+            provider,provider_event_id,event_type,payload,processing_error,created_at
+        ) VALUES(
+            'plisio',$1,'operation.pending',$2::jsonb,'Synthetic stale Plisio event',NOW()-INTERVAL '60 minutes'
+        )
+        RETURNING id
+    `, [
+        `integrity-freshness-${suffix}`,
+        JSON.stringify({ txn_id: `integrity-freshness-${suffix}`, status: 'pending' })
+    ]);
+    created.paymentEvents.push(event.rows[0].id);
+
+    const findings = await integrity.scan();
+    assert(
+        findings.some(item => item.kind === 'payment_event_stale' && String(item.id) === String(event.rows[0].id)),
+        'stale supported payment event must enter the integrity snapshot'
+    );
+
+    const snapshot = integrity.fingerprint(findings);
+    const dedupeKey = `admin:db-smoke:discord:automation-integrity:${snapshot}:12345`;
+    const fresh = await integrityFreshness.evaluate({ dedupe_key: dedupeKey });
+    assert.strictEqual(fresh.guarded, true, 'integrity alert dedupe key must activate delivery freshness protection');
+    assert.strictEqual(fresh.fresh, true, 'unchanged integrity snapshot must remain deliverable');
+
+    await query(`
+        UPDATE payment_events
+        SET processed_at=NOW(),processing_error=NULL,processing_started_at=NULL,processing_token=NULL
+        WHERE id=$1
+    `, [event.rows[0].id]);
+
+    const resolved = await integrityFreshness.evaluate({ dedupe_key: dedupeKey });
+    assert.strictEqual(resolved.fresh, false, 'resolved payment failure must invalidate the queued integrity snapshot');
+
+    const outbox = await query(`
+        INSERT INTO notification_outbox(
+            channel,message_type,event_type,destination,payload,dedupe_key,status,next_attempt_at,last_attempt_at
+        ) VALUES(
+            'discord','automation.integrity.failed','automation.integrity.failed','db-smoke-destination',
+            '{}'::jsonb,$1,'sending',NOW(),NOW()
+        )
+        RETURNING id,dedupe_key
+    `, [dedupeKey]);
+    created.notificationOutbox.push(outbox.rows[0].id);
+
+    const suppressed = await integrityFreshness.cancelIfStale(outbox.rows[0]);
+    assert.strictEqual(suppressed.cancelled, true, 'resolved integrity alert must be cancelled before external delivery');
+
+    const after = await query(`SELECT status,dedupe_key,payload FROM notification_outbox WHERE id=$1`, [outbox.rows[0].id]);
+    assert.strictEqual(after.rows[0]?.status, 'cancelled', 'suppressed alert must use the durable cancelled outbox state');
+    assert.strictEqual(after.rows[0]?.dedupe_key, null, 'suppressed alert must release its dedupe key for a future genuine recurrence');
+    assert(after.rows[0]?.payload?.suppressed_reason, 'suppressed alert must retain a durable reason for operator audit');
+}
+
 async function cleanup() {
+    if (created.notificationOutbox.length) await query(`DELETE FROM notification_outbox WHERE id=ANY($1::uuid[])`, [created.notificationOutbox]).catch(() => {});
     if (created.deletionJobs.length) await query(`DELETE FROM customer_deletion_jobs WHERE id=ANY($1::uuid[])`, [created.deletionJobs]).catch(() => {});
     if (created.paymentEvents.length) await query(`DELETE FROM payment_events WHERE id=ANY($1::uuid[])`, [created.paymentEvents]).catch(() => {});
     if (created.providerOps.length) await query(`DELETE FROM provider_operations WHERE id=ANY($1::uuid[])`, [created.providerOps]).catch(() => {});
@@ -172,6 +229,7 @@ async function cleanup() {
         await testImmediatePlanChangeWakesReconciliation();
         await testManualProviderOperationIsIntegrityFinding();
         await testDeletionTargetRefreshesParentLease();
+        await testResolvedIntegrityAlertIsSuppressedBeforeDelivery();
         console.log('automation reliability audit DB smoke: ok');
     } finally {
         await cleanup();
