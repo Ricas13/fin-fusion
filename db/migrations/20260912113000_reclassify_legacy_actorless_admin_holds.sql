@@ -8,8 +8,9 @@ BEGIN;
 -- These historical rows are real blocking authority. Do not release them,
 -- fabricate an actor, or rewrite hold_type/source_key: doing any of those would
 -- change customer-access semantics. Instead, mark only pre-enforcement active
--- actorless rows with a durable repair marker. The integrity watchdog exempts a
--- row only when both the historical cutoff and this exact marker are present.
+-- actorless rows with a durable repair marker and append matching audit evidence.
+-- The integrity watchdog exempts a row only when the historical cutoff, exact
+-- marker, and matching audit event all agree.
 --
 -- Metadata written by the application is an object. If a historical row has a
 -- malformed/scalar/array metadata value, leave it untouched and visible to the
