@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { expandedScript } = require('./run-check-suite');
 
 function source(relative) {
     return fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
@@ -12,7 +13,6 @@ const resilient = source('src/jellyfin/resilient-provisioning.js');
 const expiry = source('src/entitlements/subscription-expiry.js');
 const retry = source('src/entitlements/automatic-free-downgrade-retry.js');
 const jobs = source('src/automation/jobs.js');
-const packageJson = require('../package.json');
 
 const wrapperStart = resilient.indexOf('async function maybeAutoDowngrade');
 const expiryStart = resilient.indexOf('async function expireSubscriptionsAndReconcile', wrapperStart);
@@ -31,6 +31,6 @@ assert(retry.includes('next_attempt_at=NOW()+make_interval'), 'automatic downgra
 assert(retry.includes("subscription.free.auto_downgrade.retry_resolved"), 'resolved automatic downgrade retries must be auditable');
 assert(jobs.includes('automaticFreeDowngradeRetry.processDue'), 'entitlement automation must process durable automatic downgrade retries');
 
-assert(String(packageJson.scripts['check:db'] || '').includes('automatic-free-downgrade-retry-db-smoke.js'), 'automatic downgrade retry DB regression must run in check:db');
+assert(expandedScript('check:db').includes('node scripts/automatic-free-downgrade-retry-db-smoke.js'), 'automatic downgrade retry DB regression must run in check:db');
 
 console.log('automatic Free downgrade retry ownership smoke: ok');

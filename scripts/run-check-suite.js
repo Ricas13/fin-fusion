@@ -1,9 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
-const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const scripts = packageJson.scripts || {};
 const scriptName = process.argv[2] || 'check:fast';
 const timeoutArg = process.argv.find(arg => arg.startsWith('--timeout-ms='));
@@ -19,6 +20,11 @@ function expand(command, stack = []) {
     if (!scripts[name]) throw new Error(`Unknown npm script: ${name}`);
     return expand(scripts[name], [...stack, name]);
   });
+}
+
+function expandedScript(name) {
+  if (!scripts[name]) throw new Error(`Unknown npm script: ${name}`);
+  return expand(scripts[name], [name]);
 }
 
 function terminate(child) {
@@ -103,9 +109,8 @@ function selectedCommands(all) {
 }
 
 async function main() {
-  if (!scripts[scriptName]) throw new Error(`Unknown npm script: ${scriptName}`);
+  const all = expandedScript(scriptName);
   try { fs.rmSync(failureFile, { force:true }); } catch (_) {}
-  const all = expand(scripts[scriptName], [scriptName]);
   const selected = selectedCommands(all);
   console.log(`check suite mode=${selected.mode}; running ${selected.commands.length}/${selected.originalTotal} commands from ${selected.offset+1}`);
   for (let i = 0; i < selected.commands.length; i += 1) {
@@ -119,20 +124,24 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  const diagnostic = [
-    `suite=${scriptName}`,
-    `index=${error.commandIndex || ''}`,
-    `total=${error.commandTotal || ''}`,
-    `command=${error.failedCommand || ''}`,
-    `error=${String(error.message || error).replace(/\r?\n/g, ' ')}`
-  ].join('\n') + '\n';
-  try { fs.writeFileSync(failureFile, diagnostic, 'utf8'); } catch (_) {}
-  if (process.env.GITHUB_ACTIONS === 'true') {
-    const title = `Check ${error.commandIndex || '?'} of ${error.commandTotal || '?'} failed`;
-    const message = `${error.failedCommand || scriptName}: ${error.message || error}`;
-    console.error(`::error title=${annotationEscape(title)}::${annotationEscape(message)}`);
-  }
-  console.error(error.message || error);
-  process.exit(1);
-});
+module.exports = { expand, expandedScript };
+
+if (require.main === module) {
+  main().catch(error => {
+    const diagnostic = [
+      `suite=${scriptName}`,
+      `index=${error.commandIndex || ''}`,
+      `total=${error.commandTotal || ''}`,
+      `command=${error.failedCommand || ''}`,
+      `error=${String(error.message || error).replace(/\r?\n/g, ' ')}`
+    ].join('\n') + '\n';
+    try { fs.writeFileSync(failureFile, diagnostic, 'utf8'); } catch (_) {}
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      const title = `Check ${error.commandIndex || '?'} of ${error.commandTotal || '?'} failed`;
+      const message = `${error.failedCommand || scriptName}: ${error.message || error}`;
+      console.error(`::error title=${annotationEscape(title)}::${annotationEscape(message)}`);
+    }
+    console.error(error.message || error);
+    process.exit(1);
+  });
+}
