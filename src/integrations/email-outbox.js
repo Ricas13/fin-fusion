@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 const { encryptWithEnv, decryptWithEnv } = require('../security/purpose-crypto');
 const emailSettings = require('./email-settings');
+const freshness = require('./integrity-alert-freshness');
 
 const PREFIX = 'mail1';
 const KEY_ENV = 'DATA_ENCRYPTION_KEY';
@@ -37,12 +38,13 @@ async function enqueue({ type, to, subject, text, html = '', dedupeKey = null })
     };
     if (!payload.subject || !payload.text) throw new Error('Email subject and text body are required.');
     const key = dedupeKey ? cleanText(dedupeKey, 300) : null;
+    const nextAttemptAt = freshness.nextAttemptAt(key);
     const result = await query(`
-        INSERT INTO notification_outbox(channel,message_type,recipient_email,payload_encrypted,dedupe_key,status,next_attempt_at)
-        VALUES('email',$1,$2,$3,$4,'pending',NOW())
+        INSERT INTO notification_outbox(channel,message_type,event_type,recipient_email,payload,payload_encrypted,dedupe_key,status,next_attempt_at)
+        VALUES('email',$1,$1,$2,'{}'::jsonb,$3,$4,'pending',$5)
         ON CONFLICT(dedupe_key) DO UPDATE SET updated_at=notification_outbox.updated_at
         RETURNING id,status,created_at
-    `, [cleanText(type || 'transactional', 100), recipient, encryptPayload(payload), key]);
+    `, [cleanText(type || 'transactional', 100), recipient, encryptPayload(payload), key, nextAttemptAt]);
     return result.rows[0];
 }
 
@@ -104,6 +106,13 @@ async function recordUncertainDelivery(row, persistenceError) {
 }
 
 async function deliverOne(row, sender = emailSettings.send) {
+    try {
+        const gate = await freshness.cancelIfStale(row);
+        if (gate.cancelled) return { id: row.id, ok: true, suppressed: true, reason: gate.reason };
+    } catch (error) {
+        return recordConfirmedFailure(row, error);
+    }
+
     const payload = decryptPayload(row.payload_encrypted);
     try {
         await sender({ to: row.recipient_email, subject: payload.subject, text: payload.text, html: payload.html || '' });
@@ -127,14 +136,15 @@ async function deliverOne(row, sender = emailSettings.send) {
 async function deliverDue({ limit = 20, sender = emailSettings.send } = {}) {
     const max = Math.max(1, Math.min(100, Number(limit) || 20));
     const quarantined = await quarantineStaleSending();
-    const result = { attempted: 0, sent: 0, failed: 0, quarantined, items: [] };
+    const result = { attempted: 0, sent: 0, failed: 0, suppressed: 0, quarantined, items: [] };
     for (let index = 0; index < max; index += 1) {
         const row = await claimOne();
         if (!row) break;
         result.attempted += 1;
         const delivered = await deliverOne(row, sender);
         result.items.push(delivered);
-        if (delivered.ok) result.sent += 1;
+        if (delivered.suppressed) result.suppressed += 1;
+        else if (delivered.ok) result.sent += 1;
         else result.failed += 1;
     }
     if (quarantined) {
@@ -151,9 +161,9 @@ async function retry(id) {
             next_attempt_at=CASE WHEN status='sent' THEN next_attempt_at ELSE NOW() END,
             last_error=CASE WHEN status='sent' THEN last_error ELSE NULL END,
             updated_at=NOW()
-        WHERE id=$1 AND channel='email' RETURNING id,status
+        WHERE id=$1 AND channel='email' AND status<>'cancelled' RETURNING id,status
     `, [id]);
-    if (!result.rowCount) throw new Error('Email delivery not found.');
+    if (!result.rowCount) throw new Error('Email delivery not found or is no longer retryable.');
     return result.rows[0];
 }
 
@@ -171,11 +181,12 @@ async function counts() {
                COUNT(*) FILTER (WHERE status='pending')::int AS pending,
                COUNT(*) FILTER (WHERE status='failed')::int AS failed,
                COUNT(*) FILTER (WHERE status='dead')::int AS dead,
-               COUNT(*) FILTER (WHERE status='sent')::int AS sent
+               COUNT(*) FILTER (WHERE status='sent')::int AS sent,
+               COUNT(*) FILTER (WHERE status='cancelled')::int AS cancelled
         FROM notification_outbox
         WHERE channel='email'
     `);
-    return result.rows[0] || { total: 0, pending: 0, failed: 0, dead: 0, sent: 0 };
+    return result.rows[0] || { total: 0, pending: 0, failed: 0, dead: 0, sent: 0, cancelled: 0 };
 }
 
 module.exports = { enqueue, deliverDue, deliverOne, retry, recent, counts, retryDelayMs, encryptPayload, decryptPayload, quarantineStaleSending, recordConfirmedFailure, recordUncertainDelivery, STALE_SENDING_MINUTES, UNCERTAIN_DELIVERY_ERROR };
