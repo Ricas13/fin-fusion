@@ -31,12 +31,17 @@ assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'serv
 assert(expiry.DEFAULT_WARNING_DAYS >= 1 && expiry.DEFAULT_WARNING_DAYS <= 30, 'expiry warning window must stay bounded');
 assert.deepStrictEqual(expiryPolicy.DEFAULT_POLICY.milestones, [3, 0], 'default expiry cadence must cover three days and the final 24 hours only');
 assert.deepStrictEqual(expiryPolicy.normalizeMilestones([1, '7', 3, 7, 0, 31, -1]), [3, 0], 'retired 7-day/1-day milestones must be discarded');
+assert.deepStrictEqual(expiryPolicy.normalizePolicy({ milestones: [7, 1] }).milestones, [3, 0], 'legacy unsupported-only policies must safely fall back to the new default cadence');
 
 const milestoneNow = new Date('2026-09-01T12:00:00Z');
 const afterHours = hours => new Date(milestoneNow.getTime() + hours * 60 * 60 * 1000);
 assert.strictEqual(expiry.selectExpiryMilestone(afterHours(7 * 24 + 12), [7, 3, 1, 0], milestoneNow), null, 'retired seven-day milestone must not be selectable');
-assert.strictEqual(expiry.selectExpiryMilestone(afterHours(3 * 24 + 12), [3, 0], milestoneNow), 3, 'three-day milestone must cover its 24-hour window');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(3 * 24 + 12), [3, 0], milestoneNow), null, 'three-day reminder must not fire early in the 72-to-96-hour window');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(3 * 24), [3, 0], milestoneNow), 3, 'three-day reminder must begin at 72 hours remaining');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(2 * 24 + 12), [3, 0], milestoneNow), 3, 'three-day reminder window must cover 48-to-72 hours remaining');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(2 * 24), [3, 0], milestoneNow), null, 'the 48-hour boundary must not create an extra reminder');
 assert.strictEqual(expiry.selectExpiryMilestone(afterHours(1 * 24 + 12), [3, 0], milestoneNow), null, '24-to-48-hours remaining must not create a duplicate one-day warning');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(24), [3, 0], milestoneNow), 0, 'the final-24-hours reminder must begin exactly at 24 hours');
 assert.strictEqual(expiry.selectExpiryMilestone(afterHours(12), [3, 0], milestoneNow), 0, 'final 24 hours must map to the zero-day milestone');
 assert.strictEqual(expiry.selectExpiryMilestone(milestoneNow, [3, 0], milestoneNow), null, 'already expired access must not receive an expiry reminder');
 const expiryAt = '2026-09-04T12:00:00.000Z';
@@ -57,10 +62,11 @@ assert(expirySource.includes("eventType: 'subscription.expiring'"), 'subscriptio
 assert(!expirySource.includes('SUBSCRIPTION_EXPIRY_WARNING_DAYS'), 'expiry cadence must no longer be owned by one environment warning-day value');
 assert(!/async function expiringSubscriptions[\s\S]*?LIMIT\s+\$\d/i.test(expirySource), 'expiry warning discovery must not use a fixed SQL LIMIT');
 assert(expirySource.includes("COALESCE(p.is_free_tier,FALSE)=FALSE"), 'non-expiring Free Access must not receive expiry warnings');
-assert(expirySource.includes("COALESCE(s.billing_interval_snapshot,p.billing_interval,'')<>'trial'"), 'trials must not receive normal subscription expiry reminders');
+assert(expirySource.includes("LOWER(COALESCE(s.billing_interval_snapshot,p.billing_interval,''))<>'trial'"), 'trials must not receive normal subscription expiry reminders');
 assert(expirySource.includes("s.billing_mode='payment'"), 'prepaid payment-mode access must remain eligible for expiry reminders');
-assert(expirySource.includes("s.status='cancelled'"), 'cancelled paid-through subscriptions must remain eligible for expiry reminders');
-assert(expirySource.includes("COALESCE(s.cancel_at_period_end,FALSE)=TRUE"), 'provider subscriptions cancelled at period end must remain eligible while locally active');
+assert(expirySource.includes("s.billing_mode='subscription'\n              AND s.source IN ('stripe','paypal')"), 'only provider-backed recurring subscriptions may use cancellation expiry reminders');
+assert(expirySource.includes("s.status='cancelled' OR COALESCE(s.cancel_at_period_end,FALSE)=TRUE"), 'cancelled or cancel-at-period-end recurring subscriptions must remain eligible');
+assert(!/s\.billing_mode='payment'\s+OR\s+s\.status='cancelled'/.test(expirySource), 'cancelled manual/non-recurring rows must not bypass the billing-mode eligibility boundary');
 assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.includes('o.permanent_access=TRUE AND o.revoked_at IS NULL'), 'active Permanent Access must suppress expiry warnings for its pinned subscription');
 assert(expirySource.includes('subscription_admin_present'), 'an admin-granted goodwill/authority present state must also suppress expiry warnings, since that access will not actually lapse');
 assert(/async function notifyExpiringSubscriptions\(\)\s*\{\s*return subscriptionExpiry\.notifyExpiringSubscriptions\(\);\s*\}/.test(provisioning), 'subscription-expiry notification behavior must remain behind the provisioning facade');
