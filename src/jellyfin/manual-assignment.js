@@ -90,7 +90,9 @@ async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
     await query(`UPDATE jellyfin_accounts SET disabled=FALSE,password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
     account={...account,disabled:false,is_primary:true,password_setup_required:true};reused=true;
   }else{
-    account=await provisioning.createJellyfinAccount(customerId,server,effective,{makePrimary:true});
+    // This is an explicit administrator force action. Capacity is an automatic
+    // placement guard only; it must never veto the exact server the operator chose.
+    account=await provisioning.createJellyfinAccount(customerId,server,effective,{makePrimary:true,allowOverCapacity:true});
     await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
     account.password_setup_required=true;
   }
