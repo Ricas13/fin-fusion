@@ -47,7 +47,7 @@ async function cancelIfStale(row) {
         UPDATE notification_outbox
         SET status='cancelled',
             payload=COALESCE(payload,'{}'::jsonb) || jsonb_build_object(
-                'suppressed_reason',$2,
+                'suppressed_reason',$2::text,
                 'suppressed_dedupe_key',dedupe_key,
                 'suppressed_at',NOW()
             ),
