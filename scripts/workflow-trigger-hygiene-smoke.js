@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { expandedScript } = require('./run-check-suite');
 
 const root = path.join(__dirname, '..');
 const workflowDir = path.join(root, '.github', 'workflows');
@@ -73,9 +74,8 @@ if (!branchHygieneWorkflow.includes('! grep -q \'^+\' <<<"$cherry"')) {
   throw new Error('Patch-equivalence pruning must retain any branch with a patch not represented in main.');
 }
 
-const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-const fast = String(packageJson.scripts?.['check:fast'] || '');
-const db = String(packageJson.scripts?.['check:db'] || '');
+const fast = expandedScript('check:fast').join(' && ');
+const db = expandedScript('check:db').join(' && ');
 const releaseWorkflow = fs.readFileSync(path.join(workflowDir, 'release-integrity.yml'), 'utf8');
 const ciWorkflow = fs.readFileSync(path.join(workflowDir, 'ci.yml'), 'utf8');
 const integrationWorkflow = fs.readFileSync(path.join(workflowDir, 'integration.yml'), 'utf8');
