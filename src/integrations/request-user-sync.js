@@ -64,11 +64,39 @@ function externalIdentity(value) {
   return String(value || '').trim().toLowerCase();
 }
 function requestLogin(candidate) {
-  return cleanUsername(candidate?.username);
+  return externalIdentity(cleanUsername(candidate?.username));
 }
 function fallbackEmail(customerId) {
   const compact = String(customerId || '').replace(/[^a-f0-9]/gi, '').toLowerCase().slice(0, 24) || crypto.randomBytes(8).toString('hex');
   return `cf-${compact}@captainfin.invalid`;
+}
+function legacyRequestEmails(candidate) {
+  return [...new Set([
+    validEmail(candidate?.external_email),
+    validEmail(candidate?.email),
+    fallbackEmail(candidate?.customer_id)
+  ].filter(Boolean))];
+}
+function sameExternalUser(left, right) {
+  return left?.id != null && right?.id != null && String(left.id) === String(right.id);
+}
+function trustedExternalForCandidate(candidate, indexes = {}) {
+  if (candidate?.external_user_id) {
+    const linked = indexes.byId?.get(String(candidate.external_user_id)) || null;
+    if (linked) return linked;
+  }
+  for (const email of legacyRequestEmails(candidate)) {
+    const linked = indexes.byEmail?.get(externalIdentity(email)) || null;
+    if (linked) return linked;
+  }
+  return null;
+}
+function loginCollisionForCandidate(candidate, indexes = {}, login, trustedExternal = null) {
+  const target = indexes.byEmail?.get(externalIdentity(login)) || null;
+  if (!target) return null;
+  if (trustedExternal && sameExternalUser(target, trustedExternal)) return null;
+  if (candidate?.external_user_id && String(target.id) === String(candidate.external_user_id)) return null;
+  return target;
 }
 function quotaLimit(value) { const n = Number(value); return Number.isInteger(n) && n > 0 ? n : 0; }
 function quotaDays(value) { const n = Number(value); return Number.isInteger(n) && n > 0 ? n : 30; }
@@ -161,7 +189,7 @@ async function externalUsersForCandidates(candidates) {
   const wantedIds = new Set(rows.map(row => row.external_user_id == null ? null : String(row.external_user_id)).filter(Boolean));
   const wantedEmails = new Set();
   for (const candidate of rows) {
-    for (const value of [requestLogin(candidate), candidate.external_username, candidate.external_email, candidate.email, fallbackEmail(candidate.customer_id)]) {
+    for (const value of [requestLogin(candidate), ...legacyRequestEmails(candidate)]) {
       const identity = externalIdentity(value);
       if (identity) wantedEmails.add(identity);
     }
@@ -194,7 +222,7 @@ function requestLocale(override, current) {
 }
 function desiredMainSettings(current, externalUsername, plan, externalEmail = null) {
   const username = cleanUsername(plan?.username || externalUsername || current?.username);
-  const email = username;
+  const email = externalIdentity(externalEmail || username);
   const discoverRegion = planValue(plan?.request_discover_region, current?.discoverRegion ?? current?.region, null);
   const streamingRegion = planValue(plan?.request_streaming_region, current?.streamingRegion ?? current?.region, null);
   return {
@@ -264,9 +292,16 @@ async function suspendCustomer(candidate, external, { planId = null, desired = n
 function indexesFor(users) {
   return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [externalIdentity(user.email), user])) };
 }
-function rememberExternal(indexes, external) {
-  if (external?.id != null && indexes?.byId) indexes.byId.set(String(external.id), external);
-  if (external?.email && indexes?.byEmail) indexes.byEmail.set(externalIdentity(external.email), external);
+function rememberExternal(indexes, external, previousEmail = null) {
+  const id = external?.id == null ? null : String(external.id);
+  const nextEmail = externalIdentity(external?.email);
+  const oldEmail = externalIdentity(previousEmail);
+  if (oldEmail && oldEmail !== nextEmail && indexes?.byEmail) {
+    const previous = indexes.byEmail.get(oldEmail);
+    if (!id || (previous?.id != null && String(previous.id) === id)) indexes.byEmail.delete(oldEmail);
+  }
+  if (id && indexes?.byId) indexes.byId.set(id, external);
+  if (nextEmail && indexes?.byEmail) indexes.byEmail.set(nextEmail, external);
   return external;
 }
 async function createExternalUserConvergently({ candidate, indexes, email, username, password, createUser = null, listUsers = null }) {
@@ -282,8 +317,11 @@ async function createExternalUserConvergently({ candidate, indexes, email, usern
     let refreshed;
     try { refreshed = indexesFor(await refresh()); }
     catch { throw createError; }
-    let external = candidate?.external_user_id ? refreshed.byId.get(String(candidate.external_user_id)) : null;
-    if (!external) external = refreshed.byEmail.get(externalIdentity(email)) || null;
+    let external = trustedExternalForCandidate(candidate, refreshed);
+    if (!external) {
+      const target = refreshed.byEmail.get(externalIdentity(email)) || null;
+      if (target && externalIdentity(target.username) === externalIdentity(username)) external = target;
+    }
     if (!external) throw createError;
     return { external: rememberExternal(indexes, external), created: false, recoveredConcurrentCreate: true };
   }
@@ -295,22 +333,17 @@ async function resolveRequestCandidate(candidate) {
 }
 async function syncCustomer(candidate, indexes = {}, options = {}) {
   candidate = await resolveRequestCandidate(candidate);
-  const username = requestLogin(candidate), email = username;
+  const username = cleanUsername(candidate?.username), email = requestLogin(candidate);
   const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
-  let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
-  if (!external) {
-    for (const value of [email, candidate.external_email, candidate.email]) {
-      const identity = externalIdentity(value);
-      if (identity) external = indexes.byEmail?.get(identity) || null;
-      if (external) break;
-    }
-  }
+  let external = trustedExternalForCandidate(candidate, indexes);
   if (!candidate.entitlement_active) return suspendCustomer(candidate, external, { planId: null });
   if (candidate.request_access_enabled === false) {
     const managedDesired = candidate.request_permissions == null ? null : planPolicy.sanitizePermissionMask(candidate.request_permissions);
     return suspendCustomer(candidate, external, { planId: candidate.plan_id, desired: managedDesired });
   }
   try {
+    const collision = loginCollisionForCandidate(candidate, indexes, email, external);
+    if (collision) throw new Error(`Request-site login "${email}" is already used by another Seerr account; refusing to adopt or overwrite it.`);
     let created = false, recoveredConcurrentCreate = false;
     if (!external) {
       const bootstrapPassword = suppliedPassword || crypto.randomBytes(30).toString('base64url');
@@ -325,12 +358,13 @@ async function syncCustomer(candidate, indexes = {}, options = {}) {
     const activePermissions = desiredPermissions(candidate, currentPermissions);
     const permissionsChanged = currentPermissions !== activePermissions;
     if (permissionsChanged) await setPermissions(external.id, activePermissions);
+    const previousEmail = external.email;
     const main = await syncMainSettings(external.id, username, candidate, email);
     const settings = main.settings;
     if (main.changed) {
       external.email = settings.email;
       external.username = settings.username;
-      rememberExternal(indexes, external);
+      rememberExternal(indexes, external, previousEmail);
     }
     const passwordResetRequired = Boolean(candidate.password_reset_required) || (created && !suppliedPassword) || recoveredConcurrentCreate;
     await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: settings.email, username: settings.username, passwordResetRequired, activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
