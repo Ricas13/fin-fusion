@@ -23,7 +23,7 @@ id "$RUN_AS_USER" >/dev/null 2>&1 || fail "Deployment user $RUN_AS_USER does not
 log "Installing CAPTAiNFiN availability watchdog for $ROOT"
 cat >"$SYSTEMD_DIR/$SERVICE_NAME.service" <<EOF
 [Unit]
-Description=CAPTaINFiN availability watchdog
+Description=CAPTAiNFiN availability watchdog
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
@@ -43,7 +43,7 @@ EOF
 
 cat >"$SYSTEMD_DIR/$SERVICE_NAME.timer" <<EOF
 [Unit]
-Description=Run CAPTaINFiN availability watchdog every 30 seconds
+Description=Run CAPTAiNFiN availability watchdog every 30 seconds
 
 [Timer]
 OnBootSec=45s
