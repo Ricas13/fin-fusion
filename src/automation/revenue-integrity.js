@@ -9,22 +9,33 @@ const ADMIN_ACTOR_ENFORCED_AT = '2026-09-12T08:32:17.000Z';
 const LEGACY_ACTORLESS_ADMIN_REPAIR = '20260912113000';
 
 const ACTORLESS_ADMIN_HOLDS_SQL = `
-    SELECT id,customer_id,hold_type,source_key,reason,created_at
-    FROM customer_access_holds
-    WHERE released_at IS NULL
-      AND actor_user_id IS NULL
-      AND source_key='admin'
-      AND hold_type IN('admin_disabled','admin_suspended','admin_hold')
+    SELECT h.id,h.customer_id,h.hold_type,h.source_key,h.reason,h.created_at
+    FROM customer_access_holds h
+    WHERE h.released_at IS NULL
+      AND h.actor_user_id IS NULL
+      AND h.source_key='admin'
+      AND h.hold_type IN('admin_disabled','admin_suspended','admin_hold')
       AND NOT (
-        created_at < $1::timestamptz
-        AND COALESCE(jsonb_typeof(metadata),'')='object'
-        AND metadata @> jsonb_build_object(
+        h.created_at < $1::timestamptz
+        AND COALESCE(jsonb_typeof(h.metadata),'')='object'
+        AND h.metadata @> jsonb_build_object(
           'legacyActorlessAdmin', TRUE,
           'legacyActorRepair', $2::text
         )
-        AND NULLIF(metadata->>'legacyActorMarkedAt','') IS NOT NULL
+        AND NULLIF(h.metadata->>'legacyActorMarkedAt','') IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM audit_log a
+          WHERE a.action='customer.access_hold.legacy_actorless_marked'
+            AND a.entity_type='customer'
+            AND a.entity_id=h.customer_id::text
+            AND a.metadata->>'holdId'=h.id::text
+            AND a.metadata->>'repair'=$2::text
+            AND COALESCE((a.metadata->>'preservedBlockingState')::boolean,FALSE)=TRUE
+            AND COALESCE((a.metadata->>'preservedAuthorityIdentity')::boolean,FALSE)=TRUE
+        )
       )
-    ORDER BY created_at
+    ORDER BY h.created_at
     LIMIT 100
 `;
 
