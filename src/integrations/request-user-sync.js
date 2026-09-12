@@ -60,6 +60,12 @@ function cleanUsername(value) {
   const username = String(value || '').trim().replace(/[^A-Za-z0-9._-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
   return username || 'user';
 }
+function externalIdentity(value) {
+  return String(value || '').trim().toLowerCase();
+}
+function requestLogin(candidate) {
+  return cleanUsername(candidate?.username);
+}
 function fallbackEmail(customerId) {
   const compact = String(customerId || '').replace(/[^a-f0-9]/gi, '').toLowerCase().slice(0, 24) || crypto.randomBytes(8).toString('hex');
   return `cf-${compact}@captainfin.invalid`;
@@ -155,9 +161,9 @@ async function externalUsersForCandidates(candidates) {
   const wantedIds = new Set(rows.map(row => row.external_user_id == null ? null : String(row.external_user_id)).filter(Boolean));
   const wantedEmails = new Set();
   for (const candidate of rows) {
-    for (const value of [candidate.email, candidate.external_email, fallbackEmail(candidate.customer_id)]) {
-      const email = validEmail(value);
-      if (email) wantedEmails.add(email);
+    for (const value of [requestLogin(candidate), candidate.external_username, candidate.external_email, candidate.email, fallbackEmail(candidate.customer_id)]) {
+      const identity = externalIdentity(value);
+      if (identity) wantedEmails.add(identity);
     }
   }
   const indexes = { byId: new Map(), byEmail: new Map() };
@@ -167,7 +173,7 @@ async function externalUsersForCandidates(candidates) {
     const remoteRows = Array.isArray(page?.results) ? page.results : [];
     for (const user of remoteRows) {
       const id = user?.id == null ? null : String(user.id);
-      const email = validEmail(user?.email);
+      const email = externalIdentity(user?.email);
       if ((id && wantedIds.has(id)) || (email && wantedEmails.has(email))) rememberExternal(indexes, user);
     }
     if (remoteRows.length < take) break;
@@ -187,11 +193,12 @@ function requestLocale(override, current) {
   return String(value || '').trim() || 'en';
 }
 function desiredMainSettings(current, externalUsername, plan, externalEmail = null) {
-  const email = validEmail(current?.email) || validEmail(externalEmail) || fallbackEmail(plan?.customer_id);
+  const username = cleanUsername(plan?.username || externalUsername || current?.username);
+  const email = username;
   const discoverRegion = planValue(plan?.request_discover_region, current?.discoverRegion ?? current?.region, null);
   const streamingRegion = planValue(plan?.request_streaming_region, current?.streamingRegion ?? current?.region, null);
   return {
-    username: current?.username ?? externalUsername ?? cleanUsername(plan?.username),
+    username,
     email,
     locale: requestLocale(plan?.request_locale, current?.locale),
     discoverRegion,
@@ -255,11 +262,11 @@ async function suspendCustomer(candidate, external, { planId = null, desired = n
   }
 }
 function indexesFor(users) {
-  return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user])) };
+  return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [externalIdentity(user.email), user])) };
 }
 function rememberExternal(indexes, external) {
   if (external?.id != null && indexes?.byId) indexes.byId.set(String(external.id), external);
-  if (external?.email && indexes?.byEmail) indexes.byEmail.set(String(external.email).toLowerCase(), external);
+  if (external?.email && indexes?.byEmail) indexes.byEmail.set(externalIdentity(external.email), external);
   return external;
 }
 async function createExternalUserConvergently({ candidate, indexes, email, username, password, createUser = null, listUsers = null }) {
@@ -276,7 +283,7 @@ async function createExternalUserConvergently({ candidate, indexes, email, usern
     try { refreshed = indexesFor(await refresh()); }
     catch { throw createError; }
     let external = candidate?.external_user_id ? refreshed.byId.get(String(candidate.external_user_id)) : null;
-    if (!external) external = refreshed.byEmail.get(String(email).toLowerCase()) || null;
+    if (!external) external = refreshed.byEmail.get(externalIdentity(email)) || null;
     if (!external) throw createError;
     return { external: rememberExternal(indexes, external), created: false, recoveredConcurrentCreate: true };
   }
@@ -288,10 +295,16 @@ async function resolveRequestCandidate(candidate) {
 }
 async function syncCustomer(candidate, indexes = {}, options = {}) {
   candidate = await resolveRequestCandidate(candidate);
-  const username = cleanUsername(candidate.username), email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
+  const username = requestLogin(candidate), email = username;
   const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
   let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
-  if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
+  if (!external) {
+    for (const value of [email, candidate.external_email, candidate.email]) {
+      const identity = externalIdentity(value);
+      if (identity) external = indexes.byEmail?.get(identity) || null;
+      if (external) break;
+    }
+  }
   if (!candidate.entitlement_active) return suspendCustomer(candidate, external, { planId: null });
   if (candidate.request_access_enabled === false) {
     const managedDesired = candidate.request_permissions == null ? null : planPolicy.sanitizePermissionMask(candidate.request_permissions);
@@ -312,10 +325,15 @@ async function syncCustomer(candidate, indexes = {}, options = {}) {
     const activePermissions = desiredPermissions(candidate, currentPermissions);
     const permissionsChanged = currentPermissions !== activePermissions;
     if (permissionsChanged) await setPermissions(external.id, activePermissions);
-    const main = await syncMainSettings(external.id, external.username || username, candidate, external.email || email);
+    const main = await syncMainSettings(external.id, username, candidate, email);
     const settings = main.settings;
+    if (main.changed) {
+      external.email = settings.email;
+      external.username = settings.username;
+      rememberExternal(indexes, external);
+    }
     const passwordResetRequired = Boolean(candidate.password_reset_required) || (created && !suppliedPassword) || recoveredConcurrentCreate;
-    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired, activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
+    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: settings.email, username: settings.username, passwordResetRequired, activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
     return { status: 'synced', customerId: candidate.customer_id, created, recoveredConcurrentCreate, passwordApplied: Boolean(created && suppliedPassword), remoteChanged: created || permissionsChanged || main.changed };
   } catch (error) {
     await mark(candidate.customer_id, { status: 'failed', externalUserId: external?.id || candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
