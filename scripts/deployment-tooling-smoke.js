@@ -14,6 +14,10 @@ const verifyDeployment = fs.readFileSync(path.join(root, 'scripts', 'verify-depl
 const backupWorker = fs.readFileSync(path.join(root, 'scripts', 'backup-worker.js'), 'utf8');
 const application = fs.readFileSync(path.join(root, 'src', 'application.js'), 'utf8');
 const customerRateLimit = fs.readFileSync(path.join(root, 'src', 'security', 'customer-rate-limit.js'), 'utf8');
+const watchdogPath = path.join(root, 'scripts', 'availability-watchdog.sh');
+const watchdogInstallerPath = path.join(root, 'scripts', 'install-availability-watchdog.sh');
+const watchdog = fs.readFileSync(watchdogPath, 'utf8');
+const watchdogInstaller = fs.readFileSync(watchdogInstallerPath, 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -34,8 +38,14 @@ function bashPath() {
   return 'bash';
 }
 
-const syntax = spawnSync(bashPath(), ['-n', path.join(root, 'scripts', 'deploy-production.sh')], { encoding: 'utf8' });
-assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must pass bash -n');
+for (const scriptPath of [
+  path.join(root, 'scripts', 'deploy-production.sh'),
+  watchdogPath,
+  watchdogInstallerPath
+]) {
+  const syntax = spawnSync(bashPath(), ['-n', scriptPath], { encoding: 'utf8' });
+  assert.strictEqual(syntax.status, 0, syntax.stderr || `${path.basename(scriptPath)} must pass bash -n`);
+}
 
 for (const token of [
   'CAPTAINFIN_DEPLOY_DETACHED',
@@ -73,6 +83,30 @@ assert(verifyDeployment.includes('degraded_error=${backupWorker.last_error}'), '
 assert(!verifyDeployment.includes('&& (!backupWorker.last_error || backupWorker.next_run_at === null)'), 'backup operation errors must not block storefront deployment');
 assert(backupWorker.includes('SELECT last_success_at,next_run_at,last_error FROM backup_worker_state'), 'backup due logic must inspect persisted failure state');
 assert(backupWorker.indexOf('if (row.next_run_at)') < backupWorker.indexOf('if (row.last_error)'), 'a worker restart must honor persisted retry backoff after a failed backup');
+
+// The revenue-facing app gets bounded database acquisition while background
+// services have explicit CPU/memory ceilings. A maintenance runaway must lose
+// capacity before it can starve the storefront or PostgreSQL host.
+for (const token of [
+  'DB_CONNECTION_TIMEOUT_MS: ${APP_DB_CONNECTION_TIMEOUT_MS:-3000}',
+  'READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-6000}',
+  'mem_limit: ${APP_MEMORY_LIMIT:-2g}',
+  'mem_limit: ${AUTOMATION_MEMORY_LIMIT:-2g}',
+  'mem_limit: ${ACTIVITY_MEMORY_LIMIT:-1g}',
+  'mem_limit: ${BACKUP_MEMORY_LIMIT:-1g}',
+  'cpus: ${BACKUP_CPU_LIMIT:-0.75}'
+]) assert(compose.includes(token), `Compose resilience contract missing ${token}`);
+
+// Host watchdog is deliberately outside the app container so it can recover an
+// event-loop hang. It must be conservative with PostgreSQL and sacrifice
+// non-critical backup work before customer availability.
+assert(watchdog.includes('/health/live') && watchdog.includes('/health/ready'), 'watchdog must distinguish process liveness from dependency readiness');
+assert(watchdog.includes("docker compose stop backup-worker"), 'unhealthy backup work must be isolated before the storefront');
+assert(watchdog.includes("postgres_state") && watchdog.includes("postgres_health"), 'watchdog must inspect PostgreSQL state and health separately');
+assert(watchdog.includes('refusing automatic DB restart'), 'running-but-unhealthy PostgreSQL must not be blindly restart-looped');
+assert(watchdog.includes('WATCHDOG_RESTART_COOLDOWN_SECONDS'), 'watchdog recovery must have restart-storm protection');
+assert(watchdogInstaller.includes('OnUnitActiveSec=30s'), 'systemd watchdog timer must run frequently enough for short recovery time');
+assert(watchdogInstaller.includes('User=$RUN_AS_USER'), 'watchdog must run as the existing deployment account rather than root');
 
 // Reverse-proxy identity is a security boundary for sessions, abuse limits and
 // household enforcement. Never regress to trusting a hop count or raw
