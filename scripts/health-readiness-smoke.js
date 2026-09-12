@@ -6,6 +6,10 @@ const path=require('path');
 const source=fs.readFileSync(path.join(__dirname,'..','src','platform','health.js'),'utf8');
 const {boundedReadinessTimeout,publicResult}=require('../src/platform/health');
 
+// Keep the pool-overload regression attached to an existing fast-suite root so
+// dead-code auditing and CI both prove it on every release.
+require('./db-pool-saturation-smoke');
+
 assert(source.includes('const ok=checks.database&&checks.databasePool&&checks.migrations&&checks.runtimeSettings'),'Core readiness must depend on database, bounded web-pool capacity, migrations and runtime settings');
 assert(source.includes('checks.databasePool=!pool.overloaded'),'Readiness must fail closed when the configured web DB circuit breaker is overloaded');
 assert(source.includes('degraded:ok&&!checks.publicOrigin'),'Missing public origin must degrade external-link capability without taking the web process out of service');
