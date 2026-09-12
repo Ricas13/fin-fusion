@@ -3,7 +3,7 @@
 const { query, transaction } = require('../db');
 
 const SETTINGS_KEY = 'notification_expiry_policy_v1';
-const SUPPORTED_MILESTONES = Object.freeze([7, 3, 1, 0]);
+const SUPPORTED_MILESTONES = Object.freeze([3, 0]);
 const DEFAULT_POLICY = Object.freeze({ milestones: SUPPORTED_MILESTONES });
 
 function inputMilestones(value) {
@@ -14,9 +14,10 @@ function inputMilestones(value) {
 }
 
 function normalizeMilestones(value, { fallback = DEFAULT_POLICY.milestones } = {}) {
+    const supported = new Set(SUPPORTED_MILESTONES);
     const normalized = [...new Set(inputMilestones(value)
         .map(item => Number.parseInt(item, 10))
-        .filter(item => Number.isInteger(item) && item >= 0 && item <= 30))]
+        .filter(item => Number.isInteger(item) && supported.has(item)))]
         .sort((a, b) => b - a);
     if (normalized.length) return normalized;
     return [...fallback];
