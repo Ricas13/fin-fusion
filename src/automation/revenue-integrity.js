@@ -5,6 +5,26 @@ const { query } = require('../db');
 const notifications = require('../integrations/notification-dispatch');
 
 const ALERT_BUCKET_MS = 6 * 60 * 60 * 1000;
+const ADMIN_ACTOR_ENFORCED_AT = '2026-09-12T08:32:17.000Z';
+const LEGACY_ACTORLESS_ADMIN_REPAIR = '20260912113000';
+
+const ACTORLESS_ADMIN_HOLDS_SQL = `
+    SELECT id,customer_id,hold_type,source_key,reason,created_at
+    FROM customer_access_holds
+    WHERE released_at IS NULL
+      AND actor_user_id IS NULL
+      AND source_key='admin'
+      AND hold_type IN('admin_disabled','admin_suspended','admin_hold')
+      AND NOT (
+        created_at < $1::timestamptz
+        AND COALESCE(metadata,'{}'::jsonb) @> jsonb_build_object(
+          'legacyActorlessAdmin', TRUE,
+          'legacyActorRepair', $2::text
+        )
+      )
+    ORDER BY created_at
+    LIMIT 100
+`;
 
 function clean(value, max = 500) {
     return String(value == null ? '' : value)
@@ -215,16 +235,7 @@ async function scan() {
             ORDER BY COUNT(*) DESC,customer_id
             LIMIT 100
         `),
-        query(`
-            SELECT id,customer_id,hold_type,source_key,reason,created_at
-            FROM customer_access_holds
-            WHERE released_at IS NULL
-              AND actor_user_id IS NULL
-              AND source_key='admin'
-              AND hold_type IN('admin_disabled','admin_suspended','admin_hold')
-            ORDER BY created_at
-            LIMIT 100
-        `),
+        query(ACTORLESS_ADMIN_HOLDS_SQL, [ADMIN_ACTOR_ENFORCED_AT, LEGACY_ACTORLESS_ADMIN_REPAIR]),
         query(`
             SELECT c.id AS customer_id,c.access_paused_at,c.access_hold_reason,
                    EXISTS(
@@ -304,4 +315,16 @@ async function run() {
     };
 }
 
-module.exports = { ALERT_BUCKET_MS, clean, finding, retireObsoleteManualRenewalOperations, scan, fingerprint, notify, run };
+module.exports = {
+    ALERT_BUCKET_MS,
+    ADMIN_ACTOR_ENFORCED_AT,
+    LEGACY_ACTORLESS_ADMIN_REPAIR,
+    ACTORLESS_ADMIN_HOLDS_SQL,
+    clean,
+    finding,
+    retireObsoleteManualRenewalOperations,
+    scan,
+    fingerprint,
+    notify,
+    run
+};
