@@ -38,14 +38,29 @@ async function enqueue({ type, to, subject, text, html = '', dedupeKey = null })
     };
     if (!payload.subject || !payload.text) throw new Error('Email subject and text body are required.');
     const key = dedupeKey ? cleanText(dedupeKey, 300) : null;
-    const nextAttemptAt = freshness.nextAttemptAt(key);
-    const result = await query(`
-        INSERT INTO notification_outbox(channel,message_type,recipient_email,payload_encrypted,dedupe_key,status,next_attempt_at)
-        VALUES('email',$1,$2,$3,$4,'pending',$5)
-        ON CONFLICT(dedupe_key) DO UPDATE SET updated_at=notification_outbox.updated_at
-        RETURNING id,status,created_at
-    `, [cleanText(type || 'transactional', 100), recipient, encryptPayload(payload), key, nextAttemptAt]);
-    return result.rows[0];
+    const delayedUntil = freshness.nextAttemptAt(key);
+
+    return transaction(async client => {
+        const result = await client.query(`
+            INSERT INTO notification_outbox(channel,message_type,recipient_email,payload_encrypted,dedupe_key,status,next_attempt_at)
+            VALUES('email',$1,$2,$3,$4,'pending',NOW())
+            ON CONFLICT(dedupe_key) DO UPDATE SET updated_at=notification_outbox.updated_at
+            RETURNING id,status,created_at,next_attempt_at
+        `, [cleanText(type || 'transactional', 100), recipient, encryptPayload(payload), key]);
+        const row = result.rows[0];
+
+        if (row?.status === 'pending' && freshness.fingerprintFromDedupeKey(key)) {
+            const delayed = await client.query(`
+                UPDATE notification_outbox
+                SET next_attempt_at=$2,updated_at=NOW()
+                WHERE id=$1 AND status='pending'
+                RETURNING id,status,created_at,next_attempt_at
+            `, [row.id, delayedUntil]);
+            return delayed.rows[0] || row;
+        }
+
+        return row;
+    });
 }
 
 async function quarantineStaleSending() {
