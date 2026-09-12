@@ -21,6 +21,7 @@ const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
 const entitlementWakeup = read('db/migrations/20260908073500_entitlement_reconciliation_wakeup.sql');
+const freeObservationReset = read('db/migrations/20260912090000_free_inactivity_observation_safety_reset.sql');
 const serviceRecovery = read('src/automation/customer-service-recovery.js');
 const activationCleanup = read('src/automation/activation-cleanup.js');
 const freeBackfill = read('src/automation/free-capacity-backfill.js');
@@ -30,7 +31,7 @@ const scopedInactivity = read('src/automation/customer-inactivity-scoped.js');
 const accessHolds = read('src/entitlements/access-holds.js');
 const revenueIntegrity = read('src/automation/revenue-integrity.js');
 
-for (const jobKey of ['health','entitlements','free_capacity_backfill','customer_inactivity','billing','provider_operation_recovery','payment_events','plan_changes','stremio_managed_accounts','stremio_external_tokens']) {
+for (const jobKey of ['health','entitlements','free_capacity_backfill','customer_inactivity','customer_deletions','creation_intent_recovery','customer_service_recovery','revenue_integrity','billing','provider_operation_recovery','payment_events','plan_changes','activation_cleanup','stremio_managed_accounts','stremio_external_tokens']) {
     assert(criticalJobs.isCritical(jobKey), `${jobKey} must remain customer-access critical automation`);
 }
 
@@ -144,6 +145,10 @@ assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'
     'inactivity enforcement must fail closed when permanent/admin authority protects Free access');
 assert(inactivity.includes('ph.started_at>=ja.access_lane_changed_at'),
     'Free inactivity history must keep the paid-to-Free lane boundary so paid-era playback cannot satisfy a new Free allocation');
+assert(freeObservationReset.includes("access_lane='free'")
+    && freeObservationReset.includes('disabled=FALSE')
+    && freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
+    'pre-existing enabled Free accounts must receive one fresh observation window after the ambiguous historical lane-boundary backfill');
 
 assert(accessHolds.includes("error.code = 'ADMIN_ACCESS_HOLD_ACTOR_REQUIRED'")
     && accessHolds.includes("['admin_disabled', 'admin_suspended', 'admin_hold'].includes(requestedType)"),
