@@ -34,6 +34,17 @@ function canonicalHoldIdentity(type, sourceKey = '', reason = '') {
     return { holdType, key };
 }
 
+function assertAdministrativeActor(type, sourceKey, actorUserId) {
+    const requestedType = clean(type, 80);
+    const requestedKey = clean(sourceKey, 200);
+    const legacyAdminMutation = requestedKey === 'admin'
+        && ['admin_disabled', 'admin_suspended', 'admin_hold'].includes(requestedType);
+    if (!legacyAdminMutation || actorUserId) return;
+    const error = new Error(`Administrative access hold ${requestedType} requires an authenticated administrator actor.`);
+    error.code = 'ADMIN_ACCESS_HOLD_ACTOR_REQUIRED';
+    throw error;
+}
+
 async function syncLegacySummary(customerId, client = null) {
     const db = runner(client);
     const active = await db.query(`
@@ -57,6 +68,7 @@ async function syncLegacySummary(customerId, client = null) {
 }
 
 async function addHold({ customerId, type, sourceKey = '', reason = '', actorUserId = null, metadata = {} }, client = null) {
+    assertAdministrativeActor(type, sourceKey, actorUserId);
     const execute = async db => {
         const identity = canonicalHoldIdentity(type, sourceKey, reason);
         const holdType = identity.holdType;
@@ -71,7 +83,7 @@ async function addHold({ customerId, type, sourceKey = '', reason = '', actorUse
         await syncLegacySummary(customerId, db);
         await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'customer.access_hold.add','customer',$2,$3::jsonb)`,
-        [actorUserId, customerId, JSON.stringify({ type: holdType, sourceKey: key, reason: clean(reason, 500) })]);
+        [actorUserId, customerId, JSON.stringify({ type: holdType, sourceKey: key, reason: clean(reason, 500), origin: actorUserId ? 'administrator' : 'automation' })]);
         return result.rows[0];
     };
     if (client) return execute(client);
@@ -135,4 +147,4 @@ async function isBlocked(customerId, client = null) {
     return Boolean(result.rows[0]?.blocked);
 }
 
-module.exports = { addHold, releaseHold, releaseAllAdminHolds, activeHolds, isBlocked, syncLegacySummary, canonicalHoldIdentity };
+module.exports = { addHold, releaseHold, releaseAllAdminHolds, activeHolds, isBlocked, syncLegacySummary, canonicalHoldIdentity, assertAdministrativeActor };
