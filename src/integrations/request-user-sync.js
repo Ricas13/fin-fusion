@@ -14,6 +14,7 @@ const MAX_SYNC_CONCURRENCY = 8;
 const REQUEST_SCAN_KEY = 'request_users.customers';
 const DEFAULT_SYNC_BATCH_SIZE = 250;
 const MAX_SYNC_BATCH_SIZE = 1000;
+const SEERR_ADMIN_PERMISSION = 2;
 const MANAGED_MAIN_FIELDS = [
   'username','email','locale','discoverRegion','streamingRegion','region','originalLanguage',
   'watchlistSyncMovies','watchlistSyncTv','movieQuotaLimit','movieQuotaDays','tvQuotaLimit','tvQuotaDays'
@@ -31,6 +32,19 @@ function cleanBaseUrl(value) {
   parsed.pathname = parsed.pathname.replace(/\/+$/, '');
   return parsed.toString().replace(/\/$/, '');
 }
+function requestApiUserId(value = process.env.SEERR_API_USER_ID) {
+  const raw = String(value || '').trim();
+  return /^[1-9][0-9]*$/.test(raw) ? raw : '';
+}
+function requestHeaders(apiKey) {
+  const apiUserId = requestApiUserId();
+  return {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'X-Api-Key': apiKey,
+    ...(apiUserId ? { 'X-API-User': apiUserId } : {})
+  };
+}
 async function configuration() {
   const cfg = await requestSettings.get();
   return { baseUrl: cleanBaseUrl(cfg.baseUrl), apiKey: String(cfg.apiKey || '').trim(), configured: Boolean(cfg.enabled && cfg.baseUrl && cfg.apiKey) };
@@ -43,9 +57,13 @@ async function apiRequest(path, { method = 'GET', body = null, timeoutMs = 10000
   const base = new URL(`${config.baseUrl}/`), url = new URL(path, base);
   if (url.origin !== base.origin) throw new Error('Request API path escaped the configured request-service origin.');
   try {
-    const response = await outbound.safeFetch(url, { purpose: 'Request service', method, timeoutMs, headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': config.apiKey }, body: body == null ? undefined : JSON.stringify(body) });
+    const response = await outbound.safeFetch(url, { purpose: 'Request service', method, timeoutMs, headers: requestHeaders(config.apiKey), body: body == null ? undefined : JSON.stringify(body) });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.message || `Request service returned HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(payload?.message || `Request service returned HTTP ${response.status}`);
+      error.statusCode = response.status;
+      throw error;
+    }
     return payload;
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('Request service request timed out.');
@@ -264,6 +282,14 @@ async function mark(customerId, fields = {}) {
     ON CONFLICT(customer_id) DO UPDATE SET external_user_id=COALESCE(EXCLUDED.external_user_id,request_user_sync.external_user_id),external_email=COALESCE(EXCLUDED.external_email,request_user_sync.external_email),external_username=COALESCE(EXCLUDED.external_username,request_user_sync.external_username),status=EXCLUDED.status,password_reset_required=EXCLUDED.password_reset_required,last_error=EXCLUDED.last_error,last_attempt_at=NOW(),last_success_at=CASE WHEN EXCLUDED.status='synced' THEN NOW() ELSE request_user_sync.last_success_at END,active_permissions=COALESCE(EXCLUDED.active_permissions,request_user_sync.active_permissions),access_suspended=EXCLUDED.access_suspended,applied_plan_id=EXCLUDED.applied_plan_id,applied_movie_quota_limit=EXCLUDED.applied_movie_quota_limit,applied_movie_quota_days=EXCLUDED.applied_movie_quota_days,applied_tv_quota_limit=EXCLUDED.applied_tv_quota_limit,applied_tv_quota_days=EXCLUDED.applied_tv_quota_days,updated_at=NOW()
   `, [customerId, fields.externalUserId || null, fields.email || null, fields.username || null, status, Boolean(fields.passwordResetRequired), fields.error ? String(fields.error).slice(0, 1000) : null, fields.activePermissions == null ? null : Math.max(0, Number(fields.activePermissions) || 0), Boolean(fields.accessSuspended), fields.planId || null, fields.movieQuotaLimit == null ? null : Number(fields.movieQuotaLimit), fields.movieQuotaDays == null ? null : Number(fields.movieQuotaDays), fields.tvQuotaLimit == null ? null : Number(fields.tvQuotaLimit), fields.tvQuotaDays == null ? null : Number(fields.tvQuotaDays)]);
 }
+async function clearExternalBinding(customerId) {
+  await query(`
+    UPDATE request_user_sync
+    SET external_user_id=NULL,status='synced',password_reset_required=FALSE,last_error=NULL,
+      last_attempt_at=NOW(),last_success_at=NOW(),access_suspended=TRUE,applied_plan_id=NULL,updated_at=NOW()
+    WHERE customer_id=$1
+  `, [customerId]);
+}
 function desiredPermissions(candidate, currentPermissions) {
   if (candidate.request_permission_override !== null && candidate.request_permission_override !== undefined) {
     return planPolicy.sanitizePermissionMask(candidate.request_permission_override) ?? REQUEST_PERMISSION;
@@ -271,23 +297,6 @@ function desiredPermissions(candidate, currentPermissions) {
   const remembered = Number(candidate.active_permissions);
   const fallback = Number.isInteger(remembered) && remembered > 0 ? remembered : currentPermissions > 0 ? currentPermissions : REQUEST_PERMISSION;
   return planPolicy.planPermissionMask(candidate, fallback) ?? REQUEST_PERMISSION;
-}
-async function suspendCustomer(candidate, external, { planId = null, desired = null } = {}) {
-  if (!external?.id) {
-    await mark(candidate.customer_id, { status: 'skipped', email: candidate.external_email || validEmail(candidate.email), username: candidate.external_username || cleanUsername(candidate.username), passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: desired ?? candidate.active_permissions, accessSuspended: true, planId, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
-    return { status: 'ignored', customerId: candidate.customer_id, remoteChanged: false };
-  }
-  try {
-    const currentPermissions = await permissionState(external.id);
-    const activePermissions = desired == null ? desiredPermissions(candidate, currentPermissions) : planPolicy.sanitizePermissionMask(desired) ?? REQUEST_PERMISSION;
-    const remoteChanged = currentPermissions !== 0;
-    if (remoteChanged) await setPermissions(external.id, 0);
-    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || candidate.external_email || validEmail(candidate.email), username: external.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions, accessSuspended: true, planId, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
-    return { status: 'suspended', customerId: candidate.customer_id, remoteChanged };
-  } catch (error) {
-    await mark(candidate.customer_id, { status: 'failed', externalUserId: external.id, email: external.email || candidate.external_email, username: external.username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
-    return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
-  }
 }
 function indexesFor(users) {
   return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [externalIdentity(user.email), user])) };
@@ -303,6 +312,60 @@ function rememberExternal(indexes, external, previousEmail = null) {
   if (id && indexes?.byId) indexes.byId.set(id, external);
   if (nextEmail && indexes?.byEmail) indexes.byEmail.set(nextEmail, external);
   return external;
+}
+function forgetExternal(indexes, external) {
+  const id = external?.id == null ? null : String(external.id);
+  const email = externalIdentity(external?.email);
+  if (id && indexes?.byId) indexes.byId.delete(id);
+  if (email && indexes?.byEmail) {
+    const current = indexes.byEmail.get(email);
+    if (!id || (current?.id != null && String(current.id) === id)) indexes.byEmail.delete(email);
+  }
+}
+function protectedExternalUser(external, linkedId) {
+  const id = String(linkedId || '');
+  const apiUserId = requestApiUserId();
+  if (id === '1' || (apiUserId && id === apiUserId)) return true;
+  return (Number(external?.permissions || 0) & SEERR_ADMIN_PERMISSION) !== 0;
+}
+async function removeCustomer(candidate, indexes = {}) {
+  const linkedId = candidate?.external_user_id == null ? '' : String(candidate.external_user_id);
+  if (!linkedId) {
+    await mark(candidate.customer_id, { status: 'skipped', email: candidate.external_email || validEmail(candidate.email), username: candidate.external_username || cleanUsername(candidate.username), passwordResetRequired: false, activePermissions: candidate.active_permissions, accessSuspended: true, planId: null, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
+    return { status: 'ignored', customerId: candidate.customer_id, remoteChanged: false };
+  }
+  let external = indexes?.byId?.get(linkedId) || null;
+  try {
+    if (!external) {
+      try {
+        external = await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`);
+      } catch (error) {
+        if (Number(error?.statusCode) === 404) {
+          await clearExternalBinding(candidate.customer_id);
+          return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: false };
+        }
+        throw error;
+      }
+    }
+    if (protectedExternalUser(external, linkedId)) throw new Error(`Refusing to delete protected Seerr administrator account #${linkedId}.`);
+    const currentPermissions = await permissionState(linkedId);
+    const activePermissions = desiredPermissions(candidate, currentPermissions);
+    if (currentPermissions !== 0) await setPermissions(linkedId, 0);
+    let deleted = true;
+    try {
+      await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`, { method: 'DELETE' });
+    } catch (error) {
+      if (Number(error?.statusCode) === 404) deleted = false;
+      else throw error;
+    }
+    await query(`UPDATE request_user_sync SET active_permissions=$2 WHERE customer_id=$1`, [candidate.customer_id, activePermissions]);
+    await clearExternalBinding(candidate.customer_id);
+    forgetExternal(indexes, external);
+    return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: deleted || currentPermissions !== 0 };
+  } catch (error) {
+    await mark(candidate.customer_id, { status: 'failed', externalUserId: linkedId, email: external?.email || candidate.external_email, username: external?.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
+    return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
+  }
 }
 async function createExternalUserConvergently({ candidate, indexes, email, username, password, createUser = null, listUsers = null }) {
   const create = createUser || (body => apiRequest('/api/v1/user', { method: 'POST', body }));
@@ -336,11 +399,7 @@ async function syncCustomer(candidate, indexes = {}, options = {}) {
   const username = cleanUsername(candidate?.username), email = requestLogin(candidate);
   const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
   let external = trustedExternalForCandidate(candidate, indexes);
-  if (!candidate.entitlement_active) return suspendCustomer(candidate, external, { planId: null });
-  if (candidate.request_access_enabled === false) {
-    const managedDesired = candidate.request_permissions == null ? null : planPolicy.sanitizePermissionMask(candidate.request_permissions);
-    return suspendCustomer(candidate, external, { planId: candidate.plan_id, desired: managedDesired });
-  }
+  if (!candidate.entitlement_active || candidate.request_access_enabled === false) return removeCustomer(candidate, indexes);
   try {
     const collision = loginCollisionForCandidate(candidate, indexes, email, external);
     if (collision) throw new Error(`Request-site login "${email}" is already used by another Seerr account; refusing to adopt or overwrite it.`);
@@ -526,4 +585,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, createExternalUserConvergently, syncCustomer, syncBatch, requestRoleRetry };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, protectedExternalUser, removeCustomer, createExternalUserConvergently, syncCustomer, syncBatch, requestRoleRetry };
