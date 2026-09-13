@@ -86,17 +86,18 @@ assert(management.includes('module.exports=')&&management.includes('portalSectio
 
 const view360=read('src/platform/customer-360-view.js');
 const compact360=read('src/platform/customer-360-compact.js');
+const directIndividual=read('src/platform/admin-customer-individual-actions.js');
 const directLifecycle=read('src/platform/admin-customer-direct-lifecycle.js');
-const individualActions=read('src/platform/admin-customer-individual-actions.js');
 const accessCards=read('src/platform/customer-360-access-cards.js');
 assert(view360.includes("compact=require('./customer-360-compact')")&&view360.includes('compact.render(safe,token,options)'),'the focused Customer 360 renderer must own the default operator page');
 for(const title of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone'])assert(compact360.includes(title),`action-first Customer 360 is missing ${title}`);
 assert(compact360.includes('accessCards.accessLibrariesRequests(detail,token,options)')&&compact360.includes('Permissions, libraries & requests…'),'lane-aware access/library/request overrides must remain available as a secondary action inside the service control panel');
-assert(!compact360.includes('/admin/customers/bulk/preview')&&!compact360.includes('bulkForm('),'Customer 360 single-customer actions must not depend on the bulk preview workflow');
-assert(compact360.includes("customerLink(id,'move-server','Move Jellyfin server')")&&directLifecycle.includes('forceMove.move(req.params.customerId,serverId'),'Customer 360 server movement must use the canonical single-customer force-move service');
-assert(compact360.includes("customerLink(id,'subscriptions/revoke','Revoke a plan'")&&compact360.includes("customerLink(id,'change-plan','Change plan'")&&directLifecycle.includes('subscriptionForCustomer'),'Customer 360 plan actions must use explicit subscription-targeted single-customer workflows');
-assert(compact360.includes("customerLink(id,'delete-customer','Review permanent deletion'")&&directLifecycle.includes('deletion.hardDeletePortalCustomer')&&directLifecycle.includes('ownerStatus(req.session.authUserId)'),'Customer 360 permanent deletion must stay owner-only and use the durable deletion saga');
-assert(!individualActions.includes("router.post('/admin/customers/bulk/preview'"),'individual Customer 360 router must not shadow the real bulk-preview owner');
+assert(!compact360.includes('bulkForm(')&&!compact360.includes('/admin/customers/bulk/preview'),'Customer 360 single-customer actions must not submit through the bulk preview workflow');
+assert(compact360.includes('/change-plan?subscriptionId=')&&compact360.includes('/revoke/${encodeURIComponent(plan.id)}')&&compact360.includes('/move-server')&&compact360.includes('/delete-customer'),'Customer 360 must expose targeted direct plan, revoke, server-move and permanent-delete workflows');
+assert(directIndividual.includes("COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')"),'individual subscription actions must only target Jellyfin-capable subscriptions');
+assert(directLifecycle.includes("forceMove.move(req.params.customerId,serverId")&&directLifecycle.includes('ownerStatus(req.session.authUserId)')&&directLifecycle.includes('deletion.hardDeletePortalCustomer'),'single-customer lifecycle routes must reuse canonical move/deletion safeguards');
+assert(directLifecycle.includes("serviceScope=require('../entitlements/service-scope')")&&directLifecycle.includes('result.rows.filter(plan=>serviceScope.overlaps(sub,plan))')&&directLifecycle.includes('if(!serviceScope.overlaps(sub,target))'),'single-customer plan changes must only offer and accept service-compatible target plans');
+assert(composition.includes('createAdminCustomerIndividualActionsRouter()')&&composition.includes('createAdminCustomerDirectLifecycleRouter()'),'direct Customer 360 action routers must be mounted explicitly');
 assert(compact360.includes('/access-holds/${encodeURIComponent(hold.id)}/release')&&compact360.includes('Type RELEASE'),'hold release must remain a typed-confirm canonical workflow');
 assert(compact360.includes("disclosure('Activity'")&&compact360.includes("disclosure('Payments'")&&compact360.includes("disclosure('Logs'"),'only the three operator-support disclosures must own lower-page history/technical data');
 assert(!compact360.includes('Jellyfin account details')&&!compact360.includes('Service reconciliation truth'),'redundant account-detail and diagnostic tables must stay off the main action-first page');
@@ -117,7 +118,7 @@ assert(customerClaims.includes('UPDATE customers SET user_id=$2')&&customerClaim
 assert(operator.includes("appendTopAction('Manage customer'"),'legacy operator enrichment must remain compatible until the customer-specific stabilizer runs');
 assert(operator.includes('if(context.hasJellyfinAccount)appendTopAction(\'Change Jellyfin password\''),'Jellyfin password support context must remain available to the legacy enrichment layer');
 assert(!operator.includes("link.textContent='Change Jellyfin password';link.setAttribute('data-customer-password-support'"),'the old unconditional Jellyfin password action must not return');
-assert(operator.includes("form.dataset.nativeSubmit='true'"),'Customer 360 full-page controls must submit through native page workflows');
+assert(operator.includes("form.dataset.nativeSubmit='true'"),'Customer 360 bulk preview controls must submit as full-page workflows');
 assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-verification pill markup must be repaired safely in Customer 360');
 
 // Customer 360 remains one server-rendered page with only one record nav entry
