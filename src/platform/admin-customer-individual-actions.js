@@ -16,12 +16,6 @@ const provisioningHelpers=require('../jellyfin/provisioning-helpers');
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DIRECT_ACTIONS=new Set(['extend','expiry','suspend','delete-jellyfin']);
-const LEGACY_BULK_BRIDGE=new Map([
-  ['extend_entitlement','extend'],
-  ['set_expiry','expiry'],
-  ['suspend','suspend'],
-  ['jellyfin_delete','delete-jellyfin']
-]);
 const readLimit=routeRateLimit.middleware({scope:'admin-customer-individual-action-read',max:120,windowSeconds:60,reason:'admin_customer_individual_action_read'});
 const writeLimit=routeRateLimit.middleware({scope:'admin-customer-individual-action',max:30,windowSeconds:60,reason:'admin_customer_individual_action'});
 
@@ -254,23 +248,8 @@ async function performAction(req,res){
   }
 }
 
-function bridgeLegacyCompactAction(req,res,next){
-  const action=String(req.body?.action||'');
-  const direct=LEGACY_BULK_BRIDGE.get(action);
-  if(!direct)return next();
-  if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-  const raw=Array.isArray(req.body?.customerId)?req.body.customerId:[req.body?.customerId];
-  const ids=raw.map(value=>String(value||'').trim()).filter(Boolean);
-  if(req.body?.selectAllMatching==='1'||ids.length!==1||!UUID.test(ids[0]))return res.redirect(303,'/admin/users?error='+encodeURIComponent('This action is available for one customer at a time.'));
-  const suffix=(direct==='extend'||direct==='expiry')&&req.body?.subscriptionId?`?subscriptionId=${encodeURIComponent(req.body.subscriptionId)}`:'';
-  return res.redirect(303,actionPath(ids[0],direct)+suffix);
-}
-
 function createAdminCustomerIndividualActionsRouter(){
   const router=express.Router();
-  // Compatibility bridge for compact Customer 360 requests created before the
-  // direct action links were introduced. No mutation happens on this bridge.
-  router.post('/admin/customers/bulk/preview',gate,noStore,writeLimit,bridgeLegacyCompactAction);
   router.get('/admin/users/:customerId/actions/:action',gate,noStore,readLimit,renderAction);
   router.post('/admin/users/:customerId/actions/:action',gate,noStore,writeLimit,performAction);
   return router;
@@ -278,7 +257,6 @@ function createAdminCustomerIndividualActionsRouter(){
 
 module.exports={
   DIRECT_ACTIONS,
-  LEGACY_BULK_BRIDGE,
   createAdminCustomerIndividualActionsRouter,
   currentSubscription,
   subscriptionForCustomer,
@@ -286,6 +264,5 @@ module.exports={
   performExtend,
   performExpiry,
   performSuspend,
-  performJellyfinDelete,
-  bridgeLegacyCompactAction
+  performJellyfinDelete
 };
