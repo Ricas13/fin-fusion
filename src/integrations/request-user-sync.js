@@ -476,6 +476,21 @@ async function removeCustomer(candidate, indexes = {}, options = {}) {
       }
       await finalizeRemovedBinding(candidate, external, linkedId, activePermissions, deleted);
       forgetExternal(indexes, external);
+      const postDeleteEntitlement = await requestEntitlements.resolve(candidate.customer_id);
+      if (postDeleteEntitlement?.entitlement_active && postDeleteEntitlement.request_access_enabled !== false) {
+        const recovered = await syncCustomerLocked({
+          ...candidate,
+          ...postDeleteEntitlement,
+          external_user_id: null,
+          access_suspended: true,
+          applied_plan_id: null
+        }, indexes, options);
+        return {
+          ...recovered,
+          recoveredAfterDelete: recovered.status === 'synced',
+          remoteChanged: Boolean(deleted || recovered.remoteChanged)
+        };
+      }
       return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: deleted };
     } catch (error) {
       let message = error.message;
@@ -503,7 +518,7 @@ async function createExternalUserConvergently({ candidate, indexes, email, usern
     try { refreshed = indexesFor(await refresh()); }
     catch { throw createError; }
     let external = trustedExternalForCandidate(candidate, refreshed);
-    if (!external) {
+    if (!external && !intentionallyRemoved(candidate)) {
       const target = refreshed.byEmail.get(externalIdentity(email)) || null;
       if (target && externalIdentity(target.username) === externalIdentity(username)) external = target;
     }
