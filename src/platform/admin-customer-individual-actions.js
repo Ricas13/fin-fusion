@@ -22,6 +22,7 @@ const LEGACY_BULK_BRIDGE=new Map([
   ['suspend','suspend'],
   ['jellyfin_delete','delete-jellyfin']
 ]);
+const readLimit=routeRateLimit.middleware({scope:'admin-customer-individual-action-read',max:120,windowSeconds:60,reason:'admin_customer_individual_action_read'});
 const writeLimit=routeRateLimit.middleware({scope:'admin-customer-individual-action',max:30,windowSeconds:60,reason:'admin_customer_individual_action'});
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
@@ -173,7 +174,7 @@ async function performExtend(req){
   while(remaining>0){
     const days=Math.min(365,remaining),reference=`admin-single:${op}:${chunk}`;
     const didAdd=await transaction(async client=>{
-      const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,metadata) VALUES($1,$2,'admin_bulk',$3,$4,$5::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,req.params.customerId,days,reference,JSON.stringify({mode:'single_customer',actorUserId:req.session.authUserId,subscriptionId:subId,units,chunk})]);
+      const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,metadata) VALUES($1,$2,'admin_single',$3,$4,$5::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,req.params.customerId,days,reference,JSON.stringify({mode:'single_customer',actorUserId:req.session.authUserId,subscriptionId:subId,units,chunk})]);
       if(!inserted.rowCount)return false;
       const updated=await client.query(`UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,[subId,days,req.params.customerId]);
       if(!updated.rowCount)throw new Error('The selected subscription changed before the extension could be saved.');
@@ -269,8 +270,8 @@ function createAdminCustomerIndividualActionsRouter(){
   const router=express.Router();
   // Compatibility bridge for compact Customer 360 requests created before the
   // direct action links were introduced. No mutation happens on this bridge.
-  router.post('/admin/customers/bulk/preview',gate,noStore,bridgeLegacyCompactAction);
-  router.get('/admin/users/:customerId/actions/:action',gate,noStore,renderAction);
+  router.post('/admin/customers/bulk/preview',gate,noStore,writeLimit,bridgeLegacyCompactAction);
+  router.get('/admin/users/:customerId/actions/:action',gate,noStore,readLimit,renderAction);
   router.post('/admin/users/:customerId/actions/:action',gate,noStore,writeLimit,performAction);
   return router;
 }
