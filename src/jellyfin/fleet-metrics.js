@@ -140,7 +140,7 @@ async function persistSuccess(serverId, metrics) {
         INSERT INTO jellyfin_server_metrics(
             server_id,total_users,active_streams,managed_streams,transcode_streams,
             direct_stream_streams,direct_play_streams,paused_streams,observed_at,last_error,error_at,updated_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NULL,NULL,NOW())
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,NULL,NULL,NOW())
         ON CONFLICT(server_id) DO UPDATE SET
             total_users=EXCLUDED.total_users,
             active_streams=EXCLUDED.active_streams,
@@ -149,14 +149,14 @@ async function persistSuccess(serverId, metrics) {
             direct_stream_streams=EXCLUDED.direct_stream_streams,
             direct_play_streams=EXCLUDED.direct_play_streams,
             paused_streams=EXCLUDED.paused_streams,
-            observed_at=NOW(),
+            observed_at=EXCLUDED.observed_at,
             last_error=NULL,
             error_at=NULL,
             updated_at=NOW()
     `, [
         serverId,metrics.totalUsers,metrics.activeStreams,metrics.managedStreams,
         metrics.transcodeStreams,metrics.directStreamStreams,metrics.directPlayStreams,
-        metrics.pausedStreams
+        metrics.pausedStreams,metrics.observedAt || new Date().toISOString()
     ]);
 }
 
@@ -192,6 +192,7 @@ async function collectServerMetrics(serverId, managedUserIds, { refreshUsers = t
     const [users, sessions] = await Promise.all([usersPromise, sessionsPromise]);
     if (refreshUsers && !Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
     if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
+    const observedAt = new Date().toISOString();
 
     const activity = refreshUsers ? await persistUserActivity(serverId, users) : { observed: 0, updated: 0 };
     const playing = sessions.filter(session => session?.Id && session?.NowPlayingItem);
@@ -219,7 +220,8 @@ async function collectServerMetrics(serverId, managedUserIds, { refreshUsers = t
         directPlayStreams,
         pausedStreams,
         activityUpdates: activity.updated,
-        usersRefreshed: refreshUsers
+        usersRefreshed: refreshUsers,
+        observedAt
     };
 }
 
