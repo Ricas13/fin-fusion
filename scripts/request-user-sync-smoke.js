@@ -7,6 +7,7 @@ const runtimeSettings = require('../src/platform/runtime-settings');
 const operationsSettings = require('../src/platform/operations-settings');
 
 process.env.SEERR_API_KEY = 'request-sync-test-key';
+process.env.SEERR_API_USER_ID = '187';
 
 const remote = {
     users: [
@@ -19,6 +20,7 @@ const remote = {
         }
     ],
     createCalls: 0,
+    deleteCalls: [],
     passwordCalls: [],
     permissionCalls: [],
     quotaCalls: [],
@@ -46,6 +48,7 @@ async function synchronizeRaceCreate(email) {
 const server = http.createServer(async (req,res)=>{
     try {
         if(req.headers['x-api-key']!==process.env.SEERR_API_KEY){res.writeHead(401,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'bad api key'}));}
+        if(req.headers['x-api-user']!==process.env.SEERR_API_USER_ID){res.writeHead(403,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'bad api actor'}));}
         const url=new URL(req.url,'http://request.test');
         if(req.method==='GET'&&url.pathname==='/api/v1/user'){
             const take=Math.max(1,Number(url.searchParams.get('take')||10)),skip=Math.max(0,Number(url.searchParams.get('skip')||0)),results=remote.users.slice(skip,skip+take).map(({settings,...user})=>user);
@@ -64,6 +67,22 @@ const server = http.createServer(async (req,res)=>{
             res.writeHead(201,{'Content-Type':'application/json'});
             const{settings,...publicUser}=created;
             return res.end(JSON.stringify(publicUser));
+        }
+        const userRoute=url.pathname.match(/^\/api\/v1\/user\/(\d+)$/);
+        if(userRoute&&req.method==='GET'){
+            const user=userById(userRoute[1]);
+            if(!user){res.writeHead(404,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'User not found.'}));}
+            const{settings,...publicUser}=user;
+            res.writeHead(200,{'Content-Type':'application/json'});
+            return res.end(JSON.stringify(publicUser));
+        }
+        if(userRoute&&req.method==='DELETE'){
+            const index=remote.users.findIndex(user=>Number(user.id)===Number(userRoute[1]));
+            if(index<0){res.writeHead(404,{'Content-Type':'application/json'});return res.end(JSON.stringify({message:'User not found.'}));}
+            const [deleted]=remote.users.splice(index,1);
+            remote.deleteCalls.push(deleted.id);
+            res.writeHead(204);
+            return res.end();
         }
         const permissions=url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/permissions$/);
         if(permissions){const user=userById(permissions[1]);if(!user)throw new Error('remote user missing');if(req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}if(req.method==='POST'){const body=await readJson(req);user.permissions=Number(body.permissions)||0;remote.permissionCalls.push({id:user.id,permissions:user.permissions});res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({permissions:user.permissions}));}}
@@ -88,6 +107,7 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     await runtimeSettings.reload();
     const requestSettings=require('../src/integrations/request-service-settings');
     await requestSettings.useEnvironment();
+    const connection=await requestSettings.testConnection();assert.strictEqual(connection.ok,true,'request connection test must send the configured Seerr API actor');
     const firstServer=await makeServer('Premium A','premium-a'),secondServer=await makeServer('Premium B','premium-b'),planId=await makePlan();
     const multiServerCustomer=await makeCustomer({username:'multi-user',email:'multi@example.test',serverIds:[firstServer,secondServer],planId});
     const noEmailCustomer=await makeCustomer({username:'no-email-user',serverIds:[firstServer],planId});
@@ -95,6 +115,9 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     const fixtureCustomerIds=[multiServerCustomer,noEmailCustomer,existingCustomer];
     const fixtureCustomerIdSet=new Set(fixtureCustomerIds.map(String));
     const requestSync=require('../src/integrations/request-user-sync'),candidates=(await requestSync.syncCandidates()).filter(row=>fixtureCustomerIdSet.has(String(row.customer_id)));
+    assert.strictEqual(requestSync.protectedExternalUser({permissions:2},999),true,'Seerr administrators must never be deleted by entitlement cleanup');
+    assert.strictEqual(requestSync.protectedExternalUser({permissions:0},1),true,'Seerr owner id 1 must never be deleted');
+    assert.strictEqual(requestSync.protectedExternalUser({permissions:0},187),true,'configured Seerr API actor must never be deleted');
     assert.strictEqual(candidates.length,3,'multi-server Jellyfin accounts must collapse to one CAPTAiNFiN request user');const multi=candidates.find(row=>String(row.customer_id)===String(multiServerCustomer));assert.strictEqual(multi.active_server_count,2);assert.strictEqual(multi.request_movie_quota_limit,2);assert.strictEqual(multi.request_tv_quota_limit,2);
     const first=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(first,{total:3,created:2,linked:1,suspended:0,failed:0},{updated:3,unchanged:0});assert.strictEqual(remote.createCalls,2);assert.strictEqual(remote.users.length,3);for(const user of remote.users){assert.strictEqual(user.email,String(user.username).toLowerCase(),'Seerr local login identity must be the lowercase portal username');assert.strictEqual(user.settings.email,String(user.username).toLowerCase(),'Seerr main settings must retain the lowercase login identity');assert.strictEqual(user.settings.locale,'en','request sync must never submit a null Seerr locale');assert.strictEqual(user.settings.movieQuotaLimit,2);assert.strictEqual(user.settings.movieQuotaDays,30);assert.strictEqual(user.settings.tvQuotaLimit,2);assert.strictEqual(user.settings.tvQuotaDays,30);assert.strictEqual(user.permissions,32);}
     const linked=await requestSync.requestAccessForCustomer(existingCustomer);assert.strictEqual(Number(linked.external_user_id),41,'existing request user should be adopted by its legacy email rather than duplicated');assert.strictEqual(linked.external_email,'existing-user','adopted request users must migrate their Seerr login to the portal username');assert.strictEqual(linked.password_reset_required,false,'pre-existing request account password must not be reset');
@@ -104,9 +127,10 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     const second=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(second,{total:3,created:0,linked:3,suspended:0,failed:0},{updated:0,unchanged:3});assert.strictEqual(remote.createCalls,2);assert.strictEqual(remote.quotaCalls.length,mutationCallsBeforeUnchanged,'unchanged users must generate zero main-settings mutation calls');assert.strictEqual(remote.permissionCalls.length,permissionCallsBeforeUnchanged,'unchanged users must generate zero permission mutation calls');assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).password_reset_required,true);
     await query(`UPDATE plans SET request_movie_quota_limit=4,request_tv_quota_limit=4 WHERE id=$1`,[planId]);remote.failMainForId=41;const partial=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(partial,{total:3,created:0,linked:2,suspended:0,failed:1},{updated:2,failed:1});assert(remote.users.filter(user=>user.id!==41).every(user=>user.settings.movieQuotaLimit===4&&user.settings.tvQuotaLimit===4),'one failed user must not prevent other users from converging');remote.failMainForId=null;const recovered=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(recovered,{total:3,created:0,linked:3,suspended:0,failed:0},{updated:1,unchanged:2});assert.strictEqual(userById(41).settings.movieQuotaLimit,4);
     await requestSync.setCustomerPassword(multiServerCustomer,'SharedPass-2026!');assert.strictEqual(remote.passwordCalls.length,1);assert.strictEqual(remote.passwordCalls[0].id,Number(multiAccess.external_user_id));assert.strictEqual(remote.passwordCalls[0].newPassword,'SharedPass-2026!');assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).password_reset_required,false);
-    await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute',status='expired' WHERE customer_id=$1`,[multiServerCustomer]);const expired=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(expired,{total:3,created:0,linked:2,suspended:1,failed:0});const multiRemote=userById(multiAccess.external_user_id);assert.strictEqual(multiRemote.permissions,0,'expired customer must lose request permission');const suspended=await requestSync.requestAccessForCustomer(multiServerCustomer);assert.strictEqual(suspended.access_suspended,true);assert.strictEqual(Number(suspended.active_permissions),32);assert.strictEqual(remote.users.length,3,'expiry must not delete request users');
-    await query(`UPDATE plans SET request_movie_quota_limit=10,request_tv_quota_limit=15 WHERE id=$1`,[planId]);await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '30 days',status='active' WHERE customer_id=$1`,[multiServerCustomer]);const renewed=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(renewed,{total:3,created:0,linked:3,suspended:0,failed:0});assert.strictEqual(multiRemote.permissions,32,'renewal must restore remembered request permissions');assert.strictEqual(multiRemote.settings.movieQuotaLimit,10);assert.strictEqual(multiRemote.settings.tvQuotaLimit,15);assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).access_suspended,false);
-    await query(`UPDATE plans SET request_movie_quota_limit=NULL,request_tv_quota_limit=NULL WHERE id=$1`,[planId]);await requestSync.syncSelected(fixtureCustomerIds);assert.strictEqual(multiRemote.settings.movieQuotaLimit,0);assert.strictEqual(multiRemote.settings.tvQuotaLimit,0);
+    const expiredExternalId=Number(multiAccess.external_user_id);
+    await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute',status='expired' WHERE customer_id=$1`,[multiServerCustomer]);const expired=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(expired,{total:3,created:0,linked:2,suspended:1,failed:0});assert.strictEqual(userById(expiredExternalId),undefined,'expired customer request account must be deleted from Seerr');assert(remote.deleteCalls.includes(expiredExternalId),'expired customer must be deleted by its exact linked Seerr id');const removed=await requestSync.requestAccessForCustomer(multiServerCustomer);assert.strictEqual(removed.external_user_id,null,'deleted request account binding must be cleared');assert.strictEqual(removed.access_suspended,true);assert.strictEqual(Number(removed.active_permissions),32,'last active request permissions may be retained locally for future policy fallback');assert.strictEqual(remote.users.length,2,'expiry must remove the linked Seerr request user');
+    await query(`UPDATE plans SET request_movie_quota_limit=10,request_tv_quota_limit=15 WHERE id=$1`,[planId]);await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '30 days',status='active' WHERE customer_id=$1`,[multiServerCustomer]);const renewed=await requestSync.syncSelected(fixtureCustomerIds);assertSummary(renewed,{total:3,created:1,linked:2,suspended:0,failed:0});const renewedAccess=await requestSync.requestAccessForCustomer(multiServerCustomer),renewedRemote=userById(renewedAccess.external_user_id);assert(renewedRemote,'renewed entitlement must create a fresh Seerr account');assert.notStrictEqual(Number(renewedAccess.external_user_id),expiredExternalId,'renewal must not restore the deleted Seerr identity');assert.strictEqual(renewedRemote.permissions,32,'renewal must restore request permissions on the fresh account');assert.strictEqual(renewedRemote.settings.movieQuotaLimit,10);assert.strictEqual(renewedRemote.settings.tvQuotaLimit,15);assert.strictEqual(renewedAccess.access_suspended,false);assert.strictEqual(renewedAccess.password_reset_required,true,'freshly recreated Seerr account must require the portal password to be applied');
+    await query(`UPDATE plans SET request_movie_quota_limit=NULL,request_tv_quota_limit=NULL WHERE id=$1`,[planId]);await requestSync.syncSelected(fixtureCustomerIds);assert.strictEqual(renewedRemote.settings.movieQuotaLimit,0);assert.strictEqual(renewedRemote.settings.tvQuotaLimit,0);
 
     const mixedCaseCustomer=await makeCustomer({username:'MixedCaseUser',email:'mixed-case@example.test',serverIds:[firstServer],planId});
     const createCallsBeforeMixed=remote.createCalls;
@@ -125,6 +149,7 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     const collision=await requestSync.syncOneCustomer(collisionCustomer);
     assert.strictEqual(collision.status,'failed','an unrelated account occupying the desired login must fail closed');assert.match(collision.error,/already used by another Seerr account/);assert.strictEqual(remote.createCalls,collisionCreates,'collision must not attempt a create');assert.strictEqual(remote.quotaCalls.length,collisionQuotaCalls,'collision must not mutate request settings');assert.strictEqual(remote.permissionCalls.length,collisionPermissionCalls,'collision must not mutate permissions');assert.strictEqual(collisionRemote.permissions,64);assert.strictEqual(collisionRemote.settings.movieQuotaLimit,7);
     const collisionAccess=await requestSync.requestAccessForCustomer(collisionCustomer);assert.strictEqual(collisionAccess.external_user_id,null,'collision must not adopt the unrelated Seerr user id');assert.strictEqual(collisionAccess.status,'failed');
+    await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute',status='expired' WHERE customer_id=$1`,[collisionCustomer]);const deleteCallsBeforeCollisionCleanup=remote.deleteCalls.length;const collisionExpired=await requestSync.syncOneCustomer(collisionCustomer);assert.strictEqual(collisionExpired.status,'ignored','invalid entitlement without a linked Seerr id must not delete by username or email');assert.strictEqual(remote.deleteCalls.length,deleteCallsBeforeCollisionCleanup);assert.strictEqual(userById(777),collisionRemote,'unlinked colliding Seerr user must remain untouched');
 
     const raceCustomer=await makeCustomer({username:'RaceUser',email:'race@example.test',serverIds:[firstServer],planId});
     remote.raceEmail='raceuser';
