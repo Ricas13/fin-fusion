@@ -560,10 +560,31 @@ async function syncCustomerLocked(candidate, indexes = {}, options = {}) {
     return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
   }
 }
+async function refreshCandidateAfterCustomerLock(candidate, indexes = {}) {
+  const customerId = String(candidate?.customer_id || '').trim();
+  if (!isUuid(customerId)) return candidate;
+  const rows = await syncCandidates({ ids: [customerId], limit: 1 });
+  const fresh = rows[0] || candidate;
+  const previousLinkedId = candidate?.external_user_id == null ? '' : String(candidate.external_user_id);
+  const freshLinkedId = fresh?.external_user_id == null ? '' : String(fresh.external_user_id);
+  if (freshLinkedId && freshLinkedId !== previousLinkedId && !indexes.byId?.has(freshLinkedId)) {
+    try {
+      const external = await apiRequest(`/api/v1/user/${encodeURIComponent(freshLinkedId)}`);
+      rememberExternal(indexes, external);
+    } catch (error) {
+      if (Number(error?.statusCode) === 404) forgetExternalId(indexes, freshLinkedId);
+      else throw error;
+    }
+  }
+  return fresh;
+}
 async function syncCustomer(candidate, indexes = {}, options = {}) {
   const customerId = String(candidate?.customer_id || '').trim();
   if (!customerId) return syncCustomerLocked(candidate, indexes, options);
-  return withCustomerSyncLock(customerId, lockClient => syncCustomerLocked(candidate, indexes, { ...options, _lockClient: lockClient }));
+  return withCustomerSyncLock(customerId, async lockClient => {
+    const lockedCandidate = await refreshCandidateAfterCustomerLock(candidate, indexes);
+    return syncCustomerLocked(lockedCandidate, indexes, { ...options, _lockClient: lockClient });
+  });
 }
 function cleanFailureMessage(value) {
   const message = String(value || 'Request-user sync failed').replace(/\s+/g, ' ').trim();
