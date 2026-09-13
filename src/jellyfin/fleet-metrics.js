@@ -156,7 +156,7 @@ async function persistSuccess(serverId, metrics) {
     `, [
         serverId,metrics.totalUsers,metrics.activeStreams,metrics.managedStreams,
         metrics.transcodeStreams,metrics.directStreamStreams,metrics.directPlayStreams,
-        metrics.pausedStreams,metrics.observedAt || new Date().toISOString()
+        metrics.pausedStreams,metrics.observedAt
     ]);
 }
 
@@ -192,7 +192,7 @@ async function collectServerMetrics(serverId, managedUserIds, { refreshUsers = t
     const [users, sessions] = await Promise.all([usersPromise, sessionsPromise]);
     if (refreshUsers && !Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
     if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
-    const observedAt = new Date().toISOString();
+    const observedAt = (await query('SELECT NOW() AS observed_at')).rows[0].observed_at;
 
     const activity = refreshUsers ? await persistUserActivity(serverId, users) : { observed: 0, updated: 0 };
     const playing = sessions.filter(session => session?.Id && session?.NowPlayingItem);
