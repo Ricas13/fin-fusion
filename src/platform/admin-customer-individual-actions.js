@@ -9,8 +9,10 @@ const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 const subscriptionState=require('../entitlements/subscription-state');
 const planExpiry=require('../entitlements/plan-expiry');
+const accessHolds=require('../entitlements/access-holds');
 const serviceAdminControl=require('../entitlements/service-admin-control');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const provisioningHelpers=require('../jellyfin/provisioning-helpers');
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DIRECT_ACTIONS=new Set(['extend','expiry','suspend','delete-jellyfin']);
@@ -67,7 +69,7 @@ async function currentSubscription(customerId){
 
 async function jellyfinAccounts(customerId){
   const result=await query(`
-    SELECT ja.id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,js.name AS server_name
+    SELECT ja.*,js.name AS server_name
     FROM jellyfin_accounts ja
     JOIN jellyfin_servers js ON js.id=ja.server_id
     WHERE ja.customer_id=$1
@@ -115,7 +117,7 @@ function suspendPage(req,c){
 async function deleteJellyfinPage(req,c){
   const accounts=await jellyfinAccounts(c.id);
   const rows=accounts.length?`<div class="tableWrap"><table class="table"><thead><tr><th>Jellyfin user</th><th>Server</th></tr></thead><tbody>${accounts.map(row=>`<tr><td>${esc(row.jellyfin_username||row.jellyfin_user_id||row.id)}</td><td>${esc(row.server_name||row.server_id)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="notice">There are no ordinary Jellyfin customer accounts to delete. Emby and internal Stremio identities are intentionally excluded.</div>';
-  const form=accounts.length?`<div class="notice error"><strong>Destructive individual action.</strong> Only the Jellyfin account(s) listed above are removed through the canonical Jellyfin lifecycle. The portal customer, plan/payment history, Emby accounts and internal Stremio identities are preserved. Jellyfin is left explicitly Removed for this customer so automation cannot immediately recreate the account; use Return to Automatic when access should be allowed again.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'delete-jellyfin'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why are these Jellyfin accounts being deleted?"></div><div class="formGroup"><label>Type DELETE JELLYFIN to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Delete this customer's Jellyfin account(s)</button></form>`:'';
+  const form=accounts.length?`<div class="notice error"><strong>Destructive individual action.</strong> Only the Jellyfin account(s) listed above are removed. The portal customer, plan/payment history, Emby accounts and internal Stremio identities are preserved. Jellyfin is left explicitly Removed for this customer so automation cannot immediately recreate the account; use Return to Automatic when access should be allowed again.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'delete-jellyfin'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why are these Jellyfin accounts being deleted?"></div><div class="formGroup"><label>Type DELETE JELLYFIN to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Delete this customer's Jellyfin account(s)</button></form>`:'';
   return pageShell(req,c,'Delete Jellyfin account(s)','Individual customer action',`${rows}${form}`);
 }
 
@@ -180,9 +182,11 @@ async function performExpiry(req){
 async function performSuspend(req){
   if(!exactConfirmation(req,'SUSPEND'))throw new Error('Type SUSPEND exactly to confirm.');
   const reason=clean(req.body?.reason,500);if(reason.length<3)throw new Error('Enter a suspension reason of at least 3 characters.');
-  const outcome=await provisioning.holdAccess(req.params.customerId,'suspended',req.session.authUserId);
-  await audit(req.session.authUserId,'admin.customer.suspend',req.params.customerId,{reason,active:Boolean(outcome?.active)});
-  return 'Customer suspended. Access will remain held until the suspension is released.';
+  await accessHolds.addHold({customerId:req.params.customerId,type:'admin_suspended',sourceKey:'admin',reason,actorUserId:req.session.authUserId,metadata:{origin:'customer_360'}});
+  let reconcileError='',outcome=null;
+  try{outcome=await provisioning.reconcileCustomer(req.params.customerId);}catch(error){reconcileError=clean(error.message||error,400);}
+  await audit(req.session.authUserId,'admin.customer.suspend',req.params.customerId,{reason,active:Boolean(outcome?.active),reconcileError:reconcileError||null});
+  return reconcileError?`Customer suspended. The hold is active, but reconciliation needs attention: ${reconcileError}`:'Customer suspended. Access will remain held until the suspension is released.';
 }
 
 async function performJellyfinDelete(req){
@@ -190,14 +194,19 @@ async function performJellyfinDelete(req){
   const reason=clean(req.body?.reason,500);if(reason.length<3)throw new Error('Enter a deletion reason of at least 3 characters.');
   const accounts=await jellyfinAccounts(req.params.customerId);
   if(!accounts.length)return 'No ordinary Jellyfin customer accounts were present. Nothing was deleted.';
-  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.requested',req.params.customerId,{reason,accounts:accounts.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null}))});
+  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.requested',req.params.customerId,{reason,accounts:accounts.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null,accessLane:row.access_lane||null}))});
   await serviceAdminControl.setRemoved(req.params.customerId,'jellyfin',{actorUserId:req.session.authUserId,reason});
   let reconcileError='';
   try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){reconcileError=clean(error.message||error,500);}
-  const remaining=await jellyfinAccounts(req.params.customerId);
+  let remaining=await jellyfinAccounts(req.params.customerId),cleanupFailures=[];
+  for(const account of remaining){
+    try{await provisioningHelpers.deleteJellyfinAccount(account,{reason,actorUserId:req.session.authUserId});}
+    catch(error){cleanupFailures.push({accountId:account.id,username:account.jellyfin_username||null,error:clean(error.message||error,500)});}
+  }
+  remaining=await jellyfinAccounts(req.params.customerId);
   const removed=Math.max(0,accounts.length-remaining.length);
-  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.completed',req.params.customerId,{reason,requested:accounts.length,removed,remaining:remaining.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null})),reconcileError:reconcileError||null});
-  if(remaining.length)throw new Error(`Jellyfin is now pinned to Removed, but ${remaining.length} account${remaining.length===1?' still exists':'s still exist'}. ${reconcileError||'Run Reconcile access to retry the canonical deletion.'}`);
+  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.completed',req.params.customerId,{reason,requested:accounts.length,removed,remaining:remaining.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null,accessLane:row.access_lane||null})),cleanupFailures,reconcileError:reconcileError||null});
+  if(remaining.length)throw new Error(`Jellyfin is now pinned to Removed, but ${remaining.length} account${remaining.length===1?' still exists':'s still exist'}. ${cleanupFailures[0]?.error||reconcileError||'Run the deletion action again after checking Jellyfin connectivity.'}`);
   const suffix=reconcileError?` Jellyfin was removed successfully, but another reconciliation step reported: ${reconcileError}`:'';
   return `${removed} Jellyfin account${removed===1?'':'s'} removed. Portal, billing history, Emby and Stremio identities were preserved.${suffix}`;
 }
