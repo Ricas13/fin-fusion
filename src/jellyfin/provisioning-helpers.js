@@ -2,6 +2,7 @@
 
 const core = require('./provisioning-engine');
 const durableCreation = require('./durable-account-creation');
+const recovery = require('./media-access-recovery');
 const { query, transaction } = require('../db');
 const subscriptionState = require('../entitlements/subscription-state');
 const planServers = require('./plan-servers');
@@ -56,6 +57,16 @@ async function deleteJellyfinAccount(account, options = {}) {
     error.code = 'JELLYFIN_DISABLED_STATE_FORBIDDEN';
     throw error;
   }
+  // The DB trigger has already captured the deleted row at this point. Attach
+  // the specific lifecycle reason afterwards so recovery history remains useful
+  // without putting plaintext credentials or business state in audit metadata.
+  await recovery.setRemovalReason(account.customer_id, account, options.reason).catch(error => {
+    console.warn('Unable to annotate media access recovery reason.', {
+      customerId: safeLog(account.customer_id, 100),
+      accountId: safeLog(account.id, 100),
+      error: safeLog(error?.message || error)
+    });
+  });
   return result;
 }
 
@@ -140,8 +151,8 @@ async function selectServerForPlan(plan) {
   // If this customer's earlier attempt already reserved a server or created a
   // durable creation intent there, retry that server first. Re-running load
   // balancing here could otherwise create a second remote account elsewhere.
-  const recovery = await reservedServerForCustomer(plan?.customer_id || null, available, lane);
-  if (recovery) return recovery;
+  const recoveryServer = await reservedServerForCustomer(plan?.customer_id || null, available, lane);
+  if (recoveryServer) return recoveryServer;
 
   // Server capacity includes durable accounts plus short-lived placement leases
   // and creation intents. A concurrent reconciler therefore sees a slot as used
@@ -285,20 +296,56 @@ async function notifyNewJellyfinAccess(customerId, account) {
   }
 }
 
+function effectiveWithRecoveredLibraries(effective, saved) {
+  if (!saved?.found || saved.serviceType !== 'jellyfin' || !Array.isArray(saved.selectedLibraryNames)) return effective;
+  const wanted = new Set(saved.selectedLibraryNames.map(name => String(name || '').trim().toLowerCase()).filter(Boolean));
+  const visibleNames = (effective?.entitlementRows || [])
+    .filter(row => row?.effective && wanted.has(String(row.name || '').trim().toLowerCase()))
+    .map(row => row.name);
+  return {
+    ...effective,
+    selection: { selected_names: saved.selectedLibraryNames },
+    visibleNames,
+    unrestricted: false
+  };
+}
+
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
+  const accessLane = options.accessLane || server.requested_access_lane || requestedAccessLane(effective);
+  // Recovery is a hint for identity/settings only. Server selection and capacity
+  // have already been decided by the canonical allocator before this point.
+  const saved = await recovery.recoveryForCreation(customerId, server, accessLane);
+  const recoveredManagedPasswordUsed = Boolean(saved.password && !options.bootstrapPassword);
+  const creationEffective = effectiveWithRecoveredLibraries(effective, saved);
   const reservedServer = await reservePlacement(customerId, server, { allowOverCapacity: Boolean(options.allowOverCapacity) });
   let account;
   try {
-    account = await durableCreation.createJellyfinAccount(customerId, reservedServer, effective, {
+    account = await durableCreation.createJellyfinAccount(customerId, reservedServer, creationEffective, {
       ...options,
+      preferredUsername: options.preferredUsername || saved.preferredUsername || undefined,
+      bootstrapPassword: options.bootstrapPassword || saved.password || undefined,
       placementLeaseId: reservedServer.placement_lease_id,
-      accessLane: options.accessLane || reservedServer.requested_access_lane || requestedAccessLane(effective)
+      accessLane
     });
   } catch (error) {
     await releaseDefinitivePlacementFailure(customerId, reservedServer.id, reservedServer.placement_lease_id);
     throw error;
   }
-  if (options.passwordSetupRequired !== false) {
+
+  if (saved.found) {
+    account.recovery_restored = Boolean(await recovery.markRestored(customerId, account, saved));
+    account.recovery_had_managed_password = recoveredManagedPasswordUsed;
+  }
+
+  if (recoveredManagedPasswordUsed) {
+    await query(`
+      UPDATE jellyfin_accounts
+      SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW()
+      WHERE id=$1
+    `, [account.id]);
+    account.password_setup_required = false;
+    account.password_reset_required = false;
+  } else if (options.passwordSetupRequired !== false) {
     await markPasswordSetupRequired(account.id);
     account.password_setup_required = true;
     account.password_reset_required = true;
@@ -307,7 +354,23 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
 }
 
 async function setJellyfinPassword(customerId, accountId, newPassword) {
+  // Validate the encryption key before changing the remote password. This avoids
+  // creating a password we know we cannot escrow if secret configuration is bad.
+  const encryptedPassword = recovery.encryptManagedPassword(newPassword);
   const result = await core.setJellyfinPassword(customerId, accountId, newPassword);
+  try {
+    await recovery.recordManagedPassword(customerId, accountId, encryptedPassword);
+  } catch (error) {
+    // The remote password has already changed successfully. Do not report the
+    // whole password operation as failed just because recovery bookkeeping had
+    // a transient/local failure; that would mislead the customer into retrying
+    // an operation which already took effect remotely.
+    console.warn('Media recovery credential bookkeeping failed after remote password update.', {
+      customerId: safeLog(customerId, 100),
+      accountId: safeLog(accountId, 100),
+      error: safeLog(error?.message || error)
+    });
+  }
   await query(`
     UPDATE jellyfin_accounts
     SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW()
