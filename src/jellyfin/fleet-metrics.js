@@ -264,10 +264,16 @@ async function refreshAll(options = {}) {
         }
     });
 
-    // Serialising only these small PostgreSQL writes preserves concurrent network
-    // collection while making the fleet-wide trigger deterministic under MVCC.
-    for (const result of results) {
-        if (!result.ok) continue;
+    // Persist oldest observations first so the final trigger fires from the newest
+    // snapshot. The database freshness contract is asymmetric by design: a fleet
+    // row may be up to 25 seconds older than the trigger row, but only 5 seconds
+    // newer. Persisting in observation order therefore makes the final write the
+    // authoritative end of the same-snapshot window regardless of server priority
+    // or response speed.
+    const successfulResults = results
+        .filter(result => result.ok)
+        .sort((left, right) => new Date(left.observedAt).getTime() - new Date(right.observedAt).getTime());
+    for (const result of successfulResults) {
         try {
             await persistSuccess(result.serverId, result);
         } catch (error) {
