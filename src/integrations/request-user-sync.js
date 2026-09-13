@@ -102,7 +102,7 @@ function sameExternalUser(left, right) {
   return left?.id != null && right?.id != null && String(left.id) === String(right.id);
 }
 function intentionallyRemoved(candidate) {
-  return !candidate?.external_user_id && candidate?.access_suspended === true && candidate?.status === 'synced';
+  return !candidate?.external_user_id && candidate?.access_suspended === true;
 }
 function trustedExternalForCandidate(candidate, indexes = {}) {
   if (candidate?.external_user_id) {
