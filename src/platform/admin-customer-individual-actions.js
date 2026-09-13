@@ -9,9 +9,8 @@ const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 const subscriptionState=require('../entitlements/subscription-state');
 const planExpiry=require('../entitlements/plan-expiry');
+const serviceAdminControl=require('../entitlements/service-admin-control');
 const provisioning=require('../jellyfin/resilient-provisioning');
-const registry=require('../jellyfin/registry');
-const customerDeletion=require('./customer-deletion');
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DIRECT_ACTIONS=new Set(['extend','expiry','suspend','delete-jellyfin']);
@@ -91,7 +90,9 @@ async function extendPage(req,c){
   if(planExpiry.isFreeTier(sub))return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">Free Access has no expiry to extend.</div>');
   const durationDays=Math.max(1,Number(sub.duration_days_snapshot||sub.duration_days||30));
   const existing=Math.max(0,Number(sub.service_extension_days||0));
-  const maxUnits=Math.max(1,Math.floor((3650-existing)/durationDays));
+  const remainingAllowance=Math.max(0,3650-existing);
+  if(remainingAllowance<durationDays)return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">This customer has reached the 3,650-day manual extension safety limit.</div>');
+  const maxUnits=Math.floor(remainingAllowance/durationDays);
   const form=`<div class="notice"><strong>Individual action.</strong> This adds service time to this customer only. It does not create a new provider charge.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'extend'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="operationId" value="${esc(crypto.randomUUID())}"><div class="formGroup"><label>Plan periods to add</label><input class="input" type="number" name="units" min="1" max="${esc(maxUnits)}" value="1" required><div class="inlineHelp">One period is ${esc(durationDays)} day${durationDays===1?'':'s'}. Existing manual extension: ${esc(existing)} day${existing===1?'':'s'}. Maximum combined manual extension: 3,650 days.</div></div><div class="formGroup"><label>Type EXTEND to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Extend this customer</button></form>`;
   return pageShell(req,c,'Extend plan','Individual customer action',form);
 }
@@ -114,7 +115,7 @@ function suspendPage(req,c){
 async function deleteJellyfinPage(req,c){
   const accounts=await jellyfinAccounts(c.id);
   const rows=accounts.length?`<div class="tableWrap"><table class="table"><thead><tr><th>Jellyfin user</th><th>Server</th></tr></thead><tbody>${accounts.map(row=>`<tr><td>${esc(row.jellyfin_username||row.jellyfin_user_id||row.id)}</td><td>${esc(row.server_name||row.server_id)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="notice">There are no ordinary Jellyfin customer accounts to delete. Emby and internal Stremio identities are intentionally excluded.</div>';
-  const form=accounts.length?`<div class="notice error"><strong>Destructive individual action.</strong> Only the Jellyfin account(s) listed above are deleted. The portal customer, plan/payment history, Emby accounts and internal Stremio identities are preserved. A deletion hold is left in place so automation cannot immediately recreate Jellyfin access.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'delete-jellyfin'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why are these Jellyfin accounts being deleted?"></div><div class="formGroup"><label>Type DELETE JELLYFIN to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Delete this customer's Jellyfin account(s)</button></form>`:'';
+  const form=accounts.length?`<div class="notice error"><strong>Destructive individual action.</strong> Only the Jellyfin account(s) listed above are removed through the canonical Jellyfin lifecycle. The portal customer, plan/payment history, Emby accounts and internal Stremio identities are preserved. Jellyfin is left explicitly Removed for this customer so automation cannot immediately recreate the account; use Return to Automatic when access should be allowed again.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'delete-jellyfin'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why are these Jellyfin accounts being deleted?"></div><div class="formGroup"><label>Type DELETE JELLYFIN to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Delete this customer's Jellyfin account(s)</button></form>`:'';
   return pageShell(req,c,'Delete Jellyfin account(s)','Individual customer action',`${rows}${form}`);
 }
 
@@ -157,7 +158,8 @@ async function performExtend(req){
   }
   await provisioning.reconcileCustomer(req.params.customerId);
   await audit(req.session.authUserId,'admin.customer.extend_entitlement',req.params.customerId,{units,requestedDays,addedDays:added,operationId:op});
-  return `${added||requestedDays} day${(added||requestedDays)===1?'':'s'} added to this customer.`;
+  if(!added)return 'This extension had already been applied. No additional days were added.';
+  return `${added} day${added===1?'':'s'} added to this customer.`;
 }
 
 async function performExpiry(req){
@@ -189,26 +191,15 @@ async function performJellyfinDelete(req){
   const accounts=await jellyfinAccounts(req.params.customerId);
   if(!accounts.length)return 'No ordinary Jellyfin customer accounts were present. Nothing was deleted.';
   await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.requested',req.params.customerId,{reason,accounts:accounts.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null}))});
-  await provisioning.holdAccess(req.params.customerId,'jellyfin_deleted',req.session.authUserId);
-  const results=[];
-  for(const account of accounts){
-    const label=account.jellyfin_username||account.jellyfin_user_id||String(account.id);
-    try{
-      if(!account.jellyfin_user_id)throw new Error(`Local Jellyfin account ${label} has no Jellyfin user id.`);
-      await registry.request(account.server_id,`/Users/${encodeURIComponent(account.jellyfin_user_id)}`,{method:'DELETE',timeoutMs:15000});
-      await query('DELETE FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2',[account.id,req.params.customerId]);
-      results.push({accountId:account.id,serverId:account.server_id,username:label,status:'deleted'});
-    }catch(error){
-      if(customerDeletion.isRemoteMissing(error)){
-        await query('DELETE FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2',[account.id,req.params.customerId]);
-        results.push({accountId:account.id,serverId:account.server_id,username:label,status:'already_missing'});
-      }else results.push({accountId:account.id,serverId:account.server_id,username:label,status:'failed',error:clean(error.message||error,500)});
-    }
-  }
-  const failed=results.filter(row=>row.status==='failed'),deleted=results.filter(row=>row.status==='deleted').length,missing=results.filter(row=>row.status==='already_missing').length;
-  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.completed',req.params.customerId,{reason,deleted,alreadyMissing:missing,failed:failed.length,results});
-  if(failed.length)throw new Error(`Jellyfin deletion was only partially completed: ${failed.length} account${failed.length===1?'':'s'} failed. The deletion hold remains active so automation cannot recreate access.`);
-  return `${deleted+missing} Jellyfin account${deleted+missing===1?'':'s'} removed. Portal, billing history, Emby and Stremio identities were preserved.`;
+  await serviceAdminControl.setRemoved(req.params.customerId,'jellyfin',{actorUserId:req.session.authUserId,reason});
+  let reconcileError='';
+  try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){reconcileError=clean(error.message||error,500);}
+  const remaining=await jellyfinAccounts(req.params.customerId);
+  const removed=Math.max(0,accounts.length-remaining.length);
+  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.completed',req.params.customerId,{reason,requested:accounts.length,removed,remaining:remaining.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null})),reconcileError:reconcileError||null});
+  if(remaining.length)throw new Error(`Jellyfin is now pinned to Removed, but ${remaining.length} account${remaining.length===1?' still exists':'s still exist'}. ${reconcileError||'Run Reconcile access to retry the canonical deletion.'}`);
+  const suffix=reconcileError?` Jellyfin was removed successfully, but another reconciliation step reported: ${reconcileError}`:'';
+  return `${removed} Jellyfin account${removed===1?'':'s'} removed. Portal, billing history, Emby and Stremio identities were preserved.${suffix}`;
 }
 
 async function performAction(req,res){
