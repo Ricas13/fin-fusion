@@ -315,6 +315,7 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
   // Recovery is a hint for identity/settings only. Server selection and capacity
   // have already been decided by the canonical allocator before this point.
   const saved = await recovery.recoveryForCreation(customerId, server, accessLane);
+  const recoveredManagedPasswordUsed = Boolean(saved.password && !options.bootstrapPassword);
   const creationEffective = effectiveWithRecoveredLibraries(effective, saved);
   const reservedServer = await reservePlacement(customerId, server, { allowOverCapacity: Boolean(options.allowOverCapacity) });
   let account;
@@ -332,12 +333,11 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
   }
 
   if (saved.found) {
-    await recovery.markRestored(customerId, account, saved);
-    account.recovery_restored = true;
-    account.recovery_had_managed_password = saved.hasManagedPassword;
+    account.recovery_restored = Boolean(await recovery.markRestored(customerId, account, saved));
+    account.recovery_had_managed_password = recoveredManagedPasswordUsed;
   }
 
-  if (saved.hasManagedPassword) {
+  if (recoveredManagedPasswordUsed) {
     await query(`
       UPDATE jellyfin_accounts
       SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW()
@@ -358,7 +358,19 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
   // creating a password we know we cannot escrow if secret configuration is bad.
   const encryptedPassword = recovery.encryptManagedPassword(newPassword);
   const result = await core.setJellyfinPassword(customerId, accountId, newPassword);
-  await recovery.recordManagedPassword(customerId, accountId, encryptedPassword);
+  try {
+    await recovery.recordManagedPassword(customerId, accountId, encryptedPassword);
+  } catch (error) {
+    // The remote password has already changed successfully. Do not report the
+    // whole password operation as failed just because recovery bookkeeping had
+    // a transient/local failure; that would mislead the customer into retrying
+    // an operation which already took effect remotely.
+    console.warn('Media recovery credential bookkeeping failed after remote password update.', {
+      customerId: safeLog(customerId, 100),
+      accountId: safeLog(accountId, 100),
+      error: safeLog(error?.message || error)
+    });
+  }
   await query(`
     UPDATE jellyfin_accounts
     SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW()
