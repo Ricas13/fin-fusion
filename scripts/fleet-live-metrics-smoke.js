@@ -33,12 +33,21 @@ const fleetDashboard = require('../src/platform/admin-server-fleet-dashboard');
             if (String(serverId) === String(server2)) return [{ Id: 'free-1' }, { Id: 'free-2' }];
         }
         if (path === '/Sessions') {
-            if (String(serverId) === String(server1)) return [
-                { Id: 's1', UserId: 'managed-user-id', NowPlayingItem: { Id: 'm1', Name: 'Managed Movie' }, PlayState: { PlayMethod: 'DirectPlay', IsPaused: false } },
-                { Id: 's2', UserId: 'legacy-1', NowPlayingItem: { Id: 'm2', Name: 'Legacy Movie' }, PlayState: { PlayMethod: 'DirectStream', IsPaused: false } },
-                { Id: 's3', UserId: 'legacy-2', NowPlayingItem: { Id: 'm3', Name: 'Legacy Transcode' }, PlayState: { PlayMethod: 'Transcode', IsPaused: true }, TranscodingInfo: { TranscodeReasons: ['VideoCodecNotSupported'] } },
-                { Id: 'idle', UserId: 'legacy-3', PlayState: { IsPaused: false } }
-            ];
+            if (String(serverId) === String(server1)) {
+                // Make the higher-priority server's observation more than five
+                // seconds newer than server2. Persisting by server priority would
+                // write this newer row first and the older row last, which cannot
+                // satisfy the trigger's +5s future bound. refreshAll must persist
+                // observations oldest-first so the newest row fires the final
+                // trusted fleet sample.
+                await new Promise(resolve => setTimeout(resolve, 6000));
+                return [
+                    { Id: 's1', UserId: 'managed-user-id', NowPlayingItem: { Id: 'm1', Name: 'Managed Movie' }, PlayState: { PlayMethod: 'DirectPlay', IsPaused: false } },
+                    { Id: 's2', UserId: 'legacy-1', NowPlayingItem: { Id: 'm2', Name: 'Legacy Movie' }, PlayState: { PlayMethod: 'DirectStream', IsPaused: false } },
+                    { Id: 's3', UserId: 'legacy-2', NowPlayingItem: { Id: 'm3', Name: 'Legacy Transcode' }, PlayState: { PlayMethod: 'Transcode', IsPaused: true }, TranscodingInfo: { TranscodeReasons: ['VideoCodecNotSupported'] } },
+                    { Id: 'idle', UserId: 'legacy-3', PlayState: { IsPaused: false } }
+                ];
+            }
             if (String(serverId) === String(server2)) return [];
         }
         throw new Error(`Unexpected request ${serverId} ${path}`);

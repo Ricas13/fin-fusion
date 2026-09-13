@@ -140,7 +140,7 @@ async function persistSuccess(serverId, metrics) {
         INSERT INTO jellyfin_server_metrics(
             server_id,total_users,active_streams,managed_streams,transcode_streams,
             direct_stream_streams,direct_play_streams,paused_streams,observed_at,last_error,error_at,updated_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NULL,NULL,NOW())
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,NULL,NULL,NOW())
         ON CONFLICT(server_id) DO UPDATE SET
             total_users=EXCLUDED.total_users,
             active_streams=EXCLUDED.active_streams,
@@ -149,14 +149,14 @@ async function persistSuccess(serverId, metrics) {
             direct_stream_streams=EXCLUDED.direct_stream_streams,
             direct_play_streams=EXCLUDED.direct_play_streams,
             paused_streams=EXCLUDED.paused_streams,
-            observed_at=NOW(),
+            observed_at=EXCLUDED.observed_at,
             last_error=NULL,
             error_at=NULL,
             updated_at=NOW()
     `, [
         serverId,metrics.totalUsers,metrics.activeStreams,metrics.managedStreams,
         metrics.transcodeStreams,metrics.directStreamStreams,metrics.directPlayStreams,
-        metrics.pausedStreams
+        metrics.pausedStreams,metrics.observedAt
     ]);
 }
 
@@ -177,7 +177,7 @@ async function cachedTotalUsers(serverId) {
     return Number(result.rows[0]?.total_users || 0);
 }
 
-async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}) {
+async function collectServerMetrics(serverId, managedUserIds, { refreshUsers = true } = {}) {
     // Peak-concurrency analytics needs the exact set of playback sessions Jellyfin
     // currently exposes. Do not use activeWithinSeconds here: a genuinely paused
     // item is still a concurrent stream even when its activity timestamp is old.
@@ -192,6 +192,7 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}
     const [users, sessions] = await Promise.all([usersPromise, sessionsPromise]);
     if (refreshUsers && !Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
     if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
+    const observedAt = (await query('SELECT NOW() AS observed_at')).rows[0].observed_at;
 
     const activity = refreshUsers ? await persistUserActivity(serverId, users) : { observed: 0, updated: 0 };
     const playing = sessions.filter(session => session?.Id && session?.NowPlayingItem);
@@ -210,7 +211,7 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}
         else if (method === 'directplay') directPlayStreams += 1;
     }
 
-    const metrics = {
+    return {
         totalUsers: refreshUsers ? users.length : await cachedTotalUsers(serverId),
         activeStreams: playing.length,
         managedStreams,
@@ -219,8 +220,13 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}
         directPlayStreams,
         pausedStreams,
         activityUpdates: activity.updated,
-        usersRefreshed: refreshUsers
+        usersRefreshed: refreshUsers,
+        observedAt
     };
+}
+
+async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}) {
+    const metrics = await collectServerMetrics(serverId, managedUserIds, { refreshUsers });
     await persistSuccess(serverId, metrics);
     return metrics;
 }
@@ -245,13 +251,37 @@ async function refreshAll(options = {}) {
     const refreshUsers = options.refreshUsers !== false;
     const results = await mapLimit(rows, 3, async row => {
         try {
-            const metrics = await pollServer(row.serverId, row.managedUserIds, { refreshUsers });
+            // Keep Jellyfin network polling concurrent, but defer the metric-row
+            // writes until every observation has completed. The concurrency sample
+            // trigger requires each prior server observation to be committed and
+            // visible; concurrent metric transactions can otherwise both miss the
+            // other transaction and produce no trusted fleet sample at all.
+            const metrics = await collectServerMetrics(row.serverId, row.managedUserIds, { refreshUsers });
             return { serverId: row.serverId, ok: true, ...metrics };
         } catch (error) {
             try { await persistFailure(row.serverId, error); } catch (_) {}
             return { serverId: row.serverId, ok: false, error: String(error?.message || error) };
         }
     });
+
+    // Persist oldest observations first so the final trigger fires from the newest
+    // snapshot. The database freshness contract is asymmetric by design: a fleet
+    // row may be up to 25 seconds older than the trigger row, but only 5 seconds
+    // newer. Persisting in observation order therefore makes the final write the
+    // authoritative end of the same-snapshot window regardless of server priority
+    // or response speed.
+    const successfulResults = results
+        .filter(result => result.ok)
+        .sort((left, right) => new Date(left.observedAt).getTime() - new Date(right.observedAt).getTime());
+    for (const result of successfulResults) {
+        try {
+            await persistSuccess(result.serverId, result);
+        } catch (error) {
+            try { await persistFailure(result.serverId, error); } catch (_) {}
+            result.ok = false;
+            result.error = String(error?.message || error);
+        }
+    }
 
     // Run after the normal fleet/policy collection boundary. These sessions are
     // deliberately written without customer_id, jellyfin_account_id or a stream

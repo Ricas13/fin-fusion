@@ -27,6 +27,14 @@ const CUSTOMER_ACCESS_CRITICAL_JOBS = Object.freeze([
     'stremio_external_tokens'
 ]);
 
+// Some safety jobs are intentionally operator-controlled. They must remain
+// implemented/registered so the capability cannot disappear silently, but a
+// deliberate disabled state is valid and must not make deployment verification
+// roll back an otherwise healthy release.
+const DISABLEABLE_CRITICAL_JOBS = Object.freeze([
+    'customer_inactivity'
+]);
+
 function names() {
     return [...CUSTOMER_ACCESS_CRITICAL_JOBS];
 }
@@ -35,4 +43,14 @@ function isCritical(jobKey) {
     return CUSTOMER_ACCESS_CRITICAL_JOBS.includes(String(jobKey || ''));
 }
 
-module.exports = { CUSTOMER_ACCESS_CRITICAL_JOBS, names, isCritical };
+function mayBeDisabled(jobKey) {
+    return DISABLEABLE_CRITICAL_JOBS.includes(String(jobKey || ''));
+}
+
+module.exports = {
+    CUSTOMER_ACCESS_CRITICAL_JOBS,
+    DISABLEABLE_CRITICAL_JOBS,
+    names,
+    isCritical,
+    mayBeDisabled
+};

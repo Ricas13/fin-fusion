@@ -51,6 +51,9 @@ jobs:
       - name: Provisioning recovery invariants
         run: node scripts/provisioning-recovery-invariants-smoke.js
 
+      - name: Deployment verification policy
+        run: node scripts/deployment-verification-policy-smoke.js
+
       - name: Supply-chain pinning policy
         run: node scripts/supply-chain-integrity-smoke.js
 

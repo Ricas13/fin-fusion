@@ -20,35 +20,92 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function proveAutomationRecoveryPass({ timeoutMs = DEPLOYMENT_PROBE_TIMEOUT_MS } = {}) {
-    // Use PostgreSQL's clock for the marker so comparisons against job timestamps
-    // are not vulnerable to clock skew between the app and database containers.
-    const marker = new Date((await query('SELECT NOW() AS marker')).rows[0].marker);
-    for (const jobKey of DEPLOYMENT_PROBE_JOBS) await jobHealth.requestRun(jobKey);
+function timestamp(value) {
+    if (value == null || value === '') return null;
+    const parsed = value instanceof Date ? value.getTime() : new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function probeSucceededSince(row, since) {
+    const sinceMs = timestamp(since);
+    const successMs = timestamp(row?.last_success_at);
+    if (!row || sinceMs == null || successMs == null) return false;
+
+    // A successful run under this release is the proof we need. Do not require
+    // the row to be idle right now: the scheduler may already have started a
+    // later healthy run after the successful one. A later failed/degraded
+    // completion still fails closed because it changes last_outcome.
+    return String(row.last_outcome || '') === 'success' && successMs >= sinceMs;
+}
+
+function probeSnapshot(jobKey, row, requiredSince) {
+    return {
+        jobKey,
+        state: row ? jobHealth.healthState(row) : 'missing',
+        proven: probeSucceededSince(row, requiredSince),
+        requiredSince,
+        lastStartedAt: row?.last_started_at || null,
+        completedAt: row?.last_completed_at || null,
+        successAt: row?.last_success_at || null,
+        forceRunRequested: Boolean(row?.force_run_requested)
+    };
+}
+
+function formatProbeSnapshot(snapshot) {
+    const format = value => value ? new Date(value).toISOString() : 'never';
+    return `${snapshot.jobKey}:state=${snapshot.state}`
+        + ` success=${format(snapshot.successAt)}`
+        + ` completed=${format(snapshot.completedAt)}`
+        + ` started=${format(snapshot.lastStartedAt)}`
+        + ` force=${snapshot.forceRunRequested}`
+        + ` required_since=${format(snapshot.requiredSince)}`;
+}
+
+async function proveAutomationRecoveryPass({
+    timeoutMs = DEPLOYMENT_PROBE_TIMEOUT_MS,
+    workerStartedAt = null
+} = {}) {
+    // Use the current worker's startup time as the release boundary. Recovery
+    // jobs that already passed after this worker started have already proved the
+    // deployed code and should not be needlessly forced through a second pass.
+    // Fall back to PostgreSQL's clock for direct/legacy callers that do not have
+    // a worker start timestamp.
+    const databaseMarker = new Date((await query('SELECT NOW() AS marker')).rows[0].marker);
+    const releaseMarker = timestamp(workerStartedAt) == null ? databaseMarker : new Date(workerStartedAt);
+
+    const initialRows = await jobHealth.list();
+    const initialByKey = new Map(initialRows.map(row => [row.job_key, row]));
+    const requiredSince = new Map();
+
+    for (const jobKey of DEPLOYMENT_PROBE_JOBS) {
+        const row = initialByKey.get(jobKey);
+        if (probeSucceededSince(row, releaseMarker)) {
+            requiredSince.set(jobKey, releaseMarker);
+            continue;
+        }
+
+        // requestRun returns the database row updated by the force request, so
+        // updated_at is a DB-clock marker that cannot be beaten by an older run.
+        const requested = await jobHealth.requestRun(jobKey);
+        requiredSince.set(jobKey, new Date(requested?.updated_at || databaseMarker));
+    }
 
     const deadline = Date.now() + Math.max(15000, Number(timeoutMs) || DEPLOYMENT_PROBE_TIMEOUT_MS);
     while (Date.now() < deadline) {
         const rows = await jobHealth.list();
         const byKey = new Map(rows.map(row => [row.job_key, row]));
-        const completed = DEPLOYMENT_PROBE_JOBS.every(jobKey => {
-            const row = byKey.get(jobKey);
-            if (!row?.last_completed_at || row.force_run_requested) return false;
-            return new Date(row.last_completed_at).getTime() >= marker.getTime();
-        });
-        if (completed) {
-            return DEPLOYMENT_PROBE_JOBS.map(jobKey => {
-                const row = byKey.get(jobKey);
-                return { jobKey, state: jobHealth.healthState(row), completedAt: row.last_completed_at };
-            });
-        }
+        const snapshots = DEPLOYMENT_PROBE_JOBS.map(jobKey =>
+            probeSnapshot(jobKey, byKey.get(jobKey), requiredSince.get(jobKey))
+        );
+        if (snapshots.every(item => item.proven)) return snapshots;
         await sleep(2000);
     }
+
     const rows = await jobHealth.list();
     const byKey = new Map(rows.map(row => [row.job_key, row]));
-    const detail = DEPLOYMENT_PROBE_JOBS.map(jobKey => {
-        const row = byKey.get(jobKey);
-        return `${jobKey}:${row ? jobHealth.healthState(row) : 'missing'}`;
-    }).join(', ');
+    const detail = DEPLOYMENT_PROBE_JOBS.map(jobKey =>
+        formatProbeSnapshot(probeSnapshot(jobKey, byKey.get(jobKey), requiredSince.get(jobKey)))
+    ).join('; ');
     throw new Error(`Timed out waiting for the post-deploy automation recovery probe (${detail}).`);
 }
 
@@ -79,10 +136,11 @@ async function main() {
 
             const workers = await query(`
                 SELECT DISTINCT ON (worker_key)
-                       worker_key,instance_id,commit_sha,metadata,last_heartbeat_at,
+                       worker_key,instance_id,commit_sha,metadata,started_at,last_heartbeat_at,
                        EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int AS age
                 FROM operational_worker_state
                 WHERE worker_key IN ('automation','activity')
+                  AND draining_at IS NULL
                 ORDER BY worker_key,last_heartbeat_at DESC
             `);
             const byKey = new Map(workers.rows.map(row => [row.worker_key, row]));
@@ -104,14 +162,13 @@ async function main() {
                     ? `running worker missing=${missingRegisteredJobs.join(',')}`
                     : `${registeredJobs.length} jobs registered; ${requiredJobs.length} access-critical jobs present`);
 
-            // A heartbeat proves only that the worker process is alive. Before
-            // accepting a deployment, force the new recovery lanes plus the
-            // integrity watchdog through the real scheduler and wait for a pass
-            // completed by this running release.
+            // A heartbeat proves only that the worker process is alive. Accept a
+            // recovery/integrity pass already completed by this exact worker;
+            // otherwise force only the lanes that still need release proof.
             if (automationWorkerHealthy && automationShaMatches && missingRegisteredJobs.length === 0) {
                 try {
-                    const probe = await proveAutomationRecoveryPass();
-                    add('automation recovery probe', probe.every(item => item.state === 'healthy'),
+                    const probe = await proveAutomationRecoveryPass({ workerStartedAt: automationWorker.started_at });
+                    add('automation recovery probe', probe.every(item => item.proven),
                         probe.map(item => `${item.jobKey}:${item.state}`).join(', '));
                 } catch (error) {
                     add('automation recovery probe', false, error.message);
@@ -144,23 +201,52 @@ async function main() {
                     : 'no heartbeat');
 
             const jobs = await jobHealth.list();
+            const jobsByKey = new Map(jobs.map(job => [job.job_key, job]));
             const critical = new Set(requiredJobs);
             // A degraded critical job means one or more customer/revenue sub-operations
             // failed. Treat that as a deployment blocker rather than accepting a green
-            // worker heartbeat while customers remain stranded.
+            // worker heartbeat while customers remain stranded. Deliberately disabled
+            // operator-controlled jobs are validated separately below.
             const badStates = new Set(['failed', 'degraded', 'stale', 'missing']);
-            const bad = jobs.filter(job => critical.has(job.job_key) && badStates.has(jobHealth.healthState(job)));
-            const inactivityJob = jobs.find(job => job.job_key === 'customer_inactivity');
-            add('Free Server lifecycle job', Boolean(inactivityJob?.enabled), inactivityJob ? `state=${jobHealth.healthState(inactivityJob)} next=${inactivityJob.next_run_at || 'pending'}` : 'job row missing');
-            const freeBackfillJob = jobs.find(job => job.job_key === 'free_capacity_backfill');
+            const bad = jobs.filter(job =>
+                critical.has(job.job_key)
+                && job.enabled !== false
+                && badStates.has(jobHealth.healthState(job))
+            );
+
+            const inactivityJob = jobsByKey.get('customer_inactivity');
+            const inactivityState = inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing';
+            const inactivityAllowed = Boolean(inactivityJob) && (
+                inactivityJob.enabled === false
+                    ? criticalJobs.mayBeDisabled('customer_inactivity')
+                    : !badStates.has(inactivityState)
+            );
+            add('Free Server inactivity cleanup policy', inactivityAllowed,
+                inactivityJob
+                    ? inactivityJob.enabled === false
+                        ? `state=${inactivityState} (operator-disabled; allowed)`
+                        : `state=${inactivityState} next=${inactivityJob.next_run_at || 'pending'}`
+                    : 'job row missing');
+
+            const freeBackfillJob = jobsByKey.get('free_capacity_backfill');
             const freeBackfillState = freeBackfillJob ? jobHealth.healthState(freeBackfillJob) : 'missing';
             add('Free Server recovery job', Boolean(freeBackfillJob?.enabled) && !['failed','stale','missing','degraded'].includes(freeBackfillState),
                 freeBackfillJob
                     ? `state=${freeBackfillState} interval=${freeBackfillJob.interval_seconds}s next=${freeBackfillJob.next_run_at || 'pending'}${freeBackfillJob.last_warning ? ` warning=${freeBackfillJob.last_warning}` : ''}`
                     : 'job row missing');
-            const missingCritical = requiredJobs.filter(jobKey => !jobs.some(job => job.job_key === jobKey && job.enabled !== false));
+
+            const missingCritical = requiredJobs.filter(jobKey => !jobsByKey.has(jobKey));
             add('critical automation job registry', missingCritical.length === 0,
-                missingCritical.length ? `missing/disabled=${missingCritical.join(',')}` : `${critical.size} required jobs present`);
+                missingCritical.length ? `missing=${missingCritical.join(',')}` : `${critical.size} required jobs present`);
+
+            const disabledCritical = requiredJobs.filter(jobKey => {
+                const row = jobsByKey.get(jobKey);
+                return row?.enabled === false && !criticalJobs.mayBeDisabled(jobKey);
+            });
+            add('critical automation job enablement', disabledCritical.length === 0,
+                disabledCritical.length
+                    ? `unexpectedly disabled=${disabledCritical.join(',')}`
+                    : 'all required-enabled jobs enabled; operator-controlled disablements allowed');
             add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${jobHealth.healthState(job)}`).join(', '));
 
             const lifecycleTable = (await query(`SELECT to_regclass('public.jellyfin_account_lifecycle') AS table_name`)).rows[0]?.table_name;
@@ -189,9 +275,21 @@ async function main() {
     }
 }
 
-main().catch(error => {
-    console.error(error);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch(error => {
+        console.error(error);
+        process.exit(1);
+    });
+}
 
-module.exports = { DEPLOYMENT_PROBE_JOBS, DEPLOYMENT_PROBE_TIMEOUT_MS, sleep, proveAutomationRecoveryPass, main };
+module.exports = {
+    DEPLOYMENT_PROBE_JOBS,
+    DEPLOYMENT_PROBE_TIMEOUT_MS,
+    sleep,
+    timestamp,
+    probeSucceededSince,
+    probeSnapshot,
+    formatProbeSnapshot,
+    proveAutomationRecoveryPass,
+    main
+};
