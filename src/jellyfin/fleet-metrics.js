@@ -177,7 +177,7 @@ async function cachedTotalUsers(serverId) {
     return Number(result.rows[0]?.total_users || 0);
 }
 
-async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}) {
+async function pollServer(serverId, managedUserIds, { refreshUsers = true, persistMetrics = true } = {}) {
     // Peak-concurrency analytics needs the exact set of playback sessions Jellyfin
     // currently exposes. Do not use activeWithinSeconds here: a genuinely paused
     // item is still a concurrent stream even when its activity timestamp is old.
@@ -221,7 +221,7 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}
         activityUpdates: activity.updated,
         usersRefreshed: refreshUsers
     };
-    await persistSuccess(serverId, metrics);
+    if (persistMetrics) await persistSuccess(serverId, metrics);
     return metrics;
 }
 
@@ -245,13 +245,31 @@ async function refreshAll(options = {}) {
     const refreshUsers = options.refreshUsers !== false;
     const results = await mapLimit(rows, 3, async row => {
         try {
-            const metrics = await pollServer(row.serverId, row.managedUserIds, { refreshUsers });
+            // Keep Jellyfin network polling concurrent, but defer the metric-row
+            // writes until every observation has completed. The concurrency sample
+            // trigger requires each prior server observation to be committed and
+            // visible; concurrent metric transactions can otherwise both miss the
+            // other transaction and produce no trusted fleet sample at all.
+            const metrics = await pollServer(row.serverId, row.managedUserIds, { refreshUsers, persistMetrics: false });
             return { serverId: row.serverId, ok: true, ...metrics };
         } catch (error) {
             try { await persistFailure(row.serverId, error); } catch (_) {}
             return { serverId: row.serverId, ok: false, error: String(error?.message || error) };
         }
     });
+
+    // Serialising only these small PostgreSQL writes preserves concurrent network
+    // collection while making the fleet-wide trigger deterministic under MVCC.
+    for (const result of results) {
+        if (!result.ok) continue;
+        try {
+            await persistSuccess(result.serverId, result);
+        } catch (error) {
+            try { await persistFailure(result.serverId, error); } catch (_) {}
+            result.ok = false;
+            result.error = String(error?.message || error);
+        }
+    }
 
     // Run after the normal fleet/policy collection boundary. These sessions are
     // deliberately written without customer_id, jellyfin_account_id or a stream
