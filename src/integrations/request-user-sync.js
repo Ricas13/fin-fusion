@@ -377,6 +377,16 @@ function forgetExternal(indexes, external) {
     if (!id || (current?.id != null && String(current.id) === id)) indexes.byEmail.delete(email);
   }
 }
+function forgetExternalId(indexes, externalUserId) {
+  const id = externalUserId == null ? '' : String(externalUserId);
+  if (!id) return;
+  if (indexes?.byId) indexes.byId.delete(id);
+  if (indexes?.byEmail) {
+    for (const [email, current] of indexes.byEmail.entries()) {
+      if (current?.id != null && String(current.id) === id) indexes.byEmail.delete(email);
+    }
+  }
+}
 function protectedExternalUser(external, linkedId, livePermissions = external?.permissions) {
   const id = String(linkedId || '');
   const apiUserId = requestApiUserId();
@@ -429,6 +439,17 @@ async function removeCustomer(candidate, indexes = {}, options = {}) {
       } catch (error) {
         if (Number(error?.statusCode) === 404) {
           await clearExternalBinding(candidate.customer_id, linkedId);
+          forgetExternalId(indexes, linkedId);
+          const finalEntitlement = await requestEntitlements.resolve(candidate.customer_id);
+          if (finalEntitlement?.entitlement_active && finalEntitlement.request_access_enabled !== false) {
+            return syncCustomerLocked({
+              ...candidate,
+              ...finalEntitlement,
+              external_user_id: null,
+              access_suspended: true,
+              applied_plan_id: null
+            }, indexes, options);
+          }
           return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: false };
         }
         throw error;
