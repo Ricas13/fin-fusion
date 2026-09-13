@@ -5,7 +5,7 @@ const { getPool } = require('../src/db');
 const { validateRuntimePrivileges } = require('./runtime-db-privilege-smoke');
 
 const ROLE_SPECS = {
-    app: { role: 'steamfusion_app', urlEnv: 'APP_DATABASE_URL', connectionLimit: 40, statementTimeout: '30s', lockTimeout: '10s', idleTimeout: '30s', createdb: false },
+    app: { role: 'steamfusion_app', urlEnv: 'APP_DATABASE_URL', connectionLimit: -1, statementTimeout: '30s', lockTimeout: '10s', idleTimeout: '30s', createdb: false },
     automation: { role: 'steamfusion_automation', urlEnv: 'AUTOMATION_DATABASE_URL', connectionLimit: 12, statementTimeout: '90s', lockTimeout: '10s', idleTimeout: '60s', createdb: false },
     activity: { role: 'steamfusion_activity', urlEnv: 'ACTIVITY_DATABASE_URL', connectionLimit: 5, statementTimeout: '15s', lockTimeout: '5s', idleTimeout: '15s', createdb: false },
     backup: { role: 'steamfusion_backup', urlEnv: 'BACKUP_DATABASE_URL', connectionLimit: 6, statementTimeout: '0', lockTimeout: '10s', idleTimeout: '60s', createdb: false },
