@@ -33,14 +33,22 @@ async function recoveryForCreation(customerId, server, accessLane = 'primary') {
 
   const row = found.rows[0];
   let password = null;
+  let credentialRecoveryFailed = false;
   if (row.encrypted_password) {
     try {
       password = decryptString(row.encrypted_password);
-    } catch (cause) {
-      const error = new Error('Stored media recovery credential could not be decrypted. Account recreation was stopped before changing remote access.');
-      error.code = 'MEDIA_RECOVERY_CREDENTIAL_DECRYPT_FAILED';
-      error.cause = cause;
-      throw error;
+    } catch (error) {
+      // Recovery state is optional convenience metadata, never entitlement
+      // authority. A stale/corrupt ciphertext must not strand an otherwise
+      // valid customer. Ignore only the unusable credential and let normal
+      // account creation require password setup afterwards.
+      credentialRecoveryFailed = true;
+      console.warn('Stored media recovery credential could not be decrypted; continuing without recovered password.', {
+        customerId: String(customerId || '').slice(0, 100),
+        serviceType,
+        accessLane: lane,
+        error: String(error?.message || error || 'unknown error').replace(/[\r\n\t]+/g, ' ').slice(0, 300)
+      });
     }
   }
   return {
@@ -50,6 +58,7 @@ async function recoveryForCreation(customerId, server, accessLane = 'primary') {
     preferredUsername: row.preferred_username || null,
     password,
     hasManagedPassword: Boolean(password),
+    credentialRecoveryFailed,
     selectedLibraryNames: Array.isArray(row.selected_library_names) ? row.selected_library_names : null,
     previousServerId: row.last_server_id || null,
     previousAccountId: row.last_account_id || null,
