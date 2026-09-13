@@ -57,6 +57,7 @@ const { createAdminPlansRouter } = require('./admin-plans');
 const { createAdminPlanPlacementFleetRouter } = require('./admin-plan-placement-fleet');
 const { createAdminPlanPlacementRouter } = require('./admin-plan-placement');
 const { createAdminJobsRouter } = require('./admin-jobs');
+const { createAdminCustomerIndividualActionsRouter } = require('./admin-customer-individual-actions');
 const { createAdminBulkCustomersRouter } = require('./admin-bulk-customers');
 const { createAdminCustomersListRouter } = require('./admin-customers-list');
 const { createAdminPlanLibrariesRouter } = require('./admin-plan-libraries');
@@ -166,6 +167,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminPlanPlacementFleetRouter());
   app.use(createAdminPlanPlacementRouter());
   app.use(createAdminJobsRouter());
+  app.use(createAdminCustomerIndividualActionsRouter());
   app.use(createAdminBulkCustomersRouter());
   app.use(createAdminCustomerOperatorRouter());
   app.use(createAdminCustomerForceAccessRouter());
