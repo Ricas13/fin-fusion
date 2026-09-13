@@ -86,13 +86,15 @@ assert(management.includes('module.exports=')&&management.includes('portalSectio
 
 const view360=read('src/platform/customer-360-view.js');
 const compact360=read('src/platform/customer-360-compact.js');
+const primaryActions=read('src/platform/admin-customer-primary-actions.js');
 const directIndividual=read('src/platform/admin-customer-individual-actions.js');
 const directLifecycle=read('src/platform/admin-customer-direct-lifecycle.js');
 const accessCards=read('src/platform/customer-360-access-cards.js');
 assert(view360.includes("compact=require('./customer-360-compact')")&&view360.includes('compact.render(safe,token,options)'),'the focused Customer 360 renderer must own the default operator page');
 for(const title of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone'])assert(compact360.includes(title),`action-first Customer 360 is missing ${title}`);
 assert(compact360.includes('accessCards.accessLibrariesRequests(detail,token,options)')&&compact360.includes('Permissions, libraries & requests…'),'lane-aware access/library/request overrides must remain available as a secondary action inside the service control panel');
-assert(!compact360.includes('bulkForm(')&&!compact360.includes('/admin/customers/bulk/preview'),'Customer 360 single-customer actions must not submit through the bulk preview workflow');
+assert(!compact360.includes('bulkForm(')&&!compact360.includes('/admin/customers/bulk/preview'),'Customer 360 compact single-customer actions must not submit through the bulk preview workflow');
+assert(!primaryActions.includes('/admin/customers/bulk/preview')&&primaryActions.includes('/admin/users/${encodeURIComponent(id)}/move-server'),'Customer 360 primary actions must route server movement directly instead of through bulk preview');
 assert(compact360.includes('/change-plan?subscriptionId=')&&compact360.includes('/revoke/${encodeURIComponent(plan.id)}')&&compact360.includes('/move-server')&&compact360.includes('/delete-customer'),'Customer 360 must expose targeted direct plan, revoke, server-move and permanent-delete workflows');
 assert(directIndividual.includes("COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')"),'individual subscription actions must only target Jellyfin-capable subscriptions');
 assert(directLifecycle.includes("forceMove.move(req.params.customerId,serverId")&&directLifecycle.includes('ownerStatus(req.session.authUserId)')&&directLifecycle.includes('deletion.hardDeletePortalCustomer'),'single-customer lifecycle routes must reuse canonical move/deletion safeguards');
