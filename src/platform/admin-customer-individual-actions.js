@@ -33,6 +33,7 @@ function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${es
 function dateOnly(value){if(!value)return'';const d=new Date(value);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);}
 function exactConfirmation(req,value){return String(req.body?.confirmWord||'').trim().toUpperCase()===value;}
 function operationId(value){const id=String(value||'').trim();if(!UUID.test(id))throw new Error('This action form has expired. Open it again and retry.');return id;}
+function subscriptionId(value){const id=String(value||'').trim();if(!UUID.test(id))throw new Error('Choose the subscription this action should change.');return id;}
 
 async function audit(actorUserId,action,customerId,metadata={}){
   await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,action,customerId,JSON.stringify(metadata)]);
@@ -67,6 +68,30 @@ async function currentSubscription(customerId){
   return effective||latest;
 }
 
+async function subscriptionForCustomer(customerId,value){
+  const id=subscriptionId(value);
+  const result=await query(`
+    SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval,
+      EXISTS(
+        SELECT 1 FROM audit_log terminal_audit
+        WHERE terminal_audit.entity_type='subscription'
+          AND terminal_audit.entity_id=s.id::text
+          AND terminal_audit.action='billing.subscription.terminate_for_refund'
+      ) AS refund_terminated
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    WHERE s.id=$1
+      AND s.customer_id=$2
+      AND COALESCE(p.is_addon,FALSE)=FALSE
+      AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
+      AND s.superseded_by IS NULL
+    LIMIT 1
+  `,[id,customerId]);
+  const sub=result.rows[0]||null;
+  if(!sub||sub.refund_terminated)throw new Error('That subscription is not available for this customer.');
+  return sub;
+}
+
 async function jellyfinAccounts(customerId){
   const result=await query(`
     SELECT ja.*,js.name AS server_name
@@ -87,25 +112,23 @@ function pageShell(req,c,title,description,content){
 }
 
 async function extendPage(req,c){
-  const sub=await currentSubscription(c.id);
-  if(!sub)return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">This customer has no primary subscription that can be extended.</div>');
+  const sub=await subscriptionForCustomer(c.id,req.query?.subscriptionId);
   if(planExpiry.isFreeTier(sub))return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">Free Access has no expiry to extend.</div>');
   const durationDays=Math.max(1,Number(sub.duration_days_snapshot||sub.duration_days||30));
   const existing=Math.max(0,Number(sub.service_extension_days||0));
   const remainingAllowance=Math.max(0,3650-existing);
-  if(remainingAllowance<durationDays)return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">This customer has reached the 3,650-day manual extension safety limit.</div>');
-  const maxUnits=Math.floor(remainingAllowance/durationDays);
-  const form=`<div class="notice"><strong>Individual action.</strong> This adds service time to this customer only. It does not create a new provider charge.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'extend'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="operationId" value="${esc(crypto.randomUUID())}"><div class="formGroup"><label>Plan periods to add</label><input class="input" type="number" name="units" min="1" max="${esc(maxUnits)}" value="1" required><div class="inlineHelp">One period is ${esc(durationDays)} day${durationDays===1?'':'s'}. Existing manual extension: ${esc(existing)} day${existing===1?'':'s'}. Maximum combined manual extension: 3,650 days.</div></div><div class="formGroup"><label>Type EXTEND to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Extend this customer</button></form>`;
+  if(remainingAllowance<durationDays)return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">This subscription has reached the 3,650-day manual extension safety limit.</div>');
+  const maxUnits=Math.floor(remainingAllowance/durationDays),subId=sub.id||sub.subscription_id;
+  const form=`<div class="notice"><strong>Individual action.</strong> This adds service time to the selected subscription only. It does not create a new provider charge.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'extend'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><input type="hidden" name="operationId" value="${esc(crypto.randomUUID())}"><div class="formGroup"><label>Plan periods to add</label><input class="input" type="number" name="units" min="1" max="${esc(maxUnits)}" value="1" required><div class="inlineHelp">Subscription ${esc(subId)} · one period is ${esc(durationDays)} day${durationDays===1?'':'s'}. Existing manual extension: ${esc(existing)} day${existing===1?'':'s'}. Maximum combined manual extension: 3,650 days.</div></div><div class="formGroup"><label>Type EXTEND to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Extend this subscription</button></form>`;
   return pageShell(req,c,'Extend plan','Individual customer action',form);
 }
 
 async function expiryPage(req,c){
-  const sub=await currentSubscription(c.id);
-  if(!sub)return pageShell(req,c,'Edit expiry','Individual customer action','<div class="notice error">This customer has no primary subscription whose expiry can be edited.</div>');
+  const sub=await subscriptionForCustomer(c.id,req.query?.subscriptionId);
   if(planExpiry.isFreeTier(sub))return pageShell(req,c,'Edit expiry','Individual customer action','<div class="notice error">Free Access does not use an expiry date.</div>');
   if(subscriptionState.recurringProvider(sub))return pageShell(req,c,'Edit expiry','Provider-controlled recurring plan','<div class="notice error"><strong>This expiry is controlled by the payment provider.</strong> Fin-Fusion will not rewrite the local end date for an active Stripe/PayPal recurring agreement because that would make billing and access disagree. Use renewal/cancellation or the plan-change workflow instead.</div>');
-  const current=dateOnly(sub.current_period_end)||new Date().toISOString().slice(0,10);
-  const form=`<div class="notice"><strong>Individual action.</strong> This changes this customer only and clears any previously-added service-extension days.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'expiry'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<div class="formGroup"><label>New expiry date</label><input class="input" type="date" name="expiryDate" value="${esc(current)}" required></div><div class="formGroup"><label>Type EXPIRY to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Set expiry for this customer</button></form>`;
+  const current=dateOnly(sub.current_period_end)||new Date().toISOString().slice(0,10),subId=sub.id||sub.subscription_id;
+  const form=`<div class="notice"><strong>Individual action.</strong> This changes the selected subscription only and clears its previously-added service-extension days.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'expiry'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><div class="formGroup"><label>New expiry date</label><input class="input" type="date" name="expiryDate" value="${esc(current)}" required><div class="inlineHelp">Subscription ${esc(subId)}</div></div><div class="formGroup"><label>Type EXPIRY to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Set expiry for this subscription</button></form>`;
   return pageShell(req,c,'Edit expiry','Individual customer action',form);
 }
 
@@ -140,9 +163,9 @@ async function performExtend(req){
   const op=operationId(req.body?.operationId);
   const units=Number(req.body?.units);
   if(!Number.isInteger(units)||units<1)throw new Error('Choose at least one plan period to add.');
-  const sub=await currentSubscription(req.params.customerId);
-  if(!sub)throw new Error('Customer has no subscription to extend.');
+  const sub=await subscriptionForCustomer(req.params.customerId,req.body?.subscriptionId);
   if(planExpiry.isFreeTier(sub))throw new Error('Free Access has no expiry to extend.');
+  const subId=sub.id||sub.subscription_id;
   const durationDays=Math.max(1,Number(sub.duration_days_snapshot||sub.duration_days||30));
   const requestedDays=durationDays*units,currentDays=Math.max(0,Number(sub.service_extension_days||0));
   if(!Number.isInteger(requestedDays)||requestedDays<1||currentDays+requestedDays>3650)throw new Error('Requested service extension exceeds the 3,650-day safety limit.');
@@ -150,33 +173,34 @@ async function performExtend(req){
   while(remaining>0){
     const days=Math.min(365,remaining),reference=`admin-single:${op}:${chunk}`;
     const didAdd=await transaction(async client=>{
-      const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,metadata) VALUES($1,$2,'admin_bulk',$3,$4,$5::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[sub.subscription_id||sub.id,req.params.customerId,days,reference,JSON.stringify({mode:'single_customer',actorUserId:req.session.authUserId,units,chunk})]);
+      const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,metadata) VALUES($1,$2,'admin_bulk',$3,$4,$5::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,req.params.customerId,days,reference,JSON.stringify({mode:'single_customer',actorUserId:req.session.authUserId,subscriptionId:subId,units,chunk})]);
       if(!inserted.rowCount)return false;
-      await client.query(`UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1`,[sub.subscription_id||sub.id,days]);
+      const updated=await client.query(`UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,[subId,days,req.params.customerId]);
+      if(!updated.rowCount)throw new Error('The selected subscription changed before the extension could be saved.');
       return true;
     });
     if(didAdd)added+=days;
     remaining-=days;chunk+=1;
   }
   await provisioning.reconcileCustomer(req.params.customerId);
-  await audit(req.session.authUserId,'admin.customer.extend_entitlement',req.params.customerId,{units,requestedDays,addedDays:added,operationId:op});
+  await audit(req.session.authUserId,'admin.customer.extend_entitlement',req.params.customerId,{subscriptionId:subId,units,requestedDays,addedDays:added,operationId:op});
   if(!added)return 'This extension had already been applied. No additional days were added.';
-  return `${added} day${added===1?'':'s'} added to this customer.`;
+  return `${added} day${added===1?'':'s'} added to the selected subscription.`;
 }
 
 async function performExpiry(req){
   if(!exactConfirmation(req,'EXPIRY'))throw new Error('Type EXPIRY exactly to confirm.');
   const expiryDate=String(req.body?.expiryDate||'');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate))throw new Error('Choose a valid expiry date.');
-  const sub=await currentSubscription(req.params.customerId);
-  if(!sub)throw new Error('Customer has no subscription.');
+  const sub=await subscriptionForCustomer(req.params.customerId,req.body?.subscriptionId);
   if(planExpiry.isFreeTier(sub))throw new Error('Free Access does not use an expiry date.');
   if(subscriptionState.recurringProvider(sub))throw new Error('Expiry on an active Stripe/PayPal recurring agreement is provider-controlled. Use billing cancellation or plan change instead.');
-  const updated=await query(`UPDATE subscriptions SET current_period_end=$2::date,service_extension_days=0,updated_at=NOW() WHERE id=$1 RETURNING id`,[sub.subscription_id||sub.id,expiryDate]);
-  if(!updated.rowCount)throw new Error('Subscription changed before the expiry could be saved.');
+  const subId=sub.id||sub.subscription_id;
+  const updated=await query(`UPDATE subscriptions SET current_period_end=$2::date,service_extension_days=0,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,[subId,expiryDate,req.params.customerId]);
+  if(!updated.rowCount)throw new Error('The selected subscription changed before the expiry could be saved.');
   await provisioning.reconcileCustomer(req.params.customerId);
-  await audit(req.session.authUserId,'admin.customer.set_expiry',req.params.customerId,{expiryDate,clearedServiceExtensions:true});
-  return `Expiry set to ${expiryDate} for this customer.`;
+  await audit(req.session.authUserId,'admin.customer.set_expiry',req.params.customerId,{subscriptionId:subId,expiryDate,clearedServiceExtensions:true});
+  return `Expiry set to ${expiryDate} for the selected subscription.`;
 }
 
 async function performSuspend(req){
@@ -237,15 +261,14 @@ function bridgeLegacyCompactAction(req,res,next){
   const raw=Array.isArray(req.body?.customerId)?req.body.customerId:[req.body?.customerId];
   const ids=raw.map(value=>String(value||'').trim()).filter(Boolean);
   if(req.body?.selectAllMatching==='1'||ids.length!==1||!UUID.test(ids[0]))return res.redirect(303,'/admin/users?error='+encodeURIComponent('This action is available for one customer at a time.'));
-  return res.redirect(303,actionPath(ids[0],direct));
+  const suffix=(direct==='extend'||direct==='expiry')&&req.body?.subscriptionId?`?subscriptionId=${encodeURIComponent(req.body.subscriptionId)}`:'';
+  return res.redirect(303,actionPath(ids[0],direct)+suffix);
 }
 
 function createAdminCustomerIndividualActionsRouter(){
   const router=express.Router();
-  // Compatibility bridge for the four compact Customer 360 buttons that were
-  // historically rendered through the bulk preview URL. The request is
-  // converted to an individual GET workflow before the bulk router sees it;
-  // no mutation happens on this bridge.
+  // Compatibility bridge for compact Customer 360 requests created before the
+  // direct action links were introduced. No mutation happens on this bridge.
   router.post('/admin/customers/bulk/preview',gate,noStore,bridgeLegacyCompactAction);
   router.get('/admin/users/:customerId/actions/:action',gate,noStore,renderAction);
   router.post('/admin/users/:customerId/actions/:action',gate,noStore,writeLimit,performAction);
@@ -257,6 +280,7 @@ module.exports={
   LEGACY_BULK_BRIDGE,
   createAdminCustomerIndividualActionsRouter,
   currentSubscription,
+  subscriptionForCustomer,
   jellyfinAccounts,
   performExtend,
   performExpiry,
