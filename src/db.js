@@ -111,12 +111,13 @@ function poolStats(target = pool, maxWaitingOverride = process.env.DB_POOL_MAX_W
     const idle = target ? Number(target.idleCount || 0) : 0;
     const waiting = target ? Number(target.waitingCount || 0) : 0;
     const maxWaiting = poolMaxWaiting(maxWaitingOverride);
-    const saturated = waiting > 0 || (total >= max && idle === 0);
+    const exhausted = total >= max && idle === 0;
+    const saturated = waiting > 0 || exhausted;
     const overloaded = maxWaiting == null
         ? false
         : maxWaiting === 0
-            ? total >= max && idle === 0
-            : waiting >= maxWaiting;
+            ? exhausted
+            : exhausted && waiting >= maxWaiting;
     return {
         max,
         total,
