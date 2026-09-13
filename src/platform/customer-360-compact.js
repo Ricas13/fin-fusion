@@ -11,13 +11,15 @@ function dt(value){if(!value)return'—';const d=new Date(value);return Number.i
 function money(minor,currency='GBP'){const raw=String(currency||'GBP').toUpperCase(),code=/^[A-Z]{3}$/.test(raw)?raw:'GBP';return new Intl.NumberFormat('en-GB',{style:'currency',currency:code,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}
 function pill(text,tone=''){return `<span class="pill ${tone}">${esc(text)}</span>`;}
 function buttonForm(token,action,label,{tone='secondary',fields={}}={}){return `<form class="plainForm" method="post" action="${esc(action)}" data-native-submit="true">${csrfHidden(token)}${Object.entries(fields).map(([name,value])=>`<input type="hidden" name="${esc(name)}" value="${esc(value)}">`).join('')}<button class="button ${esc(tone)} sm" type="submit">${esc(label)}</button></form>`;}
-function bulkForm(token,customerId,action,label,tone='secondary'){return `<form class="plainForm" method="post" action="/admin/customers/bulk/preview">${csrfHidden(token)}<input type="hidden" name="customerId" value="${esc(customerId)}"><input type="hidden" name="action" value="${esc(action)}"><button class="button ${esc(tone)} sm" type="submit">${esc(label)}</button></form>`;}
+function actionLink(customerId,action,label,{tone='secondary',params={}}={}){const queryString=new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined&&value!==null&&String(value)!=='').map(([key,value])=>[key,String(value)])).toString();const href=`/admin/users/${encodeURIComponent(customerId)}/actions/${encodeURIComponent(action)}${queryString?`?${queryString}`:''}`;return `<a class="button ${esc(tone)} sm" href="${esc(href)}">${esc(label)}</a>`;}
+function customerLink(customerId,path,label,{tone='secondary',params={}}={}){const queryString=new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined&&value!==null&&String(value)!=='').map(([key,value])=>[key,String(value)])).toString();const href=`/admin/users/${encodeURIComponent(customerId)}/${path}${queryString?`?${queryString}`:''}`;return `<a class="button ${esc(tone)} sm" href="${esc(href)}">${esc(label)}</a>`;}
 function stateRow(label,value){return `<div class="opState"><span>${esc(label)}</span><strong>${value}</strong></div>`;}
 function card(title,status,body,actions='',extraClass=''){return `<section class="opCard ${esc(extraClass)}"><div class="opCardHead"><h2>${esc(title)}</h2>${status||''}</div><div class="opCardBody">${body}</div>${actions?`<div class="opActions">${actions}</div>`:''}</section>`;}
 function disclosure(title,summary,body){return `<details class="opDisclosure"><summary><span>${esc(title)}</span><small>${esc(summary||'')}</small><span class="opChevron">▸</span></summary><div class="opDisclosureBody">${body}</div></details>`;}
 function readableAction(value){return String(value||'Activity').replace(/^admin\./,'').replace(/^customer\./,'').replace(/^billing\./,'').replaceAll('.',' · ').replaceAll('_',' ');}
 function currentSubscriptions(detail){return (detail.subscriptions||[]).filter(s=>['active','trialing','past_due','paused'].includes(String(s.status||''))&&(!s.current_period_end||new Date(s.current_period_end)>new Date()));}
 function recurring(sub){const ref=String(sub?.provider_subscription_id||'');return (sub?.source==='stripe'&&/^sub_/i.test(ref))||(sub?.source==='paypal'&&/^I-/i.test(ref));}
+function jellyfinPlan(sub){return ['jellyfin','bundle'].includes(String(sub?.service_type_snapshot||sub?.service_type||'jellyfin').toLowerCase());}
 
 async function supplementary(customerId){
   const [media,request,payments,paymentIncidents,discord,plans]=await Promise.all([
@@ -63,10 +65,15 @@ function plansCard(detail,token,plans){
   const body=`${subs.length?subs.slice(0,6).map(sub=>`<div class="opItem"><div><strong>${esc(sub.plan_name||sub.plan_code||'Plan')}</strong><span>${esc(sub.source||'local')}${sub.current_period_end?` · ${esc(dt(sub.current_period_end))}`:''}</span></div>${pill(String(sub.status||'unknown').replaceAll('_',' '),['active','trialing'].includes(sub.status)?'good':sub.status==='past_due'?'warn':'')}</div>`).join(''):'<div class="opEmpty">No subscription records.</div>'}${current.length?'':manualGrantForm(detail,token,plans)}`;
   const actions=[];
   if(current.length){
-    actions.push(bulkForm(token,id,'plan_change','Change plan'));actions.push(bulkForm(token,id,'extend_entitlement','Extend'));actions.push(bulkForm(token,id,'set_expiry','Edit expiry'));
     const primary=current.find(s=>String(s.id)===String(detail.primaryEntitlement?.subscription_id))||current[0];
+    const jellyfinPrimary=(jellyfinPlan(primary)?primary:null)||current.find(jellyfinPlan)||null;
+    if(jellyfinPrimary){
+      actions.push(customerLink(id,'change-plan','Change plan',{params:{subscriptionId:jellyfinPrimary.id}}));
+      actions.push(actionLink(id,'extend','Extend',{params:{subscriptionId:jellyfinPrimary.id}}));
+      actions.push(actionLink(id,'expiry','Edit expiry',{params:{subscriptionId:jellyfinPrimary.id}}));
+    }
     if(recurring(primary))actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/renewal`,primary.cancel_at_period_end?'Resume renewal':'Stop renewal',{fields:{enabled:primary.cancel_at_period_end?'1':'0'}}));
-    if(current.some(s=>['jellyfin','bundle'].includes(String(s.service_type||'jellyfin'))))actions.push(bulkForm(token,id,'end_jellyfin_plan','Revoke current plan now','danger'));
+    actions.push(customerLink(id,'subscriptions/revoke','Revoke a plan',{tone:'danger'}));
   }
   return card('Plans & Subscriptions',pill(`${current.length} active`,current.length?'good':''),body,actions.join(''));
 }
@@ -88,7 +95,7 @@ function mediaCard(detail,token,media,authority){
   const id=detail.customer.id,jellyfin=media.filter(a=>a.media_server_type!=='emby'),emby=media.filter(a=>a.media_server_type==='emby');
   const body=`${authorityRows(authority)}${media.length?media.map(account=>`<div class="opItem"><div><strong>${esc(account.media_server_type==='emby'?'Emby':'Jellyfin')} · ${esc(account.jellyfin_username)}</strong><span>${esc(account.server_name||'Server')} · ${esc(account.disabled?'disabled':account.health_status||'active')}</span></div>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'warn':'good')}</div>`).join(''):'<div class="opEmpty">No Jellyfin / Emby account (present or deleted - never left disabled indefinitely).</div>'}`;
   const actions=authorityActions(id,token,'jellyfin',authority);
-  if(media.length){if(jellyfin.length)actions.push(`<a class="button secondary sm" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(id)}">Reset Jellyfin password</a>`);if(jellyfin.length)actions.push(bulkForm(token,id,'migrate_server','Move Jellyfin server'));}
+  if(media.length){if(jellyfin.length)actions.push(`<a class="button secondary sm" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(id)}">Reset Jellyfin password</a>`);if(jellyfin.length)actions.push(customerLink(id,'move-server','Move Jellyfin server'));}
   actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));
   if(emby.length&&!jellyfin.length)actions.push('<span class="opActionNote">Emby-specific destructive/credential actions are not exposed unless backed by a safe service lifecycle route.</span>');
   return card('Jellyfin / Emby',pill(`${media.filter(a=>!a.disabled).length}/${media.length} enabled`,media.some(a=>!a.disabled)?'good':''),body,actions.join(''));
@@ -124,15 +131,15 @@ function discordCard(detail,token,discord){
 function holdsCard(detail,token){
   const id=detail.customer.id,holds=detail.activeHolds||[];
   const body=holds.length?holds.map(hold=>`<div class="opHold"><div><strong>${esc(String(hold.hold_type||'hold').replaceAll('_',' '))}</strong><span>${esc(hold.reason||'Access restricted')}</span></div>${String(hold.hold_type)==='payment_risk'?pill('Payment workflow','warn'):`<details class="miniMenu"><summary>Release…</summary><form method="post" action="/admin/users/${encodeURIComponent(id)}/access-holds/${encodeURIComponent(hold.id)}/release">${csrfHidden(token)}<input class="input" name="reason" minlength="5" maxlength="500" placeholder="Release reason" required><input class="input" name="confirmation" placeholder="Type RELEASE" required><button class="button secondary sm">Release hold</button></form></details>`}</div>`).join(''):'<div class="opEmpty">No active holds or suspensions.</div>';
-  const actions=[bulkForm(token,id,'suspend','Add suspension'),buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile access')];
+  const actions=[actionLink(id,'suspend','Add suspension'),buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile access')];
   return card('Access / Holds',pill(holds.length?`${holds.length} active`:'Clear',holds.length?'warn':'good'),body,actions.join(''));
 }
 
 function dangerCard(detail,token,media,state){
   const id=detail.customer.id,actions=[],jellyfin=media.filter(a=>a.media_server_type!=='emby'),emby=media.filter(a=>a.media_server_type==='emby');
-  if(jellyfin.length)actions.push(`<details class="dangerAction"><summary>Delete Jellyfin account(s)…</summary><p>Deletes customer Jellyfin account(s). It does not delete the portal customer, Emby account, payment history or unrelated service entitlements.</p>${bulkForm(token,id,'jellyfin_delete','Review Jellyfin deletion','danger')}</details>`);
+  if(jellyfin.length)actions.push(`<details class="dangerAction"><summary>Delete Jellyfin account(s)…</summary><p>Deletes customer Jellyfin account(s). It does not delete the portal customer, Emby account, payment history or unrelated service entitlements.</p>${actionLink(id,'delete-jellyfin','Review Jellyfin deletion',{tone:'danger'})}</details>`);
   if(state?.row&&state.row.status!=='revoked')actions.push(`<details class="dangerAction"><summary>Revoke Stremio installation…</summary><p>Invalidates the current Stremio installation credential. It does not delete the portal customer or payment history.</p>${buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/stremio/revoke`,'Revoke Stremio install','danger')}</details>`);
-  actions.push(`<details class="dangerAction"><summary>Delete customer completely…</summary><p>Permanent customer deletion uses the existing guarded deletion saga and requires typed confirmation before execution.</p>${bulkForm(token,id,'portal_delete','Review permanent deletion','danger')}</details>`);
+  actions.push(`<details class="dangerAction"><summary>Delete customer completely…</summary><p>Permanent customer deletion uses the existing guarded deletion saga and requires typed confirmation before execution.</p>${customerLink(id,'delete-customer','Review permanent deletion',{tone:'danger'})}</details>`);
   if(emby.length)actions.push('<div class="dangerNote">Emby deletion is not exposed here because no independent, audited Emby account-deletion lifecycle was found.</div>');
   actions.push('<div class="dangerNote">Deleting an individual subscription record is not exposed until Fin-Fusion can prove provider, entitlement and history references can be removed without corrupting the customer record. Use immediate revoke for normal access removal.</div>');
   actions.push('<div class="dangerNote">Overseerr account deletion is not exposed because the existing canonical request-service lifecycle suspends/resyncs accounts to preserve request history rather than deleting them.</div>');
