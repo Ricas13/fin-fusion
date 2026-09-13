@@ -40,12 +40,18 @@ try {
   assert(helpers.includes('preferredUsername: options.preferredUsername || saved.preferredUsername || undefined')
     && helpers.includes('bootstrapPassword: options.bootstrapPassword || saved.password || undefined'),
     'recreation must reuse recoverable username/password without bypassing caller overrides');
-  assert(helpers.includes('if (saved.hasManagedPassword)')
-    && helpers.includes('password_setup_required=FALSE,password_reset_required=FALSE'),
-    'a successfully restored managed password must not force unnecessary password setup');
+  assert(helpers.includes('const recoveredManagedPasswordUsed = Boolean(saved.password && !options.bootstrapPassword)')
+    && helpers.includes('if (recoveredManagedPasswordUsed)')
+    && helpers.includes('account.recovery_had_managed_password = recoveredManagedPasswordUsed'),
+    'password setup flags must only be cleared when the recovered managed password was actually used');
+  assert(helpers.includes('account.recovery_restored = Boolean(await recovery.markRestored(customerId, account, saved))'),
+    'recovery_restored must reflect whether post-create recovery bookkeeping actually succeeded');
   assert(helpers.includes('const encryptedPassword = recovery.encryptManagedPassword(newPassword)')
     && helpers.indexOf('const encryptedPassword = recovery.encryptManagedPassword(newPassword)') < helpers.indexOf('core.setJellyfinPassword(customerId, accountId, newPassword)'),
     'encryption-key validation must happen before changing the remote password');
+  assert(helpers.includes('Media recovery credential bookkeeping failed after remote password update.')
+    && helpers.indexOf('core.setJellyfinPassword(customerId, accountId, newPassword)') < helpers.indexOf('Media recovery credential bookkeeping failed after remote password update.'),
+    'a local recovery bookkeeping failure after a successful remote password change must not misreport the remote password operation as failed');
 
   assert(recoverySource.includes('Media access recovery bookkeeping failed after account recreation.')
     && recoverySource.includes('return false;'),
