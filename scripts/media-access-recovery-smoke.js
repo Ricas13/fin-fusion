@@ -53,6 +53,12 @@ try {
     && helpers.indexOf('core.setJellyfinPassword(customerId, accountId, newPassword)') < helpers.indexOf('Media recovery credential bookkeeping failed after remote password update.'),
     'a local recovery bookkeeping failure after a successful remote password change must not misreport the remote password operation as failed');
 
+  assert(recoverySource.includes('credentialRecoveryFailed = true')
+    && recoverySource.includes('continuing without recovered password')
+    && recoverySource.includes('credentialRecoveryFailed,'),
+    'an undecryptable optional recovery credential must be ignored rather than blocking valid account provisioning');
+  assert(!recoverySource.includes('MEDIA_RECOVERY_CREDENTIAL_DECRYPT_FAILED'),
+    'credential recovery corruption must not become a hard entitlement/provisioning failure');
   assert(recoverySource.includes('Media access recovery bookkeeping failed after account recreation.')
     && recoverySource.includes('return false;'),
     'post-create recovery bookkeeping failure must not convert successful account creation into a duplicate-producing retry');
