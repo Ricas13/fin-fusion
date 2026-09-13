@@ -324,13 +324,26 @@ async function mark(customerId, fields = {}) {
     ON CONFLICT(customer_id) DO UPDATE SET external_user_id=COALESCE(EXCLUDED.external_user_id,request_user_sync.external_user_id),external_email=COALESCE(EXCLUDED.external_email,request_user_sync.external_email),external_username=COALESCE(EXCLUDED.external_username,request_user_sync.external_username),status=EXCLUDED.status,password_reset_required=EXCLUDED.password_reset_required,last_error=EXCLUDED.last_error,last_attempt_at=NOW(),last_success_at=CASE WHEN EXCLUDED.status='synced' THEN NOW() ELSE request_user_sync.last_success_at END,active_permissions=COALESCE(EXCLUDED.active_permissions,request_user_sync.active_permissions),access_suspended=EXCLUDED.access_suspended,applied_plan_id=EXCLUDED.applied_plan_id,applied_movie_quota_limit=EXCLUDED.applied_movie_quota_limit,applied_movie_quota_days=EXCLUDED.applied_movie_quota_days,applied_tv_quota_limit=EXCLUDED.applied_tv_quota_limit,applied_tv_quota_days=EXCLUDED.applied_tv_quota_days,updated_at=NOW()
   `, [customerId, fields.externalUserId || null, fields.email || null, fields.username || null, status, Boolean(fields.passwordResetRequired), fields.error ? String(fields.error).slice(0, 1000) : null, fields.activePermissions == null ? null : Math.max(0, Number(fields.activePermissions) || 0), Boolean(fields.accessSuspended), fields.planId || null, fields.movieQuotaLimit == null ? null : Number(fields.movieQuotaLimit), fields.movieQuotaDays == null ? null : Number(fields.movieQuotaDays), fields.tvQuotaLimit == null ? null : Number(fields.tvQuotaLimit), fields.tvQuotaDays == null ? null : Number(fields.tvQuotaDays)]);
 }
-async function clearExternalBinding(customerId) {
-  await query(`
+async function clearExternalBinding(customerId, expectedExternalUserId) {
+  const result = await query(`
     UPDATE request_user_sync
     SET external_user_id=NULL,status='synced',password_reset_required=FALSE,last_error=NULL,
       last_attempt_at=NOW(),last_success_at=NOW(),access_suspended=TRUE,applied_plan_id=NULL,updated_at=NOW()
-    WHERE customer_id=$1
-  `, [customerId]);
+    WHERE customer_id=$1 AND external_user_id=$2
+    RETURNING customer_id
+  `, [customerId, expectedExternalUserId]);
+  if (!result.rowCount) {
+    throw new Error(`Request-user binding changed while clearing missing Seerr account #${expectedExternalUserId}; refusing to clear a newer binding.`);
+  }
+}
+async function markRemovalFailure(candidate, linkedId, error) {
+  const result = await query(`
+    UPDATE request_user_sync
+    SET status='failed',last_error=$3,last_attempt_at=NOW(),updated_at=NOW()
+    WHERE customer_id=$1 AND external_user_id=$2
+    RETURNING customer_id
+  `, [candidate.customer_id, linkedId, String(error?.message || error).slice(0, 1000)]);
+  return Boolean(result.rowCount);
 }
 function desiredPermissions(candidate, currentPermissions) {
   if (candidate.request_permission_override !== null && candidate.request_permission_override !== undefined) {
@@ -415,7 +428,7 @@ async function removeCustomer(candidate, indexes = {}, options = {}) {
         external = await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`);
       } catch (error) {
         if (Number(error?.statusCode) === 404) {
-          await clearExternalBinding(candidate.customer_id);
+          await clearExternalBinding(candidate.customer_id, linkedId);
           return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: false };
         }
         throw error;
@@ -444,8 +457,14 @@ async function removeCustomer(candidate, indexes = {}, options = {}) {
       forgetExternal(indexes, external);
       return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: deleted };
     } catch (error) {
-      await mark(candidate.customer_id, { status: 'failed', externalUserId: linkedId, email: external?.email || candidate.external_email, username: external?.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
-      return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
+      let message = error.message;
+      try {
+        const recorded = await markRemovalFailure(candidate, linkedId, error);
+        if (!recorded) message += ' Request-user binding changed concurrently; the newer binding was left untouched.';
+      } catch (markError) {
+        message += ` Failed to record cleanup failure: ${markError.message}`;
+      }
+      return { status: 'failed', customerId: candidate.customer_id, externalUserId: linkedId, error: message, remoteChanged: false };
     }
   });
 }
@@ -673,4 +692,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, withSessionAdvisoryLock, withCustomerSyncLock, withExternalSyncLock, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, intentionallyRemoved, protectedExternalUser, deletionIdentityMatches, assertExclusiveExternalOwnership, finalizeRemovedBinding, removeCustomer, createExternalUserConvergently, syncCustomerLocked, syncCustomer, syncBatch, requestRoleRetry };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, withSessionAdvisoryLock, withCustomerSyncLock, withExternalSyncLock, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, markRemovalFailure, intentionallyRemoved, protectedExternalUser, deletionIdentityMatches, assertExclusiveExternalOwnership, finalizeRemovedBinding, removeCustomer, createExternalUserConvergently, syncCustomerLocked, syncCustomer, syncBatch, requestRoleRetry };
