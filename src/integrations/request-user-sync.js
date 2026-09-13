@@ -18,6 +18,7 @@ const SEERR_ADMIN_PERMISSION = 2;
 const SEERR_MANAGE_USERS_PERMISSION = 8;
 const SEERR_PROTECTED_DELETE_MASK = SEERR_ADMIN_PERMISSION | SEERR_MANAGE_USERS_PERMISSION;
 const REQUEST_SYNC_LOCK_PREFIX = 'request-user-sync:';
+const REQUEST_EXTERNAL_LOCK_PREFIX = 'request-user-external:';
 const MANAGED_MAIN_FIELDS = [
   'username','email','locale','discoverRegion','streamingRegion','region','originalLanguage',
   'watchlistSyncMovies','watchlistSyncTv','movieQuotaLimit','movieQuotaDays','tvQuotaLimit','tvQuotaDays'
@@ -149,23 +150,39 @@ async function mapBounded(items, limit, mapper) {
   }));
   return results;
 }
+async function withSessionAdvisoryLock(client, key, fn) {
+  await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key]);
+  let primaryError = null;
+  try {
+    return await fn();
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    try {
+      const released = await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0)) AS unlocked', [key]);
+      if (released.rows[0]?.unlocked !== true && !primaryError) throw new Error(`Failed to release request sync lock ${key}.`);
+    } catch (unlockError) {
+      if (!primaryError) throw unlockError;
+    }
+  }
+}
 async function withCustomerSyncLock(customerId, fn) {
   const key = `${REQUEST_SYNC_LOCK_PREFIX}${String(customerId || '').trim()}`;
   const client = await getPool().connect();
-  let locked = false, destroy = false;
+  let destroy = false;
   try {
-    await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key]);
-    locked = true;
-    return await fn();
+    return await withSessionAdvisoryLock(client, key, () => fn(client));
+  } catch (error) {
+    if (/release request sync lock/.test(String(error?.message || ''))) destroy = true;
+    throw error;
   } finally {
-    if (locked) {
-      try {
-        const released = await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0)) AS unlocked', [key]);
-        if (released.rows[0]?.unlocked !== true) destroy = true;
-      } catch (_) { destroy = true; }
-    }
     client.release(destroy);
   }
+}
+async function withExternalSyncLock(client, externalUserId, fn) {
+  if (!client || externalUserId == null) return fn();
+  return withSessionAdvisoryLock(client, `${REQUEST_EXTERNAL_LOCK_PREFIX}${String(externalUserId)}`, fn);
 }
 
 async function syncCandidates(options = {}) {
@@ -360,7 +377,7 @@ function deletionIdentityMatches(candidate, external) {
 }
 async function assertExclusiveExternalOwnership(customerId, linkedId) {
   const other = await query(`SELECT customer_id FROM request_user_sync WHERE external_user_id=$1 AND customer_id<>$2 LIMIT 1`, [linkedId, customerId]);
-  if (other.rowCount) throw new Error(`Refusing to delete Seerr account #${linkedId}: it is also linked to another Fin-Fusion customer.`);
+  if (other.rowCount) throw new Error(`Refusing to manage Seerr account #${linkedId}: it is also linked to another Fin-Fusion customer.`);
 }
 async function finalizeRemovedBinding(candidate, external, linkedId, activePermissions, deleted) {
   const metadata = {
@@ -392,43 +409,45 @@ async function removeCustomer(candidate, indexes = {}, options = {}) {
     return { status: 'ignored', customerId: candidate.customer_id, remoteChanged: false };
   }
   let external = null;
-  try {
+  return withExternalSyncLock(options._lockClient, linkedId, async () => {
     try {
-      external = await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`);
-    } catch (error) {
-      if (Number(error?.statusCode) === 404) {
-        await clearExternalBinding(candidate.customer_id);
-        return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: false };
+      try {
+        external = await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`);
+      } catch (error) {
+        if (Number(error?.statusCode) === 404) {
+          await clearExternalBinding(candidate.customer_id);
+          return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: false };
+        }
+        throw error;
       }
-      throw error;
-    }
-    await assertExclusiveExternalOwnership(candidate.customer_id, linkedId);
-    if (!deletionIdentityMatches(candidate, external)) {
-      throw new Error(`Refusing to delete Seerr account #${linkedId}: the live remote identity no longer matches Fin-Fusion's stored binding.`);
-    }
-    const currentPermissions = await permissionState(linkedId);
-    if (protectedExternalUser(external, linkedId, currentPermissions)) {
-      throw new Error(`Refusing to delete protected Seerr administrator/user-manager account #${linkedId}.`);
-    }
-    const finalEntitlement = await requestEntitlements.resolve(candidate.customer_id);
-    if (finalEntitlement?.entitlement_active && finalEntitlement.request_access_enabled !== false) {
-      return syncCustomerLocked({ ...candidate, ...finalEntitlement }, indexes, options);
-    }
-    const activePermissions = desiredPermissions(candidate, currentPermissions);
-    let deleted = true;
-    try {
-      await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`, { method: 'DELETE' });
+      await assertExclusiveExternalOwnership(candidate.customer_id, linkedId);
+      if (!deletionIdentityMatches(candidate, external)) {
+        throw new Error(`Refusing to delete Seerr account #${linkedId}: the live remote identity no longer matches Fin-Fusion's stored binding.`);
+      }
+      const currentPermissions = await permissionState(linkedId);
+      if (protectedExternalUser(external, linkedId, currentPermissions)) {
+        throw new Error(`Refusing to delete protected Seerr administrator/user-manager account #${linkedId}.`);
+      }
+      const finalEntitlement = await requestEntitlements.resolve(candidate.customer_id);
+      if (finalEntitlement?.entitlement_active && finalEntitlement.request_access_enabled !== false) {
+        return syncCustomerLocked({ ...candidate, ...finalEntitlement }, indexes, options);
+      }
+      const activePermissions = desiredPermissions(candidate, currentPermissions);
+      let deleted = true;
+      try {
+        await apiRequest(`/api/v1/user/${encodeURIComponent(linkedId)}`, { method: 'DELETE' });
+      } catch (error) {
+        if (Number(error?.statusCode) === 404) deleted = false;
+        else throw error;
+      }
+      await finalizeRemovedBinding(candidate, external, linkedId, activePermissions, deleted);
+      forgetExternal(indexes, external);
+      return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: deleted };
     } catch (error) {
-      if (Number(error?.statusCode) === 404) deleted = false;
-      else throw error;
+      await mark(candidate.customer_id, { status: 'failed', externalUserId: linkedId, email: external?.email || candidate.external_email, username: external?.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
+      return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
     }
-    await finalizeRemovedBinding(candidate, external, linkedId, activePermissions, deleted);
-    forgetExternal(indexes, external);
-    return { status: 'suspended', customerId: candidate.customer_id, remoteChanged: deleted };
-  } catch (error) {
-    await mark(candidate.customer_id, { status: 'failed', externalUserId: linkedId, email: external?.email || candidate.external_email, username: external?.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
-    return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
-  }
+  });
 }
 async function createExternalUserConvergently({ candidate, indexes, email, username, password, createUser = null, listUsers = null }) {
   const create = createUser || (body => apiRequest('/api/v1/user', { method: 'POST', body }));
@@ -461,7 +480,7 @@ async function syncCustomerLocked(candidate, indexes = {}, options = {}) {
   candidate = await resolveRequestCandidate(candidate);
   const username = cleanUsername(candidate?.username), email = requestLogin(candidate);
   const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
-  let external = trustedExternalForCandidate(candidate, indexes);
+  let external = trustedExternalForCandidate(candidate, indexes), bindingSafe = Boolean(candidate.external_user_id);
   if (!candidate.entitlement_active || candidate.request_access_enabled === false) return removeCustomer(candidate, indexes, options);
   try {
     const collision = loginCollisionForCandidate(candidate, indexes, email, external);
@@ -475,31 +494,36 @@ async function syncCustomerLocked(candidate, indexes = {}, options = {}) {
       recoveredConcurrentCreate = creation.recoveredConcurrentCreate;
     }
     if (!external?.id) throw new Error('Request service did not return a user id.');
-    rememberExternal(indexes, external);
-    const currentPermissions = await permissionState(external.id);
-    const activePermissions = desiredPermissions(candidate, currentPermissions);
-    const permissionsChanged = currentPermissions !== activePermissions;
-    if (permissionsChanged) await setPermissions(external.id, activePermissions);
-    const previousEmail = external.email;
-    const main = await syncMainSettings(external.id, username, candidate, email);
-    const settings = main.settings;
-    if (main.changed) {
-      external.email = settings.email;
-      external.username = settings.username;
-      rememberExternal(indexes, external, previousEmail);
-    }
-    const passwordResetRequired = Boolean(candidate.password_reset_required) || (created && !suppliedPassword) || recoveredConcurrentCreate;
-    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: settings.email, username: settings.username, passwordResetRequired, activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
-    return { status: 'synced', customerId: candidate.customer_id, created, recoveredConcurrentCreate, passwordApplied: Boolean(created && suppliedPassword), remoteChanged: created || permissionsChanged || main.changed };
+    return await withExternalSyncLock(options._lockClient, external.id, async () => {
+      await assertExclusiveExternalOwnership(candidate.customer_id, external.id);
+      bindingSafe = true;
+      rememberExternal(indexes, external);
+      const currentPermissions = await permissionState(external.id);
+      if (protectedExternalUser(external, external.id, currentPermissions)) throw new Error(`Refusing to manage protected Seerr administrator/user-manager account #${external.id}.`);
+      const activePermissions = desiredPermissions(candidate, currentPermissions);
+      const permissionsChanged = currentPermissions !== activePermissions;
+      if (permissionsChanged) await setPermissions(external.id, activePermissions);
+      const previousEmail = external.email;
+      const main = await syncMainSettings(external.id, username, candidate, email);
+      const settings = main.settings;
+      if (main.changed) {
+        external.email = settings.email;
+        external.username = settings.username;
+        rememberExternal(indexes, external, previousEmail);
+      }
+      const passwordResetRequired = Boolean(candidate.password_reset_required) || (created && !suppliedPassword) || recoveredConcurrentCreate;
+      await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: settings.email, username: settings.username, passwordResetRequired, activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
+      return { status: 'synced', customerId: candidate.customer_id, created, recoveredConcurrentCreate, passwordApplied: Boolean(created && suppliedPassword), remoteChanged: created || permissionsChanged || main.changed };
+    });
   } catch (error) {
-    await mark(candidate.customer_id, { status: 'failed', externalUserId: external?.id || candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
+    await mark(candidate.customer_id, { status: 'failed', externalUserId: bindingSafe ? (external?.id || candidate.external_user_id) : candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
     return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
   }
 }
 async function syncCustomer(candidate, indexes = {}, options = {}) {
   const customerId = String(candidate?.customer_id || '').trim();
   if (!customerId) return syncCustomerLocked(candidate, indexes, options);
-  return withCustomerSyncLock(customerId, () => syncCustomerLocked(candidate, indexes, options));
+  return withCustomerSyncLock(customerId, lockClient => syncCustomerLocked(candidate, indexes, { ...options, _lockClient: lockClient }));
 }
 function cleanFailureMessage(value) {
   const message = String(value || 'Request-user sync failed').replace(/\s+/g, ' ').trim();
@@ -649,4 +673,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, withCustomerSyncLock, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, intentionallyRemoved, protectedExternalUser, deletionIdentityMatches, assertExclusiveExternalOwnership, finalizeRemovedBinding, removeCustomer, createExternalUserConvergently, syncCustomerLocked, syncCustomer, syncBatch, requestRoleRetry };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, withSessionAdvisoryLock, withCustomerSyncLock, withExternalSyncLock, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, intentionallyRemoved, protectedExternalUser, deletionIdentityMatches, assertExclusiveExternalOwnership, finalizeRemovedBinding, removeCustomer, createExternalUserConvergently, syncCustomerLocked, syncCustomer, syncBatch, requestRoleRetry };
