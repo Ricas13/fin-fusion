@@ -87,6 +87,31 @@ async function subscriptionForCustomer(customerId,value){
   return sub;
 }
 
+async function lockedSubscriptionForCustomer(client,customerId,value){
+  const id=subscriptionId(value);
+  const result=await client.query(`
+    SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval,
+      EXISTS(
+        SELECT 1 FROM audit_log terminal_audit
+        WHERE terminal_audit.entity_type='subscription'
+          AND terminal_audit.entity_id=s.id::text
+          AND terminal_audit.action='billing.subscription.terminate_for_refund'
+      ) AS refund_terminated
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    WHERE s.id=$1
+      AND s.customer_id=$2
+      AND COALESCE(p.is_addon,FALSE)=FALSE
+      AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
+      AND s.superseded_by IS NULL
+    LIMIT 1
+    FOR UPDATE OF s
+  `,[id,customerId]);
+  const sub=result.rows[0]||null;
+  if(!sub||sub.refund_terminated)throw new Error('That subscription is not available for this customer.');
+  return sub;
+}
+
 async function jellyfinAccounts(customerId){
   const result=await query(`
     SELECT ja.*,js.name AS server_name
@@ -155,57 +180,57 @@ async function renderAction(req,res,next){
 
 async function performExtend(req){
   if(!exactConfirmation(req,'EXTEND'))throw new Error('Type EXTEND exactly to confirm.');
-  const op=operationId(req.body?.operationId);
-  const units=Number(req.body?.units);
+  const op=operationId(req.body?.operationId),units=Number(req.body?.units);
   if(!Number.isInteger(units)||units<1)throw new Error('Choose at least one plan period to add.');
-  const sub=await subscriptionForCustomer(req.params.customerId,req.body?.subscriptionId);
-  if(planExpiry.isFreeTier(sub))throw new Error('Free Access has no expiry to extend.');
-  const subId=sub.id||sub.subscription_id;
-  const durationDays=Math.max(1,Number(sub.duration_days_snapshot||sub.duration_days||30));
-  const requestedDays=durationDays*units,currentDays=Math.max(0,Number(sub.service_extension_days||0));
-  if(!Number.isInteger(requestedDays)||requestedDays<1||currentDays+requestedDays>3650)throw new Error('Requested service extension exceeds the 3,650-day safety limit.');
-  let remaining=requestedDays,chunk=0,added=0;
-  while(remaining>0){
-    const days=Math.min(365,remaining),reference=`admin-single:${op}:${chunk}`;
-    const didAdd=await transaction(async client=>{
-      const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,metadata) VALUES($1,$2,'admin_single',$3,$4,$5::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,req.params.customerId,days,reference,JSON.stringify({mode:'single_customer',actorUserId:req.session.authUserId,subscriptionId:subId,units,chunk})]);
-      if(!inserted.rowCount)return false;
-      const updated=await client.query(`UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,[subId,days,req.params.customerId]);
-      if(!updated.rowCount)throw new Error('The selected subscription changed before the extension could be saved.');
-      return true;
-    });
-    if(didAdd)added+=days;
-    remaining-=days;chunk+=1;
-  }
-  await provisioning.reconcileCustomer(req.params.customerId);
-  await audit(req.session.authUserId,'admin.customer.extend_entitlement',req.params.customerId,{subscriptionId:subId,units,requestedDays,addedDays:added,operationId:op});
-  if(!added)return 'This extension had already been applied. No additional days were added.';
-  return `${added} day${added===1?'':'s'} added to the selected subscription.`;
+  const result=await transaction(async client=>{
+    const sub=await lockedSubscriptionForCustomer(client,req.params.customerId,req.body?.subscriptionId);
+    if(planExpiry.isFreeTier(sub))throw new Error('Free Access has no expiry to extend.');
+    const subId=sub.id||sub.subscription_id,durationDays=Math.max(1,Number(sub.duration_days_snapshot||sub.duration_days||30)),requestedDays=durationDays*units;
+    if(!Number.isInteger(requestedDays)||requestedDays<1)throw new Error('Requested service extension is invalid.');
+    let remaining=requestedDays,chunk=0;const chunks=[];
+    while(remaining>0){const days=Math.min(365,remaining);chunks.push({days,chunk,reference:`admin-single:${op}:${chunk}`});remaining-=days;chunk+=1;}
+    const refs=chunks.map(row=>row.reference),existingResult=await client.query(`SELECT subscription_id,customer_id,days,reference_id,metadata FROM subscription_service_extension_events WHERE source='admin_single' AND reference_id=ANY($1::text[])`,[refs]),existing=new Map(existingResult.rows.map(row=>[String(row.reference_id),row]));
+    for(const row of chunks){const prior=existing.get(row.reference);if(!prior)continue;if(String(prior.subscription_id)!==String(subId)||String(prior.customer_id)!==String(req.params.customerId)||Number(prior.days)!==Number(row.days)||Number(prior.metadata?.units)!==units)throw new Error('This extension operation was already used with different subscription terms. Open a fresh action form.');}
+    const missing=chunks.filter(row=>!existing.has(row.reference)),missingDays=missing.reduce((sum,row)=>sum+row.days,0),currentDays=Math.max(0,Number(sub.service_extension_days||0));
+    if(currentDays+missingDays>3650)throw new Error('Requested service extension exceeds the 3,650-day safety limit.');
+    let added=0;
+    for(const row of missing){const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,metadata) VALUES($1,$2,'admin_single',$3,$4,$5::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,req.params.customerId,row.days,row.reference,JSON.stringify({mode:'single_customer',actorUserId:req.session.authUserId,subscriptionId:subId,units,chunk:row.chunk})]);if(!inserted.rowCount)continue;await client.query(`UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1 AND customer_id=$3`,[subId,row.days,req.params.customerId]);added+=row.days;}
+    return{subId,requestedDays,added};
+  });
+  const warnings=[];
+  try{await audit(req.session.authUserId,'admin.customer.extend_entitlement',req.params.customerId,{subscriptionId:result.subId,units,requestedDays:result.requestedDays,addedDays:result.added,operationId:op});}catch(error){warnings.push(`audit logging needs review: ${clean(error.message||error,140)}`);}
+  try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){warnings.push(`access reconciliation needs retry: ${clean(error.message||error,180)}`);}
+  const base=result.added?`${result.added} day${result.added===1?'':'s'} added to the selected subscription.`:'This extension had already been applied. No additional days were added.',suffix=warnings.length?` Warning: ${warnings.join('; ')}`:'';
+  return `${base}${suffix}`;
 }
 
 async function performExpiry(req){
   if(!exactConfirmation(req,'EXPIRY'))throw new Error('Type EXPIRY exactly to confirm.');
   const expiryDate=String(req.body?.expiryDate||'');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate))throw new Error('Choose a valid expiry date.');
-  const sub=await subscriptionForCustomer(req.params.customerId,req.body?.subscriptionId);
-  if(planExpiry.isFreeTier(sub))throw new Error('Free Access does not use an expiry date.');
-  if(subscriptionState.recurringProvider(sub))throw new Error('Expiry on an active Stripe/PayPal recurring agreement is provider-controlled. Use billing cancellation or plan change instead.');
-  const subId=sub.id||sub.subscription_id;
-  const updated=await query(`UPDATE subscriptions SET current_period_end=$2::date,service_extension_days=0,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,[subId,expiryDate,req.params.customerId]);
-  if(!updated.rowCount)throw new Error('The selected subscription changed before the expiry could be saved.');
-  await provisioning.reconcileCustomer(req.params.customerId);
-  await audit(req.session.authUserId,'admin.customer.set_expiry',req.params.customerId,{subscriptionId:subId,expiryDate,clearedServiceExtensions:true});
-  return `Expiry set to ${expiryDate} for the selected subscription.`;
+  const subId=await transaction(async client=>{
+    const sub=await lockedSubscriptionForCustomer(client,req.params.customerId,req.body?.subscriptionId);
+    if(planExpiry.isFreeTier(sub))throw new Error('Free Access does not use an expiry date.');
+    if(subscriptionState.recurringProvider(sub))throw new Error('Expiry on an active Stripe/PayPal recurring agreement is provider-controlled. Use billing cancellation or plan change instead.');
+    const id=sub.id||sub.subscription_id,updated=await client.query(`UPDATE subscriptions SET current_period_end=$2::date,service_extension_days=0,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,[id,expiryDate,req.params.customerId]);
+    if(!updated.rowCount)throw new Error('The selected subscription changed before the expiry could be saved.');
+    return id;
+  });
+  const warnings=[];
+  try{await audit(req.session.authUserId,'admin.customer.set_expiry',req.params.customerId,{subscriptionId:subId,expiryDate,clearedServiceExtensions:true});}catch(error){warnings.push(`audit logging needs review: ${clean(error.message||error,140)}`);}
+  try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){warnings.push(`access reconciliation needs retry: ${clean(error.message||error,180)}`);}
+  return `Expiry set to ${expiryDate} for the selected subscription.${warnings.length?` Warning: ${warnings.join('; ')}`:''}`;
 }
 
 async function performSuspend(req){
   if(!exactConfirmation(req,'SUSPEND'))throw new Error('Type SUSPEND exactly to confirm.');
   const reason=clean(req.body?.reason,500);if(reason.length<3)throw new Error('Enter a suspension reason of at least 3 characters.');
   await accessHolds.addHold({customerId:req.params.customerId,type:'admin_suspended',sourceKey:'admin',reason,actorUserId:req.session.authUserId,metadata:{origin:'customer_360'}});
-  let reconcileError='',outcome=null;
+  let reconcileError='',auditError='',outcome=null;
   try{outcome=await provisioning.reconcileCustomer(req.params.customerId);}catch(error){reconcileError=clean(error.message||error,400);}
-  await audit(req.session.authUserId,'admin.customer.suspend',req.params.customerId,{reason,active:Boolean(outcome?.active),reconcileError:reconcileError||null});
-  return reconcileError?`Customer suspended. The hold is active, but reconciliation needs attention: ${reconcileError}`:'Customer suspended. Access will remain held until the suspension is released.';
+  try{await audit(req.session.authUserId,'admin.customer.suspend',req.params.customerId,{reason,active:Boolean(outcome?.active),reconcileError:reconcileError||null});}catch(error){auditError=clean(error.message||error,200);}
+  const warnings=[reconcileError?`reconciliation needs attention: ${reconcileError}`:'',auditError?`audit logging needs review: ${auditError}`:''].filter(Boolean);
+  return warnings.length?`Customer suspended. The hold is active. Warning: ${warnings.join('; ')}`:'Customer suspended. Access will remain held until the suspension is released.';
 }
 
 async function performJellyfinDelete(req){
@@ -223,10 +248,10 @@ async function performJellyfinDelete(req){
     catch(error){cleanupFailures.push({accountId:account.id,username:account.jellyfin_username||null,error:clean(error.message||error,500)});}
   }
   remaining=await jellyfinAccounts(req.params.customerId);
-  const removed=Math.max(0,accounts.length-remaining.length);
-  await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.completed',req.params.customerId,{reason,requested:accounts.length,removed,remaining:remaining.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null,accessLane:row.access_lane||null})),cleanupFailures,reconcileError:reconcileError||null});
+  const removed=Math.max(0,accounts.length-remaining.length);let auditError='';
+  try{await audit(req.session.authUserId,'admin.customer.jellyfin.delete_accounts.completed',req.params.customerId,{reason,requested:accounts.length,removed,remaining:remaining.map(row=>({accountId:row.id,serverId:row.server_id,username:row.jellyfin_username||null,accessLane:row.access_lane||null})),cleanupFailures,reconcileError:reconcileError||null});}catch(error){auditError=clean(error.message||error,200);}
   if(remaining.length)throw new Error(`Jellyfin is now pinned to Removed, but ${remaining.length} account${remaining.length===1?' still exists':'s still exist'}. ${cleanupFailures[0]?.error||reconcileError||'Run the deletion action again after checking Jellyfin connectivity.'}`);
-  const suffix=reconcileError?` Jellyfin was removed successfully, but another reconciliation step reported: ${reconcileError}`:'';
+  const warnings=[reconcileError?`another reconciliation step reported: ${reconcileError}`:'',auditError?`completion audit logging needs review: ${auditError}`:''].filter(Boolean),suffix=warnings.length?` Warning: ${warnings.join('; ')}`:'';
   return `${removed} Jellyfin account${removed===1?'':'s'} removed. Portal, billing history, Emby and Stremio identities were preserved.${suffix}`;
 }
 
