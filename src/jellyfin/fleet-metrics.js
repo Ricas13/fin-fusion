@@ -177,7 +177,7 @@ async function cachedTotalUsers(serverId) {
     return Number(result.rows[0]?.total_users || 0);
 }
 
-async function pollServer(serverId, managedUserIds, { refreshUsers = true, persistMetrics = true } = {}) {
+async function collectServerMetrics(serverId, managedUserIds, { refreshUsers = true } = {}) {
     // Peak-concurrency analytics needs the exact set of playback sessions Jellyfin
     // currently exposes. Do not use activeWithinSeconds here: a genuinely paused
     // item is still a concurrent stream even when its activity timestamp is old.
@@ -210,7 +210,7 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true, persi
         else if (method === 'directplay') directPlayStreams += 1;
     }
 
-    const metrics = {
+    return {
         totalUsers: refreshUsers ? users.length : await cachedTotalUsers(serverId),
         activeStreams: playing.length,
         managedStreams,
@@ -221,7 +221,11 @@ async function pollServer(serverId, managedUserIds, { refreshUsers = true, persi
         activityUpdates: activity.updated,
         usersRefreshed: refreshUsers
     };
-    if (persistMetrics) await persistSuccess(serverId, metrics);
+}
+
+async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}) {
+    const metrics = await collectServerMetrics(serverId, managedUserIds, { refreshUsers });
+    await persistSuccess(serverId, metrics);
     return metrics;
 }
 
@@ -250,7 +254,7 @@ async function refreshAll(options = {}) {
             // trigger requires each prior server observation to be committed and
             // visible; concurrent metric transactions can otherwise both miss the
             // other transaction and produce no trusted fleet sample at all.
-            const metrics = await pollServer(row.serverId, row.managedUserIds, { refreshUsers, persistMetrics: false });
+            const metrics = await collectServerMetrics(row.serverId, row.managedUserIds, { refreshUsers });
             return { serverId: row.serverId, ok: true, ...metrics };
         } catch (error) {
             try { await persistFailure(row.serverId, error); } catch (_) {}
