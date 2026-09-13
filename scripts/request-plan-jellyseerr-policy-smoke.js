@@ -38,6 +38,10 @@ for (const privileged of [2, 4, 8, 16, 1048576, 268435456]) {
 assert(planUi.includes('Requests / Jellyseerr'), 'plan policy must render as a Requests / Jellyseerr card');
 assert(planUi.includes('permissionMode'), 'plan policy must support preserve vs managed permission modes');
 assert(planUi.includes('requestAccessEnabled'), 'plan policy must control request-service access');
+assert(planUi.includes('confirmRequestDeletion'), 'disabling request access must require explicit destructive confirmation');
+assert(planUi.includes('permanently removes') && planUi.includes('request history'), 'plan UI must describe destructive Seerr user/history deletion');
+assert(!planUi.includes('permissions are set to zero while the account and request history are preserved'), 'obsolete non-destructive request-disable copy must not return');
+assert(planUi.includes('destructiveDisableConfirmed'), 'request-policy audit must record destructive disable confirmation');
 assert(planUi.includes('watchlistSyncMovies') && planUi.includes('watchlistSyncTv'), 'plan policy must expose watchlist defaults');
 assert(planUi.includes('discoverRegion') && planUi.includes('streamingRegion'), 'plan policy must expose modern Seerr region defaults');
 assert(planUi.includes('Username, email, password and personal notification destinations remain user-owned'), 'plan UI must make the identity/privacy boundary explicit');
@@ -51,7 +55,13 @@ assert(sync.includes('email,') && sync.includes('discoverRegion') && sync.includ
 assert(!sync.includes('discordId:current?.discordId'), 'legacy partial main-settings payload must not return');
 assert(sync.includes('syncSelected(customerIds)'), 'request sync must support selected-customer reconciliation');
 assert(sync.includes('currentPermissions !== activePermissions'), 'managed plan permissions must be reconciled even for already-active users');
-assert(sync.includes("require('./request-entitlement')") && sync.includes('resolveRequestCandidate(candidate)'), 'request sync must resolve non-Jellyfin service entitlements before suspending a customer');
+assert(sync.includes("require('./request-entitlement')") && sync.includes('resolveRequestCandidate(candidate)'), 'request sync must resolve non-Jellyfin service entitlements before removing a customer');
+assert(sync.includes('assertExclusiveExternalOwnership'), 'destructive cleanup must reject shared/stale external bindings');
+assert(sync.includes('deletionIdentityMatches'), 'destructive cleanup must verify live Seerr identity before deleting');
+assert(sync.includes('withCustomerSyncLock'), 'request reconciliation must serialize per customer across workers');
+assert(sync.includes('finalEntitlement') && sync.includes('requestEntitlements.resolve(candidate.customer_id)'), 'destructive cleanup must re-check entitlement immediately before delete');
+assert(sync.includes('automation.request_user.delete'), 'destructive request-user cleanup must write an audit record');
+assert(sync.includes('SEERR_MANAGE_USERS_PERMISSION'), 'Seerr user managers must be protected from automated deletion');
 for (const laneView of ['effective_customer_entitlements','effective_stremio_entitlements','effective_emby_entitlements']) {
   assert(requestEntitlement.includes(laneView), `request entitlement resolution must include ${laneView}`);
 }

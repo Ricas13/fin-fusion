@@ -70,6 +70,7 @@ jobs:
           node scripts/platform-coherence-static-smoke.js
           node scripts/assembled-app-smoke.js
           node scripts/request-user-sync-ownership-smoke.js
+          node scripts/media-access-recovery-smoke.js
           node --check scripts/production-readiness.js
 
       - name: Isolated feature database contracts
