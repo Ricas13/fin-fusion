@@ -78,9 +78,11 @@ function planCard(req, plan, { variant = 'jellyfin' } = {}) {
   const outerClass = variant === 'stremio' ? 'section stremioCard requestPlanCard' : 'planConfigCard span3 requestPlanCard';
   const headClass = variant === 'stremio' ? 'sectionHead' : 'planConfigHead';
   const bodyClass = variant === 'stremio' ? 'requestPlanBody' : 'planConfigBody requestPlanBody';
-  const badge = accessEnabled ? '<span class="pill good">Enabled</span>' : '<span class="pill warn">Suspended</span>';
+  const badge = accessEnabled ? '<span class="pill good">Enabled</span>' : '<span class="pill warn">Disabled</span>';
+  const destructiveConfirm = accessEnabled ? `<label class="toggleRow"><input type="checkbox" name="confirmRequestDeletion" value="yes"><span><strong>I understand disabling request access deletes managed Seerr accounts</strong><small>Required when turning request access off. Seerr request history owned by those deleted accounts is permanently removed.</small></span></label>` : '';
   const requestCard=`<section class="${outerClass}" id="requests"><div class="${headClass}"><div><h2>Requests / Jellyseerr</h2><p class="muted">Request quota, permissions and plan-owned user defaults. Saving automatically reconciles every current member of this plan.</p></div>${badge}</div><form class="${bodyClass}" method="post" action="/admin/request-plan-policy/${esc(plan.id)}">${csrfInput(req)}<input type="hidden" name="returnToPlan" value="1">
-    <label class="toggleRow"><input type="checkbox" name="requestAccessEnabled" ${checked(accessEnabled)}><span><strong>Request-service access</strong><small>When off, Jellyseerr permissions are set to zero while the account and request history are preserved.</small></span></label>
+    <label class="toggleRow"><input type="checkbox" name="requestAccessEnabled" ${checked(accessEnabled)}><span><strong>Request-service access</strong><small>When off, Fin-Fusion removes each ineligible managed Seerr account. Deleting a Seerr user permanently removes that user's Seerr request history.</small></span></label>
+    ${destructiveConfirm}
     <div class="formGrid requestQuotaGrid">
       <div class="formGroup"><label>Movie requests</label><input class="input" type="number" min="1" max="10000" name="movieLimit" value="${esc(plan.request_movie_quota_limit ?? '')}" placeholder="Unlimited"><div class="inlineHelp">Leave blank for unlimited.</div></div>
       <div class="formGroup"><label>Movie quota window</label><div class="inputUnit"><input class="input" type="number" min="1" max="3650" name="movieDays" value="${esc(plan.request_movie_quota_days || 30)}" required><span>days</span></div></div>
@@ -104,8 +106,6 @@ function freeRedirectTarget(planId,kind,message){return `/admin/plans/${encodeUR
 function createAdminRequestPlanPolicyRouter() {
   const router = express.Router();
   router.use('/admin/request-plan-policy', gate, noStore);
-  // Compatibility only: request policy no longer owns a standalone screen.
-  // Old bookmarks land on the canonical Plans control room instead.
   router.get('/admin/request-plan-policy', (_req, res) => res.redirect(302, '/admin/plans'));
   router.post('/admin/request-plan-policy/:planId/free-inactivity',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid security token');
@@ -143,9 +143,14 @@ function createAdminRequestPlanPolicyRouter() {
       const originalLanguage = policy.optionalText(req.body.originalLanguage, 32);
       let updated;
       await transaction(async client => {
+        const current = await client.query('SELECT id,name,service_type,COALESCE(request_access_enabled,TRUE) AS request_access_enabled FROM plans WHERE id=$1 FOR UPDATE', [req.params.planId]);
+        if (!current.rowCount) throw new Error('Plan not found.');
+        const disabling = current.rows[0].request_access_enabled === true && requestAccessEnabled === false;
+        if (disabling && String(req.body.confirmRequestDeletion || '') !== 'yes') {
+          throw new Error('Confirm that disabling request access will delete managed Seerr accounts and their Seerr request history.');
+        }
         updated = await client.query(`UPDATE plans SET request_movie_quota_limit=$2,request_movie_quota_days=$3,request_tv_quota_limit=$4,request_tv_quota_days=$5,request_access_enabled=$6,request_permissions=$7,request_watchlist_sync_movies=$8,request_watchlist_sync_tv=$9,request_locale=$10,request_discover_region=$11,request_streaming_region=$12,request_original_language=$13,updated_at=NOW() WHERE id=$1 RETURNING name,service_type`, [req.params.planId, movieLimit, movieDays, tvLimit, tvDays, requestAccessEnabled, requestPermissions, watchlistSyncMovies, watchlistSyncTv, locale, discoverRegion, streamingRegion, originalLanguage]);
-        if (!updated.rowCount) throw new Error('Plan not found.');
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'plan.request_policy.update','plan',$2,$3::jsonb)`, [req.session.authUserId, req.params.planId, JSON.stringify({ movieLimit, movieDays, tvLimit, tvDays, requestAccessEnabled, permissionMode: requestPermissions == null ? 'preserve' : 'managed', requestPermissions, watchlistSyncMovies, watchlistSyncTv, locale, discoverRegion, streamingRegion, originalLanguage })]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'plan.request_policy.update','plan',$2,$3::jsonb)`, [req.session.authUserId, req.params.planId, JSON.stringify({ movieLimit, movieDays, tvLimit, tvDays, requestAccessEnabled, destructiveDisableConfirmed: disabling, permissionMode: requestPermissions == null ? 'preserve' : 'managed', requestPermissions, watchlistSyncMovies, watchlistSyncTv, locale, discoverRegion, streamingRegion, originalLanguage })]);
       });
       const job = await queuePlanRequestReconciliation(req.params.planId, req.session.authUserId);
       const fanout = job ? ` ${Number(job.total_items || 0)} current member${Number(job.total_items || 0) === 1 ? '' : 's'} queued for Jellyseerr sync.` : ' No current plan members needed syncing.';
