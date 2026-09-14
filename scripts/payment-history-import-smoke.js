@@ -105,7 +105,7 @@ assert.ok(dashboardPageSource.includes('Do not treat affected revenue/refund tot
 assert.ok(dashboardMoneySource.includes('warnings:accounting.warnings||[]'), 'Main dashboard normalization must propagate ledger warnings');
 assert.ok(reportingSource.includes('lastFinancialWarning'), 'FX fallback failures must be retained as an admin-visible financial warning');
 assert.ok(reportingSource.includes('Dashboard currency conversions are using the last stored rates'), 'FX fallback must explain the degraded financial state');
-assert.ok(reconciliationSource.includes('Financial/provider failures are deliberately returned to the UI'), 'reconciliation error fallback must remain explicitly UI-visible');
+assert.ok(/catch\s*\(error\)[\s\S]*return \{ provider, configured: true, error: error\.message \|\| String\(error\), rows: \[\] \}/.test(reconciliationSource), 'reconciliation error fallback must remain explicitly UI-visible');
 
 const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'migrations', '042_payment_history_import.sql'), 'utf8');
 assert.ok(/UNIQUE\(provider, provider_transaction_id\)/.test(migration), 'historical ledger must enforce provider-level transaction dedupe');
