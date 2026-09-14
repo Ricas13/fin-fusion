@@ -9,7 +9,9 @@ const fs = require('fs');
 const path = require('path');
 const { query, getPool } = require('../src/db');
 const intents = require('../src/payments/checkout-intents');
+const lifecyclePrimitives = require('../src/payments/lifecycle-primitives');
 const livePaypalHistory = require('../src/payments/live-paypal-payment-history');
+const paymentReconciliation = require('../src/payments/provider-payment-reconciliation');
 
 function expect(condition, message) { if (!condition) throw new Error(message); }
 
@@ -45,6 +47,14 @@ async function main() {
     const returnSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'customer-payment-return.js'), 'utf8');
     expect(returnSource.includes('intents.alreadyCompletedByOwner'), 'the PayPal return route must fall back to alreadyCompletedByOwner() on a verify() failure.');
 
+    // A provider transaction in one-time/payment mode is immutable. If activation
+    // commits but a later accounting/checkout step fails, retrying the same capture
+    // must not move starts_at/current_period_end forward. Recurring subscriptions
+    // retain their update behavior while their settlement intent is still open.
+    expect(lifecyclePrimitives.isHistoricalCheckoutReplay({ existingCount: 1, effectiveBillingMode: 'payment', settlementState: 'open' }) === true, 'an existing one-time provider payment must be treated as an idempotent replay even while checkout settlement is still open.');
+    expect(lifecyclePrimitives.isHistoricalCheckoutReplay({ existingCount: 1, effectiveBillingMode: 'subscription', settlementState: 'open' }) === false, 'an open recurring subscription settlement must retain provider update semantics.');
+    expect(lifecyclePrimitives.isHistoricalCheckoutReplay({ existingCount: 1, effectiveBillingMode: 'subscription', settlementState: 'completed' }) === true, 'a completed recurring checkout replay must remain historical/idempotent.');
+
     const capture = {
         id: `PAYPAL-CAPTURE-${suffix}`,
         status: 'COMPLETED',
@@ -66,6 +76,8 @@ async function main() {
     expect(history.status === 'S', 'completed PayPal captures must use the canonical successful accounting status.');
     expect(livePaypalHistory.historyValues({ ...capture, status: 'PENDING' }, { customerId: customer.id }) === null, 'pending PayPal captures must never become revenue.');
     expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: {} }, { customerId: customer.id }) === null, 'missing PayPal fee/net data must never be guessed.');
+    expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: { paypal_fee: { currency_code: 'USD', value: '-1.00' }, net_amount: { currency_code: 'USD', value: '31.00' } } }, { customerId: customer.id }) === null, 'negative PayPal fees must never be accepted as authoritative revenue data.');
+    expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: { paypal_fee: { currency_code: 'USD', value: '31.00' }, net_amount: { currency_code: 'USD', value: '-1.00' } } }, { customerId: customer.id }) === null, 'fees above gross / negative net proceeds must never be booked.');
 
     // New canonical row: retries/redelivery must remain exactly-once and customer-attributed.
     await livePaypalHistory.upsertValues(history, { eventId: `EVENT-${suffix}` });
@@ -83,6 +95,10 @@ async function main() {
     expect(Number(recorded.gross_amount_minor) === 3000 && Number(recorded.fee_amount_minor) === 147 && Number(recorded.net_amount_minor) === 2853, 'canonical financial row must preserve provider-authoritative gross/fee/net values.');
     expect(String(recorded.customer_id) === String(customer.id), 'canonical financial row must be attached to the owning customer.');
     expect(recorded.metadata?.providerAuthoritative === true && recorded.metadata?.feeDataAvailable === true, 'canonical financial row must be marked provider-authoritative for P&L accounting.');
+    expect(recorded.metadata?.providerEventId === `EVENT-${suffix}`, 'provider event provenance must be retained on the canonical row.');
+
+    const authoritativeIds = await paymentReconciliation.authoritativePayPalCaptureIds([capture.id, `MISSING-${suffix}`]);
+    expect(authoritativeIds.has(capture.id) && !authoritativeIds.has(`MISSING-${suffix}`), 'reconciliation must recognize already-authoritative captures so scheduled repair does not refetch them every run.');
 
     // Existing/imported row: live repair may enrich financial data/metadata but must
     // not erase the richer historical transaction classification. The schema makes
@@ -95,7 +111,9 @@ async function main() {
         ) VALUES('paypal',$1,'T9999','S',$2,'USD',3000,147,2853,$3,'{}'::jsonb)
     `, [legacyCaptureId, capture.create_time, customer.id]);
     const legacyValues = { ...history, providerTransactionId: legacyCaptureId };
-    await livePaypalHistory.upsertValues(legacyValues, { reconciliation: true });
+    await livePaypalHistory.upsertValues(legacyValues, { eventId: `RECON-EVENT-${suffix}`, reconciliation: true });
+    // A later ordinary live retry must not erase stronger provenance established by reconciliation.
+    await livePaypalHistory.upsertValues(legacyValues);
     const repaired = (await query(`
         SELECT transaction_type,customer_id,metadata
         FROM payment_history_transactions
@@ -104,9 +122,29 @@ async function main() {
     expect(repaired.transaction_type === 'T9999', 'live reconciliation must preserve an existing imported PayPal transaction classification.');
     expect(String(repaired.customer_id) === String(customer.id), 'live reconciliation must preserve customer ownership.');
     expect(repaired.metadata?.providerAuthoritative === true && repaired.metadata?.feeDataAvailable === true && repaired.metadata?.reconciled === true, 'live reconciliation must enrich existing metadata with authoritative accounting flags.');
+    expect(repaired.metadata?.providerEventId === `RECON-EVENT-${suffix}`, 'a later retry without an event ID must not erase recorded provider-event provenance.');
+
+    // A verified capture must never silently inherit a conflicting existing customer owner.
+    const conflictCaptureId = `PAYPAL-CONFLICT-${suffix}`;
+    await query(`
+        INSERT INTO payment_history_transactions(
+            provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
+            gross_amount_minor,fee_amount_minor,net_amount_minor,customer_id,metadata
+        ) VALUES('paypal',$1,'T0006','S',$2,'USD',3000,147,2853,$3,'{}'::jsonb)
+    `, [conflictCaptureId, capture.create_time, other.id]);
+    let conflictThrew = false;
+    try {
+        await livePaypalHistory.upsertValues({ ...history, providerTransactionId: conflictCaptureId });
+    } catch (error) {
+        conflictThrew = /customer owner/i.test(String(error?.message || error));
+    }
+    expect(conflictThrew, 'a canonical PayPal transaction already owned by a different customer must raise an integrity conflict.');
+    const conflictOwner = (await query(`SELECT customer_id FROM payment_history_transactions WHERE provider='paypal' AND provider_transaction_id=$1`, [conflictCaptureId])).rows[0]?.customer_id;
+    expect(String(conflictOwner) === String(other.id), 'an ownership conflict must never silently reassign the historical financial row.');
 
     const ledgerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'live-paypal-payment-history.js'), 'utf8');
     const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
+    const jobsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'automation', 'jobs.js'), 'utf8');
     expect(ledgerSource.includes('ON CONFLICT(provider,provider_transaction_id) DO UPDATE'), 'PayPal retries must upsert rather than double count.');
     expect(ledgerSource.includes("LIVE_CAPTURE_PAYMENT_TYPE = 'T0006'"), 'live PayPal captures must have a safe canonical fallback classification.');
     expect(ledgerSource.includes('providerAuthoritative: true'), 'provider-verified PayPal rows must be marked authoritative.');
@@ -114,6 +152,8 @@ async function main() {
     expect(!/UPDATE\s+subscriptions/i.test(ledgerSource), 'accounting sync must never mutate entitlement state.');
     expect(paypalSource.includes('await recordCompletedCapture(capture'), 'the common completed-order path must persist the authoritative PayPal capture.');
     expect(paypalSource.includes('async function activateCompletedOrder(order)'), 'PayPal accounting persistence must remain attached to the common completed-order activation path.');
+    expect(jobsSource.includes('PayPal payment-history reconciliation failed without blocking core revenue integrity:'), 'PayPal provider/reporting failures must be isolated from the core revenue-integrity scan.');
+    expect(jobsSource.includes('const integrity=await revenueIntegrity.run()'), 'core revenue integrity must still run after the isolated PayPal reconciliation attempt.');
 
     console.log('PayPal return/accounting race smoke test passed.');
 }
