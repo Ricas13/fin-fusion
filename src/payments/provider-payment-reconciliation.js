@@ -155,7 +155,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
 
     const orderIds = [...new Set([...captures.values()].map(paypalCaptureOrderId).filter(Boolean))];
     const intents = orderIds.length ? await query(`
-        SELECT provider_checkout_id,customer_id,state,mode
+        SELECT provider_checkout_id,customer_id
         FROM billing_checkout_intents
         WHERE provider='paypal' AND provider_checkout_id = ANY($1::text[])
         ORDER BY created_at DESC
