@@ -30,19 +30,25 @@ function authoritativeTimestamp(capture) {
     return capture?.create_time || capture?.update_time || null;
 }
 
+function validFinancialTriplet(grossMinor, feeMinor, netMinor) {
+    return Number.isInteger(grossMinor) && grossMinor > 0
+        && Number.isInteger(feeMinor) && feeMinor >= 0 && feeMinor <= grossMinor
+        && Number.isInteger(netMinor) && netMinor >= 0
+        && grossMinor - feeMinor === netMinor;
+}
+
 function hasAuthoritativeFinancials(capture) {
     if (!capture?.id || String(capture.status || '').toUpperCase() !== 'COMPLETED') return false;
     const gross = capture.amount || capture?.seller_receivable_breakdown?.gross_amount;
     const fee = capture?.seller_receivable_breakdown?.paypal_fee;
     const net = capture?.seller_receivable_breakdown?.net_amount;
     const currencies = [moneyCurrency(gross), moneyCurrency(fee), moneyCurrency(net)];
+    const grossMinor = moneyMinor(gross), feeMinor = moneyMinor(fee), netMinor = moneyMinor(net);
     return Boolean(
         authoritativeTimestamp(capture) &&
         currencies.every(Boolean) &&
         new Set(currencies).size === 1 &&
-        moneyMinor(gross) != null &&
-        moneyMinor(fee) != null &&
-        moneyMinor(net) != null
+        validFinancialTriplet(grossMinor, feeMinor, netMinor)
     );
 }
 
@@ -59,8 +65,7 @@ function historyValues(capture, { customerId = null, providerCustomerId = null }
     const occurredAt = authoritativeTimestamp(capture);
 
     if (!occurredAt || currencies.some(value => !value) || new Set(currencies).size !== 1) return null;
-    if (grossMinor == null || grossMinor <= 0 || feeMinor == null || netMinor == null) return null;
-    if (grossMinor - feeMinor !== netMinor) return null;
+    if (!validFinancialTriplet(grossMinor, feeMinor, netMinor)) return null;
 
     const ids = relatedIds(capture);
     return {
@@ -88,10 +93,10 @@ function historyValues(capture, { customerId = null, providerCustomerId = null }
 async function upsertValues(values, { eventId = null, reconciliation = false } = {}) {
     const metadata = {
         ...values.metadata,
-        providerEventId: eventId || null,
-        reconciled: Boolean(reconciliation)
+        ...(eventId ? { providerEventId: String(eventId) } : {}),
+        ...(reconciliation ? { reconciled: true } : {})
     };
-    await query(`
+    const result = await query(`
         INSERT INTO payment_history_transactions(
             provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
             gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,
@@ -113,6 +118,10 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
             customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
             metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb) || COALESCE(EXCLUDED.metadata,'{}'::jsonb),
             updated_at=NOW()
+        WHERE payment_history_transactions.customer_id IS NULL
+           OR EXCLUDED.customer_id IS NULL
+           OR payment_history_transactions.customer_id=EXCLUDED.customer_id
+        RETURNING customer_id
     `, [
         values.providerTransactionId,
         LIVE_CAPTURE_PAYMENT_TYPE,
@@ -128,7 +137,10 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
         values.customerId,
         JSON.stringify(metadata)
     ]);
-    return { recorded: true, id: values.providerTransactionId, customerId: values.customerId };
+    if (result.rowCount !== 1) {
+        throw new Error(`PayPal capture ${values.providerTransactionId} conflicts with an existing financial-history customer owner.`);
+    }
+    return { recorded: true, id: values.providerTransactionId, customerId: result.rows[0]?.customer_id || values.customerId };
 }
 
 async function recordCapture(capture, {
@@ -161,6 +173,7 @@ module.exports = {
     moneyCurrency,
     relatedIds,
     authoritativeTimestamp,
+    validFinancialTriplet,
     hasAuthoritativeFinancials,
     historyValues,
     upsertValues,
