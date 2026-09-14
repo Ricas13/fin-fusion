@@ -86,16 +86,18 @@ async function paypalHistorySafeRun(){
  catch(error){
   const detail=String(error?.message||error);
   if(workerDbBudget.transientDatabasePressure(detail)){
-   return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,truncated:false,infrastructureSuppressed:1,transientSuppressed:true};
+   return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,infrastructureSuppressed:1,transientSuppressed:true};
   }
-  console.error('PayPal payment-history reconciliation failed without blocking core revenue integrity:',detail);
-  return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,truncated:false,error:detail};
+  console.error('PayPal payment-history reconciliation failed:',detail);
+  return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,error:detail,failed:1,warning:`PayPal payment-history reconciliation failed: ${detail}`.slice(0,1000)};
  }
 }
 
+// Retained as a compatibility helper for direct callers/tests. Scheduled work uses
+// separate jobs below so provider latency/outages can never delay the core integrity
+// watchdog. If invoked directly, start both branches concurrently for the same reason.
 async function revenueIntegrityWithPayPal(){
- const paypalHistory=await paypalHistorySafeRun();
- const integrity=await revenueIntegritySafeRun();
+ const[integrity,paypalHistory]=await Promise.all([revenueIntegritySafeRun(),paypalHistorySafeRun()]);
  const paypalDegraded=Boolean(paypalHistory?.error||paypalHistory?.warning||Number(paypalHistory?.skipped||0)>0||paypalHistory?.truncated);
  const paypalWarning=paypalHistory?.error
   ?`PayPal payment-history reconciliation failed: ${paypalHistory.error}`
@@ -120,7 +122,8 @@ const jobs={
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
  async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
  async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
- async revenue_integrity(){return revenueIntegrityWithPayPal()},
+ async revenue_integrity(){return revenueIntegritySafeRun()},
+ async paypal_history_reconciliation(){return paypalHistorySafeRun()},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
