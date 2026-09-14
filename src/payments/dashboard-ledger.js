@@ -107,7 +107,9 @@ function isCovered(coverage, provider, at) {
 function authoritativeLivePaypal(row) {
     if (String(row?.provider || '').toLowerCase() !== 'paypal') return false;
     const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
-    return metadata.providerAuthoritative === true && metadata.feeDataAvailable === true;
+    return metadata.providerAuthoritative === true
+        && metadata.feeDataAvailable === true
+        && classifier.historyKind(row) === 'payment';
 }
 
 function paypalCaptureIdFromEvent(row) {
