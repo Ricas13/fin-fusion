@@ -3,6 +3,8 @@
 const Stripe = require('stripe');
 const { query } = require('../db');
 const providerSettings = require('./provider-settings');
+const providerHttp = require('./provider-http');
+const checkoutIntents = require('./checkout-intents');
 const livePaypalHistory = require('./live-paypal-payment-history');
 const { classifyProviderTransaction } = require('./provider-transaction-classifier');
 
@@ -14,16 +16,17 @@ function iso(value) { return new Date(value).toISOString(); }
 function providerLabel(provider) { return provider === 'paypal' ? 'PayPal' : 'Stripe'; }
 function money(minor, currency) { const value = Number(minor); if (!Number.isFinite(value)) return '—'; try { return new Intl.NumberFormat('en-GB', { style: 'currency', currency: String(currency || 'USD').toUpperCase(), currencyDisplay: 'narrowSymbol' }).format(value / 100); } catch (_) { return `${String(currency || 'USD').toUpperCase()} ${(value / 100).toFixed(2)}`; } }
 function paypalBase(config) { return config?.environment === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com'; }
+function paypalReportingError(response, payload, requestId, fallback) { return providerHttp.responseError('paypal', response, payload, requestId, fallback); }
 
 async function paypalToken(config) {
     if (!config?.clientId || !config?.clientSecret) throw new Error('PayPal is not configured');
-    const response = await fetch(`${paypalBase(config)}/v1/oauth2/token`, {
+    const result = await providerHttp.fetchJson('paypal', `${paypalBase(config)}/v1/oauth2/token`, {
         method: 'POST',
         headers: { Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body: 'grant_type=client_credentials'
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.access_token) throw new Error(`PayPal reporting authentication failed: ${payload.error_description || payload.message || response.status}`);
+    const payload = result.data || {};
+    if (!result.response.ok || !payload.access_token) throw paypalReportingError(result.response, payload, result.requestId, 'PayPal reporting authentication failed');
     return payload.access_token;
 }
 
@@ -32,16 +35,20 @@ const MAX_STRIPE_PAGES = 100;
 
 async function paypalTransactionPage(config, token, since, end, page) {
     const params = new URLSearchParams({ start_date: iso(since), end_date: iso(end), fields: 'all', page_size: '100', page: String(page) });
-    const response = await fetch(`${paypalBase(config)}/v1/reporting/transactions?${params}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`PayPal reporting failed: ${payload.message || response.status}`);
+    const result = await providerHttp.fetchJson('paypal', `${paypalBase(config)}/v1/reporting/transactions?${params}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+    });
+    const payload = result.data || {};
+    if (!result.response.ok) throw paypalReportingError(result.response, payload, result.requestId, 'PayPal reporting failed');
     return payload;
 }
 
 async function paypalCapture(config, token, captureId) {
-    const response = await fetch(`${paypalBase(config)}/v2/payments/captures/${encodeURIComponent(captureId)}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`PayPal capture lookup failed for ${captureId}: ${payload.message || response.status}`);
+    const result = await providerHttp.fetchJson('paypal', `${paypalBase(config)}/v2/payments/captures/${encodeURIComponent(captureId)}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+    });
+    const payload = result.data || {};
+    if (!result.response.ok) throw paypalReportingError(result.response, payload, result.requestId, `PayPal capture lookup failed for ${captureId}`);
     return payload;
 }
 
@@ -94,28 +101,23 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, truncated: false };
 
     const allCandidates = remote.rows.filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE);
+    const allCandidateIds = allCandidates.map(row => String(row.id));
+    const authoritativeIds = await authoritativePayPalCaptureIds(allCandidateIds);
+    const allPending = allCandidates.filter(row => !authoritativeIds.has(String(row.id)));
+    const alreadyAuthoritative = allCandidates.length - allPending.length;
     const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
-    const candidates = allCandidates.slice(0, boundedLimit);
-    const limited = allCandidates.length > candidates.length;
-    if (!candidates.length) {
-        const truncated = Boolean(remote.truncated || limited);
-        return { provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null };
-    }
-
-    const candidateIds = candidates.map(row => String(row.id));
-    const authoritativeIds = await authoritativePayPalCaptureIds(candidateIds);
-    const pending = candidates.filter(row => !authoritativeIds.has(String(row.id)));
-    const alreadyAuthoritative = candidates.length - pending.length;
+    const candidates = allPending.slice(0, boundedLimit);
+    const limited = allPending.length > candidates.length;
     const truncated = Boolean(remote.truncated || limited);
-    if (!pending.length) {
+    if (!candidates.length) {
         return {
-            provider: 'paypal', configured: true, processed: candidates.length, recorded: 0, alreadyAuthoritative, skipped: 0,
+            provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0,
             truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
         };
     }
 
-    const ids = pending.map(row => String(row.id));
-    const orderIds = [...new Set(pending.map(row => row.referenceId).filter(Boolean).map(String))];
+    const ids = candidates.map(row => String(row.id));
+    const orderIds = [...new Set(candidates.map(row => row.referenceId).filter(Boolean).map(String))];
     const [mapped, intents] = await Promise.all([
         query(`
             SELECT provider_subscription_id,customer_id,provider_customer_id
@@ -148,10 +150,17 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     let recorded = 0, skipped = 0;
     const skippedIds = [];
     const failures = [];
-    for (const row of pending) {
-        const local = byCapture.get(String(row.id)) || (row.referenceId ? byCheckout.get(String(row.referenceId)) : null);
+    for (const row of candidates) {
+        const checkout = row.referenceId ? byCheckout.get(String(row.referenceId)) || null : null;
+        const local = byCapture.get(String(row.id)) || checkout;
         if (!local?.customer_id) { skipped += 1; skippedIds.push(String(row.id)); continue; }
         try {
+            // Provider truth says this one-time checkout took money. Settle the local
+            // checkout before booking the ledger row so a later accounting failure
+            // cannot leave access active while the checkout remains falsely open.
+            if (checkout?.customer_id && String(checkout.customer_id) === String(local.customer_id)) {
+                await checkoutIntents.completeVerifiedProvider('paypal', row.referenceId, 'completed');
+            }
             const capture = await paypalCapture(config, token, row.id);
             await livePaypalHistory.recordCapture(capture, {
                 customerId: local.customer_id,
