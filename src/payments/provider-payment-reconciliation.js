@@ -67,6 +67,24 @@ async function paypalCapture(config, token, captureId) {
     return payload;
 }
 
+async function paypalOrder(config, token, orderId) {
+    const result = await providerHttp.fetchJson('paypal', `${paypalBase(config)}/v2/checkout/orders/${encodeURIComponent(orderId)}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+    });
+    const payload = result.data || {};
+    if (!result.response.ok) throw paypalReportingError(result.response, payload, result.requestId, `PayPal order lookup failed for ${orderId}`);
+    return payload;
+}
+
+async function paypalOrderById(orderId) {
+    const id = String(orderId || '').trim();
+    if (!id) throw new Error('PayPal order ID is required');
+    const config = await providerSettings.get('paypal');
+    if (!config?.clientId || !config?.clientSecret) throw new Error('PayPal is not configured');
+    const token = await paypalToken(config);
+    return paypalOrder(config, token, id);
+}
+
 function paypalCaptureOrderId(capture) {
     const ids = capture?.supplementary_data?.related_ids || capture?.related_ids || {};
     return ids.order_id ? String(ids.order_id).trim() || null : null;
@@ -438,6 +456,8 @@ module.exports = {
     recentUnmapped,
     paypalRecent,
     paypalCapture,
+    paypalOrder,
+    paypalOrderById,
     paypalCaptureOrderId,
     paypalOrderReference,
     authoritativePayPalCaptureIds,
