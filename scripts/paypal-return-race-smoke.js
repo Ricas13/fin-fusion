@@ -143,6 +143,13 @@ async function main() {
     `, [conflictCaptureId, capture.create_time, other.id]);
     let conflictThrew = false;
     try {
+        await livePaypalHistory.assertCaptureOwner(conflictCaptureId, customer.id);
+    } catch (error) {
+        conflictThrew = /customer owner/i.test(String(error?.message || error));
+    }
+    expect(conflictThrew, 'capture ownership must be rejectable before entitlement or checkout state is mutated.');
+    conflictThrew = false;
+    try {
         await livePaypalHistory.upsertValues({ ...history, providerTransactionId: conflictCaptureId });
     } catch (error) {
         conflictThrew = /customer owner/i.test(String(error?.message || error));
@@ -155,19 +162,24 @@ async function main() {
     const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
     const reconciliationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-payment-reconciliation.js'), 'utf8');
     const jobsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'automation', 'jobs.js'), 'utf8');
+    const completedOrderStart = paypalSource.indexOf('async function activateCompletedOrder(order)');
+    const completedOrderEnd = paypalSource.indexOf('async function captureOrder(orderId)', completedOrderStart);
+    const completedOrderSource = paypalSource.slice(completedOrderStart, completedOrderEnd);
     expect(ledgerSource.includes('ON CONFLICT(provider,provider_transaction_id) DO UPDATE'), 'PayPal retries must upsert rather than double count.');
     expect(ledgerSource.includes("LIVE_CAPTURE_PAYMENT_TYPE = 'T0006'"), 'live PayPal captures must have a safe canonical fallback classification.');
     expect(ledgerSource.includes('PAYPAL_PAYMENT_CODES'), 'live repair must only preserve transaction types that the canonical PayPal classifier recognizes as payments.');
     expect(ledgerSource.includes('providerAuthoritative: true'), 'provider-verified PayPal rows must be marked authoritative.');
+    expect(ledgerSource.includes('assertCaptureOwner'), 'PayPal capture ownership must have a preflight integrity guard.');
     expect(!/INSERT\s+INTO\s+subscriptions/i.test(ledgerSource), 'accounting sync must never create entitlement state.');
     expect(!/UPDATE\s+subscriptions/i.test(ledgerSource), 'accounting sync must never mutate entitlement state.');
     expect(paypalSource.includes('existingCapture.rowCount?null:payerId'), 'a historical one-time PayPal replay must not overwrite a newer payer identity.');
-    expect(paypalSource.indexOf("completeVerifiedProvider('paypal',order.id,'completed')") < paypalSource.indexOf('recordCompletedCapture(capture'), 'the local checkout must be completed before ledger persistence so an accounting failure cannot leave a paid checkout open.');
-    expect(paypalSource.includes('await recordCompletedCapture(capture'), 'the common completed-order path must persist the authoritative PayPal capture.');
-    expect(paypalSource.includes('async function activateCompletedOrder(order)'), 'PayPal accounting persistence must remain attached to the common completed-order activation path.');
+    expect(completedOrderSource.indexOf("completeVerifiedProvider('paypal',order.id,'completed')") < completedOrderSource.indexOf('recordCompletedCapture(capture'), 'the local checkout must be completed before ledger persistence so an accounting failure cannot leave a paid checkout open.');
+    expect(completedOrderSource.includes('await recordCompletedCapture(capture'), 'the common completed-order path must persist the authoritative PayPal capture.');
+    expect(completedOrderSource.includes('livePaypalHistory.assertCaptureOwner(providerId,mapping.customerId)'), 'capture ownership must be checked before the common PayPal activation path mutates local state.');
     expect(reconciliationSource.includes("providerHttp.fetchJson('paypal'"), 'scheduled PayPal reconciliation must use the canonical provider HTTP timeout/bounds layer.');
     expect(reconciliationSource.indexOf('const allPending = allCandidates.filter') < reconciliationSource.indexOf('const candidates = allPending.slice'), 'the reconciliation limit must be applied after already-authoritative captures are removed so older gaps cannot starve forever.');
     expect(reconciliationSource.includes("completeVerifiedProvider('paypal', row.referenceId, 'completed')"), 'reconciliation must repair a paid one-time checkout that was left locally open.');
+    expect(reconciliationSource.includes('assertCaptureOwner(row.id, local.customer_id)'), 'reconciliation must reject a conflicting ledger owner before completing local checkout state.');
     expect(jobsSource.includes('revenueIntegritySafeRun()'), 'PayPal reconciliation must preserve the bounded DB-pressure-safe revenue-integrity path from main.');
     expect(jobsSource.includes('paypalHistoryDegraded'), 'unmatched/truncated PayPal reconciliation must make the automation visibly degraded.');
     expect(jobsSource.includes('transientDatabasePressure(detail)'), 'transient local DB pressure must remain suppressed rather than becoming a false PayPal integrity alert.');
