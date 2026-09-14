@@ -75,6 +75,22 @@ async function main() {
     expect(history.netMinor === 2853, 'PayPal net proceeds must remain provider-authoritative.');
     expect(history.status === 'S', 'completed PayPal captures must use the canonical successful accounting status.');
     expect(paymentReconciliation.paypalCaptureOrderId(capture) === `PAYPAL-ORDER-${suffix}`, 'reconciliation must derive checkout ownership from the canonical order ID on the full capture.');
+
+    const ranked = paymentReconciliation.prioritizePayPalCandidates([
+        { id: 'UNRELATED' },
+        { id: 'OWNED-CAPTURE' },
+        { id: 'CHECKOUT-CAPTURE', referenceId: 'LOCAL-ORDER' }
+    ], new Map([['OWNED-CAPTURE', { customer_id: customer.id }]]), new Map([['LOCAL-ORDER', { customer_id: customer.id }]]));
+    expect(ranked.map(row => row.id).join(',') === 'OWNED-CAPTURE,CHECKOUT-CAPTURE,UNRELATED', 'PayPal repair must prioritize locally-owned captures before unrelated provider traffic consumes the lookup budget.');
+    let activeLookups = 0, peakLookups = 0;
+    await paymentReconciliation.forEachConcurrent(Array.from({ length: 12 }), 3, async () => {
+        activeLookups += 1;
+        peakLookups = Math.max(peakLookups, activeLookups);
+        await new Promise(resolve => setTimeout(resolve, 2));
+        activeLookups -= 1;
+    });
+    expect(peakLookups > 1 && peakLookups <= 3, 'PayPal capture verification must be concurrent but remain inside its explicit concurrency bound.');
+
     expect(livePaypalHistory.historyValues({ ...capture, status: 'PENDING' }, { customerId: customer.id }) === null, 'pending PayPal captures must never become revenue.');
     expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: {} }, { customerId: customer.id }) === null, 'missing PayPal fee/net data must never be guessed.');
     expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: { paypal_fee: { currency_code: 'USD', value: '-1.00' }, net_amount: { currency_code: 'USD', value: '31.00' } } }, { customerId: customer.id }) === null, 'negative PayPal fees must never be accepted as authoritative revenue data.');
@@ -197,11 +213,13 @@ async function main() {
     expect(completedOrderSource.includes('await recordCompletedCapture(capture'), 'the common completed-order path must persist the authoritative PayPal capture.');
     expect(completedOrderSource.includes('livePaypalHistory.assertCaptureOwner(providerId,mapping.customerId)'), 'capture ownership must be checked before the common PayPal activation path mutates local state.');
     expect(reconciliationSource.includes("providerHttp.fetchJson('paypal'"), 'scheduled PayPal reconciliation must use the canonical provider HTTP timeout/bounds layer.');
-    expect(reconciliationSource.indexOf('const allPending = allCandidates.filter') < reconciliationSource.indexOf('const candidates = allPending.slice'), 'the reconciliation limit must be applied after already-authoritative captures are removed so older gaps cannot starve forever.');
+    expect(reconciliationSource.indexOf('const prioritizedPending = prioritizePayPalCandidates') < reconciliationSource.indexOf('const candidates = prioritizedPending.slice'), 'the reconciliation budget must be applied after local ownership evidence is ranked so unrelated provider traffic cannot starve a repairable capture.');
+    expect(reconciliationSource.includes('PAYPAL_CAPTURE_LOOKUP_CONCURRENCY = 8') && reconciliationSource.includes('forEachConcurrent(candidates, PAYPAL_CAPTURE_LOOKUP_CONCURRENCY'), 'provider capture lookups must have an explicit concurrency bound rather than running hundreds of sequential timeout windows.');
     expect(reconciliationSource.includes('const canonicalOrderId = paypalCaptureOrderId(capture);'), 'reconciliation must map checkout ownership from the full capture order ID before falling back to Transaction Search metadata.');
     expect(!reconciliationSource.includes("completeVerifiedProvider('paypal'"), 'accounting reconciliation must never mark a checkout fulfilled without creating the corresponding purchase/entitlement.');
     expect(reconciliationSource.includes('fulfillmentPending'), 'paid captures matched only through checkout intent must remain visibly pending fulfillment instead of being silently completed.');
     expect(reconciliationSource.includes('assertCaptureOwner(row.id, local.customer_id)'), 'reconciliation must reject a conflicting ledger owner before booking provider accounting.');
+    expect(jobsSource.includes('syncRecentPayPalHistory({hours:72,limit:100})'), 'scheduled PayPal reconciliation must keep provider capture detail work to a bounded batch.');
     expect(jobsSource.includes('revenueIntegritySafeRun()'), 'PayPal reconciliation must preserve the bounded DB-pressure-safe revenue-integrity path from main.');
     expect(jobsSource.includes('paypalHistoryDegraded'), 'unmatched/truncated PayPal reconciliation must make the automation visibly degraded.');
     expect(jobsSource.includes('transientDatabasePressure(detail)'), 'transient local DB pressure must remain suppressed rather than becoming a false PayPal integrity alert.');
