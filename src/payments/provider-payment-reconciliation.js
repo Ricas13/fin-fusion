@@ -18,8 +18,18 @@ function money(minor, currency) { const value = Number(minor); if (!Number.isFin
 function paypalBase(config) { return config?.environment === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com'; }
 function paypalReportingError(response, payload, requestId, fallback) { return providerHttp.responseError('paypal', response, payload, requestId, fallback); }
 
+let cachedPaypalReportingToken = null;
+let cachedPaypalReportingTokenUntil = 0;
+let cachedPaypalReportingCredentialKey = null;
 async function paypalToken(config) {
     if (!config?.clientId || !config?.clientSecret) throw new Error('PayPal is not configured');
+    const credentialKey = `${config.environment || 'sandbox'}:${config.clientId}:${config.clientSecret}`;
+    if (cachedPaypalReportingCredentialKey !== credentialKey) {
+        cachedPaypalReportingToken = null;
+        cachedPaypalReportingTokenUntil = 0;
+        cachedPaypalReportingCredentialKey = credentialKey;
+    }
+    if (cachedPaypalReportingToken && Date.now() < cachedPaypalReportingTokenUntil - 60000) return cachedPaypalReportingToken;
     const result = await providerHttp.fetchJson('paypal', `${paypalBase(config)}/v1/oauth2/token`, {
         method: 'POST',
         headers: { Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -27,12 +37,16 @@ async function paypalToken(config) {
     });
     const payload = result.data || {};
     if (!result.response.ok || !payload.access_token) throw paypalReportingError(result.response, payload, result.requestId, 'PayPal reporting authentication failed');
-    return payload.access_token;
+    cachedPaypalReportingToken = payload.access_token;
+    cachedPaypalReportingTokenUntil = Date.now() + Math.max(60, Number(payload.expires_in) || 300) * 1000;
+    return cachedPaypalReportingToken;
 }
 
 const MAX_PAYPAL_PAGES = 10;
 const MAX_STRIPE_PAGES = 100;
 const PAYPAL_CAPTURE_LOOKUP_CONCURRENCY = 8;
+const PAYPAL_UNMATCHED_RECHECK_MS = 6 * 60 * 60 * 1000;
+const paypalUnmatchedSeenAt = new Map();
 
 async function paypalTransactionPage(config, token, since, end, page) {
     const params = new URLSearchParams({ start_date: iso(since), end_date: iso(end), fields: 'all', page_size: '100', page: String(page) });
@@ -56,6 +70,12 @@ async function paypalCapture(config, token, captureId) {
 function paypalCaptureOrderId(capture) {
     const ids = capture?.supplementary_data?.related_ids || capture?.related_ids || {};
     return ids.order_id ? String(ids.order_id).trim() || null : null;
+}
+
+function paypalOrderReference(row) {
+    if (String(row?.referenceType || '').trim().toUpperCase() !== 'ODR') return null;
+    const id = String(row?.referenceId || '').trim();
+    return id || null;
 }
 
 async function paypalRecent(since) {
@@ -116,13 +136,49 @@ function checkoutIndex(rows) {
     return indexed;
 }
 
+function paypalCandidateHasLocalEvidence(row, byCapture, byCheckout) {
+    const captureId = String(row?.id || '');
+    const orderId = paypalOrderReference(row);
+    return Boolean(byCapture?.has(captureId) || (orderId && byCheckout?.has(orderId)));
+}
+
 function prioritizePayPalCandidates(rows, byCapture, byCheckout) {
-    return (rows || []).map((row, index) => {
-        const captureId = String(row.id || '');
-        const referenceId = row.referenceId ? String(row.referenceId) : '';
-        const localEvidence = Boolean(byCapture?.has(captureId) || (referenceId && byCheckout?.has(referenceId)));
-        return { row, index, localEvidence };
-    }).sort((a, b) => Number(b.localEvidence) - Number(a.localEvidence) || a.index - b.index).map(item => item.row);
+    return (rows || []).map((row, index) => ({
+        row,
+        index,
+        localEvidence: paypalCandidateHasLocalEvidence(row, byCapture, byCheckout)
+    })).sort((a, b) => Number(b.localEvidence) - Number(a.localEvidence) || a.index - b.index).map(item => item.row);
+}
+
+function pruneUnmatchedPayPalCooldowns(now = Date.now()) {
+    for (const [id, seenAt] of paypalUnmatchedSeenAt) {
+        if (!Number.isFinite(seenAt) || now - seenAt >= PAYPAL_UNMATCHED_RECHECK_MS) paypalUnmatchedSeenAt.delete(id);
+    }
+}
+
+function paypalUnmatchedCoolingDown(row, byCapture, byCheckout, now = Date.now()) {
+    if (paypalCandidateHasLocalEvidence(row, byCapture, byCheckout)) return false;
+    const captureId = String(row?.id || '');
+    if (!captureId) return false;
+    const seenAt = Number(paypalUnmatchedSeenAt.get(captureId));
+    if (!Number.isFinite(seenAt)) return false;
+    if (now - seenAt >= PAYPAL_UNMATCHED_RECHECK_MS) {
+        paypalUnmatchedSeenAt.delete(captureId);
+        return false;
+    }
+    return true;
+}
+
+function rememberUnmatchedPayPalCapture(captureId, now = Date.now()) {
+    const id = String(captureId || '').trim();
+    if (!id) return;
+    pruneUnmatchedPayPalCooldowns(now);
+    paypalUnmatchedSeenAt.set(id, now);
+}
+
+function clearUnmatchedPayPalCapture(captureId) {
+    const id = String(captureId || '').trim();
+    if (id) paypalUnmatchedSeenAt.delete(id);
 }
 
 async function forEachConcurrent(rows, concurrency, worker) {
@@ -141,7 +197,7 @@ async function forEachConcurrent(rows, concurrency, worker) {
 async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = {}) {
     const since = sinceDate(hours);
     const remote = await paypalRecent(since);
-    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, fulfillmentPending: 0, truncated: false };
+    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, fulfillmentPending: 0, deferredUnmatched: 0, truncated: false };
 
     const allCandidates = remote.rows.filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE);
     const allCandidateIds = allCandidates.map(row => String(row.id));
@@ -150,7 +206,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     const alreadyAuthoritative = allCandidates.length - allPending.length;
     if (!allPending.length) {
         return {
-            provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0,
+            provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0, deferredUnmatched: 0,
             truncated: Boolean(remote.truncated), warning: remote.truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
         };
     }
@@ -172,7 +228,9 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         byCapture.set(key, row);
     }
 
-    const reportedOrderIds = [...new Set(allPending.map(row => row.referenceId ? String(row.referenceId) : null).filter(Boolean))];
+    // paypal_reference_id can identify several different PayPal object types.
+    // Only ODR is an order ID and therefore safe to match to provider_checkout_id.
+    const reportedOrderIds = [...new Set(allPending.map(paypalOrderReference).filter(Boolean))];
     const reportedIntents = reportedOrderIds.length ? await query(`
         SELECT provider_checkout_id,customer_id
         FROM billing_checkout_intents
@@ -183,9 +241,17 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
 
     const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
     const prioritizedPending = prioritizePayPalCandidates(allPending, byCapture, byCheckout);
-    const candidates = prioritizedPending.slice(0, boundedLimit);
-    const limited = allPending.length > candidates.length;
+    const eligiblePending = prioritizedPending.filter(row => !paypalUnmatchedCoolingDown(row, byCapture, byCheckout));
+    const deferredUnmatched = prioritizedPending.length - eligiblePending.length;
+    const candidates = eligiblePending.slice(0, boundedLimit);
+    const limited = eligiblePending.length > candidates.length;
     const truncated = Boolean(remote.truncated || limited);
+    if (!candidates.length) {
+        return {
+            provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0, deferredUnmatched,
+            truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
+        };
+    }
 
     const config = await providerSettings.get('paypal');
     const token = await paypalToken(config);
@@ -220,11 +286,16 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         const capture = captures.get(String(row.id));
         if (!capture) continue;
         const canonicalOrderId = paypalCaptureOrderId(capture);
-        const checkoutReference = canonicalOrderId || (row.referenceId ? String(row.referenceId) : null);
+        const checkoutReference = canonicalOrderId || paypalOrderReference(row);
         const checkout = checkoutReference ? byCheckout.get(checkoutReference) || null : null;
         const subscription = byCapture.get(String(row.id)) || null;
         const local = subscription || checkout;
-        if (!local?.customer_id) { skipped += 1; skippedIds.push(String(row.id)); continue; }
+        if (!local?.customer_id) {
+            skipped += 1;
+            skippedIds.push(String(row.id));
+            rememberUnmatchedPayPalCapture(row.id);
+            continue;
+        }
         try {
             await livePaypalHistory.assertCaptureOwner(row.id, local.customer_id);
             if (!subscription && checkout) {
@@ -244,6 +315,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
                 providerCustomerId: local.provider_customer_id || null,
                 reconciliation: true
             });
+            clearUnmatchedPayPalCapture(row.id);
             recorded += 1;
             if (!subscription && checkout) {
                 fulfillmentPending += 1;
@@ -264,7 +336,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     if (truncated) warningParts.push('PayPal reconciliation results were truncated; not every recent provider payment was inspected.');
     return {
         provider: 'paypal', configured: true, processed: candidates.length, recorded, alreadyAuthoritative, skipped, skippedIds,
-        fulfillmentPending, fulfillmentPendingIds,
+        fulfillmentPending, fulfillmentPendingIds, deferredUnmatched,
         truncated, warning: warningParts.length ? warningParts.join(' ') : null
     };
 }
@@ -356,4 +428,29 @@ async function recentUnmapped({ hours = DEFAULT_HOURS } = {}) {
     return { since, hours: Math.round((Date.now() - since.getTime()) / 3600000), results, rows };
 }
 
-module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, PAYPAL_CAPTURE_LOOKUP_CONCURRENCY, recentUnmapped, paypalRecent, paypalCapture, paypalCaptureOrderId, authoritativePayPalCaptureIds, prioritizePayPalCandidates, forEachConcurrent, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
+module.exports = {
+    DEFAULT_HOURS,
+    MAX_HOURS,
+    MAX_PAYPAL_PAGES,
+    MAX_STRIPE_PAGES,
+    PAYPAL_CAPTURE_LOOKUP_CONCURRENCY,
+    PAYPAL_UNMATCHED_RECHECK_MS,
+    recentUnmapped,
+    paypalRecent,
+    paypalCapture,
+    paypalCaptureOrderId,
+    paypalOrderReference,
+    authoritativePayPalCaptureIds,
+    paypalCandidateHasLocalEvidence,
+    prioritizePayPalCandidates,
+    paypalUnmatchedCoolingDown,
+    rememberUnmatchedPayPalCapture,
+    clearUnmatchedPayPalCapture,
+    forEachConcurrent,
+    syncRecentPayPalHistory,
+    stripeRecent,
+    stripeChargeRow,
+    localMatch,
+    money,
+    providerLabel
+};
