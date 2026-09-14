@@ -59,7 +59,7 @@ const jobs={
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
  async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
  async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
- async revenue_integrity(){const paypalHistory=await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:500});const integrity=await revenueIntegrity.run();return{...integrity,paypalHistory}},
+ async revenue_integrity(){let paypalHistory;try{paypalHistory=await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:500});}catch(error){paypalHistory={provider:'paypal',configured:true,processed:0,recorded:0,skipped:0,truncated:false,error:String(error?.message||error)};console.error('PayPal payment-history reconciliation failed without blocking core revenue integrity:',paypalHistory.error);}const integrity=await revenueIntegrity.run();return{...integrity,paypalHistory,paypalHistoryFailed:paypalHistory?.error?1:0}},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
