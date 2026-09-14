@@ -52,6 +52,16 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
               AND ph.metadata->>'livePaypal'='true'
               AND ph.metadata->>'providerAuthoritative'='true'
               AND ph.metadata->>'feeDataAvailable'='true'
+              AND (
+                  COALESCE(i.state,'')<>'completed'
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM subscriptions s
+                      WHERE s.source='paypal'
+                        AND s.customer_id=i.customer_id
+                        AND s.provider_subscription_id=ph.provider_transaction_id
+                  )
+              )
             ORDER BY ph.occurred_at DESC,ph.provider_transaction_id DESC
             LIMIT 1
         ) paid ON TRUE
@@ -70,16 +80,6 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
                   i.provider='paypal'
                   AND i.checkout_mode='payment'
                   AND paid.provider_transaction_id IS NOT NULL
-                  AND (
-                      COALESCE(i.state,'')<>'completed'
-                      OR NOT EXISTS (
-                          SELECT 1
-                          FROM subscriptions s
-                          WHERE s.source='paypal'
-                            AND s.customer_id=i.customer_id
-                            AND s.provider_subscription_id=paid.provider_transaction_id
-                      )
-                  )
               )
           )
           ${scopeSql}
