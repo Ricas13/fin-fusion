@@ -100,7 +100,7 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
             'paypal',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb
         )
         ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
-            transaction_type=EXCLUDED.transaction_type,
+            transaction_type=COALESCE(payment_history_transactions.transaction_type,EXCLUDED.transaction_type),
             transaction_status=EXCLUDED.transaction_status,
             occurred_at=EXCLUDED.occurred_at,
             currency=EXCLUDED.currency,
@@ -111,7 +111,7 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
             provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
             provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
             customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-            metadata=payment_history_transactions.metadata || EXCLUDED.metadata,
+            metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb) || COALESCE(EXCLUDED.metadata,'{}'::jsonb),
             updated_at=NOW()
     `, [
         values.providerTransactionId,
