@@ -74,10 +74,24 @@ async function paypalRecent(since) {
     return { provider: 'paypal', configured: true, rows, truncated };
 }
 
+async function authoritativePayPalCaptureIds(ids) {
+    if (!ids.length) return new Set();
+    const result = await query(`
+        SELECT provider_transaction_id
+        FROM payment_history_transactions
+        WHERE provider='paypal'
+          AND provider_transaction_id = ANY($1::text[])
+          AND customer_id IS NOT NULL
+          AND metadata->>'providerAuthoritative'='true'
+          AND metadata->>'feeDataAvailable'='true'
+    `, [ids]);
+    return new Set(result.rows.map(row => String(row.provider_transaction_id)));
+}
+
 async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = {}) {
     const since = sinceDate(hours);
     const remote = await paypalRecent(since);
-    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, skipped: 0, truncated: false };
+    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, truncated: false };
 
     const allCandidates = remote.rows.filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE);
     const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
@@ -85,11 +99,23 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     const limited = allCandidates.length > candidates.length;
     if (!candidates.length) {
         const truncated = Boolean(remote.truncated || limited);
-        return { provider: 'paypal', configured: true, processed: 0, recorded: 0, skipped: 0, truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null };
+        return { provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null };
     }
 
-    const ids = candidates.map(row => String(row.id));
-    const orderIds = [...new Set(candidates.map(row => row.referenceId).filter(Boolean).map(String))];
+    const candidateIds = candidates.map(row => String(row.id));
+    const authoritativeIds = await authoritativePayPalCaptureIds(candidateIds);
+    const pending = candidates.filter(row => !authoritativeIds.has(String(row.id)));
+    const alreadyAuthoritative = candidates.length - pending.length;
+    const truncated = Boolean(remote.truncated || limited);
+    if (!pending.length) {
+        return {
+            provider: 'paypal', configured: true, processed: candidates.length, recorded: 0, alreadyAuthoritative, skipped: 0,
+            truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
+        };
+    }
+
+    const ids = pending.map(row => String(row.id));
+    const orderIds = [...new Set(pending.map(row => row.referenceId).filter(Boolean).map(String))];
     const [mapped, intents] = await Promise.all([
         query(`
             SELECT provider_subscription_id,customer_id,provider_customer_id
@@ -122,7 +148,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     let recorded = 0, skipped = 0;
     const skippedIds = [];
     const failures = [];
-    for (const row of candidates) {
+    for (const row of pending) {
         const local = byCapture.get(String(row.id)) || (row.referenceId ? byCheckout.get(String(row.referenceId)) : null);
         if (!local?.customer_id) { skipped += 1; skippedIds.push(String(row.id)); continue; }
         try {
@@ -142,12 +168,11 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         error.failures = failures;
         throw error;
     }
-    const truncated = Boolean(remote.truncated || limited);
     const warningParts = [];
     if (skipped) warningParts.push(`${skipped} successful PayPal capture${skipped === 1 ? '' : 's'} could not be matched to a local customer and were not booked.`);
     if (truncated) warningParts.push('PayPal reconciliation results were truncated; not every recent provider payment was inspected.');
     return {
-        provider: 'paypal', configured: true, processed: candidates.length, recorded, skipped, skippedIds,
+        provider: 'paypal', configured: true, processed: candidates.length, recorded, alreadyAuthoritative, skipped, skippedIds,
         truncated, warning: warningParts.length ? warningParts.join(' ') : null
     };
 }
@@ -239,4 +264,4 @@ async function recentUnmapped({ hours = DEFAULT_HOURS } = {}) {
     return { since, hours: Math.round((Date.now() - since.getTime()) / 3600000), results, rows };
 }
 
-module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, paypalCapture, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
+module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, paypalCapture, authoritativePayPalCaptureIds, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
