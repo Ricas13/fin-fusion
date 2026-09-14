@@ -3,52 +3,80 @@
 const { query } = require('../db');
 
 // PayPal Transaction Search classifies Express Checkout / one-time checkout
-// receipts as customer payments. Live capture webhooks do not expose a
-// transaction_event_code, so use the canonical payment code until a later
-// historical import enriches the same provider transaction row.
+// receipts as customer payments. Live captures use the same canonical type.
 const LIVE_CAPTURE_PAYMENT_TYPE = 'T0006';
+const ZERO_DECIMAL_CURRENCIES = new Set(['HUF', 'JPY', 'TWD']);
+
+function currencyExponent(currency) {
+    return ZERO_DECIMAL_CURRENCIES.has(String(currency || '').toUpperCase()) ? 0 : 2;
+}
 
 function moneyMinor(value) {
     const amount = Number(value?.value);
-    return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+    const currency = String(value?.currency_code || value?.currency || '').toUpperCase();
+    if (!Number.isFinite(amount) || !currency) return null;
+    return Math.round(amount * (10 ** currencyExponent(currency)));
+}
+
+function moneyCurrency(value) {
+    return String(value?.currency_code || value?.currency || '').toUpperCase() || null;
 }
 
 function relatedIds(capture) {
     return capture?.supplementary_data?.related_ids || capture?.related_ids || {};
 }
 
-function historyValues(capture, customerId = null) {
+function authoritativeTimestamp(capture) {
+    return capture?.create_time || capture?.update_time || null;
+}
+
+function hasAuthoritativeFinancials(capture) {
+    if (!capture?.id || String(capture.status || '').toUpperCase() !== 'COMPLETED') return false;
+    const gross = capture.amount || capture?.seller_receivable_breakdown?.gross_amount;
+    const fee = capture?.seller_receivable_breakdown?.paypal_fee;
+    const net = capture?.seller_receivable_breakdown?.net_amount;
+    const currencies = [moneyCurrency(gross), moneyCurrency(fee), moneyCurrency(net)];
+    return Boolean(
+        authoritativeTimestamp(capture) &&
+        currencies.every(Boolean) &&
+        new Set(currencies).size === 1 &&
+        moneyMinor(gross) != null &&
+        moneyMinor(fee) != null &&
+        moneyMinor(net) != null
+    );
+}
+
+function historyValues(capture, { customerId = null, providerCustomerId = null } = {}) {
     if (!capture?.id || String(capture.status || '').toUpperCase() !== 'COMPLETED') return null;
 
-    const grossMinor = moneyMinor(capture.amount);
-    const feeMinor = moneyMinor(capture?.seller_receivable_breakdown?.paypal_fee);
-    const netMinor = moneyMinor(capture?.seller_receivable_breakdown?.net_amount);
-    const currency = String(
-        capture?.amount?.currency_code ||
-        capture?.seller_receivable_breakdown?.gross_amount?.currency_code ||
-        ''
-    ).toUpperCase();
+    const gross = capture.amount || capture?.seller_receivable_breakdown?.gross_amount;
+    const fee = capture?.seller_receivable_breakdown?.paypal_fee;
+    const net = capture?.seller_receivable_breakdown?.net_amount;
+    const grossMinor = moneyMinor(gross);
+    const feeMinor = moneyMinor(fee);
+    const netMinor = moneyMinor(net);
+    const currencies = [moneyCurrency(gross), moneyCurrency(fee), moneyCurrency(net)];
+    const occurredAt = authoritativeTimestamp(capture);
 
-    // Financial reporting must never guess PayPal fees/net proceeds. A webhook
-    // missing the authoritative breakdown is retried instead of booking a
-    // misleading zero-fee payment.
-    if (!currency || grossMinor == null || grossMinor <= 0 || feeMinor == null || netMinor == null) return null;
+    if (!occurredAt || currencies.some(value => !value) || new Set(currencies).size !== 1) return null;
+    if (grossMinor == null || grossMinor <= 0 || feeMinor == null || netMinor == null) return null;
+    if (grossMinor - feeMinor !== netMinor) return null;
 
     const ids = relatedIds(capture);
     return {
         providerTransactionId: String(capture.id),
         status: 'S',
-        occurredAt: capture.create_time || capture.update_time || new Date(),
-        currency,
+        occurredAt,
+        currency: currencies[0],
         grossMinor,
         feeMinor,
         netMinor,
-        providerCustomerId: capture?.payer?.payer_id || null,
+        providerCustomerId: providerCustomerId || capture?.payer?.payer_id || null,
         providerReferenceId: ids.order_id || null,
         providerSourceId: ids.authorization_id || null,
         customerId: customerId || null,
         metadata: {
-            livePaypalWebhook: true,
+            livePaypal: true,
             providerAuthoritative: true,
             feeDataAvailable: true,
             providerCaptureStatus: String(capture.status || '').toUpperCase(),
@@ -57,27 +85,12 @@ function historyValues(capture, customerId = null) {
     };
 }
 
-async function resolveCustomerId(capture) {
-    if (!capture?.id) return null;
-    const mapped = await query(`
-        SELECT customer_id
-          FROM subscriptions
-         WHERE source='paypal' AND provider_subscription_id=$1
-         ORDER BY created_at DESC
-         LIMIT 2
-    `, [String(capture.id)]);
-    const ids = [...new Set(mapped.rows.map(row => String(row.customer_id || '')).filter(Boolean))];
-    return ids.length === 1 ? ids[0] : null;
-}
-
-async function upsertCapture(capture, { eventId = null } = {}) {
-    const customerId = await resolveCustomerId(capture);
-    const values = historyValues(capture, customerId);
-    if (!values) {
-        throw new Error(`PayPal completed capture ${capture?.id || '(missing id)'} is missing authoritative amount/fee/net data.`);
-    }
-
-    const metadata = { ...values.metadata, providerEventId: eventId || null };
+async function upsertValues(values, { eventId = null, reconciliation = false } = {}) {
+    const metadata = {
+        ...values.metadata,
+        providerEventId: eventId || null,
+        reconciled: Boolean(reconciliation)
+    };
     await query(`
         INSERT INTO payment_history_transactions(
             provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
@@ -87,6 +100,7 @@ async function upsertCapture(capture, { eventId = null } = {}) {
             'paypal',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb
         )
         ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
+            transaction_type=EXCLUDED.transaction_type,
             transaction_status=EXCLUDED.transaction_status,
             occurred_at=EXCLUDED.occurred_at,
             currency=EXCLUDED.currency,
@@ -114,22 +128,41 @@ async function upsertCapture(capture, { eventId = null } = {}) {
         values.customerId,
         JSON.stringify(metadata)
     ]);
-
     return { recorded: true, id: values.providerTransactionId, customerId: values.customerId };
 }
 
-async function recordVerifiedWebhook(rawBody) {
-    const event = JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody));
-    if (event?.event_type !== 'PAYMENT.CAPTURE.COMPLETED') return { recorded: false, skipped: true };
-    return upsertCapture(event.resource || {}, { eventId: event.id || null });
+async function recordCapture(capture, {
+    customerId = null,
+    providerCustomerId = null,
+    eventId = null,
+    fetchCapture = null,
+    reconciliation = false
+} = {}) {
+    if (!capture?.id) throw new Error('PayPal completed capture is missing its capture ID.');
+    let authoritative = capture;
+    if (!hasAuthoritativeFinancials(authoritative)) {
+        if (typeof fetchCapture !== 'function') {
+            throw new Error(`PayPal completed capture ${capture.id} is missing authoritative amount/fee/net/timestamp data.`);
+        }
+        authoritative = await fetchCapture(String(capture.id));
+    }
+    const values = historyValues(authoritative, { customerId, providerCustomerId });
+    if (!values) {
+        throw new Error(`PayPal completed capture ${capture.id} could not be normalized from authoritative provider data.`);
+    }
+    return upsertValues(values, { eventId, reconciliation });
 }
 
 module.exports = {
     LIVE_CAPTURE_PAYMENT_TYPE,
+    ZERO_DECIMAL_CURRENCIES,
+    currencyExponent,
     moneyMinor,
+    moneyCurrency,
     relatedIds,
+    authoritativeTimestamp,
+    hasAuthoritativeFinancials,
     historyValues,
-    resolveCustomerId,
-    upsertCapture,
-    recordVerifiedWebhook
+    upsertValues,
+    recordCapture
 };
