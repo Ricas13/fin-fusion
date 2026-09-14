@@ -156,13 +156,23 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         if (!local?.customer_id) { skipped += 1; skippedIds.push(String(row.id)); continue; }
         try {
             await livePaypalHistory.assertCaptureOwner(row.id, local.customer_id);
-            // Provider truth says this one-time checkout took money. Settle the local
-            // checkout before booking the ledger row so a later accounting failure
-            // cannot leave access active while the checkout remains falsely open.
+            const capture = await paypalCapture(config, token, row.id);
+            // Provider truth says this one-time checkout took money. Before changing
+            // local checkout state, verify the capture amount/currency against the
+            // immutable checkout snapshot just like the live completion path does.
             if (checkout?.customer_id && String(checkout.customer_id) === String(local.customer_id)) {
+                const amount = capture?.amount || capture?.seller_receivable_breakdown?.gross_amount || {};
+                await checkoutIntents.verifiedProviderContract({
+                    provider: 'paypal',
+                    providerCheckoutId: row.referenceId,
+                    scope: 'customer',
+                    ownerId: local.customer_id,
+                    checkoutMode: 'payment',
+                    amountMinor: livePaypalHistory.moneyMinor(amount),
+                    currency: livePaypalHistory.moneyCurrency(amount)
+                });
                 await checkoutIntents.completeVerifiedProvider('paypal', row.referenceId, 'completed');
             }
-            const capture = await paypalCapture(config, token, row.id);
             await livePaypalHistory.recordCapture(capture, {
                 customerId: local.customer_id,
                 providerCustomerId: local.provider_customer_id || null,
