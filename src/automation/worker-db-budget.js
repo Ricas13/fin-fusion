@@ -16,16 +16,30 @@ function jobConcurrency(env = process.env) {
     return bounded(env.AUTOMATION_JOB_DB_CONCURRENCY, DEFAULT_JOB_DB_CONCURRENCY, 1, Math.max(1, pool - 2));
 }
 
-async function permit(fn) {
-    const limit = jobConcurrency();
-    if (active >= limit) await new Promise(resolve => waiting.push(resolve));
-    active += 1;
-    try { return await fn(); }
-    finally {
-        active = Math.max(0, active - 1);
-        const next = waiting.shift();
-        if (next) next();
+async function acquire(limit) {
+    if (active < limit) {
+        active += 1;
+        return;
     }
+    await new Promise(resolve => waiting.push(resolve));
+}
+
+function release() {
+    const next = waiting.shift();
+    if (next) {
+        // Transfer the existing permit directly to the next waiter. Keeping the
+        // active count unchanged avoids a release/reacquire race that could
+        // briefly exceed the configured concurrency.
+        next();
+        return;
+    }
+    active = Math.max(0, active - 1);
+}
+
+async function permit(fn) {
+    await acquire(jobConcurrency());
+    try { return await fn(); }
+    finally { release(); }
 }
 
 function guarded(fn) {
@@ -39,6 +53,10 @@ function install(db, env = process.env) {
         env.REQUEST_USER_SYNC_CONCURRENCY = String(DEFAULT_REQUEST_USER_SYNC_CONCURRENCY);
     }
     if (installed) return;
+    // Patch the shared db exports before the automation job modules are loaded.
+    // The worker scheduler itself imports its control-plane query before this
+    // install runs, so heartbeat/scheduling retains the pool headroom reserved
+    // by scripts/automation-worker.js.
     for (const name of ['query', 'readQuery', 'mutationQuery']) {
         if (typeof db[name] === 'function') db[name] = guarded(db[name]);
     }
@@ -52,10 +70,15 @@ function transientDatabasePressure(value) {
         || message.includes('database is temporarily busy');
 }
 
+function metrics() {
+    return { installed, active, waiting: waiting.length, concurrency: jobConcurrency() };
+}
+
 module.exports = {
     DEFAULT_JOB_DB_CONCURRENCY,
     DEFAULT_REQUEST_USER_SYNC_CONCURRENCY,
     jobConcurrency,
     install,
-    transientDatabasePressure
+    transientDatabasePressure,
+    metrics
 };
