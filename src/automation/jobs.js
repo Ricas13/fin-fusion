@@ -16,6 +16,7 @@ const providerOperationRecovery=require('../payments/provider-operation-recovery
 const providerCheckoutRecovery=require('../payments/provider-checkout-recovery');
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
+const providerPaymentReconciliation=require('../payments/provider-payment-reconciliation');
 const subscriptionDiscovery=require('../payments/subscription-discovery');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
@@ -58,7 +59,7 @@ const jobs={
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
  async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
  async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
- async revenue_integrity(){return revenueIntegrity.run()},
+ async revenue_integrity(){const paypalHistory=await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:500});const integrity=await revenueIntegrity.run();return{...integrity,paypalHistory}},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
