@@ -52,6 +52,11 @@ async function paypalCapture(config, token, captureId) {
     return payload;
 }
 
+function paypalCaptureOrderId(capture) {
+    const ids = capture?.supplementary_data?.related_ids || capture?.related_ids || {};
+    return ids.order_id ? String(ids.order_id).trim() || null : null;
+}
+
 async function paypalRecent(since) {
     const config = await providerSettings.get('paypal');
     if (!config?.clientId || !config?.clientSecret) return { provider: 'paypal', configured: false, rows: [] };
@@ -84,7 +89,7 @@ async function paypalRecent(since) {
 async function authoritativePayPalCaptureIds(ids) {
     if (!ids.length) return new Set();
     const result = await query(`
-        SELECT provider_transaction_id
+        SELECT provider_transaction_id,transaction_type,transaction_status,gross_amount_minor,customer_id,metadata
         FROM payment_history_transactions
         WHERE provider='paypal'
           AND provider_transaction_id = ANY($1::text[])
@@ -92,13 +97,18 @@ async function authoritativePayPalCaptureIds(ids) {
           AND metadata->>'providerAuthoritative'='true'
           AND metadata->>'feeDataAvailable'='true'
     `, [ids]);
-    return new Set(result.rows.map(row => String(row.provider_transaction_id)));
+    return new Set(result.rows.filter(row => classifyProviderTransaction({
+        provider: 'paypal',
+        type: row.transaction_type,
+        status: row.transaction_status,
+        grossMinor: row.gross_amount_minor
+    }) === 'payment').map(row => String(row.provider_transaction_id)));
 }
 
 async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = {}) {
     const since = sinceDate(hours);
     const remote = await paypalRecent(since);
-    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, truncated: false };
+    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, fulfillmentPending: 0, truncated: false };
 
     const allCandidates = remote.rows.filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE);
     const allCandidateIds = allCandidates.map(row => String(row.id));
@@ -111,33 +121,45 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     const truncated = Boolean(remote.truncated || limited);
     if (!candidates.length) {
         return {
-            provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0,
+            provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0,
             truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
         };
     }
 
     const ids = candidates.map(row => String(row.id));
-    const orderIds = [...new Set(candidates.map(row => row.referenceId).filter(Boolean).map(String))];
-    const [mapped, intents] = await Promise.all([
-        query(`
-            SELECT provider_subscription_id,customer_id,provider_customer_id
-            FROM subscriptions
-            WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
-            ORDER BY created_at DESC
-        `, [ids]),
-        orderIds.length ? query(`
-            SELECT provider_checkout_id,customer_id
-            FROM billing_checkout_intents
-            WHERE provider='paypal' AND provider_checkout_id = ANY($1::text[])
-            ORDER BY created_at DESC
-        `, [orderIds]) : Promise.resolve({ rows: [] })
-    ]);
+    const mapped = await query(`
+        SELECT provider_subscription_id,customer_id,provider_customer_id
+        FROM subscriptions
+        WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+        ORDER BY created_at DESC
+    `, [ids]);
     const byCapture = new Map();
     for (const row of mapped.rows) {
         const key = String(row.provider_subscription_id || '');
         if (!key || byCapture.has(key)) continue;
         byCapture.set(key, row);
     }
+
+    const config = await providerSettings.get('paypal');
+    const token = await paypalToken(config);
+    const captures = new Map();
+    const failures = [];
+    for (const row of candidates) {
+        try {
+            const capture = await paypalCapture(config, token, row.id);
+            captures.set(String(row.id), capture);
+        } catch (error) {
+            failures.push({ id: row.id, error: error.message || String(error) });
+        }
+    }
+
+    const orderIds = [...new Set([...captures.values()].map(paypalCaptureOrderId).filter(Boolean))];
+    const intents = orderIds.length ? await query(`
+        SELECT provider_checkout_id,customer_id,state,mode
+        FROM billing_checkout_intents
+        WHERE provider='paypal' AND provider_checkout_id = ANY($1::text[])
+        ORDER BY created_at DESC
+    `, [orderIds]) : { rows: [] };
     const byCheckout = new Map();
     for (const row of intents.rows) {
         const key = String(row.provider_checkout_id || '');
@@ -145,33 +167,31 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         byCheckout.set(key, row);
     }
 
-    const config = await providerSettings.get('paypal');
-    const token = await paypalToken(config);
-    let recorded = 0, skipped = 0;
+    let recorded = 0, skipped = 0, fulfillmentPending = 0;
     const skippedIds = [];
-    const failures = [];
+    const fulfillmentPendingIds = [];
     for (const row of candidates) {
-        const checkout = row.referenceId ? byCheckout.get(String(row.referenceId)) || null : null;
-        const local = byCapture.get(String(row.id)) || checkout;
+        const capture = captures.get(String(row.id));
+        if (!capture) continue;
+        const canonicalOrderId = paypalCaptureOrderId(capture);
+        const checkoutReference = canonicalOrderId || (row.referenceId ? String(row.referenceId) : null);
+        const checkout = checkoutReference ? byCheckout.get(checkoutReference) || null : null;
+        const subscription = byCapture.get(String(row.id)) || null;
+        const local = subscription || checkout;
         if (!local?.customer_id) { skipped += 1; skippedIds.push(String(row.id)); continue; }
         try {
             await livePaypalHistory.assertCaptureOwner(row.id, local.customer_id);
-            const capture = await paypalCapture(config, token, row.id);
-            // Provider truth says this one-time checkout took money. Before changing
-            // local checkout state, verify the capture amount/currency against the
-            // immutable checkout snapshot just like the live completion path does.
-            if (checkout?.customer_id && String(checkout.customer_id) === String(local.customer_id)) {
+            if (!subscription && checkout) {
                 const amount = capture?.amount || capture?.seller_receivable_breakdown?.gross_amount || {};
                 await checkoutIntents.verifiedProviderContract({
                     provider: 'paypal',
-                    providerCheckoutId: row.referenceId,
+                    providerCheckoutId: checkoutReference,
                     scope: 'customer',
                     ownerId: local.customer_id,
                     checkoutMode: 'payment',
                     amountMinor: livePaypalHistory.moneyMinor(amount),
                     currency: livePaypalHistory.moneyCurrency(amount)
                 });
-                await checkoutIntents.completeVerifiedProvider('paypal', row.referenceId, 'completed');
             }
             await livePaypalHistory.recordCapture(capture, {
                 customerId: local.customer_id,
@@ -179,6 +199,10 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
                 reconciliation: true
             });
             recorded += 1;
+            if (!subscription && checkout) {
+                fulfillmentPending += 1;
+                fulfillmentPendingIds.push(String(row.id));
+            }
         } catch (error) {
             failures.push({ id: row.id, error: error.message || String(error) });
         }
@@ -190,9 +214,11 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     }
     const warningParts = [];
     if (skipped) warningParts.push(`${skipped} successful PayPal capture${skipped === 1 ? '' : 's'} could not be matched to a local customer and were not booked.`);
+    if (fulfillmentPending) warningParts.push(`${fulfillmentPending} paid PayPal checkout${fulfillmentPending === 1 ? '' : 's'} matched a customer but has no capture-linked local purchase; accounting was repaired without changing fulfillment state.`);
     if (truncated) warningParts.push('PayPal reconciliation results were truncated; not every recent provider payment was inspected.');
     return {
         provider: 'paypal', configured: true, processed: candidates.length, recorded, alreadyAuthoritative, skipped, skippedIds,
+        fulfillmentPending, fulfillmentPendingIds,
         truncated, warning: warningParts.length ? warningParts.join(' ') : null
     };
 }
@@ -284,4 +310,4 @@ async function recentUnmapped({ hours = DEFAULT_HOURS } = {}) {
     return { since, hours: Math.round((Date.now() - since.getTime()) / 3600000), results, rows };
 }
 
-module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, paypalCapture, authoritativePayPalCaptureIds, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
+module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, paypalCapture, paypalCaptureOrderId, authoritativePayPalCaptureIds, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
