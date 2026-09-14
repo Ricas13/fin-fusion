@@ -82,11 +82,15 @@ async function revenueIntegritySafeRun(){
 }
 
 async function paypalHistorySafeRun(){
- try{return await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:100});}
+ try{
+  const result=await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:100});
+  const degraded=Boolean(result?.warning||Number(result?.skipped||0)>0||Number(result?.fulfillmentPending||0)>0||result?.truncated);
+  return{...result,failed:degraded?1:0};
+ }
  catch(error){
   const detail=String(error?.message||error);
   if(workerDbBudget.transientDatabasePressure(detail)){
-   return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,infrastructureSuppressed:1,transientSuppressed:true};
+   return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,failed:0,infrastructureSuppressed:1,transientSuppressed:true};
   }
   console.error('PayPal payment-history reconciliation failed:',detail);
   return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,error:detail,failed:1,warning:`PayPal payment-history reconciliation failed: ${detail}`.slice(0,1000)};
