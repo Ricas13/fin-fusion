@@ -85,14 +85,14 @@ async function main() {
     expect(recorded.metadata?.providerAuthoritative === true && recorded.metadata?.feeDataAvailable === true, 'canonical financial row must be marked provider-authoritative for P&L accounting.');
 
     // Existing/imported row: live repair may enrich financial data/metadata but must
-    // not erase the richer historical transaction classification. NULL metadata
-    // must be upgraded rather than remaining NULL after jsonb concatenation.
+    // not erase the richer historical transaction classification. The schema makes
+    // metadata NOT NULL, so use an empty object to exercise enrichment safely.
     const legacyCaptureId = `PAYPAL-LEGACY-${suffix}`;
     await query(`
         INSERT INTO payment_history_transactions(
             provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
             gross_amount_minor,fee_amount_minor,net_amount_minor,customer_id,metadata
-        ) VALUES('paypal',$1,'T9999','S',$2,'USD',3000,147,2853,$3,NULL)
+        ) VALUES('paypal',$1,'T9999','S',$2,'USD',3000,147,2853,$3,'{}'::jsonb)
     `, [legacyCaptureId, capture.create_time, customer.id]);
     const legacyValues = { ...history, providerTransactionId: legacyCaptureId };
     await livePaypalHistory.upsertValues(legacyValues, { reconciliation: true });
@@ -103,7 +103,7 @@ async function main() {
     `, [legacyCaptureId])).rows[0];
     expect(repaired.transaction_type === 'T9999', 'live reconciliation must preserve an existing imported PayPal transaction classification.');
     expect(String(repaired.customer_id) === String(customer.id), 'live reconciliation must preserve customer ownership.');
-    expect(repaired.metadata?.providerAuthoritative === true && repaired.metadata?.feeDataAvailable === true && repaired.metadata?.reconciled === true, 'live reconciliation must upgrade NULL metadata with authoritative accounting flags.');
+    expect(repaired.metadata?.providerAuthoritative === true && repaired.metadata?.feeDataAvailable === true && repaired.metadata?.reconciled === true, 'live reconciliation must enrich existing metadata with authoritative accounting flags.');
 
     const ledgerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'live-paypal-payment-history.js'), 'utf8');
     const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
