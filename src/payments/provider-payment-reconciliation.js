@@ -155,6 +155,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         const local = byCapture.get(String(row.id)) || checkout;
         if (!local?.customer_id) { skipped += 1; skippedIds.push(String(row.id)); continue; }
         try {
+            await livePaypalHistory.assertCaptureOwner(row.id, local.customer_id);
             // Provider truth says this one-time checkout took money. Settle the local
             // checkout before booking the ledger row so a later accounting failure
             // cannot leave access active while the checkout remains falsely open.
