@@ -4,6 +4,7 @@ const { query } = require('../db');
 const stripe = require('./stripe');
 const paypal = require('./paypal');
 const checkoutIntents = require('./checkout-intents');
+const providerPaymentReconciliation = require('./provider-payment-reconciliation');
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -32,22 +33,57 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
     const scopedIds = Array.isArray(checkoutIntentIds)
         ? checkoutIntentIds.map(value => String(value || '').trim()).filter(Boolean)
         : [];
-    const scopeSql = scopedIds.length ? 'AND id=ANY($3::uuid[])' : '';
+    const scopeSql = scopedIds.length ? 'AND i.id=ANY($3::uuid[])' : '';
     const params = scopedIds.length ? [safeLimit, LOOKBACK_DAYS, scopedIds] : [safeLimit, LOOKBACK_DAYS];
     const result = await query(`
-        SELECT id,customer_id,plan_id,provider,provider_checkout_id,state,
-               provider_terminal_at,created_at,updated_at
-        FROM billing_checkout_intents
-        WHERE provider IN ('stripe','paypal')
-          AND checkout_mode='subscription'
-          AND provider_checkout_id IS NOT NULL
-          AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+        SELECT i.id,i.customer_id,i.plan_id,i.provider,i.provider_checkout_id,i.checkout_mode,i.state,
+               i.provider_terminal_at,i.created_at,i.updated_at,paid.provider_transaction_id AS paid_capture_id
+        FROM billing_checkout_intents i
+        LEFT JOIN LATERAL (
+            SELECT ph.provider_transaction_id
+            FROM payment_history_transactions ph
+            WHERE i.provider='paypal'
+              AND i.checkout_mode='payment'
+              AND ph.provider='paypal'
+              AND ph.provider_reference_id=i.provider_checkout_id
+              AND ph.customer_id=i.customer_id
+              AND ph.transaction_status='S'
+              AND ph.gross_amount_minor>0
+              AND ph.metadata->>'livePaypal'='true'
+              AND ph.metadata->>'providerAuthoritative'='true'
+              AND ph.metadata->>'feeDataAvailable'='true'
+              AND (
+                  COALESCE(i.state,'')<>'completed'
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM subscriptions s
+                      WHERE s.source='paypal'
+                        AND s.customer_id=i.customer_id
+                        AND s.provider_subscription_id=ph.provider_transaction_id
+                  )
+              )
+            ORDER BY ph.occurred_at DESC,ph.provider_transaction_id DESC
+            LIMIT 1
+        ) paid ON TRUE
+        WHERE i.provider IN ('stripe','paypal')
+          AND i.provider_checkout_id IS NOT NULL
+          AND i.created_at >= NOW() - ($2::int * INTERVAL '1 day')
           AND (
-              state IN ('open','failed','expired')
-              OR (state='cancelled' AND provider_terminal_at IS NULL)
+              (
+                  i.checkout_mode='subscription'
+                  AND (
+                      i.state IN ('open','failed','expired')
+                      OR (i.state='cancelled' AND i.provider_terminal_at IS NULL)
+                  )
+              )
+              OR (
+                  i.provider='paypal'
+                  AND i.checkout_mode='payment'
+                  AND paid.provider_transaction_id IS NOT NULL
+              )
           )
           ${scopeSql}
-        ORDER BY created_at DESC,id DESC
+        ORDER BY i.created_at DESC,i.id DESC
         LIMIT $1
     `, params);
     return result.rows;
@@ -63,6 +99,12 @@ function defaultHandlers() {
         },
         async paypalActivate(row) {
             return paypal.activateSubscription(row.provider_checkout_id);
+        },
+        async paypalPaymentOrder(row) {
+            return providerPaymentReconciliation.paypalOrderById(row.provider_checkout_id);
+        },
+        async paypalActivatePayment(row, order) {
+            return paypal.activateCompletedOrder(order);
         },
         async markTerminal(row) {
             return checkoutIntents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled');
@@ -80,7 +122,27 @@ async function recoverStripe(row, handlers) {
     return { state: 'terminal', detail: outcome?.status || 'terminal' };
 }
 
+async function recoverPayPalPayment(row, handlers) {
+    if (!row?.paid_capture_id) throw new Error('PayPal one-time recovery requires an authoritative paid capture.');
+    const order = await handlers.paypalPaymentOrder(row);
+    const status = paypal.paypalStatus(order?.status);
+    if (status !== 'COMPLETED') {
+        throw new Error(`PayPal checkout ${row.provider_checkout_id} has an authoritative capture locally but provider order is ${status || 'unknown'}.`);
+    }
+    const capture = order?.purchase_units?.[0]?.payments?.captures?.[0] || null;
+    if (!capture?.id || paypal.paypalStatus(capture.status) !== 'COMPLETED') {
+        throw new Error(`PayPal checkout ${row.provider_checkout_id} is completed but its completed capture is missing.`);
+    }
+    if (String(capture.id) !== String(row.paid_capture_id)) {
+        throw new Error(`PayPal checkout ${row.provider_checkout_id} capture does not match the authoritative local payment.`);
+    }
+    await handlers.paypalActivatePayment(row, order);
+    return { state: 'recovered', detail: 'COMPLETED_PAYMENT' };
+}
+
 async function recoverPayPal(row, handlers) {
+    if (row.checkout_mode === 'payment') return recoverPayPalPayment(row, handlers);
+
     const synced = await handlers.paypalStatus(row);
     const providerStatus = paypal.paypalStatus(synced?.providerStatus || synced?.subscription?.status);
 
@@ -158,6 +220,7 @@ module.exports = {
     failureWarning,
     candidates,
     recoverStripe,
+    recoverPayPalPayment,
     recoverPayPal,
     run
 };

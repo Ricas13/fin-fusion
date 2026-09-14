@@ -104,6 +104,20 @@ function isCovered(coverage, provider, at) {
     return (coverage?.[provider] || []).some(interval => when >= interval.start && when < interval.end);
 }
 
+function authoritativeLivePaypal(row) {
+    if (String(row?.provider || '').toLowerCase() !== 'paypal') return false;
+    const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    return metadata.providerAuthoritative === true
+        && metadata.feeDataAvailable === true
+        && classifier.historyKind(row) === 'payment';
+}
+
+function paypalCaptureIdFromEvent(row) {
+    if (String(row?.provider || '').toLowerCase() !== 'paypal' || row?.event_type !== 'PAYMENT.CAPTURE.COMPLETED') return null;
+    const id = row?.payload?.resource?.id;
+    return id ? String(id) : null;
+}
+
 function historyRecord(row, kind) {
     const gross = Number(row.gross_amount_minor || 0);
     const provider = String(row.provider || '').toLowerCase();
@@ -186,7 +200,7 @@ async function scanHistoryInRange(range, visit, queryFn = query) {
     let scanned = 0;
     for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
         const result = await queryFn(`
-            SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,customer_id,provider_customer_id
+            SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,customer_id,provider_customer_id,metadata
             FROM payment_history_transactions
             WHERE occurred_at >= $1 AND occurred_at < $2
               AND ($3::timestamptz IS NULL OR (occurred_at,provider,provider_transaction_id) > ($3::timestamptz,$4::text,$5::text))
@@ -209,6 +223,19 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     const coverage = coverageFromRuns(runs.rows);
     const warnings = [];
     const refundState = new Map();
+    const authoritativePaypalCaptures = new Set();
+
+    // Authoritative live PayPal capture rows are safe to use immediately, even
+    // outside a completed history-import window. Scan them first so a matching
+    // PAYMENT.CAPTURE.COMPLETED webhook can be suppressed and revenue counted
+    // exactly once regardless of which successful checkout path ran first.
+    const historyRowsScanned = await scanHistoryInRange(range, async row => {
+        const livePaypal = authoritativeLivePaypal(row);
+        if (livePaypal) authoritativePaypalCaptures.add(String(row.provider_transaction_id || ''));
+        if (!livePaypal && !isCovered(coverage, row.provider, row.occurred_at)) return;
+        const kind = classifier.historyKind(row);
+        if (kind) await visit(historyRecord(row, kind));
+    }, queryFn);
 
     // Events are keyset-scanned oldest-first so cumulative Stripe refund state
     // remains correct without retaining every webhook payload in Node memory.
@@ -217,13 +244,9 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     const eventRowsScanned = await scanPaymentEventsInRange(range, async row => {
         const extracted = eventRecords(row, refundState, warnings);
         if (isCovered(coverage, row.provider, row.created_at)) return;
+        const captureId = paypalCaptureIdFromEvent(row);
+        if (captureId && authoritativePaypalCaptures.has(captureId)) return;
         for (const record of extracted) await visit(record);
-    }, queryFn);
-
-    const historyRowsScanned = await scanHistoryInRange(range, async row => {
-        if (!isCovered(coverage, row.provider, row.occurred_at)) return;
-        const kind = classifier.historyKind(row);
-        if (kind) await visit(historyRecord(row, kind));
     }, queryFn);
 
     return { coverage, warnings, eventRowsScanned, historyRowsScanned };
@@ -345,6 +368,8 @@ module.exports = {
     MAX_COMPAT_RECORDS,
     coverageFromRuns,
     isCovered,
+    authoritativeLivePaypal,
+    paypalCaptureIdFromEvent,
     historyKind: classifier.historyKind,
     coverageRunsInRange,
     scanPaymentEventsInRange,

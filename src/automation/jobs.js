@@ -18,6 +18,7 @@ const providerOperationRecovery=require('../payments/provider-operation-recovery
 const providerCheckoutRecovery=require('../payments/provider-checkout-recovery');
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
+const providerPaymentReconciliation=require('../payments/provider-payment-reconciliation');
 const subscriptionDiscovery=require('../payments/subscription-discovery');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
@@ -80,6 +81,42 @@ async function revenueIntegritySafeRun(){
  };
 }
 
+async function paypalHistorySafeRun(){
+ try{
+  const result=await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:100});
+  const degraded=Boolean(result?.warning||Number(result?.skipped||0)>0||Number(result?.fulfillmentPending||0)>0||result?.truncated);
+  return{...result,failed:degraded?1:0};
+ }
+ catch(error){
+  const detail=String(error?.message||error);
+  if(workerDbBudget.transientDatabasePressure(detail)){
+   return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,failed:0,infrastructureSuppressed:1,transientSuppressed:true};
+  }
+  console.error('PayPal payment-history reconciliation failed:',detail);
+  return{provider:'paypal',configured:true,processed:0,recorded:0,alreadyAuthoritative:0,skipped:0,fulfillmentPending:0,deferredUnmatched:0,truncated:false,error:detail,failed:1,warning:`PayPal payment-history reconciliation failed: ${detail}`.slice(0,1000)};
+ }
+}
+
+// Retained as a compatibility helper for direct callers/tests. Scheduled work uses
+// separate jobs below so provider latency/outages can never delay the core integrity
+// watchdog. If invoked directly, start both branches concurrently for the same reason.
+async function revenueIntegrityWithPayPal(){
+ const[integrity,paypalHistory]=await Promise.all([revenueIntegritySafeRun(),paypalHistorySafeRun()]);
+ const paypalDegraded=Boolean(paypalHistory?.error||paypalHistory?.warning||Number(paypalHistory?.skipped||0)>0||paypalHistory?.truncated);
+ const paypalWarning=paypalHistory?.error
+  ?`PayPal payment-history reconciliation failed: ${paypalHistory.error}`
+  :(paypalHistory?.warning||'');
+ const warning=[integrity?.warning,paypalWarning].filter(Boolean).join(' ').slice(0,1000);
+ return{
+  ...integrity,
+  paypalHistory,
+  paypalHistoryDegraded:paypalDegraded?1:0,
+  failed:Number(integrity?.failed||0)+(paypalDegraded?1:0),
+  infrastructureSuppressed:Number(integrity?.infrastructureSuppressed||0)+Number(paypalHistory?.infrastructureSuppressed||0),
+  ...(warning?{warning}:{})
+ };
+}
+
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0),blockedCount=Number(active.blocked||0);return{...active,blocked:blockedCount,expired:expiredCount,expiryFailed,downgradeRetries,warnings,serviceEndEmails:serviceEnd,processed:Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
@@ -90,6 +127,7 @@ const jobs={
  async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
  async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
  async revenue_integrity(){return revenueIntegritySafeRun()},
+ async paypal_history_reconciliation(){return paypalHistorySafeRun()},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
@@ -117,4 +155,4 @@ const jobs={
 };
 function names(){return Object.keys(jobs)}
 async function run(jobKey){const job=jobs[jobKey];if(!job)throw new Error(`Unknown automation job: ${jobKey}`);return job()}
-module.exports={jobs,names,run,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding};
+module.exports={jobs,names,run,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,revenueIntegrityWithPayPal};
