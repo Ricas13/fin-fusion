@@ -12,6 +12,7 @@ const intents = require('../src/payments/checkout-intents');
 const lifecyclePrimitives = require('../src/payments/lifecycle-primitives');
 const livePaypalHistory = require('../src/payments/live-paypal-payment-history');
 const paymentReconciliation = require('../src/payments/provider-payment-reconciliation');
+const dashboardLedger = require('../src/payments/dashboard-ledger');
 
 function expect(condition, message) { if (!condition) throw new Error(message); }
 
@@ -73,6 +74,7 @@ async function main() {
     expect(history.feeMinor === 147, 'PayPal fee must come from seller_receivable_breakdown.');
     expect(history.netMinor === 2853, 'PayPal net proceeds must remain provider-authoritative.');
     expect(history.status === 'S', 'completed PayPal captures must use the canonical successful accounting status.');
+    expect(paymentReconciliation.paypalCaptureOrderId(capture) === `PAYPAL-ORDER-${suffix}`, 'reconciliation must derive checkout ownership from the canonical order ID on the full capture.');
     expect(livePaypalHistory.historyValues({ ...capture, status: 'PENDING' }, { customerId: customer.id }) === null, 'pending PayPal captures must never become revenue.');
     expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: {} }, { customerId: customer.id }) === null, 'missing PayPal fee/net data must never be guessed.');
     expect(livePaypalHistory.historyValues({ ...capture, seller_receivable_breakdown: { paypal_fee: { currency_code: 'USD', value: '-1.00' }, net_amount: { currency_code: 'USD', value: '31.00' } } }, { customerId: customer.id }) === null, 'negative PayPal fees must never be accepted as authoritative revenue data.');
@@ -95,9 +97,27 @@ async function main() {
     expect(String(recorded.customer_id) === String(customer.id), 'canonical financial row must be attached to the owning customer.');
     expect(recorded.metadata?.providerAuthoritative === true && recorded.metadata?.feeDataAvailable === true, 'canonical financial row must be marked provider-authoritative for P&L accounting.');
     expect(recorded.metadata?.providerEventId === `EVENT-${suffix}`, 'provider event provenance must be retained on the canonical row.');
+    expect(dashboardLedger.authoritativeLivePaypal({ provider: 'paypal', ...recorded }) === true, 'a valid authoritative PayPal payment must be eligible to suppress its duplicate webhook revenue event.');
 
     const authoritativeIds = await paymentReconciliation.authoritativePayPalCaptureIds([capture.id, `MISSING-${suffix}`]);
     expect(authoritativeIds.has(capture.id) && !authoritativeIds.has(`MISSING-${suffix}`), 'reconciliation must recognize already-authoritative captures so scheduled repair does not refetch them every run.');
+
+    // Metadata flags alone are not enough: malformed/non-payment rows must neither
+    // suppress valid webhook revenue nor escape scheduled repair.
+    const malformedCaptureId = `PAYPAL-MALFORMED-${suffix}`;
+    const authoritativeMeta = JSON.stringify({ providerAuthoritative: true, feeDataAvailable: true });
+    await query(`
+        INSERT INTO payment_history_transactions(
+            provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
+            gross_amount_minor,fee_amount_minor,net_amount_minor,customer_id,metadata
+        ) VALUES('paypal',$1,'T9999','S',$2,'USD',3000,147,2853,$3,$4::jsonb)
+    `, [malformedCaptureId, capture.create_time, customer.id, authoritativeMeta]);
+    const malformedIds = await paymentReconciliation.authoritativePayPalCaptureIds([malformedCaptureId]);
+    expect(!malformedIds.has(malformedCaptureId), 'malformed metadata-flagged PayPal rows must remain eligible for scheduled repair.');
+    expect(dashboardLedger.authoritativeLivePaypal({
+        provider: 'paypal', provider_transaction_id: malformedCaptureId, transaction_type: 'T9999', transaction_status: 'S',
+        gross_amount_minor: 3000, metadata: { providerAuthoritative: true, feeDataAvailable: true }
+    }) === false, 'malformed metadata-flagged PayPal rows must not suppress a valid PAYMENT.CAPTURE.COMPLETED event.');
 
     // Existing rows may preserve a richer type only when that type is still a
     // canonical PayPal payment. An unknown type must not suppress the webhook and
@@ -178,8 +198,10 @@ async function main() {
     expect(completedOrderSource.includes('livePaypalHistory.assertCaptureOwner(providerId,mapping.customerId)'), 'capture ownership must be checked before the common PayPal activation path mutates local state.');
     expect(reconciliationSource.includes("providerHttp.fetchJson('paypal'"), 'scheduled PayPal reconciliation must use the canonical provider HTTP timeout/bounds layer.');
     expect(reconciliationSource.indexOf('const allPending = allCandidates.filter') < reconciliationSource.indexOf('const candidates = allPending.slice'), 'the reconciliation limit must be applied after already-authoritative captures are removed so older gaps cannot starve forever.');
-    expect(reconciliationSource.includes("completeVerifiedProvider('paypal', row.referenceId, 'completed')"), 'reconciliation must repair a paid one-time checkout that was left locally open.');
-    expect(reconciliationSource.includes('assertCaptureOwner(row.id, local.customer_id)'), 'reconciliation must reject a conflicting ledger owner before completing local checkout state.');
+    expect(reconciliationSource.includes('const canonicalOrderId = paypalCaptureOrderId(capture);'), 'reconciliation must map checkout ownership from the full capture order ID before falling back to Transaction Search metadata.');
+    expect(!reconciliationSource.includes("completeVerifiedProvider('paypal'"), 'accounting reconciliation must never mark a checkout fulfilled without creating the corresponding purchase/entitlement.');
+    expect(reconciliationSource.includes('fulfillmentPending'), 'paid captures matched only through checkout intent must remain visibly pending fulfillment instead of being silently completed.');
+    expect(reconciliationSource.includes('assertCaptureOwner(row.id, local.customer_id)'), 'reconciliation must reject a conflicting ledger owner before booking provider accounting.');
     expect(jobsSource.includes('revenueIntegritySafeRun()'), 'PayPal reconciliation must preserve the bounded DB-pressure-safe revenue-integrity path from main.');
     expect(jobsSource.includes('paypalHistoryDegraded'), 'unmatched/truncated PayPal reconciliation must make the automation visibly degraded.');
     expect(jobsSource.includes('transientDatabasePressure(detail)'), 'transient local DB pressure must remain suppressed rather than becoming a false PayPal integrity alert.');
