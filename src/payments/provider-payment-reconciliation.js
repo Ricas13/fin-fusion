@@ -32,6 +32,7 @@ async function paypalToken(config) {
 
 const MAX_PAYPAL_PAGES = 10;
 const MAX_STRIPE_PAGES = 100;
+const PAYPAL_CAPTURE_LOOKUP_CONCURRENCY = 8;
 
 async function paypalTransactionPage(config, token, since, end, page) {
     const params = new URLSearchParams({ start_date: iso(since), end_date: iso(end), fields: 'all', page_size: '100', page: String(page) });
@@ -105,6 +106,38 @@ async function authoritativePayPalCaptureIds(ids) {
     }) === 'payment').map(row => String(row.provider_transaction_id)));
 }
 
+function checkoutIndex(rows) {
+    const indexed = new Map();
+    for (const row of rows || []) {
+        const key = String(row.provider_checkout_id || '');
+        if (!key || !row.customer_id || indexed.has(key)) continue;
+        indexed.set(key, row);
+    }
+    return indexed;
+}
+
+function prioritizePayPalCandidates(rows, byCapture, byCheckout) {
+    return (rows || []).map((row, index) => {
+        const captureId = String(row.id || '');
+        const referenceId = row.referenceId ? String(row.referenceId) : '';
+        const localEvidence = Boolean(byCapture?.has(captureId) || (referenceId && byCheckout?.has(referenceId)));
+        return { row, index, localEvidence };
+    }).sort((a, b) => Number(b.localEvidence) - Number(a.localEvidence) || a.index - b.index).map(item => item.row);
+}
+
+async function forEachConcurrent(rows, concurrency, worker) {
+    let next = 0;
+    const width = Math.max(1, Math.min(Number(concurrency) || 1, rows.length || 1));
+    await Promise.all(Array.from({ length: width }, async () => {
+        while (true) {
+            const index = next;
+            next += 1;
+            if (index >= rows.length) return;
+            await worker(rows[index], index);
+        }
+    }));
+}
+
 async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = {}) {
     const since = sinceDate(hours);
     const remote = await paypalRecent(since);
@@ -115,24 +148,23 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     const authoritativeIds = await authoritativePayPalCaptureIds(allCandidateIds);
     const allPending = allCandidates.filter(row => !authoritativeIds.has(String(row.id)));
     const alreadyAuthoritative = allCandidates.length - allPending.length;
-    const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
-    const candidates = allPending.slice(0, boundedLimit);
-    const limited = allPending.length > candidates.length;
-    const truncated = Boolean(remote.truncated || limited);
-    if (!candidates.length) {
+    if (!allPending.length) {
         return {
             provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0,
-            truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
+            truncated: Boolean(remote.truncated), warning: remote.truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
         };
     }
 
-    const ids = candidates.map(row => String(row.id));
+    // Rank before applying the provider-call budget. A shared/busy PayPal account can
+    // otherwise keep unrelated captures permanently ahead of a Fin-Fusion capture
+    // that already has local subscription or checkout ownership evidence.
+    const pendingIds = allPending.map(row => String(row.id));
     const mapped = await query(`
         SELECT provider_subscription_id,customer_id,provider_customer_id
         FROM subscriptions
         WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
         ORDER BY created_at DESC
-    `, [ids]);
+    `, [pendingIds]);
     const byCapture = new Map();
     for (const row of mapped.rows) {
         const key = String(row.provider_subscription_id || '');
@@ -140,32 +172,46 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         byCapture.set(key, row);
     }
 
+    const reportedOrderIds = [...new Set(allPending.map(row => row.referenceId ? String(row.referenceId) : null).filter(Boolean))];
+    const reportedIntents = reportedOrderIds.length ? await query(`
+        SELECT provider_checkout_id,customer_id
+        FROM billing_checkout_intents
+        WHERE provider='paypal' AND provider_checkout_id = ANY($1::text[])
+        ORDER BY created_at DESC
+    `, [reportedOrderIds]) : { rows: [] };
+    const byCheckout = checkoutIndex(reportedIntents.rows);
+
+    const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
+    const prioritizedPending = prioritizePayPalCandidates(allPending, byCapture, byCheckout);
+    const candidates = prioritizedPending.slice(0, boundedLimit);
+    const limited = allPending.length > candidates.length;
+    const truncated = Boolean(remote.truncated || limited);
+
     const config = await providerSettings.get('paypal');
     const token = await paypalToken(config);
     const captures = new Map();
     const failures = [];
-    for (const row of candidates) {
+    await forEachConcurrent(candidates, PAYPAL_CAPTURE_LOOKUP_CONCURRENCY, async row => {
         try {
             const capture = await paypalCapture(config, token, row.id);
             captures.set(String(row.id), capture);
         } catch (error) {
             failures.push({ id: row.id, error: error.message || String(error) });
         }
-    }
+    });
 
-    const orderIds = [...new Set([...captures.values()].map(paypalCaptureOrderId).filter(Boolean))];
-    const intents = orderIds.length ? await query(`
+    // Transaction Search usually exposes the order reference, but the capture is
+    // authoritative. Merge any canonical order IDs discovered from the full capture
+    // before deciding that a payment has no local checkout owner.
+    const canonicalOrderIds = [...new Set([...captures.values()].map(paypalCaptureOrderId).filter(Boolean))];
+    const missingOrderIds = canonicalOrderIds.filter(id => !byCheckout.has(String(id)));
+    const canonicalIntents = missingOrderIds.length ? await query(`
         SELECT provider_checkout_id,customer_id
         FROM billing_checkout_intents
         WHERE provider='paypal' AND provider_checkout_id = ANY($1::text[])
         ORDER BY created_at DESC
-    `, [orderIds]) : { rows: [] };
-    const byCheckout = new Map();
-    for (const row of intents.rows) {
-        const key = String(row.provider_checkout_id || '');
-        if (!key || !row.customer_id || byCheckout.has(key)) continue;
-        byCheckout.set(key, row);
-    }
+    `, [missingOrderIds]) : { rows: [] };
+    for (const [key, row] of checkoutIndex(canonicalIntents.rows)) byCheckout.set(key, row);
 
     let recorded = 0, skipped = 0, fulfillmentPending = 0;
     const skippedIds = [];
@@ -310,4 +356,4 @@ async function recentUnmapped({ hours = DEFAULT_HOURS } = {}) {
     return { since, hours: Math.round((Date.now() - since.getTime()) / 3600000), results, rows };
 }
 
-module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, paypalCapture, paypalCaptureOrderId, authoritativePayPalCaptureIds, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
+module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, PAYPAL_CAPTURE_LOOKUP_CONCURRENCY, recentUnmapped, paypalRecent, paypalCapture, paypalCaptureOrderId, authoritativePayPalCaptureIds, prioritizePayPalCandidates, forEachConcurrent, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
