@@ -91,6 +91,22 @@ function historyValues(capture, { customerId = null, providerCustomerId = null }
     };
 }
 
+async function assertCaptureOwner(providerTransactionId, customerId) {
+    const captureId = String(providerTransactionId || '').trim();
+    if (!captureId || !customerId) return null;
+    const existing = await query(`
+        SELECT customer_id
+        FROM payment_history_transactions
+        WHERE provider='paypal' AND provider_transaction_id=$1
+        LIMIT 1
+    `, [captureId]);
+    const existingOwner = existing.rows[0]?.customer_id || null;
+    if (existingOwner && String(existingOwner) !== String(customerId)) {
+        throw new Error(`PayPal capture ${captureId} conflicts with an existing financial-history customer owner.`);
+    }
+    return existingOwner;
+}
+
 async function upsertValues(values, { eventId = null, reconciliation = false } = {}) {
     const metadata = {
         ...values.metadata,
@@ -158,6 +174,7 @@ async function recordCapture(capture, {
     reconciliation = false
 } = {}) {
     if (!capture?.id) throw new Error('PayPal completed capture is missing its capture ID.');
+    await assertCaptureOwner(capture.id, customerId);
     let authoritative = capture;
     if (!hasAuthoritativeFinancials(authoritative)) {
         if (typeof fetchCapture !== 'function') {
@@ -183,6 +200,7 @@ module.exports = {
     validFinancialTriplet,
     hasAuthoritativeFinancials,
     historyValues,
+    assertCaptureOwner,
     upsertValues,
     recordCapture
 };
