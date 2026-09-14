@@ -1,6 +1,7 @@
 'use strict';
 
 const { query } = require('../db');
+const { PAYPAL_PAYMENT_CODES } = require('./provider-transaction-classifier');
 
 // PayPal Transaction Search classifies Express Checkout / one-time checkout
 // receipts as customer payments. Live captures use the same canonical type.
@@ -96,6 +97,7 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
         ...(eventId ? { providerEventId: String(eventId) } : {}),
         ...(reconciliation ? { reconciled: true } : {})
     };
+    const compatiblePaymentTypes = [...PAYPAL_PAYMENT_CODES];
     const result = await query(`
         INSERT INTO payment_history_transactions(
             provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
@@ -105,7 +107,11 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
             'paypal',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb
         )
         ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
-            transaction_type=COALESCE(payment_history_transactions.transaction_type,EXCLUDED.transaction_type),
+            transaction_type=CASE
+                WHEN UPPER(COALESCE(payment_history_transactions.transaction_type,'')) = ANY($14::text[])
+                    THEN payment_history_transactions.transaction_type
+                ELSE EXCLUDED.transaction_type
+            END,
             transaction_status=EXCLUDED.transaction_status,
             occurred_at=EXCLUDED.occurred_at,
             currency=EXCLUDED.currency,
@@ -135,7 +141,8 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
         values.providerReferenceId,
         values.providerSourceId,
         values.customerId,
-        JSON.stringify(metadata)
+        JSON.stringify(metadata),
+        compatiblePaymentTypes
     ]);
     if (result.rowCount !== 1) {
         throw new Error(`PayPal capture ${values.providerTransactionId} conflicts with an existing financial-history customer owner.`);
