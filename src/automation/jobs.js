@@ -82,7 +82,7 @@ async function revenueIntegritySafeRun(){
 }
 
 async function paypalHistorySafeRun(){
- try{return await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:500});}
+ try{return await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:100});}
  catch(error){
   const detail=String(error?.message||error);
   if(workerDbBudget.transientDatabasePressure(detail)){
