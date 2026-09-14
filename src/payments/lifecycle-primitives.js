@@ -50,6 +50,15 @@ function paymentDelinquencySourceKey(provider, providerSubscriptionId, subscript
     return `${source}:${id}`;
 }
 
+function isHistoricalCheckoutReplay({ existingCount = 0, effectiveBillingMode = null, settlementState = null, activationSuppressedByMoneyLoss = false } = {}) {
+    const existing = Number(existingCount || 0) > 0;
+    return Boolean(
+        activationSuppressedByMoneyLoss
+        || (existing && billingMode.normalize(effectiveBillingMode) === billingMode.BILLING_MODES.PAYMENT)
+        || (existing && settlementState && settlementState !== 'open')
+    );
+}
+
 async function syncProviderAccessState({ customerId, provider, providerSubscriptionId, status, billingMode: subscriptionBillingMode }, client = null) {
     const sourceKey = paymentDelinquencySourceKey(provider, providerSubscriptionId, subscriptionBillingMode);
     if (!customerId || !sourceKey || !status) return null;
@@ -243,10 +252,12 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const effectiveBillingMode = billingMode.normalize(existing.rows[0]?.billing_mode) || checkoutBillingMode;
             const moneyLoss = await confirmedMoneyLoss(client, provider, providerSubscriptionId, { billingMode: effectiveBillingMode });
             activationSuppressedByMoneyLoss = Boolean(moneyLoss || existing.rows[0]?.refund_terminated_at);
-            historicalCheckoutReplay = Boolean(
+            historicalCheckoutReplay = isHistoricalCheckoutReplay({
+                existingCount: existing.rowCount,
+                effectiveBillingMode,
+                settlementState: settlementIntent?.state || null,
                 activationSuppressedByMoneyLoss
-                || (existing.rowCount && settlementIntent && settlementIntent.state !== 'open')
-            );
+            });
 
             const snapshotJson = contract ? JSON.stringify(contract) : null;
             const planNameSnapshot = contract?.planName || plan.name;
@@ -336,7 +347,8 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         }
         throw error;
     }
-    if (providerCustomerId && !historicalCheckoutReplay) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
+    const oneTimeReplay = historicalCheckoutReplay && billingMode.normalize(subscription?.billing_mode) === billingMode.BILLING_MODES.PAYMENT;
+    if (providerCustomerId && (!historicalCheckoutReplay || oneTimeReplay)) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
     await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss ? 'Money-loss checkout replay' : historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription');
     if (!historicalCheckoutReplay) {
         try { await referrals.rewardIfQualifying(customerId); }
@@ -365,6 +377,7 @@ module.exports = {
     addPlanDuration,
     mapProviderStatus,
     paymentDelinquencySourceKey,
+    isHistoricalCheckoutReplay,
     syncProviderAccessState,
     reconcileCommittedCustomer,
     ensurePaymentCustomer,
