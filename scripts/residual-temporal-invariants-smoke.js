@@ -61,6 +61,18 @@ function main() {
     assert(capacity.includes('excludeCheckoutIntentId'), 'Capacity accounting cannot exclude the exact settling checkout.');
     assert(capacity.includes("error.code='PLAN_CAPACITY_EXHAUSTED'"), 'Capacity exhaustion is not machine-classified.');
 
+    const checkoutRecovery = source('src/payments/provider-checkout-recovery.js');
+    assert(checkoutRecovery.includes("i.checkout_mode='payment'"), 'Provider checkout recovery must retain the paid one-time PayPal recovery path.');
+    assert(checkoutRecovery.includes("COALESCE(i.state,'')<>'completed'"), 'A paid one-time checkout whose purchase committed before checkout completion must remain recoverable.');
+    assert(checkoutRecovery.includes('s.provider_subscription_id=ph.provider_transaction_id'), 'A completed one-time checkout with an existing matching purchase must not be recovered repeatedly.');
+    assert(checkoutRecovery.includes('String(capture.id) !== String(row.paid_capture_id)'), 'One-time PayPal recovery must prove the provider capture matches the authoritative local ledger identity.');
+
+    const automationJobs = source('src/automation/jobs.js');
+    const automationWorker = source('scripts/automation-worker.js');
+    assert(automationJobs.includes('async revenue_integrity(){return revenueIntegritySafeRun()}'), 'Core revenue integrity must remain independent from provider reconciliation latency.');
+    assert(automationJobs.includes('async paypal_history_reconciliation(){return paypalHistorySafeRun()}'), 'PayPal history reconciliation must remain a separate automation job.');
+    assert(automationWorker.includes('revenue_integrity:60') && automationWorker.includes('paypal_history_reconciliation:300'), 'Core integrity must stay at 60 seconds while PayPal history reconciliation stays on a bounded five-minute cadence.');
+
     assert.strictEqual(paypal.paypalHealthy('ACTIVE'), true);
     assert.strictEqual(paypal.paypalHealthy('SUSPENDED'), false);
     assert.strictEqual(paypal.paypalTerminal('CANCELLED'), true);
