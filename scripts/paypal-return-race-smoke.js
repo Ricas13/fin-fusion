@@ -12,6 +12,7 @@ const intents = require('../src/payments/checkout-intents');
 const lifecyclePrimitives = require('../src/payments/lifecycle-primitives');
 const livePaypalHistory = require('../src/payments/live-paypal-payment-history');
 const paymentReconciliation = require('../src/payments/provider-payment-reconciliation');
+const providerCheckoutRecovery = require('../src/payments/provider-checkout-recovery');
 const dashboardLedger = require('../src/payments/dashboard-ledger');
 
 function expect(condition, message) { if (!condition) throw new Error(message); }
@@ -75,13 +76,26 @@ async function main() {
     expect(history.netMinor === 2853, 'PayPal net proceeds must remain provider-authoritative.');
     expect(history.status === 'S', 'completed PayPal captures must use the canonical successful accounting status.');
     expect(paymentReconciliation.paypalCaptureOrderId(capture) === `PAYPAL-ORDER-${suffix}`, 'reconciliation must derive checkout ownership from the canonical order ID on the full capture.');
+    expect(paymentReconciliation.paypalOrderReference({ referenceType: 'ODR', referenceId: 'ORDER-1' }) === 'ORDER-1', 'Transaction Search ODR references must be recognized as PayPal order IDs.');
+    expect(paymentReconciliation.paypalOrderReference({ referenceType: 'TXN', referenceId: 'ORDER-1' }) === null, 'non-order PayPal reference types must never be matched to checkout order IDs.');
 
     const ranked = paymentReconciliation.prioritizePayPalCandidates([
         { id: 'UNRELATED' },
         { id: 'OWNED-CAPTURE' },
-        { id: 'CHECKOUT-CAPTURE', referenceId: 'LOCAL-ORDER' }
+        { id: 'CHECKOUT-CAPTURE', referenceType: 'ODR', referenceId: 'LOCAL-ORDER' },
+        { id: 'NON-ORDER-REFERENCE', referenceType: 'TXN', referenceId: 'LOCAL-ORDER' }
     ], new Map([['OWNED-CAPTURE', { customer_id: customer.id }]]), new Map([['LOCAL-ORDER', { customer_id: customer.id }]]));
-    expect(ranked.map(row => row.id).join(',') === 'OWNED-CAPTURE,CHECKOUT-CAPTURE,UNRELATED', 'PayPal repair must prioritize locally-owned captures before unrelated provider traffic consumes the lookup budget.');
+    expect(ranked.slice(0, 2).map(row => row.id).join(',') === 'OWNED-CAPTURE,CHECKOUT-CAPTURE', 'PayPal repair must prioritize only safely locally-owned captures before unrelated provider traffic consumes the lookup budget.');
+    expect(ranked[3].id === 'NON-ORDER-REFERENCE', 'a non-ODR PayPal reference must not be promoted as local checkout ownership evidence.');
+
+    const cooldownNow = Date.now();
+    const cooldownRow = { id: 'COOLDOWN-CAPTURE', referenceType: 'TXN', referenceId: 'LOCAL-ORDER' };
+    paymentReconciliation.rememberUnmatchedPayPalCapture(cooldownRow.id, cooldownNow);
+    expect(paymentReconciliation.paypalUnmatchedCoolingDown(cooldownRow, new Map(), new Map(), cooldownNow + 1000) === true, 'a recently inspected unmatched capture must be cooled down instead of refetched every integrity run.');
+    const laterEvidenceRow = { id: cooldownRow.id, referenceType: 'ODR', referenceId: 'LOCAL-ORDER' };
+    expect(paymentReconciliation.paypalUnmatchedCoolingDown(laterEvidenceRow, new Map(), new Map([['LOCAL-ORDER', { customer_id: customer.id }]]), cooldownNow + 1000) === false, 'new local ownership evidence must bypass the unmatched-capture cooldown immediately.');
+    paymentReconciliation.clearUnmatchedPayPalCapture(cooldownRow.id);
+
     let activeLookups = 0, peakLookups = 0;
     await paymentReconciliation.forEachConcurrent(Array.from({ length: 12 }), 3, async () => {
         activeLookups += 1;
@@ -114,6 +128,44 @@ async function main() {
     expect(recorded.metadata?.providerAuthoritative === true && recorded.metadata?.feeDataAvailable === true, 'canonical financial row must be marked provider-authoritative for P&L accounting.');
     expect(recorded.metadata?.providerEventId === `EVENT-${suffix}`, 'provider event provenance must be retained on the canonical row.');
     expect(dashboardLedger.authoritativeLivePaypal({ provider: 'paypal', ...recorded }) === true, 'a valid authoritative PayPal payment must be eligible to suppress its duplicate webhook revenue event.');
+
+    const recoveryCandidates = await providerCheckoutRecovery.candidates({ checkoutIntentIds: [created.id] });
+    const paymentRecoveryCandidate = recoveryCandidates.find(row => String(row.id) === String(created.id));
+    expect(paymentRecoveryCandidate?.checkout_mode === 'payment' && String(paymentRecoveryCandidate.paid_capture_id) === String(capture.id), 'an authoritative paid PayPal one-time checkout without a purchase must enter durable provider checkout recovery.');
+
+    let paymentActivationCalls = 0;
+    const paymentRecoveryResult = await providerCheckoutRecovery.recoverPayPal({
+        checkout_mode: 'payment',
+        provider_checkout_id: `PAYPAL-ORDER-${suffix}`,
+        paid_capture_id: capture.id
+    }, {
+        paypalPaymentOrder: async () => ({
+            id: `PAYPAL-ORDER-${suffix}`,
+            status: 'COMPLETED',
+            purchase_units: [{ payments: { captures: [{ id: capture.id, status: 'COMPLETED' }] } }]
+        }),
+        paypalActivatePayment: async () => { paymentActivationCalls += 1; }
+    });
+    expect(paymentRecoveryResult.state === 'recovered' && paymentActivationCalls === 1, 'paid one-time PayPal recovery must activate only after a completed provider order and exact capture match are verified.');
+
+    let mismatchedRecoveryThrew = false;
+    try {
+        await providerCheckoutRecovery.recoverPayPal({
+            checkout_mode: 'payment',
+            provider_checkout_id: `PAYPAL-ORDER-${suffix}`,
+            paid_capture_id: capture.id
+        }, {
+            paypalPaymentOrder: async () => ({
+                id: `PAYPAL-ORDER-${suffix}`,
+                status: 'COMPLETED',
+                purchase_units: [{ payments: { captures: [{ id: `OTHER-CAPTURE-${suffix}`, status: 'COMPLETED' }] } }]
+            }),
+            paypalActivatePayment: async () => { paymentActivationCalls += 1; }
+        });
+    } catch (error) {
+        mismatchedRecoveryThrew = /does not match the authoritative local payment/i.test(String(error?.message || error));
+    }
+    expect(mismatchedRecoveryThrew && paymentActivationCalls === 1, 'one-time recovery must refuse a provider order whose completed capture differs from the authoritative ledger row.');
 
     const authoritativeIds = await paymentReconciliation.authoritativePayPalCaptureIds([capture.id, `MISSING-${suffix}`]);
     expect(authoritativeIds.has(capture.id) && !authoritativeIds.has(`MISSING-${suffix}`), 'reconciliation must recognize already-authoritative captures so scheduled repair does not refetch them every run.');
@@ -197,6 +249,7 @@ async function main() {
     const ledgerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'live-paypal-payment-history.js'), 'utf8');
     const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
     const reconciliationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-payment-reconciliation.js'), 'utf8');
+    const checkoutRecoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-checkout-recovery.js'), 'utf8');
     const jobsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'automation', 'jobs.js'), 'utf8');
     const completedOrderStart = paypalSource.indexOf('async function activateCompletedOrder(order)');
     const completedOrderEnd = paypalSource.indexOf('async function captureOrder(orderId)', completedOrderStart);
@@ -213,12 +266,18 @@ async function main() {
     expect(completedOrderSource.includes('await recordCompletedCapture(capture'), 'the common completed-order path must persist the authoritative PayPal capture.');
     expect(completedOrderSource.includes('livePaypalHistory.assertCaptureOwner(providerId,mapping.customerId)'), 'capture ownership must be checked before the common PayPal activation path mutates local state.');
     expect(reconciliationSource.includes("providerHttp.fetchJson('paypal'"), 'scheduled PayPal reconciliation must use the canonical provider HTTP timeout/bounds layer.');
-    expect(reconciliationSource.indexOf('const prioritizedPending = prioritizePayPalCandidates') < reconciliationSource.indexOf('const candidates = prioritizedPending.slice'), 'the reconciliation budget must be applied after local ownership evidence is ranked so unrelated provider traffic cannot starve a repairable capture.');
+    expect(reconciliationSource.includes("referenceType || '').trim().toUpperCase() !== 'ODR'"), 'Transaction Search checkout ownership must only trust ODR order references.');
+    expect(reconciliationSource.indexOf('const prioritizedPending = prioritizePayPalCandidates') < reconciliationSource.indexOf('const candidates = eligiblePending.slice'), 'the reconciliation budget must be applied after local ownership evidence is ranked and cooled-down unrelated captures are removed.');
     expect(reconciliationSource.includes('PAYPAL_CAPTURE_LOOKUP_CONCURRENCY = 8') && reconciliationSource.includes('forEachConcurrent(candidates, PAYPAL_CAPTURE_LOOKUP_CONCURRENCY'), 'provider capture lookups must have an explicit concurrency bound rather than running hundreds of sequential timeout windows.');
+    expect(reconciliationSource.includes('PAYPAL_UNMATCHED_RECHECK_MS'), 'unmatched provider captures must be cooled down rather than detail-fetched on every integrity run.');
     expect(reconciliationSource.includes('const canonicalOrderId = paypalCaptureOrderId(capture);'), 'reconciliation must map checkout ownership from the full capture order ID before falling back to Transaction Search metadata.');
     expect(!reconciliationSource.includes("completeVerifiedProvider('paypal'"), 'accounting reconciliation must never mark a checkout fulfilled without creating the corresponding purchase/entitlement.');
     expect(reconciliationSource.includes('fulfillmentPending'), 'paid captures matched only through checkout intent must remain visibly pending fulfillment instead of being silently completed.');
     expect(reconciliationSource.includes('assertCaptureOwner(row.id, local.customer_id)'), 'reconciliation must reject a conflicting ledger owner before booking provider accounting.');
+    expect(checkoutRecoverySource.includes("i.checkout_mode='payment'"), 'provider checkout recovery must include paid one-time PayPal checkouts.');
+    expect(checkoutRecoverySource.includes("ph.metadata->>'livePaypal'='true'") && checkoutRecoverySource.includes("ph.metadata->>'providerAuthoritative'='true'"), 'one-time fulfillment recovery must require authoritative live PayPal accounting proof.');
+    expect(checkoutRecoverySource.includes('s.provider_subscription_id=ph.provider_transaction_id'), 'one-time recovery must exclude captures whose purchase already exists.');
+    expect(checkoutRecoverySource.includes("status !== 'COMPLETED'") && checkoutRecoverySource.includes('String(capture.id) !== String(row.paid_capture_id)'), 'one-time recovery must reverify provider completion and exact capture identity before activation.');
     expect(jobsSource.includes('syncRecentPayPalHistory({hours:72,limit:100})'), 'scheduled PayPal reconciliation must keep provider capture detail work to a bounded batch.');
     expect(jobsSource.includes('revenueIntegritySafeRun()'), 'PayPal reconciliation must preserve the bounded DB-pressure-safe revenue-integrity path from main.');
     expect(jobsSource.includes('paypalHistoryDegraded'), 'unmatched/truncated PayPal reconciliation must make the automation visibly degraded.');
