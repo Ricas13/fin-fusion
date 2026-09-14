@@ -3,6 +3,7 @@
 const Stripe = require('stripe');
 const { query } = require('../db');
 const providerSettings = require('./provider-settings');
+const livePaypalHistory = require('./live-paypal-payment-history');
 const { classifyProviderTransaction } = require('./provider-transaction-classifier');
 
 const DEFAULT_HOURS = 72;
@@ -37,6 +38,13 @@ async function paypalTransactionPage(config, token, since, end, page) {
     return payload;
 }
 
+async function paypalCapture(config, token, captureId) {
+    const response = await fetch(`${paypalBase(config)}/v2/payments/captures/${encodeURIComponent(captureId)}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`PayPal capture lookup failed for ${captureId}: ${payload.message || response.status}`);
+    return payload;
+}
+
 async function paypalRecent(since) {
     const config = await providerSettings.get('paypal');
     if (!config?.clientId || !config?.clientSecret) return { provider: 'paypal', configured: false, rows: [] };
@@ -56,7 +64,7 @@ async function paypalRecent(since) {
         return {
             provider: 'paypal', id: info.transaction_id || null, referenceId, referenceType,
             invoiceId: info.invoice_id || null, customId: info.custom_field || null,
-            amountMinor: amount.value != null ? Math.round(Number(amount.value) * 100) : null,
+            amountMinor: livePaypalHistory.moneyMinor(amount),
             currency: amount.currency_code || null, createdAt: info.transaction_initiation_date || info.transaction_updated_date || null,
             status, eventCode: info.transaction_event_code || null, email: detail.payer_info?.email_address || null, raw: detail
         };
@@ -64,6 +72,57 @@ async function paypalRecent(since) {
         provider: 'paypal', type: row.eventCode, status: row.status, grossMinor: row.amountMinor
     }) === 'payment');
     return { provider: 'paypal', configured: true, rows, truncated };
+}
+
+async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = {}) {
+    const since = sinceDate(hours);
+    const remote = await paypalRecent(since);
+    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, skipped: 0, truncated: false };
+
+    const candidates = remote.rows
+        .filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE)
+        .slice(0, Math.max(1, Math.min(1000, Number(limit) || 500)));
+    if (!candidates.length) return { provider: 'paypal', configured: true, processed: 0, recorded: 0, skipped: 0, truncated: Boolean(remote.truncated) };
+
+    const ids = candidates.map(row => String(row.id));
+    const mapped = await query(`
+        SELECT provider_subscription_id,customer_id,provider_customer_id
+        FROM subscriptions
+        WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+        ORDER BY created_at DESC
+    `, [ids]);
+    const byCapture = new Map();
+    for (const row of mapped.rows) {
+        const key = String(row.provider_subscription_id || '');
+        if (!key || byCapture.has(key)) continue;
+        byCapture.set(key, row);
+    }
+
+    const config = await providerSettings.get('paypal');
+    const token = await paypalToken(config);
+    let recorded = 0, skipped = 0;
+    const failures = [];
+    for (const row of candidates) {
+        const local = byCapture.get(String(row.id));
+        if (!local?.customer_id) { skipped += 1; continue; }
+        try {
+            const capture = await paypalCapture(config, token, row.id);
+            await livePaypalHistory.recordCapture(capture, {
+                customerId: local.customer_id,
+                providerCustomerId: local.provider_customer_id || null,
+                reconciliation: true
+            });
+            recorded += 1;
+        } catch (error) {
+            failures.push({ id: row.id, error: error.message || String(error) });
+        }
+    }
+    if (failures.length) {
+        const error = new Error(`PayPal payment-history reconciliation failed for ${failures.length} capture(s): ${failures.slice(0, 3).map(item => `${item.id}: ${item.error}`).join('; ')}`);
+        error.failures = failures;
+        throw error;
+    }
+    return { provider: 'paypal', configured: true, processed: candidates.length, recorded, skipped, truncated: Boolean(remote.truncated) };
 }
 
 function stripeChargeRow(charge) {
@@ -88,7 +147,7 @@ function stripeChargeRow(charge) {
 async function stripeRecent(since) {
     const config = await providerSettings.get('stripe'), key = config?.restrictedKey || config?.apiKey || '';
     if (!key) return { provider: 'stripe', configured: false, rows: [] };
-    const stripe = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' } });
+    const stripe = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTaINFiN', version: '1.0.0' } });
     const rows = [];
     let startingAfter = null, pages = 0, truncated = false;
     while (true) {
@@ -143,8 +202,6 @@ async function providerResult(provider, since) {
         const local = await localRows(provider, since), rows = remote.rows.map(row => ({ ...row, ...localMatch(row, local) })).filter(row => row.reason);
         return { provider, configured: true, error: null, rows, truncated: Boolean(remote.truncated) };
     } catch (error) {
-        // Financial/provider failures are deliberately returned to the UI, not
-        // converted into an apparently clean empty reconciliation result.
         return { provider, configured: true, error: error.message || String(error), rows: [] };
     }
 }
@@ -155,4 +212,4 @@ async function recentUnmapped({ hours = DEFAULT_HOURS } = {}) {
     return { since, hours: Math.round((Date.now() - since.getTime()) / 3600000), results, rows };
 }
 
-module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
+module.exports = { DEFAULT_HOURS, MAX_HOURS, MAX_PAYPAL_PAGES, MAX_STRIPE_PAGES, recentUnmapped, paypalRecent, paypalCapture, syncRecentPayPalHistory, stripeRecent, stripeChargeRow, localMatch, money, providerLabel };
