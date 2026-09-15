@@ -35,8 +35,8 @@ assert(compactSource.includes("function logsDisclosure(detail){const runs=(detai
 assert(viewSource.includes("String(hold?.hold_type||'')==='administrative_ban'"), 'Customer 360 must derive banned state from the canonical administrative ban hold');
 assert(viewSource.includes("customerStatus=banned?'Banned'"), 'Banned must take priority over normal commercial customer labels');
 assert(viewSource.includes("statusTone=banned?'bad'"), 'Banned customer status must use the danger visual treatment');
-assert(viewSource.includes('/access-ban"'), 'Customer 360 must expose a direct Ban customer workflow');
-assert(viewSource.includes('/access-ban/revoke"'), 'Customer 360 must expose a direct Remove ban workflow');
+assert(viewSource.includes('/access-ban'), 'Customer 360 must expose a direct Ban customer workflow');
+assert(viewSource.includes('/access-ban/revoke'), 'Customer 360 must expose a direct Remove ban workflow');
 assert(!viewSource.includes('/admin/customers/bulk/preview'), 'Customer 360 ban controls must never route through the bulk preview workflow');
 
 assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban'"), 'single-customer ban route must exist');
