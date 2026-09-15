@@ -10,6 +10,7 @@ const source = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360.
 const viewSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-view.js'), 'utf8');
 const truthSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-service-truth.js'), 'utf8');
 const compactSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-compact.js'), 'utf8');
+const holdsSource = fs.readFileSync(path.join(root, 'src', 'platform', 'admin-customer-access-holds.js'), 'utf8');
 
 assert(source.includes("entity_type='customer' AND entity_id::text=$1::text"), 'Customer 360 audit lookup must compare audit entity UUIDs through a consistent text cast');
 assert(source.includes("entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)"), 'Customer 360 subscription audit lookup must cast the route parameter explicitly before comparing it with subscriptions.customer_id');
@@ -27,6 +28,27 @@ assert(compactSource.includes("['Transaction',row.provider_transaction_id]"), 'P
 assert(compactSource.includes("['Reference',row.provider_reference_id]"), 'Payments must expose provider reference identifiers rather than collapsing to one ID');
 assert(compactSource.includes('Refunds, disputes & payment incidents'), 'Payments must explicitly distinguish provider incidents from ordinary transaction rows');
 assert(compactSource.includes("function logsDisclosure(detail){const runs=(detail.runs||[]).slice(0,50)"), 'Logs must remain the operational provisioning/reconciliation history');
+
+// Customer 360 bans are single-customer controls, not a bridge to the bulk
+// workflow. A ban is also a top-level customer state, so it must outrank the
+// commercial Regular/Permanent/Free labels in the hero.
+assert(viewSource.includes("String(hold?.hold_type||'')==='administrative_ban'"), 'Customer 360 must derive banned state from the canonical administrative ban hold');
+assert(viewSource.includes("customerStatus=banned?'Banned'"), 'Banned must take priority over normal commercial customer labels');
+assert(viewSource.includes("statusTone=banned?'bad'"), 'Banned customer status must use the danger visual treatment');
+assert(viewSource.includes('/access-ban'), 'Customer 360 must expose a direct Ban customer workflow');
+assert(viewSource.includes('/access-ban/revoke'), 'Customer 360 must expose a direct Remove ban workflow');
+assert(!viewSource.includes('/admin/customers/bulk/preview'), 'Customer 360 ban controls must never route through the bulk preview workflow');
+
+assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban'"), 'single-customer ban route must exist');
+assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban/revoke'"), 'single-customer unban route must exist');
+assert(holdsSource.includes("type:'admin_hold',sourceKey:'admin'"), 'ban must use the canonical admin-hold normalization path that produces administrative_ban');
+assert(holdsSource.includes("UPDATE app_users SET active=FALSE"), 'ban must disable matching customer portal logins');
+assert(holdsSource.includes("UPDATE auth_sessions SET revoked_at=NOW()"), 'ban must revoke matching customer auth sessions');
+assert(holdsSource.includes("purpose='customer_activation'"), 'ban must revoke unused customer onboarding links');
+assert(holdsSource.includes('blocks_registration=TRUE,blocks_service_access=TRUE'), 'ban must block both registration and service access');
+assert(holdsSource.includes("type:'administrative_ban',sourceKey:'ban'"), 'unban must release only the canonical administrative ban hold');
+assert(holdsSource.includes('portalAccountsReenabled:false'), 'unban must not silently reactivate portal login accounts');
+assert(!/MANUAL_RELEASE_TYPES[^\n]*administrative_ban/.test(holdsSource), 'administrative bans must not be releasable through the generic hold-release path');
 
 assert(viewSource.includes("serviceTruth=require('./customer-360-service-truth')"), 'Customer 360 must derive per-service rows through one dedicated truth helper');
 assert(viewSource.includes('Service reconciliation truth'), 'Overview must expose per-service desired/observed reconciliation state');
@@ -92,4 +114,4 @@ assert.strictEqual(stremioOnlyRows[3].desired, 'Enabled');
 assert.strictEqual(stremioOnlyRows[3].plan, 'stremio-only');
 
 require('./customer-portal-linkage-smoke');
-console.log('customer 360 UUID audit + per-service truth + activity/payment semantics smoke: ok');
+console.log('customer 360 UUID audit + per-service truth + ban controls + activity/payment semantics smoke: ok');
