@@ -74,6 +74,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
       js.free_first_playback_grace_days,js.free_playback_window_days,js.free_minimum_playback_minutes,
       COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,c.automation_protected,
       us.first_playback_at,us.last_playback_at,COALESCE(us.playback_seconds,0)::bigint playback_seconds,
+      COALESCE(historical.any_playback_history,FALSE) any_playback_history,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.jellyfin_account_id=ja.id) currently_playing,
       EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=fa.customer_id AND h.hold_type=$1 AND h.source_key=('plan:'||fa.plan_id::text) AND h.released_at IS NULL) already_held
     FROM free_access fa
@@ -88,11 +89,12 @@ async function candidates(globalCfg=null,{customerId=null}={}){
         AND jal.metadata->>'explicitRestore'='true'
     ) lifecycle ON TRUE
     LEFT JOIN LATERAL (
-      SELECT MIN(ph.started_at) historical_first_playback_at
+      SELECT
+        MIN(ph.started_at) FILTER(WHERE ph.started_at>=ja.access_lane_changed_at) historical_first_playback_at,
+        COUNT(*)>0 any_playback_history
       FROM playback_history ph
       WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
         AND (ph.jellyfin_account_id=ja.id OR ph.jellyfin_account_id IS NULL)
-        AND ph.started_at>=ja.access_lane_changed_at
     ) historical ON TRUE
     LEFT JOIN LATERAL (
       SELECT CASE
