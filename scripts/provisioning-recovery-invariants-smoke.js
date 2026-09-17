@@ -136,16 +136,20 @@ assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin
     'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
 
 const compactScopedInactivity = compact(scopedInactivity);
-assert(compactScopedInactivity.includes('eligibleCount>=CIRCUIT_BREAKER_MAX_ABSOLUTE')
-    && compactScopedInactivity.includes('ratio>=CIRCUIT_BREAKER_MAX_RATIO'),
-    'mass-removal circuit breaker thresholds must be inclusive');
-assert((scopedInactivity.match(/liveFreeJellyfinSubscription\(row\.customer_id, \{ includeBlocked: true \}\)/g) || []).length >= 2,
-    'destructive inactivity enforcement must re-check canonical authority before and after telemetry I/O');
-assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'")
-    && scopedInactivity.includes("reason: 'admin_authority_added_during_check'"),
-    'inactivity enforcement must fail closed when permanent/admin authority protects Free access');
-assert(inactivity.includes('ph.started_at>=ja.access_lane_changed_at'),
-    'Free inactivity history must keep the paid-to-Free lane boundary so paid-era playback cannot satisfy a new Free allocation');
+assert(compactScopedInactivity.includes('tripped:false')
+    && compactScopedInactivity.includes('retired:true')
+    && scopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN', 100"),
+    'Free inactivity must use a throughput cap without silently converting trustworthy eligible removals into a percentage dry-run');
+assert(scopedInactivity.includes('const final = await finalEligibility(original, globalCfg, serverTelemetry)')
+    && scopedInactivity.indexOf('await refreshCandidateUserActivity(rows, serverTelemetry)') < scopedInactivity.indexOf('const final = await finalEligibility(original, globalCfg, serverTelemetry)'),
+    'destructive inactivity enforcement must perform its final eligibility and authority check after fresh telemetry I/O');
+assert(scopedInactivity.includes('liveFreeJellyfinSubscription(fresh.customer_id, { includeBlocked: true })')
+    && scopedInactivity.includes("reason: 'admin_authority_protects_free_access'"),
+    'final Free inactivity eligibility must re-read canonical entitlement and fail closed when admin/permanent authority protects access');
+assert(inactivity.includes('COALESCE(ja.access_lane_changed_at,ja.created_at)')
+    && inactivity.includes('ph.started_at>=allocation.allocation_start_at')
+    && inactivity.includes('GREATEST(allocation.allocation_start_at,NOW()-(js.free_playback_window_days'),
+    'Free inactivity playback evidence must remain clipped to the current Free allocation/lane boundary and configured server window');
 assert(freeObservationReset.includes('ADD COLUMN IF NOT EXISTS inactivity_observation_reset_at')
     && freeObservationReset.includes("access_lane_changed_at<=lt.applied_at")
     && !freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
