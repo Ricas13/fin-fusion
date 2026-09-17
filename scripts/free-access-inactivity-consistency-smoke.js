@@ -141,6 +141,10 @@ const importer=read('src/jellyfin/user-import.js');
 assert.match(base,/async function candidates\(globalCfg=null,\{customerId=null\}=\{\}\)/,'candidate discovery must support customer-scoped evaluation');
 assert.match(base,/\(\$2::uuid IS NULL OR s\.customer_id=\$2::uuid\)/,'customer-scoped evaluation must be enforced in SQL instead of filtering a fleet-wide result');
 assert.match(base,/MAX\(jal\.restored_at\).*restored_at/,'current allocation discovery must include explicit Free Server restoration time');
+assert.match(base,/MAX\(revoked_at\) resumed_at/,'current allocation discovery must include the return-to-automation timestamp');
+assert.match(base,/automation_resume\.resumed_at IS NOT NULL/,'returning a customer to automation must create a new Free allocation boundary');
+assert.match(base,/COALESCE\(automation_resume\.resumed_at,ja\.access_lane_changed_at\)/,'historical playback before automation resumed must not reactivate the new allocation');
+
 assert.match(base,/metadata->>'restoredReason'='admin_reenable'/,'only a real administrator re-enable may reset established account playback history');
 assert.match(base,/metadata->>'explicitRestore'='true'/,'generic legacy lifecycle rows must not reset the customer-facing Free allocation');
 assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=ja\.access_lane_changed_at\) historical_first_playback_at/,'candidate discovery must find established playback evidence for the current managed Jellyfin account');
