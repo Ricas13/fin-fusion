@@ -23,7 +23,7 @@
     const href=String(command.href||'').trim();
     const label=String(command.label||'').trim();
     if(!href||!label)return;
-    const existing=list.find(item=>item.href===href);
+    const existing=list.find(item=>item.href===href&&normalize(item.label)===normalize(label));
     if(existing){
       existing.keywords=normalize(`${existing.keywords||''} ${existing.label||''} ${command.keywords||''} ${label}`);
       existing.search=normalize(`${existing.label} ${existing.group||''} ${existing.keywords} ${href}`);
