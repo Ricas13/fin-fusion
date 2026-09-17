@@ -76,7 +76,7 @@ const aliases=Object.freeze({
   people:'users','jellyfin-import-users':'jellyfin-import','automation':'automation-jobs'
 });
 
-// The rail is flat: six sections, nineteen destinations, two levels. Every
+// The rail is flat: six sections, twenty destinations, two levels. Every
 // other page is surfaced by its parent page according to its kind, or found
 // with the command palette:
 //
