@@ -98,8 +98,12 @@ function resultDomain(item){const owner=domain(item.owner);return owner&&item.hr
 function search(term){
   const q=String(term||'').trim().toLowerCase();
   if(!q)return[];
+  const words=q.split(/\s+/).filter(Boolean);
   return SETTINGS.map(item=>({...item,domain:resultDomain(item)}))
-    .filter(item=>[item.key,item.label,item.keywords,item.domain?.label,item.domain?.description].filter(Boolean).join(' ').toLowerCase().includes(q));
+    .filter(item=>{
+      const haystack=[item.key,item.label,item.keywords,item.domain?.label,item.domain?.description].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q)||words.every(word=>haystack.includes(word));
+    });
 }
 function directoryCards(esc){
   const e=typeof esc==='function'?esc:(v=>String(v));
