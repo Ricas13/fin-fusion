@@ -4,7 +4,7 @@ const {query}=require('../db');
 const requestUsers=require('../integrations/request-user-sync');
 const accessCards=require('./customer-360-access-cards');
 const serviceDesiredState=require('../entitlements/service-desired-state');
-const customerInactivity=require('../automation/customer-inactivity');
+const customerInactivityStatus=require('../automation/customer-inactivity-status');
 const {esc}=require('./admin-html');
 
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
@@ -165,12 +165,12 @@ function styles(){return `<style>
 async function render(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const customerId=detail.customer.id;
-  const [extra,jellyfinAuthority,stremioAuthority,overseerrAuthority,freeInactivityRows]=await Promise.all([
+  const [extra,jellyfinAuthority,stremioAuthority,overseerrAuthority,freeInactivityStatus]=await Promise.all([
     supplementary(customerId),
     serviceDesiredState.resolveServiceDesiredState(customerId,'jellyfin').catch(()=>({authority:'automatic',desiredState:null})),
     serviceDesiredState.resolveServiceDesiredState(customerId,'stremio').catch(()=>({authority:'automatic',desiredState:null})),
     serviceDesiredState.resolveServiceDesiredState(customerId,'overseerr').catch(()=>({authority:'automatic',desiredState:null})),
-    customerInactivity.candidates(null,{customerId}).catch(()=>[])
+    customerInactivityStatus.customerStatus(customerId).catch(()=>({applies:false}))
   ]);
   // Lane-aware "Permissions, libraries & requests…" remain available through the compact Jellyfin & Overseerr settings disclosure below.
   const accessHtml=await accessCards.accessLibrariesRequests(detail,token,options).catch(()=> '');
@@ -178,9 +178,8 @@ async function render(detail,token,options={}){
   const planSettings=hasJellyfinPlan&&accessHtml?disclosure('Jellyfin & Overseerr settings','Library access · Jellyfin user settings · request access',`<div class="opNested">${accessHtml}</div>`):'';
   const current=currentSubscriptions(detail),primary=current.find(sub=>String(sub.id)===String(detail.primaryEntitlement?.subscription_id))||current[0]||null;
   const activeMedia=extra.media.filter(account=>!account.disabled),openPaymentIncidents=extra.paymentIncidents.filter(item=>!item.resolved_at).length,holds=(detail.activeHolds||[]).length;
-  const freeState=freeInactivityRows[0]||null;
-  const freePlayed=freeState?Math.round(Number(freeState.playback_seconds||0)/60):0;
-  const freeActivity=freeState?`<div><span>Free activity</span><strong>${freeState.has_playback?`${esc(freePlayed)} / ${esc(freeState.policy.minimumPlaybackMinutes)} min`:'No playback yet'}</strong><small>${freeState.eligible?'Removal condition met':freeState.automation_protected?'Protected by administrator':freeState.currently_playing?'Currently playing':freeState.has_playback?`rolling ${esc(freeState.policy.playbackWindowDays)}d requirement`:`first play within ${esc(freeState.policy.firstPlaybackGraceDays)}d`}</small></div>`:'';
+  const freeState=freeInactivityStatus?.applies?freeInactivityStatus:null;
+  const freeActivity=freeState?`<div><span>Free activity</span><strong>${freeState.hasPlayback?`${esc(freeState.playbackMinutes)} / ${esc(freeState.policy.minimumPlaybackMinutes)} min`:'No playback yet'}</strong><small>${!freeState.globalEnforcementEnabled?'Enforcement paused · assessment only':freeState.eligible?'Eligible for removal now':freeState.policyEligible&&!freeState.enforcementReady?'Policy threshold met · safety telemetry not ready':freeState.automationProtected?'Protected by administrator':freeState.currentlyPlaying?'Currently playing':freeState.hasPlayback?`rolling ${esc(freeState.policy.playbackWindowDays)}d requirement`:`first play within ${esc(freeState.policy.firstPlaybackGraceDays)}d`}</small></div>`:'';
   const glance=`<section class="customer360Glance"><div><span>Current plan</span><strong>${esc(primary?.plan_name||primary?.plan_code||'No active plan')}</strong><small>${primary?.current_period_end?`through ${esc(dt(primary.current_period_end))}`:'No paid-through date'}</small></div><div><span>Media access</span><strong>${esc(activeMedia.length)} active account${activeMedia.length===1?'':'s'}</strong><small>${esc(activeMedia.map(account=>account.server_name).filter(Boolean).join(', ')||'No Jellyfin/Emby server')}</small></div><div><span>Billing</span><strong>${openPaymentIncidents?esc(openPaymentIncidents)+' issue'+(openPaymentIncidents===1?'':'s'):esc(primary?.source||'No provider')}</strong><small>${openPaymentIncidents?'Review payment incidents below':primary?.cancel_at_period_end?'Renewal stopped':'No open payment incident'}</small></div><div><span>Last playback</span><strong>${esc(dt(detail.activitySummary?.last_playback_at))}</strong><small>${esc(detail.activitySummary?.sessions_30d||0)} sessions / 30d</small></div>${freeActivity}<div><span>Access holds</span><strong>${holds?esc(holds)+' active':'Clear'}</strong><small>${detail.customer.automation_protected?'Automatic cleanup protected':'Normal lifecycle rules'}</small></div></section>`;
   const essentialCards=[plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media,jellyfinAuthority),portalCard(detail,token),holdsCard(detail,token)];
   const serviceCards=[stremioCard(detail,token,options.stremioInfo,stremioAuthority),overseerrCard(detail,token,extra.request,overseerrAuthority),discordCard(detail,token,extra.discord)];
