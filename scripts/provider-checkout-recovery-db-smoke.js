@@ -82,6 +82,15 @@ async function cleanup() {
     if (createdCustomers.length) await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [createdCustomers]).catch(() => {});
 }
 
+function missingPayPalError(status = 404, message = 'The specified resource does not exist.') {
+    const error = new Error(message);
+    error.provider = 'paypal';
+    error.code = 'http_error';
+    error.status = status;
+    error.retryable = false;
+    return error;
+}
+
 async function main() {
     const stripeOk = await attachedIntent('recovery stripe ok', 'stripe', `cs_test_${unique('ok')}`, `price_${unique('ok')}`);
     const stripeFail = await attachedIntent('recovery stripe fail', 'stripe', `cs_test_${unique('fail')}`, `price_${unique('fail')}`);
@@ -158,6 +167,62 @@ async function main() {
 
     const third = await recovery.run({ limit: 20, checkoutIntentIds: createdIntents, handlers: {} });
     assert.strictEqual(third.total, 0, 'settled/terminal checkouts must not be polled forever');
+
+    const paypalMissing = await attachedIntent(
+        'recovery paypal missing',
+        'paypal',
+        `I-${unique('missing')}`,
+        `P-${unique('missing')}`
+    );
+    await query(`
+        UPDATE billing_checkout_intents
+        SET state='expired',expires_at=NOW()-INTERVAL '1 minute',updated_at=NOW()
+        WHERE id=$1
+    `, [paypalMissing.id]);
+
+    const missingResult = await recovery.run({
+        limit: 20,
+        checkoutIntentIds: [paypalMissing.id],
+        handlers: {
+            async paypalStatus() {
+                throw missingPayPalError();
+            },
+            async markTerminal(row) {
+                return intents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled');
+            }
+        }
+    });
+    assert.strictEqual(missingResult.total, 1);
+    assert.strictEqual(missingResult.terminal, 1, 'expired PayPal checkout missing at the provider must converge terminally');
+    assert.strictEqual(missingResult.failed, 0);
+    const missingTerminal = await stateOf(paypalMissing.id);
+    assert.strictEqual(missingTerminal.state, 'expired', 'provider proof must not rewrite the historical local expiry state');
+    assert(missingTerminal.provider_terminal_at, 'provider-not-found must record terminal proof');
+    assert.strictEqual((await recovery.candidates({ checkoutIntentIds: [paypalMissing.id] })).length, 0,
+        'provider-terminal expired PayPal checkout must leave the retry set');
+
+    const paypalOpenMissing = await attachedIntent(
+        'recovery paypal open missing',
+        'paypal',
+        `I-${unique('open-missing')}`,
+        `P-${unique('open-missing')}`
+    );
+    const openMissingResult = await recovery.run({
+        limit: 20,
+        checkoutIntentIds: [paypalOpenMissing.id],
+        handlers: {
+            async paypalStatus() {
+                throw missingPayPalError();
+            }
+        }
+    });
+    assert.strictEqual(openMissingResult.failed, 1, 'open PayPal 404 must remain operator-visible');
+    assert.strictEqual((await stateOf(paypalOpenMissing.id)).state, 'open');
+
+    assert.strictEqual(recovery.paypalResourceNotFound(missingPayPalError(404)), true);
+    assert.strictEqual(recovery.paypalResourceNotFound(missingPayPalError(422)), true);
+    assert.strictEqual(recovery.paypalResourceNotFound(missingPayPalError(422, 'Validation failed.')), false,
+        'generic PayPal 422 must not be mistaken for resource absence');
 
     console.log('provider checkout recovery DB smoke: retry isolation, pending safety and terminal convergence ok');
 }
