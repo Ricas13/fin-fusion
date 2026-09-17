@@ -2,6 +2,7 @@
 
 const {query}=require('../db');
 const accessHolds=require('../entitlements/access-holds');
+const planPolicy=require('../entitlements/plan-lifecycle-policy');
 const lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy');
 const provisioning=require('../jellyfin/resilient-provisioning');
 
@@ -159,7 +160,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
 }
 
 function policyConfigured(policy){
-  return Boolean(policy&&policy.firstPlaybackGraceDays!=null&&policy.minimumPlaybackMinutes!=null&&policy.playbackWindowDays!=null);
+  return Boolean(planPolicy.hasUsageTrigger(policy)&&policy?.firstPlaybackGraceDays!=null&&policy?.minimumPlaybackMinutes!=null&&policy?.playbackWindowDays!=null);
 }
 
 async function releaseObsoletePlanHolds(actorUserId=null,globalCfg=null){
