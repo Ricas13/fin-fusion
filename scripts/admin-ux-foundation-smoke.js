@@ -47,12 +47,12 @@ assert(densityCss.includes('.summaryCard{padding:8px 9px')&&densityCss.includes(
 assert(!/\.button\s*\{/.test(densityCss),'Density layer must not shrink global action targets');
 
 assert.equal(navModel.groups.length,6,'Admin rail must expose exactly six sections');
-assert.equal(navModel.groups.reduce((sum,group)=>sum+group.pages.length,0),19,'Admin rail must expose exactly nineteen permanent destinations');
+assert.equal(navModel.groups.reduce((sum,group)=>sum+group.pages.length,0),20,'Admin rail must expose exactly twenty permanent destinations');
 const commerceGroup=navModel.groups.find(group=>group.key==='commerce');
 assert(commerceGroup&&commerceGroup.pages.some(page=>page[0]==='discounts'&&page[2]==='/admin/discounts'),'Discounts must be a permanent Commerce rail destination');
 assert(commerceGroup&&commerceGroup.pages.some(page=>page[0]==='referrals'&&page[2]==='/admin/referrals'),'Affiliates must be a permanent Commerce rail destination');
-assert(commerceGroup&&!commerceGroup.pages.some(page=>page[0]==='billing'),'Billing must not become a permanent Commerce rail destination');
-assert(navModel.relatedPages('payments').some(page=>page[0]==='billing'&&page[2]==='/admin/billing'),'Billing must remain discoverable from Payments without occupying the rail');
+assert(commerceGroup&&commerceGroup.pages.some(page=>page[0]==='billing'&&page[2]==='/admin/billing'),'Billing must be a permanent Commerce rail destination because it owns customer billing integrity work');
+assert(commerceGroup&&commerceGroup.pages.some(page=>page[0]==='payments'&&page[1]==='Providers'),'Payment infrastructure must be labelled Providers so it is distinct from customer Billing');
 const billingGroup=navModel.groupFor('billing');
 assert(billingGroup.key==='commerce'&&billingGroup.pages.some(page=>page[0]==='billing'),'Billing must remain a routable Commerce workflow page for breadcrumb context');
 const serversGroup=navModel.groups.find(group=>group.key==='servers');
