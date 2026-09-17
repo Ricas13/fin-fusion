@@ -56,6 +56,15 @@ assert(worker.includes('Automation request-service settings refresh failed durin
 assert(worker.includes('free_capacity_backfill:30'),
     'Free Server vacancy backfill must run on a short 30-second cadence');
 
+assert(worker.includes('let runningJobs = new Set();'),
+    'Automation worker must track active job keys so repeated scheduler polls cannot duplicate an in-flight job');
+assert(worker.includes('MAX_CONCURRENCY - running.size'),
+    'Automation scheduler must reuse capacity released while another long-running job is still active');
+assert(worker.includes('if (due.length) dispatchDue(due);'),
+    'Automation scheduler must keep polling for newly-due work instead of waiting for the whole due batch to finish');
+assert(!worker.includes('if (due.length) await runBatch(due);'),
+    'A long-running job must not block later scheduler polls for unrelated jobs');
+
 const automationJobs = read('src/automation/jobs.js');
 const freeBackfill = read('src/automation/free-capacity-backfill.js');
 const compactFreeBackfill = compact(freeBackfill);
