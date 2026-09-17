@@ -7,12 +7,14 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const shell=read('src/platform/admin-html-core.js');
-for(const token of ['data-command-palette-open','data-admin-command-seed','aria-haspopup="dialog"','role="dialog"','role="combobox"','role="listbox"','adminCommandResults','/js/admin-command-palette.js'])assert(shell.includes(token),`admin shell missing command palette contract: ${token}`);
+for(const token of ['data-command-palette-open','aria-haspopup="dialog"','role="dialog"','role="combobox"','role="listbox"','adminCommandResults','/js/admin-command-palette.js'])assert(shell.includes(token),`admin shell missing command palette contract: ${token}`);
 assert(shell.includes("action=\"\\/admin\\/search\""),'command palette enhancement must replace the existing canonical search launcher rather than introduce another search form');
 
 
 const commandIndex=require('../src/platform/admin-command-index');
 const indexed=commandIndex.all();
+assert(commandIndex.markup().includes('data-admin-command-seed'),'canonical command index must render CSP-safe seed elements');
+assert(shell.includes('commandIndex.markup()'),'admin shell must render the canonical command index without inline JavaScript');
 for(const [label,href] of [['Billing','/admin/billing'],['Free Server inactivity policy','/admin/servers'],['Transactional email / SMTP','/admin/notifications/email'],['Provider transaction ledger','/admin/payments/transactions']]){
   assert(indexed.some(item=>item.label===label&&item.href===href),`canonical command index missing ${label} → ${href}`);
 }
