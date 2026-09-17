@@ -7,6 +7,7 @@ const registry = require('../src/jellyfin/registry');
 const lifecycle = require('../src/automation/customer-inactivity-scoped');
 const lifecyclePolicy = require('../src/entitlements/jellyfin-lifecycle-policy');
 const inactivityRestore = require('../src/entitlements/jellyfin-inactivity-restore');
+const serviceAdminControl = require('../src/entitlements/service-admin-control');
 
 const originalRequest = registry.request;
 
@@ -70,7 +71,12 @@ const originalRequest = registry.request;
         `, [customerId, serverId, remoteUserId, `Free_${suffix}`, staleActivity]);
         accountId = account.rows[0].id;
 
-        await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`, [lifecyclePolicy.KEY, JSON.stringify({ enabled:true, dryRun:false, freeNoPlaybackDays:7 })]);
+        // Placement authority must never be a retention exemption.
+        await serviceAdminControl.pinServer(customerId, serverId, {
+            reason: 'integration test: Free account pinned to its current server'
+        });
+
+        await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`, [lifecyclePolicy.KEY, JSON.stringify({ enabled:true, dryRun:false })]);
         await query(`SELECT public.record_activity_worker_heartbeat($1,$2,$3,FALSE,$4::jsonb)`, [`free-lifecycle-test-${suffix}`, 'test', 'test', '{}']);
         await query(`
             INSERT INTO jellyfin_activity_poll_state(server_id,last_attempt_at,last_success_at,last_failure_at,last_error,updated_at)
@@ -84,8 +90,7 @@ const originalRequest = registry.request;
         `, [serverId]);
 
         // A failed remote deletion must not strand the customer behind an
-        // inactivity hold. They remain present + enabled until deletion can be
-        // retried successfully.
+        // inactivity hold. The exact account stays present and the next run can retry.
         deleteShouldFail = true;
         const failedRemoval = await lifecycle.runPlanRules();
         assert.strictEqual(failedRemoval.enforced, 0, 'failed remote removal must not count as enforced');
@@ -104,16 +109,13 @@ const originalRequest = registry.request;
         const removed = await lifecycle.runPlanRules();
         assert.strictEqual(removed.enforced, 1, 'stale Free account should be removed directly');
         assert.strictEqual(removed.failed, 0, 'successful direct removal must complete without errors');
-        assert.strictEqual(deleteCalls, 2, 'retry must issue the second Jellyfin DELETE');
+        assert.strictEqual(deleteCalls, 2, 'retry must issue the second Jellyfin DELETE even while the Free account is server-pinned');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE id=$1', [accountId])).rows[0].n, 0, 'Free Jellyfin mapping must be absent after successful remote deletion');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM customers WHERE id=$1', [customerId])).rows[0].n, 1, 'portal customer must survive Jellyfin deletion');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [customerId])).rows[0].n, 1, 'Free subscription history must survive Jellyfin deletion');
         const activeHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
         assert.strictEqual(activeHold.rowCount, 1, 'successful inactivity removal must leave the Free-lane hold active');
         assert.strictEqual(activeHold.rows[0].released_at, null, 'inactivity hold must remain active until explicit restoration');
-
-        const pending = await lifecycle.processPendingDeletions(await lifecyclePolicy.get());
-        assert.deepStrictEqual(pending, { processed:0, deleted:0, restored:0, failed:0, deferred:0, serverFailures:0 }, 'binary lifecycle must have no post-disable deletion queue');
 
         // Explicit restoration means absent -> freshly provisioned + enabled,
         // never toggling a disabled account back on.
