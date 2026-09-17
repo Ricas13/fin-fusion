@@ -28,7 +28,7 @@ assert(!renderedBody.includes('serverAdvancedGrid') && !renderedBody.includes('o
 assert(!fleet.includes('sellable stream capacity'), 'server capacity must never be described as stream inventory');
 assert(serversAdmin.includes('js.free_first_playback_grace_days,js.free_playback_window_days,js.free_minimum_playback_minutes'),'fleet data must carry the canonical per-Free-server inactivity fields');
 assert(fleet.includes('function freeInactivitySummary(server)')&&fleet.includes('Free inactivity:')&&fleet.includes('first playback within'),'Free Server rows must expose their inactivity policy without requiring the operator to open Edit');
-assert(fleet.includes('freeInactivityPolicy: String(server.server_class'),'fleet status JSON must expose the same canonical Free inactivity policy for progressive clients');
+assert(fleet.includes('freeInactivityPolicy: freeInactivityPolicy(server)'),'fleet status JSON must reuse the same canonical Free inactivity helper as the rendered fleet row');
 
 assert(operations.includes("res.redirect(302,forward(req,'placement'))"), 'legacy Fleet operations GET must redirect to Servers');
 assert(operations.includes('/admin/servers?message=') && operations.includes('#capacity-preview'), 'legacy placement mutations/previews must return to Servers');
