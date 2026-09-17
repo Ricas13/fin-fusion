@@ -51,8 +51,11 @@ function all(){
   EXTRA.forEach(add);
   return rows;
 }
-function json(){
-  return JSON.stringify(all()).replace(/</g,'\\u003c');
+function attr(value){
+  return String(value??'').replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+}
+function markup(){
+  return all().map(item=>`<i hidden data-admin-command-seed data-label="${attr(item.label)}" data-href="${attr(item.href)}" data-group="${attr(item.group)}" data-keywords="${attr(item.keywords)}"></i>`).join('');
 }
 
-module.exports={all,json,EXTRA};
+module.exports={all,markup,EXTRA};
