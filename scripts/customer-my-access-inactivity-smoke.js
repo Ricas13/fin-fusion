@@ -122,6 +122,27 @@ assert.equal(postActivationRed.tone,'bad','after activation the card must return
 assert.equal(postActivationRed.activityMet,false);
 assert.equal(postActivationRed.minimumMet,false);
 
+const modernPlaybackOnly=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,noPlaybackDays:null,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
+  lastPlaybackAt:'2026-08-29T12:00:00.000Z',
+  lastActivityAt:'2026-09-06T12:00:00.000Z',
+  observationStartedAt:'2026-08-16T12:00:00.000Z',
+  inactiveReferenceAt:'2026-08-29T12:00:00.000Z',
+  hasPlayback:true,
+  playbackMinutes:12,
+  currentlyPlaying:false,
+  automationProtected:false,
+  enforcementReady:true,
+  eligible:true
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.equal(modernPlaybackOnly.tone,'bad','the current Free Server policy must be red when rolling watch time is below minimum, even after a recent Jellyfin login');
+assert.equal(modernPlaybackOnly.minimumMet,false);
+assert.equal(modernPlaybackOnly.activityMet,true,'with no separate account-activity rule, activity must be neutral rather than protective');
+assert.equal(modernPlaybackOnly.label,'Needs playback','the customer UI must describe the actual playback-only retention requirement');
+
 assert.match(view,/accounts\.forEach\(function\(account\)/,'each Jellyfin or Emby server account must remain independently renderable instead of using a single server selector');
 assert.match(view,/hasStremioAccess/,'My Access must render Stremio independently from Jellyfin account cards');
 assert.match(view,/id="stremio-access"/,'Stremio access must have its own card below media-server access');
