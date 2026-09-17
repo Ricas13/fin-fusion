@@ -29,8 +29,16 @@ const managedLibraries=read('src/stremio/managed-library-selection.js');
 const managedIndex=read('src/stremio/media-index.js');
 const externalIndex=read('src/stremio/source-index.js');
 const sourcePool=read('src/stremio/source-pool.js');
+const settingsRegistry=require('../src/platform/settings-registry');
 
 assert(shell.includes("require('./admin-html-core-base')"),'admin shell must wrap the stable base layout');
+const inactivityResults=settingsRegistry.search('free inactivity');
+assert(inactivityResults.some(item=>item.key==='server.freeInactivity'&&item.href==='/admin/servers'),'settings search must send Free inactivity to the server-owned control surface');
+assert(!inactivityResults.some(item=>item.href==='/admin/activity/inactivity-policy'),'settings search must not resurrect the retired Playback-owned inactivity screen');
+const billingResults=settingsRegistry.search('billing integrity');
+assert(billingResults.some(item=>item.key==='commerce.billing'&&item.href==='/admin/billing'),'settings search must expose first-class Billing integrity');
+const smtpResults=settingsRegistry.search('smtp');
+assert(smtpResults.some(item=>item.href==='/admin/notifications/email'),'settings search must expose transactional email directly');
 assert(shell.includes('/js/admin-setting-controls.js'),'compact setting enhancer must load on every admin page');
 assert(shellBase.includes('/css/admin-capability.css'),'base admin shell must load the shared capability stylesheet');
 assert(capability.includes("@import url('/css/admin-capability-base.css')")&&capability.includes("@import url('/css/admin-setting-controls.css')")&&capability.includes("@import url('/css/admin-provider-controls.css')"),'capability entrypoint must load layout, setting-control and provider-disclosure layers');
