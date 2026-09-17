@@ -101,7 +101,7 @@ async function main() {
     expect(routeSource.includes("/account/checkout/cancel-open"), 'a self-service cancel-open route must exist.');
     expect(routeSource.includes('checkoutStartLimit'), 'checkout-session creation must be rate limited.');
     expect(routeSource.includes('await assertProviderCheckoutReady(provider);'), 'server-side checkout must enforce provider callback readiness before starting a checkout.');
-    expect(routeSource.includes("router.get('/account/checkout/readiness',requireCustomer"), 'customer UI must receive authenticated provider checkout readiness.');
+    expect(routeSource.includes("router.get('/account/checkout/readiness',checkoutReadLimit,requireCustomer"), 'customer UI provider checkout readiness must be rate limited before customer authorization.');
     expect(routeSource.indexOf('await assertProviderCheckoutReady(provider);') < routeSource.indexOf('const intent=await intents.createIntent'), 'provider readiness must be checked before a local checkout intent is created.');
     expect(checkoutJs.includes("fetch('/account/checkout/readiness'"), 'customer checkout UI must consume provider readiness.');
     expect(checkoutJs.includes('form.checkoutForm[action='), 'customer checkout UI must hide unavailable provider forms.');
