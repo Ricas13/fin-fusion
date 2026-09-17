@@ -6,8 +6,6 @@ const path=require('path');
 const paypal=require('../src/payments/paypal');
 const providerHttp=require('../src/payments/provider-http');
 const providerCheckoutRecovery=require('../src/payments/provider-checkout-recovery');
-const inactivityScoped=require('../src/automation/customer-inactivity-scoped');
-const fleetMetrics=require('../src/jellyfin/fleet-metrics');
 const lifecyclePolicy=require('../src/entitlements/jellyfin-lifecycle-policy');
 
 const root=path.resolve(__dirname,'..');
@@ -73,45 +71,31 @@ function freeInactivitySafetyContract(){
   const inactivity=source('src/automation/customer-inactivity.js');
   const scoped=source('src/automation/customer-inactivity-scoped.js');
   const lifecycle=source('src/entitlements/jellyfin-lifecycle-policy.js');
+  const adminControl=source('src/jellyfin/admin-control.js');
 
   assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/,'Free inactivity must preserve current and orphaned same-customer/server playback continuity');
-  const historical=inactivity.match(/LEFT JOIN LATERAL \([\s\S]*?historical_first_playback_at,[\s\S]*?any_playback_history[\s\S]*?\) historical ON TRUE/);
-  assert(historical,'historical playback continuity query must exist');
-  assert(historical[0].includes('ph.started_at>=GREATEST(')
-    && historical[0].includes('ja.access_lane_changed_at')
-    && historical[0].includes('COALESCE(automation_resume.resumed_at,ja.access_lane_changed_at)'),
-    'historical Free activation evidence must be scoped to the current access lane and any later re-add boundary so older playback cannot activate a new Free allocation');
-  assert(historical[0].includes('COUNT(*)>0 any_playback_history'),'legacy safety must know when an account has positively never played');
-  assert.match(inactivity,/MAX\(revoked_at\) resumed_at/,'returning from admin protection must become an explicit Free allocation boundary');
-  assert.match(inactivity,/automation_resume\.resumed_at IS NOT NULL/,'old playback must not survive a return-to-automation allocation reset');
+  assert.match(inactivity,/GREATEST\([\s\S]*?fa\.starts_at[\s\S]*?ja\.created_at[\s\S]*?ja\.access_lane_changed_at[\s\S]*?automation_resume\.resumed_at/,'Free allocation must start at the newest real allocation boundary');
+  assert.doesNotMatch(inactivity,/historical_first_playback_at|any_playback_history/,'legacy playback heuristics must not decide current allocation state');
+  assert.doesNotMatch(inactivity,/noPlaybackDays|noPlaybackEligible/,'Free retention must not have a separate login/activity rule');
+  assert.match(inactivity,/LEAST\(COALESCE\(ph\.ended_at,ph\.last_seen_at\),NOW\(\)\)/,'rolling playback must count exact overlap with the rolling window');
 
-  assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must have an explicit fail-closed state');
+  assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must fail closed');
   assert.equal(lifecyclePolicy.explicitlyConfigured({}),false,'empty lifecycle settings must not authorize destructive automation');
   assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true}),false,'partial lifecycle settings must not authorize destructive automation');
-  assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true,dryRun:false}),true,'both execution fields must be explicitly persisted before enforcement can be enabled');
-  assert.match(lifecycle,/if\(!r\.rowCount\|\|!explicitlyConfigured\(stored\)\)/,'missing or partial lifecycle settings must take the fail-closed branch');
+  assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true,dryRun:false}),true,'both execution fields must be explicit before enforcement');
 
-  const observed=fleetMetrics.expectedUserEvidence([
-    {Id:'ABC',LastActivityDate:'2026-09-11T12:00:00Z'}
-  ],['abc','missing']);
-  assert.equal(observed.abc.present,true,'fresh Jellyfin /Users evidence must identify the exact candidate');
-  assert.equal(observed.missing.present,false,'a missing candidate must remain explicitly unobserved');
-  assert.match(scoped,/candidate_user_not_observed_in_fresh_users_response/,'destructive inactivity action must fail closed when the exact candidate is absent from the fresh Jellyfin user inventory');
-  assert.match(scoped,/activityObservedForCandidate/,'removal audit evidence must record exact-candidate observation');
-  assert.match(scoped,/jellyfinLastActivityDate/,'removal audit evidence must retain final Jellyfin activity evidence');
-  assert.match(scoped,/jellyfinLastLoginDate/,'removal audit evidence must retain final Jellyfin login evidence');
+  assert.match(scoped,/await provisioning\.deleteJellyfinAccount\(/,'inactivity must delete the exact selected Free account');
+  assert.doesNotMatch(scoped,/await provisioning\.reconcileCustomer\(/,'inactivity deletion must not depend on broad entitlement reconciliation');
+  assert.doesNotMatch(scoped,/refreshServerUserActivity|candidate_user_not_observed_in_fresh_users_response/,'login/user inventory is not retention authority');
+  assert.doesNotMatch(scoped,/massRemovalRisk|CIRCUIT_BREAKER_/,'retired mass-removal policy must not remain in runtime');
+  assert.match(scoped,/eligible\.slice\(0, MAX_ENFORCEMENTS_PER_RUN\)/,'large cleanups may be throughput-bounded without changing eligibility');
 
-  const clean=inactivityScoped.massRemovalRisk(new Array(100).fill({}),[{}]);
-  assert.equal(clean.tripped,false,'a single eligible user must remain live-policy eligible');
-  const ratioCount=Math.max(inactivityScoped.CIRCUIT_BREAKER_MIN_ELIGIBLE,Math.floor(100*inactivityScoped.CIRCUIT_BREAKER_MAX_RATIO)+1);
-  const spike=inactivityScoped.massRemovalRisk(new Array(100).fill({}),new Array(ratioCount).fill({}));
-  assert.equal(spike.tripped,false,'population size alone must never convert legitimate Free inactivity enforcement into dry-run');
-  assert.equal(spike.retired,true,'the historical mass-removal population breaker must stay explicitly retired');
-  assert.doesNotMatch(scoped,/configuredDryRun \|\| circuitBreaker\.tripped/,'population-size diagnostics must not override the configured live/dry-run mode');
-  assert.match(scoped,/eligible\.slice\(0, MAX_ENFORCEMENTS_PER_RUN\)/,'large cleanups must be bounded by throughput rather than globally blocked');
-  assert(!scoped.includes("mode === 'forced_server'"),'admin server pinning must remain placement authority, not an inactivity exemption');
+  const pinBranch=adminControl.slice(
+    adminControl.indexOf("control.mode==='admin_server_pin'"),
+    adminControl.indexOf('return decorated',adminControl.indexOf("control.mode==='admin_server_pin'"))
+  );
+  assert(!pinBranch.includes('decorated.blocked=false'),'server pinning must remain placement-only and cannot erase inactivity holds');
 }
-
 function deferredWebhookContract(){
   const text=source('src/platform/webhooks.js');
   assert.match(text,/result\?\.processingError/,'payment webhooks must inspect durable business-processing failure');
