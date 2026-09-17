@@ -15,14 +15,32 @@ const paymentReconciliation = require('../src/payments/provider-payment-reconcil
 const providerCheckoutRecovery = require('../src/payments/provider-checkout-recovery');
 const dashboardLedger = require('../src/payments/dashboard-ledger');
 
+const suffix = crypto.randomBytes(4).toString('hex');
+const createdCustomerIds = [];
+const createdIntentIds = [];
+
 function expect(condition, message) { if (!condition) throw new Error(message); }
 
+async function cleanup() {
+    if (createdCustomerIds.length) {
+        await query(`DELETE FROM payment_history_transactions WHERE customer_id=ANY($1::uuid[])`, [createdCustomerIds]);
+    }
+    if (createdIntentIds.length) {
+        await query(`DELETE FROM billing_checkout_intents WHERE id=ANY($1::uuid[])`, [createdIntentIds]);
+    }
+    if (createdCustomerIds.length) {
+        await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [createdCustomerIds]);
+    }
+}
+
 async function main() {
-    const suffix = crypto.randomBytes(4).toString('hex');
     const customer = (await query(`INSERT INTO customers(display_name,email) VALUES('Race Test',$1) RETURNING id`, [`race-${suffix}@example.invalid`])).rows[0];
+    createdCustomerIds.push(customer.id);
     const other = (await query(`INSERT INTO customers(display_name,email) VALUES('Other',$1) RETURNING id`, [`race-other-${suffix}@example.invalid`])).rows[0];
+    createdCustomerIds.push(other.id);
 
     const created = await intents.createIntent({ scope: 'customer', customerId: customer.id, provider: 'paypal', checkoutMode: 'payment', commercialSnapshot: {} });
+    createdIntentIds.push(created.id);
     const nonce = created.nonce;
     await intents.attachProviderCheckout(created.id, `PAYPAL-ORDER-${suffix}`);
 
@@ -165,7 +183,7 @@ async function main() {
     } catch (error) {
         mismatchedRecoveryThrew = /does not match the authoritative local payment/i.test(String(error?.message || error));
     }
-    expect(mismatchedRecoveryThrew && paymentActivationCalls === 1, 'one-time recovery must refuse a provider order whose completed capture differs from the authoritative ledger row.');
+    expect(mismatchedRecoveryThrew && paymentActivationCalls === 1, 'one-time recovery must refuse a provider order whose completed capture differs from the authoritative local payment.');
 
     const authoritativeIds = await paymentReconciliation.authoritativePayPalCaptureIds([capture.id, `MISSING-${suffix}`]);
     expect(authoritativeIds.has(capture.id) && !authoritativeIds.has(`MISSING-${suffix}`), 'reconciliation must recognize already-authoritative captures so scheduled repair does not refetch them every run.');
@@ -286,4 +304,15 @@ async function main() {
     console.log('PayPal return/accounting race smoke test passed.');
 }
 
-main().finally(() => getPool().end());
+main().catch(error => {
+    console.error(error.stack || error);
+    process.exitCode = 1;
+}).finally(async () => {
+    try {
+        await cleanup();
+    } catch (error) {
+        console.error('PayPal return/accounting race smoke cleanup failed:', error.stack || error);
+        process.exitCode = 1;
+    }
+    await getPool().end();
+});
