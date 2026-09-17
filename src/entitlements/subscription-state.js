@@ -131,13 +131,13 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
  LIMIT 1
  `,[customerId]);
  let row=result.rows[0]||null;if(!row)return null;
- // Free Server is managed by its own inactivity/capacity automation, but an
- // active admin directive still wins: admin_removed forces the lane absent
- // regardless of inactivity state, and admin_present protects it from the
- // inactivity-hold lane check below (customer-inactivity-scoped.js separately
- // consults the same authority before ever deleting the account).
- if(row.admin_removed){row.blocked=true;return applyOperatorSemantics(db,row,{includeBlocked});}
- if(row.admin_present){row.blocked=false;return applyOperatorSemantics(db,row,{includeBlocked});}
+ // subscription_admin_present() intentionally treats a server pin as authority
+ // for keeping a subscription discoverable, but a pin is placement only for
+ // Free inactivity. Decorate first so we can distinguish explicit PRESENT from
+ // FORCED_SERVER instead of trusting the conflated SQL helper boolean.
+ row=await applyOperatorSemantics(db,row,{includeBlocked:true});
+ if(row.admin_jellyfin_removed){row.blocked=true;return includeBlocked?row:null;}
+ if(row.permanent_access||row.admin_jellyfin_mode==='present'){row.blocked=false;return row;}
  const laneHold=await db.query(`SELECT EXISTS(
    SELECT 1 FROM customer_access_holds h
    WHERE h.customer_id=$1 AND h.released_at IS NULL AND (
@@ -150,7 +150,8 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
    )
  ) AS blocked`,[customerId,row.plan_id]);
  row.blocked=Boolean(row.blocked||laneHold.rows[0]?.blocked);
- return applyOperatorSemantics(db,row,{includeBlocked});
+ if(row.blocked&&!includeBlocked)return null;
+ return row;
 }
 async function effectiveAddons(customerId,{client=null,includeBlocked=false}={}){const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
