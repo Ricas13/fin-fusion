@@ -124,6 +124,13 @@ const retiredBreaker=scopedInactivity.massRemovalRisk(new Array(90).fill({}),new
 assert.equal(retiredBreaker.tripped,false,'a legitimate large inactivity cleanup must never be converted into dry-run solely because many customers are eligible');
 assert.equal(retiredBreaker.retired,true,'the historical population-size circuit breaker must remain explicitly retired');
 
+assert.equal(scopedInactivity.adminProtectedFreeEntitlement({admin_jellyfin_mode:'forced_server'}),false,'a server pin is placement only and must not exempt Free inactivity');
+assert.equal(scopedInactivity.adminProtectedFreeEntitlement({admin_jellyfin_mode:'present'}),true,'explicit admin-present authority must continue to protect Free access');
+assert.equal(scopedInactivity.adminProtectedFreeEntitlement({permanent_access:true}),true,'permanent access must continue to protect Free access');
+assert.equal(restorationGrace.legacyResetNeedsGrace({any_playback_history:false}),false,'a true never-played legacy account must not receive the ambiguity reset grace');
+assert.equal(restorationGrace.legacyResetNeedsGrace({any_playback_history:true}),true,'legacy accounts with historical playback must retain ambiguity protection');
+assert.equal(restorationGrace.legacyResetNeedsGrace({}),true,'unknown legacy playback state must fail closed and retain ambiguity protection');
+
 const base=read('src/automation/customer-inactivity.js');
 const scoped=read('src/automation/customer-inactivity-scoped.js');
 const grace=read('src/entitlements/jellyfin-inactivity-grace.js');
@@ -167,6 +174,10 @@ assert.match(scoped,/row\.allocation_start_at \|\| null/,'the final safety query
 assert(!scoped.includes('configuredDryRun || circuitBreaker.tripped'),'mass-removal population size must never force a valid live policy run into dry-run');
 assert.match(scoped,/const MAX_ENFORCEMENTS_PER_RUN = intEnv\('INACTIVITY_MAX_ENFORCEMENTS_PER_RUN', 100/,'large cleanups may be spread across runs with a throughput cap without being neutralised');
 assert.match(grace,/if \(!row\?\.has_playback && firstPlaybackGraceDays != null && firstPlaybackGraceDays > 0\)/,'restored allocations awaiting first playback must use the activation grace');
+assert.match(grace,/legacyAt && legacyResetNeedsGrace\(row\)/,'legacy ambiguity grace must not hide accounts proven to have never played');
+assert.match(scoped,/mode === 'present'/,'explicit admin-present protection must remain');
+assert(!scoped.includes("mode === 'forced_server'"),'server pin placement must not silently exempt Free inactivity');
+
 assert.match(status,/firstPlaybackAt:row\.first_playback_at\|\|null/,'customer status must expose first-play activation evidence to My Access');
 assert.match(status,/lastActivityAt:row\.last_activity_at\|\|null/,'customer status must expose Jellyfin activity evidence to My Access');
 assert.match(status,/allocationStartAt:row\.allocation_start_at\|\|null/,'customer status must expose the current allocation boundary to My Access');
