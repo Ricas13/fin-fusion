@@ -7,14 +7,18 @@ const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const policy=require('../src/entitlements/plan-lifecycle-policy');
 const inactivity=require('../src/automation/customer-inactivity');
+const scopedInactivity=require('../src/automation/customer-inactivity-scoped');
 const restorationGrace=require('../src/entitlements/jellyfin-inactivity-grace');
 
-const retentionPolicy={firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24};
+// Current Free Server policy: first playback within the grace period, then one
+// rolling playback requirement. Jellyfin login/LastActivityDate is not a rule.
+const retentionPolicy={firstPlaybackGraceDays:3,noPlaybackDays:null,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24};
+const legacyCombinedPolicy={...retentionPolicy,noPlaybackDays:7};
 assert.equal(policy.usageTriggered({hasPlayback:false,firstPlaybackEligible:false},retentionPolicy),false,'a fresh Free allocation must remain inside its first-play grace');
 assert.equal(policy.usageTriggered({hasPlayback:false,firstPlaybackEligible:true},retentionPolicy),true,'an unactivated Free allocation must trigger independently when its first-play grace expires');
-assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usageEligible:false},retentionPolicy),false,'after activation both configured retention rules must not trigger when only inactivity is breached');
-assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:false,usageEligible:true},retentionPolicy),false,'after activation both configured retention rules must not trigger when only low playback is breached');
-assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usageEligible:true},retentionPolicy),true,'after activation both configured retention rules must trigger when both are breached');
+assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usageEligible:false},legacyCombinedPolicy),false,'legacy combined policies must still require all configured retention checks');
+assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:false,usageEligible:true},legacyCombinedPolicy),false,'legacy combined policies must still require all configured retention checks');
+assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usageEligible:true},legacyCombinedPolicy),true,'legacy combined policies must still trigger when all configured checks are breached');
 assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usageEligible:false},{firstPlaybackGraceDays:null,noPlaybackDays:7,minimumPlaybackMinutes:null}),true,'a single configured inactivity rule must remain independently usable after activation');
 assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:false,usageEligible:true},{firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:30}),true,'a single configured playback rule must remain independently usable after activation');
 assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usageEligible:true},{firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null}),false,'no configured usage rules must never trigger removal');
@@ -37,7 +41,7 @@ assert.equal(policy.hasUsageTrigger(pausedPolicy),true,'pausing global lifecycle
 
 const serverOwned=inactivity.serverPolicy({free_first_playback_grace_days:4,free_playback_window_days:9,free_minimum_playback_minutes:45,inactivity_policy:{firstPlaybackGraceDays:99,noPlaybackDays:99,minimumPlaybackMinutes:999,playbackWindowDays:99}},globalPolicy);
 assert.equal(serverOwned.firstPlaybackGraceDays,4,'the assigned server must own first-play grace');
-assert.equal(serverOwned.noPlaybackDays,9,'the assigned server activity window must own inactivity recency');
+assert.equal(serverOwned.noPlaybackDays,null,'the modern Free Server policy must not treat login/account activity as a retention rule');
 assert.equal(serverOwned.playbackWindowDays,9,'the assigned server activity window must own rolling playback');
 assert.equal(serverOwned.minimumPlaybackMinutes,45,'the assigned server must own minimum playback');
 assert.equal(serverOwned.thresholdOwner,'free_server','effective inactivity policy must identify server ownership');
@@ -65,7 +69,7 @@ assert.equal(restorationGrace.graceHours({policy:retentionPolicy,has_playback:fa
 assert.equal(restorationGrace.graceHours({policy:retentionPolicy,has_playback:true}),168,'after activation a restoration observation window may use the full seven-day retention window');
 
 const expiredFirstPlay=inactivity.assessUsage({allocation_start_at:'2026-09-04T11:00:00.000Z',last_playback_at:null,last_activity_at:'2026-09-07T11:00:00.000Z',playback_seconds:0},retentionPolicy,now);
-assert.equal(expiredFirstPlay.referenceAt.toISOString(),'2026-09-07T11:00:00.000Z','fresh Jellyfin activity may be retained as activity evidence even before activation');
+assert.equal(expiredFirstPlay.referenceAt.toISOString(),'2026-09-04T11:00:00.000Z','Jellyfin login/account activity must not move the playback reference');
 assert.equal(expiredFirstPlay.firstPlaybackEligible,true,'non-playback Jellyfin activity must never satisfy or extend the independent first-play rule');
 assert.equal(expiredFirstPlay.noPlaybackEligible,false,'the seven-day retention clock must not substitute for the first-play rule');
 
@@ -93,10 +97,10 @@ const recentJellyfinActivity=inactivity.assessUsage({
   playback_seconds:0
 },retentionPolicy,now);
 assert.equal(recentJellyfinActivity.lastActivityAt.toISOString(),'2026-09-06T12:00:00.000Z','the persisted Jellyfin activity timestamp must be included in retention assessment');
-assert.equal(recentJellyfinActivity.referenceAt.toISOString(),'2026-09-06T12:00:00.000Z','recent Jellyfin activity must become the inactivity reference even when playback is old');
-assert.equal(recentJellyfinActivity.noPlaybackEligible,false,'recent Jellyfin activity must satisfy the seven-day activity half of retention');
+assert.equal(recentJellyfinActivity.referenceAt.toISOString(),'2026-08-29T12:00:00.000Z','Jellyfin login/account activity must never replace the last playback reference');
+assert.equal(recentJellyfinActivity.noPlaybackEligible,false,'the modern Free Server policy has no separate account-activity retention rule');
 assert.equal(recentJellyfinActivity.usageEligible,true,'recent account activity must not fabricate playback minutes');
-assert.equal(policy.usageTriggered(recentJellyfinActivity,retentionPolicy),false,'an active customer below the playback minimum must not be removed until both retention conditions are breached');
+assert.equal(policy.usageTriggered(recentJellyfinActivity,retentionPolicy),true,'an activated customer below the rolling playback minimum must be removal-eligible even after a recent login');
 
 const existingManagedAccount=inactivity.assessUsage({
   allocation_start_at:'2026-08-20T12:00:00.000Z',
@@ -107,14 +111,18 @@ const existingManagedAccount=inactivity.assessUsage({
 },retentionPolicy,now);
 assert.equal(existingManagedAccount.hasPlayback,true,'an already-managed Jellyfin account with established playback must already be activated');
 assert.equal(existingManagedAccount.firstPlaybackEligible,false,'established playback for the same managed identity must prevent a false first-play warning');
-assert.equal(existingManagedAccount.noPlaybackEligible,false,'recent Jellyfin activity must keep an activated managed account out of the inactivity breach');
+assert.equal(existingManagedAccount.noPlaybackEligible,false,'the modern Free Server policy must not add a separate account-activity rule');
 assert.equal(existingManagedAccount.usageEligible,true,'historical activation evidence must not fabricate current rolling watch minutes');
-assert.equal(policy.usageTriggered(existingManagedAccount,retentionPolicy),false,'an activated account with recent activity must not be removed merely because current watch minutes are low');
+assert.equal(policy.usageTriggered(existingManagedAccount,retentionPolicy),true,'recent Jellyfin login activity must not protect an activated account below the rolling watch minimum');
 
 const minimumPolicy={firstPlaybackGraceDays:3,noPlaybackDays:null,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24};
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-30T12:00:00.000Z',first_playback_at:'2026-09-05T12:00:00.000Z',last_playback_at:'2026-09-05T12:00:00.000Z',playback_seconds:29*60},minimumPolicy,now).usageEligible,false,'the playback-minimum clock must start only after the first stream');
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-20T12:00:00.000Z',first_playback_at:'2026-08-30T12:00:00.000Z',last_playback_at:'2026-09-01T12:00:00.000Z',playback_seconds:29*60},minimumPolicy,now).usageEligible,true,'an activated allocation below its configured playback minimum must become eligible after the full window');
 assert.equal(inactivity.assessUsage({allocation_start_at:'2026-08-20T12:00:00.000Z',first_playback_at:'2026-08-30T12:00:00.000Z',last_playback_at:'2026-09-01T12:00:00.000Z',playback_seconds:31*60},minimumPolicy,now).usageEligible,false,'an activated allocation meeting its configured playback minimum must remain safe');
+
+const retiredBreaker=scopedInactivity.massRemovalRisk(new Array(90).fill({}),new Array(40).fill({eligible:true}));
+assert.equal(retiredBreaker.tripped,false,'a legitimate large inactivity cleanup must never be converted into dry-run solely because many customers are eligible');
+assert.equal(retiredBreaker.retired,true,'the historical population-size circuit breaker must remain explicitly retired');
 
 const base=read('src/automation/customer-inactivity.js');
 const scoped=read('src/automation/customer-inactivity-scoped.js');
@@ -146,14 +154,18 @@ assert.match(base,/js\.free_playback_window_days/,'candidate policy and rolling 
 assert.match(base,/js\.free_minimum_playback_minutes/,'candidate policy must read the assigned server minimum playback');
 assert.match(base,/rawLastActivityAt=asDate\(row\.last_activity_at\)/,'retention assessment must consume the Jellyfin activity timestamp that fleet telemetry persists');
 assert.match(base,/const lastActivityAt=rawLastActivityAt&&\(!allocationStartAt/,'Jellyfin activity must be scoped to the current Free allocation');
-assert.match(base,/const playbackOrActivityAt=lastActivityAt&&lastPlaybackAt/,'recent activity must use the newest trustworthy Jellyfin activity or playback signal');
+assert.match(base,/const referenceAt=lastPlaybackAt\|\|allocationStartAt/,'eligibility must use playback only; Jellyfin LastActivityDate/login must not move the inactivity reference');
 assert.match(base,/firstPlaybackEligible=!hasPlayback&&phasedActivation/,'the activation phase must remain an explicit independent first-play check');
 assert.match(base,/const retentionReady=hasPlayback\|\|!phasedActivation/,'ongoing retention must require activation for phased Free policies while keeping legacy policy compatibility');
 assert.match(base,/const noPlaybackEligible=retentionReady&&policy\.noPlaybackDays!=null/,'ongoing inactivity must use the phase gate');
 assert.match(base,/const usageEligible=retentionReady&&policy\.minimumPlaybackMinutes!=null/,'minimum playback must use the phase gate');
 assert.match(base,/planPolicy\.usageTriggered\(assessment,policy\)/,'candidate eligibility must use the shared phase-aware policy');
-assert.match(scoped,/\(\$4::timestamptz IS NULL OR started_at >= \$4::timestamptz\)/,'the last-second usage safety check must ignore playback before the current allocation');
+assert.match(scoped,/started_at >= NOW\(\) - \(\$3::int \* INTERVAL '1 day'\)/,'the last-second usage safety check must use an exact rolling window instead of a calendar-day window');
+assert.match(scoped,/jellyfin_account_id=\$4::uuid OR jellyfin_account_id IS NULL/,'the last-second usage safety check must stay scoped to the current Jellyfin account identity');
+assert.match(scoped,/\(\$5::timestamptz IS NULL OR started_at >= \$5::timestamptz\)/,'the last-second usage safety check must ignore playback before the current allocation');
 assert.match(scoped,/row\.allocation_start_at \|\| null/,'the final safety query must receive the current allocation boundary');
+assert(!scoped.includes('configuredDryRun || circuitBreaker.tripped'),'mass-removal population size must never force a valid live policy run into dry-run');
+assert.match(scoped,/const MAX_ENFORCEMENTS_PER_RUN = intEnv\('INACTIVITY_MAX_ENFORCEMENTS_PER_RUN', 100/,'large cleanups may be spread across runs with a throughput cap without being neutralised');
 assert.match(grace,/if \(!row\?\.has_playback && firstPlaybackGraceDays != null && firstPlaybackGraceDays > 0\)/,'restored allocations awaiting first playback must use the activation grace');
 assert.match(status,/firstPlaybackAt:row\.first_playback_at\|\|null/,'customer status must expose first-play activation evidence to My Access');
 assert.match(status,/lastActivityAt:row\.last_activity_at\|\|null/,'customer status must expose Jellyfin activity evidence to My Access');
