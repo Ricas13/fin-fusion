@@ -9,7 +9,7 @@ const DOMAINS=Object.freeze([
   Object.freeze({key:'security',label:'Customer onboarding & security',href:'/admin/settings?section=security',scope:'platform',description:'Registration, email verification policy, sessions, administrator 2FA, Turnstile and trusted network destinations.'}),
   Object.freeze({key:'automation',label:'Automation & recovery',href:'/admin/automation',scope:'platform/customer',description:'Worker health, scheduled jobs, provisioning retries, access consistency and lifecycle automation.'}),
   Object.freeze({key:'commerce',label:'Commerce & billing',href:'/admin/commerce',scope:'platform/plan/customer',description:'Orders, billing integrity, payment providers, transaction history, discounts, profitability and affiliate service credit.'}),
-  Object.freeze({key:'customer',label:'Individual customer controls',href:'/admin/users',scope:'customer',description:'Customer plan, Jellyfin placement, expiry/permanent access, verification, automation protection, provisioning, libraries and technical overrides.'}),
+  Object.freeze({key:'customer',label:'Individual customer overrides',href:'/admin/users',scope:'customer',description:'Customer plan, Jellyfin placement, expiry/permanent access, verification, automation protection, provisioning, libraries and technical overrides.'}),
   Object.freeze({key:'backups',label:'Backups & configuration',href:'/admin/backups',scope:'platform',description:'Backups, restore readiness, data export and configuration transfer.'})
 ]);
 
