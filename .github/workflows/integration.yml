@@ -55,23 +55,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Specialist static contracts
-        run: |
-          node scripts/dead-code-audit.js --strict --json
-          node scripts/csp-inline-audit.js
-          node scripts/payment-incident-safety-smoke.js
-          node scripts/per-plan-revoke-stremio-refund-smoke.js
-          node scripts/customer-portal-view-smoke.js
-          node scripts/affiliate-program-clarity-smoke.js
-          node scripts/storefront-v2-smoke.js
-          node scripts/ux-control-centre-smoke.js
-          node scripts/ux-release-contract-smoke.js
-          node scripts/invitation-upgrade-bridge-smoke.js
-          node scripts/platform-coherence-static-smoke.js
-          node scripts/assembled-app-smoke.js
-          node scripts/request-user-sync-ownership-smoke.js
-          node scripts/media-access-recovery-smoke.js
-          node --check scripts/production-readiness.js
+      - name: Dead code audit
+        run: node scripts/dead-code-audit.js --strict --json
+      - name: CSP inline audit
+        run: node scripts/csp-inline-audit.js
+      - name: Payment incident safety
+        run: node scripts/payment-incident-safety-smoke.js
+      - name: Per-plan revoke refund
+        run: node scripts/per-plan-revoke-stremio-refund-smoke.js
+      - name: Customer portal view
+        run: node scripts/customer-portal-view-smoke.js
+      - name: Affiliate clarity
+        run: node scripts/affiliate-program-clarity-smoke.js
+      - name: Storefront v2
+        run: node scripts/storefront-v2-smoke.js
+      - name: UX control centre
+        run: node scripts/ux-control-centre-smoke.js
+      - name: UX release contract
+        run: node scripts/ux-release-contract-smoke.js
+      - name: Invitation upgrade bridge
+        run: node scripts/invitation-upgrade-bridge-smoke.js
+      - name: Platform coherence static
+        run: node scripts/platform-coherence-static-smoke.js
+      - name: Assembled app
+        run: node scripts/assembled-app-smoke.js
+      - name: Request user sync ownership
+        run: node scripts/request-user-sync-ownership-smoke.js
+      - name: Media access recovery
+        run: node scripts/media-access-recovery-smoke.js
+      - name: Production readiness syntax
+        run: node --check scripts/production-readiness.js
 
       - name: Isolated feature database contracts
         run: |
