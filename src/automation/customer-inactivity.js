@@ -89,8 +89,21 @@ async function candidates(globalCfg=null,{customerId=null}={}){
         AND jal.metadata->>'explicitRestore'='true'
     ) lifecycle ON TRUE
     LEFT JOIN LATERAL (
+      SELECT MAX(revoked_at) resumed_at
+      FROM customer_entitlement_overrides ceo
+      WHERE ceo.customer_id=fa.customer_id
+        AND ceo.permanent_access=FALSE
+        AND ceo.revoked_at IS NOT NULL
+        AND ceo.revoked_at<=NOW()
+    ) automation_resume ON TRUE
+    LEFT JOIN LATERAL (
       SELECT
-        MIN(ph.started_at) FILTER(WHERE ph.started_at>=ja.access_lane_changed_at) historical_first_playback_at,
+        MIN(ph.started_at) FILTER(
+          WHERE ph.started_at>=GREATEST(
+            ja.access_lane_changed_at,
+            COALESCE(automation_resume.resumed_at,ja.access_lane_changed_at)
+          )
+        ) historical_first_playback_at,
         COUNT(*)>0 any_playback_history
       FROM playback_history ph
       WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
@@ -98,7 +111,13 @@ async function candidates(globalCfg=null,{customerId=null}={}){
     ) historical ON TRUE
     LEFT JOIN LATERAL (
       SELECT CASE
-        WHEN lifecycle.restored_at IS NOT NULL THEN GREATEST(fa.starts_at,ja.access_lane_changed_at,lifecycle.restored_at)
+        WHEN lifecycle.restored_at IS NOT NULL OR automation_resume.resumed_at IS NOT NULL
+          THEN GREATEST(
+            fa.starts_at,
+            ja.access_lane_changed_at,
+            COALESCE(lifecycle.restored_at,'-infinity'::timestamptz),
+            COALESCE(automation_resume.resumed_at,'-infinity'::timestamptz)
+          )
         WHEN historical.historical_first_playback_at IS NOT NULL
           THEN LEAST(fa.starts_at,ja.access_lane_changed_at,historical.historical_first_playback_at)
         ELSE GREATEST(fa.starts_at,ja.access_lane_changed_at)

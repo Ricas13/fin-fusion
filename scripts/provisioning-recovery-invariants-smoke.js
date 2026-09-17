@@ -148,8 +148,10 @@ assert((scopedInactivity.match(/liveFreeJellyfinSubscription\(row\.customer_id, 
 assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'")
     && scopedInactivity.includes("reason: 'admin_authority_added_during_check'"),
     'inactivity enforcement must fail closed when permanent/admin authority protects Free access');
-assert(inactivity.includes('ph.started_at>=ja.access_lane_changed_at'),
-    'Free inactivity history must keep the paid-to-Free lane boundary so paid-era playback cannot satisfy a new Free allocation');
+assert(inactivity.includes('ph.started_at>=GREATEST(')
+    && inactivity.includes('ja.access_lane_changed_at')
+    && inactivity.includes('COALESCE(automation_resume.resumed_at,ja.access_lane_changed_at)'),
+    'Free inactivity history must keep the paid-to-Free lane boundary, and any later re-add boundary, so older playback cannot satisfy a new Free allocation');
 assert(freeObservationReset.includes('ADD COLUMN IF NOT EXISTS inactivity_observation_reset_at')
     && freeObservationReset.includes("access_lane_changed_at<=lt.applied_at")
     && !freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
