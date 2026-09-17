@@ -116,14 +116,12 @@ const graceRow = {
     reasons: []
 };
 (async () => {
-    const rows = await legacyGrace.applyRestorationGrace([graceRow], { now });
+    const rows = await legacyGrace.applyLegacySafetyWindow([graceRow], { now });
     assert.equal(rows[0].eligible, false, 'legacy lane repair must retain its one-time safety window');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;
 });
-assert.equal(legacyGrace.graceHours({ policy, has_playback: false }), 72);
-assert.equal(legacyGrace.graceHours({ policy, has_playback: true }), 168);
 
 const base = read('src/automation/customer-inactivity.js');
 const enforcement = read('src/automation/customer-inactivity-scoped.js');
@@ -166,7 +164,9 @@ assert(!pinBranch.includes('decorated.blocked=false'));
 // Restore/re-add complexity is reduced to the allocation clock. The grace
 // helper now only knows the one-time legacy migration marker.
 assert.doesNotMatch(grace, /customer_entitlement_overrides|jellyfin_account_lifecycle|admin_restore|automation_resume/);
+assert.match(grace, /async function applyLegacySafetyWindow/);
 assert.match(grace, /inactivity_observation_reset_at/);
+assert.match(grace, /module\.exports = \{ applyLegacySafetyWindow \}/,'legacy safety module must expose one runtime concept only');
 
 // Status and admin UI must describe the same two rules.
 assert.doesNotMatch(status, /refreshCandidateUserActivity/);
