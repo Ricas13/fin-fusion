@@ -79,7 +79,7 @@ function freeInactivitySafetyContract(){
   assert.doesNotMatch(inactivity,/noPlaybackDays|noPlaybackEligible/,'Free retention must not have a separate login/activity rule');
   assert.match(inactivity,/LEAST\(COALESCE\(ph\.ended_at,ph\.last_seen_at\),NOW\(\)\)/,'rolling playback must count exact overlap with the rolling window');
 
-  assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must fail closed');
+  assert.match(lifecycle,/SAFE_UNCONFIGURED\s*=\s*Object\.freeze\(\{\s*enabled:\s*false,\s*dryRun:\s*true\s*\}\)/,'missing lifecycle configuration must fail closed');
   assert.equal(lifecyclePolicy.explicitlyConfigured({}),false,'empty lifecycle settings must not authorize destructive automation');
   assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true}),false,'partial lifecycle settings must not authorize destructive automation');
   assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true,dryRun:false}),true,'both execution fields must be explicit before enforcement');
