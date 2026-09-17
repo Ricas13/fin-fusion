@@ -142,12 +142,48 @@ function policyConfigured(policy){
 
 async function releaseObsoletePlanHolds(actorUserId=null,globalCfg=null){
   globalCfg=globalCfg||await lifecyclePolicy.get();
-  const rows=await query(`SELECT h.customer_id,h.source_key,p.inactivity_policy,p.is_free_tier,p.price_minor,p.service_type,EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=h.customer_id AND s.plan_id=p.id AND s.superseded_by IS NULL AND s.status IN('active','trialing','past_due','paused') AND s.starts_at<=NOW() AND s.current_period_end>NOW()) active_subscription FROM customer_access_holds h LEFT JOIN plans p ON h.source_key=('plan:'||p.id::text) WHERE h.hold_type=$1 AND h.released_at IS NULL`,[HOLD_TYPE]);
+  const rows=await query(`
+    SELECT h.customer_id,h.source_key,h.created_at hold_created_at,
+           p.id plan_id,p.inactivity_policy,p.is_free_tier,p.price_minor,p.service_type,
+           EXISTS(
+             SELECT 1 FROM subscriptions s
+             WHERE s.customer_id=h.customer_id AND s.plan_id=p.id AND s.superseded_by IS NULL
+               AND s.status IN('active','trialing','past_due','paused')
+               AND s.starts_at<=NOW() AND s.current_period_end>NOW()
+           ) active_subscription,
+           EXISTS(
+             SELECT 1 FROM subscriptions s
+             WHERE s.customer_id=h.customer_id AND s.plan_id=p.id AND s.superseded_by IS NULL
+               AND s.status IN('active','trialing','past_due','paused')
+               AND s.starts_at<=NOW() AND s.current_period_end>NOW()
+               AND s.starts_at>h.created_at
+           ) readded_subscription,
+           EXISTS(
+             SELECT 1 FROM jellyfin_accounts ja
+             WHERE ja.customer_id=h.customer_id AND ja.account_purpose='jellyfin'
+               AND ja.access_lane='free' AND ja.disabled=FALSE
+               AND GREATEST(ja.created_at,COALESCE(ja.access_lane_changed_at,ja.created_at))>h.created_at
+           ) readded_account,
+           EXISTS(
+             SELECT 1 FROM jellyfin_account_lifecycle jal
+             WHERE jal.customer_id=h.customer_id AND jal.category='free'
+               AND jal.restored_at>h.created_at
+               AND jal.metadata->>'restoredReason'='admin_reenable'
+               AND jal.metadata->>'explicitRestore'='true'
+           ) explicit_restore
+    FROM customer_access_holds h
+    LEFT JOIN plans p ON h.source_key=('plan:'||p.id::text)
+    WHERE h.hold_type=$1 AND h.released_at IS NULL
+  `,[HOLD_TYPE]);
   let released=0;
   for(const row of rows.rows){
     const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg);
-    const keep=Boolean(row.active_subscription&&row.is_free_tier&&Number(row.price_minor||0)===0&&['jellyfin','bundle'].includes(String(row.service_type||'jellyfin'))&&policyConfigured(policy));
-    if(keep)continue;
+    const isCurrentFreePlan=Boolean(
+      row.active_subscription&&row.is_free_tier&&Number(row.price_minor||0)===0&&
+      ['jellyfin','bundle'].includes(String(row.service_type||'jellyfin'))&&policyConfigured(policy)
+    );
+    const readded=Boolean(row.readded_subscription||row.readded_account||row.explicit_restore);
+    if(isCurrentFreePlan&&!readded)continue;
     await accessHolds.releaseHold({customerId:row.customer_id,type:HOLD_TYPE,sourceKey:row.source_key,actorUserId});
     await provisioning.reconcileCustomer(row.customer_id).catch(()=>{});
     released++;
