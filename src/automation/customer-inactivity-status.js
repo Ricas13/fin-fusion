@@ -13,7 +13,7 @@ async function customerStatus(customerId) {
         : { ...globalCfg, enabled: true };
 
     const worker = await scoped.activityWorkerTelemetry();
-    const rows = await legacyGrace.applyRestorationGrace(
+    const rows = await legacyGrace.applyLegacySafetyWindow(
         await scoped.base.candidates(discoveryCfg, { customerId })
     );
 
