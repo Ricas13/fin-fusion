@@ -104,7 +104,7 @@ assert.equal(Object.prototype.hasOwnProperty.call(effective, 'minimumObservation
 // Server pinning is placement only.
 assert.equal(scoped.adminProtectedFreeEntitlement({ admin_jellyfin_mode: 'forced_server' }), false);
 assert.equal(scoped.adminProtectedFreeEntitlement({ admin_jellyfin_mode: 'present' }), true);
-assert.equal(scoped.adminProtectedFreeEntitlement({ admin_present: true }), true);
+assert.equal(scoped.adminProtectedFreeEntitlement({ admin_present: true, admin_jellyfin_mode: 'forced_server' }), false,'the SQL admin-present compatibility boolean must not turn a server pin into protection');
 assert.equal(scoped.adminProtectedFreeEntitlement({ permanent_access: true }), true);
 
 // The one-time legacy lane repair may delay enforcement, but normal restore /
@@ -128,6 +128,7 @@ const enforcement = read('src/automation/customer-inactivity-scoped.js');
 const grace = read('src/entitlements/jellyfin-inactivity-grace.js');
 const status = read('src/automation/customer-inactivity-status.js');
 const adminControl = read('src/jellyfin/admin-control.js');
+const subscriptionState = read('src/entitlements/subscription-state.js');
 const lifecycleAdmin = read('src/platform/admin-jellyfin-lifecycle.js');
 const planAdmin = read('src/platform/admin-request-plan-policy.js');
 
@@ -160,6 +161,9 @@ const pinBranch = adminControl.slice(
     adminControl.indexOf('return decorated', adminControl.indexOf("control.mode==='admin_server_pin'"))
 );
 assert(!pinBranch.includes('decorated.blocked=false'));
+assert.match(subscriptionState,/row=await applyOperatorSemantics\(db,row,\{includeBlocked:true\}\)/,'Free entitlement truth must decorate the real admin mode before deciding whether a hold is bypassed');
+assert.match(subscriptionState,/row\.permanent_access\|\|row\.admin_jellyfin_mode==='present'/,'only permanent or explicit admin-present may bypass a Free inactivity hold');
+assert.doesNotMatch(subscriptionState,/if\(row\.admin_present\)\{row\.blocked=false/,'server pin compatibility must never clear a Free inactivity hold');
 
 // Restore/re-add complexity is reduced to the allocation clock. The grace
 // helper now only knows the one-time legacy migration marker.
