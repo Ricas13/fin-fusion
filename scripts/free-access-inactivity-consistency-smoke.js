@@ -115,8 +115,12 @@ const graceRow = {
     eligible: true,
     reasons: []
 };
-legacyGrace.applyRestorationGrace([graceRow], { now }).then(rows => {
+(async () => {
+    const rows = await legacyGrace.applyRestorationGrace([graceRow], { now });
     assert.equal(rows[0].eligible, false, 'legacy lane repair must retain its one-time safety window');
+})().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
 });
 assert.equal(legacyGrace.graceHours({ policy, has_playback: false }), 72);
 assert.equal(legacyGrace.graceHours({ policy, has_playback: true }), 168);
