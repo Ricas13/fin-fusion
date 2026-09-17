@@ -57,7 +57,6 @@ function adminProtectedFreeEntitlement(entitlement) {
     const mode = String(entitlement.admin_jellyfin_mode || '').toLowerCase();
     return Boolean(
         entitlement.permanent_access
-        || entitlement.admin_present
         || mode === 'present'
     );
 }
