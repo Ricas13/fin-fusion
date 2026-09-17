@@ -182,6 +182,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
           SELECT MAX(revoked_at) resumed_at
           FROM customer_entitlement_overrides ceo
           WHERE ceo.customer_id=fa.customer_id
+            AND ceo.subscription_id=fa.subscription_id
             AND ceo.permanent_access=FALSE
             AND ceo.revoked_at IS NOT NULL
             AND ceo.revoked_at<=NOW()
