@@ -8,6 +8,8 @@ const lifecycle = require('../src/automation/customer-inactivity-scoped');
 const lifecyclePolicy = require('../src/entitlements/jellyfin-lifecycle-policy');
 const inactivityRestore = require('../src/entitlements/jellyfin-inactivity-restore');
 const serviceAdminControl = require('../src/entitlements/service-admin-control');
+const subscriptionState = require('../src/entitlements/subscription-state');
+const provisioning = require('../src/jellyfin/resilient-provisioning');
 
 const originalRequest = registry.request;
 
@@ -116,6 +118,14 @@ const originalRequest = registry.request;
         const activeHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
         assert.strictEqual(activeHold.rowCount, 1, 'successful inactivity removal must leave the Free-lane hold active');
         assert.strictEqual(activeHold.rows[0].released_at, null, 'inactivity hold must remain active until explicit restoration');
+
+        const pinnedBlocked = await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true });
+        assert.strictEqual(pinnedBlocked.admin_jellyfin_mode, 'forced_server', 'fixture must still be server-pinned after inactivity removal');
+        assert.strictEqual(pinnedBlocked.blocked, true, 'server pin must not erase the active inactivity hold');
+
+        await provisioning.reconcileCustomer(customerId);
+        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane=\'free\'', [customerId])).rows[0].n, 0,
+            'canonical reconciliation must not recreate a server-pinned Free account while its inactivity hold is active');
 
         // Explicit restoration means absent -> freshly provisioned + enabled,
         // never toggling a disabled account back on.
