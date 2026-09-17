@@ -91,8 +91,8 @@ const effectiveCustomPolicy = inactivity.serverPolicy({
     free_minimum_playback_minutes: customPolicy.freeMinimumPlaybackMinutes,
     inactivity_policy: { firstPlaybackGraceDays: 99, noPlaybackDays: 99, minimumPlaybackMinutes: 999, playbackWindowDays: 99 }
 }, { enabled: true, dryRun: false });
-if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.noPlaybackDays !== 14 || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
-    throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 policy');
+if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.noPlaybackDays !== null || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
+    throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 playback policy without adding a login/activity rule');
 }
 if (effectiveCustomPolicy.thresholdOwner !== 'free_server') throw new Error('Free inactivity threshold ownership must be the assigned server');
 const effectiveDefaults = inactivity.serverPolicy({}, { enabled: true, dryRun: true });
@@ -115,6 +115,7 @@ const formView = fs.readFileSync(path.join(root, 'views/admin/server-form.ejs'),
 for (const field of ['freeFirstPlaybackGraceDays', 'freePlaybackWindowDays', 'freeMinimumPlaybackMinutes']) {
     if (!formView.includes(`name="${field}"`)) throw new Error(`Server form must expose ${field}`);
 }
+if (!formView.includes('>Playback window</label>')) throw new Error('Server form must describe the seven-day setting as the rolling playback window');
 
 const legacyDefault = parseServerForm({ ...valid, mediaServerType: undefined }, { apiKeyRequired: true });
 if (legacyDefault.mediaServerType !== 'jellyfin') throw new Error('Missing media server type must remain backward-compatible with Jellyfin');

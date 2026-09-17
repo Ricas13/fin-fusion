@@ -22,7 +22,9 @@ function floatEnv(name, fallback, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
-const MAX_ENFORCEMENTS_PER_RUN = intEnv('INACTIVITY_MAX_ENFORCEMENTS_PER_RUN', 20, 1, 500);
+// This is a throughput cap only. It spreads a very large legitimate cleanup
+// across runs; it never changes an eligible removal into a dry-run.
+const MAX_ENFORCEMENTS_PER_RUN = intEnv('INACTIVITY_MAX_ENFORCEMENTS_PER_RUN', 100, 1, 500);
 const CIRCUIT_BREAKER_MIN_ELIGIBLE = intEnv('INACTIVITY_CIRCUIT_BREAKER_MIN_ELIGIBLE', 5, 2, 500);
 const CIRCUIT_BREAKER_MAX_ABSOLUTE = intEnv('INACTIVITY_CIRCUIT_BREAKER_MAX_ABSOLUTE', 20, 2, 500);
 const CIRCUIT_BREAKER_MAX_RATIO = floatEnv('INACTIVITY_CIRCUIT_BREAKER_MAX_RATIO', 0.15, 0.01, 1);
@@ -53,13 +55,14 @@ function massRemovalRisk(rows, eligible) {
     const population = Math.max(0, Number(rows?.length || 0));
     const eligibleCount = Math.max(0, Number(eligible?.length || 0));
     const ratio = population > 0 ? eligibleCount / population : 0;
-    // Thresholds are inclusive. If the operator says 20 is the maximum safe
-    // batch, the 20th simultaneous candidate is already suspicious and must
-    // force dry-run; do not allow an off-by-one batch of exactly 20 deletions.
-    const tripped = eligibleCount >= CIRCUIT_BREAKER_MIN_ELIGIBLE
-        && (eligibleCount >= CIRCUIT_BREAKER_MAX_ABSOLUTE || ratio >= CIRCUIT_BREAKER_MAX_RATIO);
+    // Retained as a compatibility/diagnostic export only. The historical
+    // population-size circuit breaker could neutralise a valid policy run just
+    // because many customers were legitimately eligible at once. Destructive
+    // safety now comes from telemetry, entitlement/admin authority, current
+    // playback protection and the final per-customer eligibility re-check.
     return {
-        tripped,
+        tripped: false,
+        retired: true,
         population,
         eligible: eligibleCount,
         ratio,
@@ -144,9 +147,10 @@ async function usageSatisfiedEarlierToday(row) {
         SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)))),0)::bigint playback_seconds
         FROM playback_history
         WHERE customer_id=$1 AND server_id=$2
-          AND started_at >= date_trunc('day',NOW()) - ($3::int * INTERVAL '1 day')
-          AND ($4::timestamptz IS NULL OR started_at >= $4::timestamptz)
-    `, [row.customer_id,row.server_id,windowDays,row.allocation_start_at || null]);
+          AND started_at >= NOW() - ($3::int * INTERVAL '1 day')
+          AND (jellyfin_account_id=$4::uuid OR jellyfin_account_id IS NULL)
+          AND ($5::timestamptz IS NULL OR started_at >= $5::timestamptz)
+    `, [row.customer_id,row.server_id,windowDays,row.account_id,row.allocation_start_at || null]);
     return Number(result.rows[0]?.playback_seconds || 0) >= minimumMinutes * 60;
 }
 
@@ -298,7 +302,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         }
         const row = final.fresh;
         const configuredDryRun = forceDryRun === null ? row.policy.dryRun : Boolean(forceDryRun);
-        const dryRun = Boolean(configuredDryRun || circuitBreaker.tripped);
+        const dryRun = Boolean(configuredDryRun);
         const evidence = {
             planId: row.plan_id,
             planCode: row.plan_code,
@@ -314,7 +318,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
             playbackMinutes: Math.round(row.playback_seconds / 60),
             triggers: row.triggers,
             dryRun,
-            safetyDryRun: circuitBreaker.tripped,
+            safetyDryRun: false,
             circuitBreaker,
             policyInherited: row.policy.inherited,
             repairExistingHold: Boolean(row.repairExistingHold),
@@ -363,9 +367,6 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
 
     const telemetry = telemetrySummary(worker, serverTelemetry);
     const warnings = [];
-    if (circuitBreaker.tripped) {
-        warnings.push(`Mass-removal circuit breaker forced dry-run: ${circuitBreaker.eligible}/${circuitBreaker.population} (${(circuitBreaker.ratio * 100).toFixed(1)}%) candidates were eligible; live removal is blocked at ${circuitBreaker.maxAbsolute} accounts or ${(circuitBreaker.maxRatio * 100).toFixed(1)}% once at least ${circuitBreaker.minEligible} accounts are eligible.`);
-    }
     if (deferred) warnings.push(`${deferred} eligible inactivity removal${deferred === 1 ? '' : 's'} deferred by the ${MAX_ENFORCEMENTS_PER_RUN}-customer throughput cap; they will be reconsidered on the next run.`);
     const warning = warnings.length ? warnings.join(' ') : undefined;
     return {
@@ -380,7 +381,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         released,
         warning,
         circuitBreaker,
-        dryRun: Boolean(circuitBreaker.tripped || selectedEligible.every(row => forceDryRun === true || row.policy.dryRun)),
+        dryRun: Boolean(selectedEligible.length && selectedEligible.every(row => forceDryRun === true || (forceDryRun === null && row.policy.dryRun))),
         telemetry,
         serverFailures: telemetry.unsafeTargetServers,
         examples: eligible.slice(0,25).map(row=>({customerId:row.customer_id,name:row.customer_name,plan:row.plan_code,server:row.server_name,triggers:row.triggers,lastPlaybackAt:row.last_playback_at,playbackMinutes:Math.round(row.playback_seconds/60)}))

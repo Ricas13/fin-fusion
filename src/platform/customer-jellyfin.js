@@ -103,8 +103,11 @@ function freeAccessHealth(status,{now=Date.now()}={}){
   const configuredCount=Number(activityConfigured)+Number(minutesConfigured),metCount=Number(activityConfigured&&activityMet)+Number(minutesConfigured&&minimumMet);
   const allMet=configuredCount===0||metCount===configuredCount;
   const tone=allMet?'good':metCount>0?'warn':'bad';
-  const label=allMet?"You're good":metCount>0?'Almost there':'Needs activity';
-  let detail=allMet?'You meet both ongoing Free Server activity requirements.':metCount>0?`You currently meet ${metCount} of ${configuredCount} ongoing requirements.`:'Neither ongoing Free Server activity requirement is currently met.';
+  const label=allMet?"You're good":metCount>0?'Almost there':minutesConfigured&&!activityConfigured?'Needs playback':'Needs activity';
+  let detail=allMet
+    ?configuredCount===1?'You meet the ongoing Free Server playback requirement.':`You meet all ${configuredCount} ongoing Free Server requirements.`
+    :metCount>0?`You currently meet ${metCount} of ${configuredCount} ongoing requirements.`
+      :configuredCount===1?'The ongoing Free Server playback requirement is not currently met.':'None of the ongoing Free Server requirements are currently met.';
   if(status.currentlyPlaying&&!allMet)detail+=' You are currently playing, so the recent-activity requirement is covered.';
   if(status.eligible)detail+=' Access can be removed on the next eligible automation run.';
   if(enforcementNote)detail+=` ${enforcementNote}`;

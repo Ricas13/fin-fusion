@@ -136,9 +136,13 @@ assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin
     'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
 
 const compactScopedInactivity = compact(scopedInactivity);
-assert(compactScopedInactivity.includes('eligibleCount>=CIRCUIT_BREAKER_MAX_ABSOLUTE')
-    && compactScopedInactivity.includes('ratio>=CIRCUIT_BREAKER_MAX_RATIO'),
-    'mass-removal circuit breaker thresholds must be inclusive');
+assert(compactScopedInactivity.includes('tripped:false')
+    && compactScopedInactivity.includes('retired:true')
+    && !compactScopedInactivity.includes('configuredDryRun||circuitBreaker.tripped'),
+    'population size must not force legitimate Free Server inactivity enforcement into dry-run');
+assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
+    && compactScopedInactivity.includes('eligible.slice(0,MAX_ENFORCEMENTS_PER_RUN)'),
+    'large inactivity cleanups may be throughput-capped without changing eligibility into dry-run');
 assert((scopedInactivity.match(/liveFreeJellyfinSubscription\(row\.customer_id, \{ includeBlocked: true \}\)/g) || []).length >= 2,
     'destructive inactivity enforcement must re-check canonical authority before and after telemetry I/O');
 assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'")

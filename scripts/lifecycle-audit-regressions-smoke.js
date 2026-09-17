@@ -96,11 +96,13 @@ function freeInactivitySafetyContract(){
   assert.match(scoped,/jellyfinLastLoginDate/,'removal audit evidence must retain final Jellyfin login evidence');
 
   const clean=inactivityScoped.massRemovalRisk(new Array(100).fill({}),[{}]);
-  assert.equal(clean.tripped,false,'a single eligible user must not trip the mass-removal breaker');
+  assert.equal(clean.tripped,false,'a single eligible user must remain live-policy eligible');
   const ratioCount=Math.max(inactivityScoped.CIRCUIT_BREAKER_MIN_ELIGIBLE,Math.floor(100*inactivityScoped.CIRCUIT_BREAKER_MAX_RATIO)+1);
   const spike=inactivityScoped.massRemovalRisk(new Array(100).fill({}),new Array(ratioCount).fill({}));
-  assert.equal(spike.tripped,true,'an anomalous eligible ratio must force the mass-removal circuit breaker');
-  assert.match(scoped,/configuredDryRun \|\| circuitBreaker\.tripped/,'a tripped mass-removal circuit breaker must force dry-run even when policy is live');
+  assert.equal(spike.tripped,false,'population size alone must never convert legitimate Free inactivity enforcement into dry-run');
+  assert.equal(spike.retired,true,'the historical mass-removal population breaker must stay explicitly retired');
+  assert.doesNotMatch(scoped,/configuredDryRun \|\| circuitBreaker\.tripped/,'population-size diagnostics must not override the configured live/dry-run mode');
+  assert.match(scoped,/eligible\.slice\(0, MAX_ENFORCEMENTS_PER_RUN\)/,'large cleanups must be bounded by throughput rather than globally blocked');
 }
 
 function deferredWebhookContract(){
