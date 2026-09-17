@@ -79,6 +79,8 @@ function freeInactivitySafetyContract(){
   assert(historical,'historical playback continuity query must exist');
   assert(historical[0].includes('ph.started_at>=ja.access_lane_changed_at'),'historical Free activation evidence must be scoped to the current access lane so paid-era playback cannot activate a newly adopted Free allocation');
   assert(historical[0].includes('COUNT(*)>0 any_playback_history'),'legacy safety must know when an account has positively never played');
+  assert.match(inactivity,/MAX\(revoked_at\) resumed_at/,'returning from admin protection must become an explicit Free allocation boundary');
+  assert.match(inactivity,/automation_resume\.resumed_at IS NOT NULL/,'old playback must not survive a return-to-automation allocation reset');
 
   assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must have an explicit fail-closed state');
   assert.equal(lifecyclePolicy.explicitlyConfigured({}),false,'empty lifecycle settings must not authorize destructive automation');
