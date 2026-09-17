@@ -11,7 +11,6 @@ const binaryMigration=read('db/migrations/20260905110000_jellyfin_present_or_del
 const retiredLifecycleMigration=read('db/migrations/20260906220000_retire_jellyfin_disable_lifecycle_options.sql');
 const deliveryContract=read('db/migrations/038_retire_stremio_delivery_identity_requirement.sql');
 const policy=read('src/entitlements/jellyfin-lifecycle-policy.js');
-const planPolicy=read('src/entitlements/plan-lifecycle-policy.js');
 const planEditor=read('src/platform/admin-jellyfin-plan-editor.js');
 const planCreate=read('src/platform/admin-plan-create-v2.js');
 const lifecycleAdmin=read('src/platform/admin-jellyfin-lifecycle.js');
@@ -27,18 +26,17 @@ const external=read('src/stremio/external-direct-runtime.js');
 const entitlements=read('src/stremio/entitlements.js');
 const admin=read('src/platform/admin-stremio-sources.js');
 
-assert(policy.includes('freeNoPlaybackDays:7'),'Free Server must keep the seven-day activity policy default');
+assert(policy.includes("const DEFAULTS = Object.freeze({ enabled: true, dryRun: false });"),'global lifecycle settings must contain execution mode only');
 for(const retired of ['freeDeleteAfterDisableDays','trialDeleteAfterDisableDays','paidDeleteAfterDisableDays'])assert(!policy.includes(retired),`retired disable lifecycle setting must stay removed: ${retired}`);
 assert(!policy.includes('function deleteDays')&&!policy.includes('function planOverride'),'global lifecycle policy must not expose retired post-disable compatibility helpers');
-assert(planPolicy.includes("action:'remove_jellyfin'"),'plan inactivity policy must directly remove Jellyfin access');
-assert(!planPolicy.includes('deleteAfterDisableDays'),'plan inactivity policy must not retain post-disable deletion timing');
+assert(!fs.existsSync(path.join(root,'src/entitlements/plan-lifecycle-policy.js')),'dead plan-level inactivity policy code must stay removed');
 assert(!planEditor.includes('Delete Jellyfin user after being disabled'),'plan editor must not expose post-disable deletion');
 assert(!planEditor.includes('editor-lifecycle'),'plan editor must not expose a per-plan lifecycle write endpoint');
 assert(!planEditor.includes('function lifecycleCard'),'plan editor must not render a configurable Jellyfin lifecycle card');
 assert(!planCreate.includes('data-free-lifecycle'),'plan creation must not expose per-plan lifecycle configuration');
 assert(!planCreate.includes('inactivityEnabled'),'plan creation must not collect per-plan inactivity toggles');
-assert(planCreate.includes('inactivityPolicy: {}'),'new plans must inherit the global Free Server inactivity policy');
-assert(lifecycleAdmin.includes('Jellyfin users are present or deleted.'),'global lifecycle UI must state the binary lifecycle invariant');
+assert(planCreate.includes('inactivityPolicy: {}'),'legacy plan inactivity JSON may remain empty for schema compatibility but must not own enforcement thresholds');
+assert(lifecycleAdmin.includes('Free Server inactivity has two rules.'),'global lifecycle UI must describe the two-rule Free Server contract');
 assert(!lifecycleAdmin.includes('Delete disabled users'),'global lifecycle UI must not expose post-disable deletion');
 assert(retiredLifecycleMigration.includes("- 'deleteAfterDisableDays'"),'migration must purge retired plan delete-after-disable configuration');
 assert(retiredLifecycleMigration.includes("- 'freeDeleteAfterDisableDays'")&&retiredLifecycleMigration.includes("- 'trialDeleteAfterDisableDays'")&&retiredLifecycleMigration.includes("- 'paidDeleteAfterDisableDays'"),'migration must purge retired global delete-after-disable configuration');
@@ -56,7 +54,6 @@ assert(!fs.existsSync(path.join(root,'src/automation/jellyfin-lifecycle.js')),'s
 assert(jobs.includes('async customer_inactivity(){return customerInactivity.run()}'),'automation must route customer inactivity through the current plan-aware owner');
 assert(inactivity.includes('minimumPlaybackMinutes')&&inactivity.includes('activityWorkerTelemetry()'),'current inactivity owner must keep plan-aware playback and telemetry safety checks');
 assert(inactivity.includes("customer.inactivity.remove_jellyfin"),'Free inactivity enforcement must remove Jellyfin access instead of disabling it');
-assert(inactivity.includes("lifecycle: 'present_or_deleted'"),'Free inactivity audit must record the binary lifecycle invariant');
 assert(!/UPDATE\s+customers|DELETE\s+FROM\s+customers/i.test(inactivity),'current inactivity lifecycle must never update/delete portal customers');
 assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
 assert(/source_kind = 'owned'::text\) OR \(authorization_confirmed = true/.test(migration),'external Stremio sources must require authorization');
