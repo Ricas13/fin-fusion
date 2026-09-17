@@ -10,12 +10,19 @@ const { encryptWithEnv } = require('../security/purpose-crypto');
 
 const SERVER_CLASSES = new Set(['premium', 'free', 'custom']);
 const SERVER_ID_PARAM = ':serverId([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})';
+const FREE_POLICY_DEFAULTS = Object.freeze({
+    firstPlaybackGraceDays: 3,
+    playbackWindowDays: 7,
+    minimumPlaybackMinutes: 30
+});
 const SAFE_ERROR_PREFIXES = [
     'Slug must be ', 'Enter a valid ', 'Only http and https ', 'URLs may not contain ',
     'URL hostname is required.', 'Internal/base URL is required.', 'Jellyfin API key is required.',
     'Jellyfin API key format is invalid.', 'Emby API key is required.', 'Emby API key format is invalid.',
     'Media-server API key is required.', 'Media-server API key format is invalid.',
-    'Priority must be between ', 'Maximum users must be between ', 'Invalid server class.',
+    'Priority must be between ', 'Maximum users must be between ',
+    'Initial playback grace days must be between ', 'Activity window days must be between ',
+    'Minimum playback minutes must be between ', 'Invalid server class.',
     'Invalid media server type.', 'Jellyfin returned HTTP ', 'Emby returned HTTP ',
     'Jellyfin returned an unexpected response.', 'Emby returned an unexpected response.',
     'Jellyfin validation timed out.', 'Emby validation timed out.',
@@ -74,6 +81,7 @@ function intField(value, { min = 0, max = 100000, nullable = false, field = null
     if (!Number.isInteger(number) || number < min || number > max) throw invalidField(field, `${label} must be between ${min} and ${max}.`);
     return number;
 }
+function defaulted(value, fallback) { return value === '' || value == null ? fallback : value; }
 function safeAdminErrorInfo(error) {
     if (error instanceof FieldValidationError) return { message: error.message, field: error.field || null };
     if (error?.code === '23505') {
@@ -102,6 +110,9 @@ function parseServerForm(body, { apiKeyRequired = false } = {}) {
         location: cleanText(body.location, 100) || null,
         priority: intField(body.priority, { min: 0, max: 10000, field: 'priority', label: 'Priority' }),
         maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: true, field: 'maxUsers', label: 'Maximum users' }),
+        freeFirstPlaybackGraceDays: intField(defaulted(body.freeFirstPlaybackGraceDays, FREE_POLICY_DEFAULTS.firstPlaybackGraceDays), { min: 1, max: 3650, field: 'freeFirstPlaybackGraceDays', label: 'Initial playback grace days' }),
+        freePlaybackWindowDays: intField(defaulted(body.freePlaybackWindowDays, FREE_POLICY_DEFAULTS.playbackWindowDays), { min: 1, max: 365, field: 'freePlaybackWindowDays', label: 'Activity window days' }),
+        freeMinimumPlaybackMinutes: intField(defaulted(body.freeMinimumPlaybackMinutes, FREE_POLICY_DEFAULTS.minimumPlaybackMinutes), { min: 1, max: 1000000, field: 'freeMinimumPlaybackMinutes', label: 'Minimum playback minutes' }),
         allowNewUsers: boolField(body.allowNewUsers), trialEnabled: boolField(body.trialEnabled),
         paidEnabled: boolField(body.paidEnabled), apiKey: validateApiKey(body.apiKey, apiKeyRequired, type)
     };
@@ -149,7 +160,8 @@ async function serverList() {
 }
 async function serverDetail(serverId) {
     const result = await query(`SELECT id,name,slug,server_class,media_server_type,base_url,public_url,location,enabled,allow_new_users,
-        trial_enabled,paid_enabled,priority,max_users,health_status,last_health_check,created_at,updated_at
+        trial_enabled,paid_enabled,priority,max_users,free_first_playback_grace_days,free_playback_window_days,free_minimum_playback_minutes,
+        health_status,last_health_check,created_at,updated_at
         FROM jellyfin_servers WHERE id=$1`, [serverId]);
     return result.rows[0] || null;
 }
@@ -178,9 +190,9 @@ async function persistHealthCheck(serverId, status) {
 async function createServer(actorUserId, form) {
     await probeCredentials(form.baseUrl, form.apiKey, form.mediaServerType);
     return transaction(async client => {
-        const result = await client.query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check)
-            VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8,$9,$10,$11,$12,$13,'unknown',NULL) RETURNING id`, [form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'),form.priority,form.maxUsers,form.location,form.allowNewUsers,form.trialEnabled,form.paidEnabled]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.create','jellyfin_server',$2,$3::jsonb)`, [actorUserId,result.rows[0].id,JSON.stringify({mediaServerType:form.mediaServerType,fields:['name','slug','serverClass','mediaServerType','baseUrl','publicUrl','priority','maxUsers','placement','apiKey']})]);
+        const result = await client.query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,free_first_playback_grace_days,free_playback_window_days,free_minimum_playback_minutes,health_status,last_health_check)
+            VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8,$9,$10,$11,$12,$13,$14,$15,$16,'unknown',NULL) RETURNING id`, [form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'),form.priority,form.maxUsers,form.location,form.allowNewUsers,form.trialEnabled,form.paidEnabled,form.freeFirstPlaybackGraceDays,form.freePlaybackWindowDays,form.freeMinimumPlaybackMinutes]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.create','jellyfin_server',$2,$3::jsonb)`, [actorUserId,result.rows[0].id,JSON.stringify({mediaServerType:form.mediaServerType,fields:['name','slug','serverClass','mediaServerType','baseUrl','publicUrl','priority','maxUsers','placement','freeInactivityPolicy','apiKey'],freeInactivityPolicy:{firstPlaybackGraceDays:form.freeFirstPlaybackGraceDays,playbackWindowDays:form.freePlaybackWindowDays,minimumPlaybackMinutes:form.freeMinimumPlaybackMinutes}})]);
         return result.rows[0].id;
     });
 }
@@ -191,11 +203,12 @@ async function updateServer(actorUserId, serverId, form) {
     await transaction(async client => {
         const result = await client.query(`UPDATE jellyfin_servers SET name=$2,slug=$3,server_class=$4,media_server_type=$5,base_url=$6,public_url=$7,location=$8,
             priority=$9,max_users=$10,allow_new_users=$11,trial_enabled=$12,paid_enabled=$13,
-            api_key_encrypted=CASE WHEN $14::text IS NULL THEN api_key_encrypted ELSE $14 END,
-            health_status=CASE WHEN base_url<>$6 OR media_server_type<>$5 OR $14::text IS NOT NULL THEN 'unknown' ELSE health_status END,updated_at=NOW()
-            WHERE id=$1 RETURNING id`, [serverId,form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,form.location,form.priority,form.maxUsers,form.allowNewUsers,form.trialEnabled,form.paidEnabled,form.apiKey?encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'):null]);
+            free_first_playback_grace_days=$14,free_playback_window_days=$15,free_minimum_playback_minutes=$16,
+            api_key_encrypted=CASE WHEN $17::text IS NULL THEN api_key_encrypted ELSE $17 END,
+            health_status=CASE WHEN base_url<>$6 OR media_server_type<>$5 OR $17::text IS NOT NULL THEN 'unknown' ELSE health_status END,updated_at=NOW()
+            WHERE id=$1 RETURNING id`, [serverId,form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,form.location,form.priority,form.maxUsers,form.allowNewUsers,form.trialEnabled,form.paidEnabled,form.freeFirstPlaybackGraceDays,form.freePlaybackWindowDays,form.freeMinimumPlaybackMinutes,form.apiKey?encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'):null]);
         if (!result.rowCount) throw new Error('Server not found.');
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.update','jellyfin_server',$2,$3::jsonb)`, [actorUserId,serverId,JSON.stringify({mediaServerType:form.mediaServerType,providerChanged,credentialRotated:Boolean(form.apiKey),connectivityChanged})]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.update','jellyfin_server',$2,$3::jsonb)`, [actorUserId,serverId,JSON.stringify({mediaServerType:form.mediaServerType,providerChanged,credentialRotated:Boolean(form.apiKey),connectivityChanged,freeInactivityPolicy:{firstPlaybackGraceDays:form.freeFirstPlaybackGraceDays,playbackWindowDays:form.freePlaybackWindowDays,minimumPlaybackMinutes:form.freeMinimumPlaybackMinutes}})]);
     });
 }
 async function renderLocals(req, server = null, error = null) {
@@ -235,4 +248,4 @@ function createAdminServersRouter() {
     router.use('/admin/servers', async (error,_req,res,_next) => { console.error('Admin servers route error:',error.message); await runtimeSettings.ensureLoaded().catch(()=>{}); return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Servers unavailable',message:'Server administration could not be loaded safely.',link:'/admin',linkText:'Return to Administration'}); });
     return router;
 }
-module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType };
+module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType,FREE_POLICY_DEFAULTS };

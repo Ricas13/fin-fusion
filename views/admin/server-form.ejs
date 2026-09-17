@@ -44,6 +44,21 @@
               <div class="formGroup"><label for="maxUsers">Customer capacity</label><input class="input" id="maxUsers" name="maxUsers" type="number" min="1" max="100000" placeholder="Not configured" value="<%= server && server.max_users ? server.max_users : '' %>"><div class="subText">Maximum managed customer users for automatic placement on this server. Every Jellyfin customer uses exactly one place, regardless of the customer's concurrent-stream allowance. Administrators can deliberately add users above this number without changing the configured capacity.</div></div>
             </div>
 
+            <details class="planCardDetails" <%= server && server.server_class==='free' ? 'open' : '' %>>
+              <summary>Advanced settings</summary>
+              <div class="planDetailsBody">
+                <div class="formGroup">
+                  <label>Free server inactivity policy</label>
+                  <div class="subText">Used only when this server belongs to the <strong>Free</strong> class. The inactivity worker reads these values from the server on every run, so changes take effect without another deployment.</div>
+                </div>
+                <div class="formGrid">
+                  <div class="formGroup"><label for="freeFirstPlaybackGraceDays">Initial playback grace</label><div class="inputUnit"><input class="input" id="freeFirstPlaybackGraceDays" name="freeFirstPlaybackGraceDays" type="number" min="1" max="3650" required value="<%= server && server.free_first_playback_grace_days != null ? server.free_first_playback_grace_days : 3 %>"><span>days</span></div><div class="subText">Remove a newly allocated Free user if they have not played anything by the end of this grace period. Re-adding the user starts a fresh allocation clock.</div></div>
+                  <div class="formGroup"><label for="freePlaybackWindowDays">Activity window</label><div class="inputUnit"><input class="input" id="freePlaybackWindowDays" name="freePlaybackWindowDays" type="number" min="1" max="365" required value="<%= server && server.free_playback_window_days != null ? server.free_playback_window_days : 7 %>"><span>days</span></div><div class="subText">After first playback, count watched time only inside this rolling window.</div></div>
+                  <div class="formGroup"><label for="freeMinimumPlaybackMinutes">Minimum playback</label><div class="inputUnit"><input class="input" id="freeMinimumPlaybackMinutes" name="freeMinimumPlaybackMinutes" type="number" min="1" max="1000000" required value="<%= server && server.free_minimum_playback_minutes != null ? server.free_minimum_playback_minutes : 30 %>"><span>minutes</span></div><div class="subText">Once the activity window has elapsed, remove a Free user whose playback inside the rolling window is below this amount.</div></div>
+                </div>
+              </div>
+            </details>
+
             <div class="toggleGrid">
               <label class="toggleRow"><input type="checkbox" name="allowNewUsers" <%= !server || server.allow_new_users ? 'checked' : '' %>><span><strong>Eligible for new-user placement</strong><span class="subText">Base eligibility only. Use Servers → Fleet operations for temporary Active, Drain or Maintenance states.</span></span></label>
               <label class="toggleRow"><input type="checkbox" name="trialEnabled" <%= !server || server.trial_enabled ? 'checked' : '' %>><span><strong>Allow trials</strong><span class="subText">Trial plans may be placed here.</span></span></label>

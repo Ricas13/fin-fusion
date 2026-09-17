@@ -21,19 +21,26 @@ assert.equal(policy.usageTriggered({hasPlayback:true,noPlaybackEligible:true,usa
 
 const globalPolicy={enabled:true,dryRun:false,freeFirstPlaybackGraceDays:3,freeNoPlaybackDays:7,freeMinimumPlaybackMinutes:30,freePlaybackWindowDays:7};
 const inherited=policy.effectiveForFreePlan({},globalPolicy);
-assert.equal(inherited.firstPlaybackGraceDays,3,'Free plans must inherit the three-day first-play grace');
-assert.equal(inherited.noPlaybackDays,7,'Free plans must inherit the seven-day recent-activity window');
-assert.equal(inherited.minimumPlaybackMinutes,30,'Free plans must inherit the thirty-minute playback minimum');
-assert.equal(inherited.playbackWindowDays,7,'Free plans must inherit the rolling seven-day playback window');
+assert.equal(inherited.firstPlaybackGraceDays,3,'legacy plan policy helpers must retain the three-day compatibility default');
+assert.equal(inherited.noPlaybackDays,7,'legacy plan policy helpers must retain the seven-day compatibility default');
+assert.equal(inherited.minimumPlaybackMinutes,30,'legacy plan policy helpers must retain the thirty-minute compatibility default');
+assert.equal(inherited.playbackWindowDays,7,'legacy plan policy helpers must retain the rolling seven-day compatibility default');
 assert.equal(policy.effectiveForFreePlan({enabled:false,dryRun:true},globalPolicy).enabled,true,'legacy per-plan disabled flags must not override the global Free lifecycle switch');
 assert.equal(policy.effectiveForFreePlan({enabled:false,dryRun:true},globalPolicy).dryRun,false,'legacy per-plan dry-run flags must not override the global Free lifecycle mode');
-assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).firstPlaybackGraceDays,3,'legacy explicit nulls must inherit the new Free defaults');
-assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).minimumPlaybackMinutes,30,'legacy explicit null minimums must inherit the thirty-minute default');
-assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:2,noPlaybackDays:5,minimumPlaybackMinutes:45,playbackWindowDays:5},globalPolicy).firstPlaybackGraceDays,2,'a Free plan must be able to override its first-play grace');
+assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).firstPlaybackGraceDays,3,'legacy explicit nulls must inherit compatibility defaults');
+assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:null,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:null},globalPolicy).minimumPlaybackMinutes,30,'legacy explicit null minimums must inherit the thirty-minute compatibility default');
+assert.equal(policy.effectiveForFreePlan({firstPlaybackGraceDays:2,noPlaybackDays:5,minimumPlaybackMinutes:45,playbackWindowDays:5},globalPolicy).firstPlaybackGraceDays,2,'legacy stored plan policy values must remain parseable for compatibility');
 assert.equal(policy.effectiveForFreePlan({}, {enabled:true,dryRun:false,freeNoPlaybackDays:7}).firstPlaybackGraceDays,null,'partial legacy global-policy callers must not have a new activation field invented for them');
 const pausedPolicy=policy.effectiveForFreePlan({}, {...globalPolicy,enabled:false});
 assert.equal(pausedPolicy.enabled,false,'the global lifecycle switch must still pause enforcement');
-assert.equal(policy.hasUsageTrigger(pausedPolicy),true,'pausing lifecycle automation must keep the configured Free usage policy recognisable so existing inactivity holds are not released as obsolete');
+assert.equal(policy.hasUsageTrigger(pausedPolicy),true,'pausing global lifecycle automation must keep legacy inactivity holds recognisable');
+
+const serverOwned=inactivity.serverPolicy({free_first_playback_grace_days:4,free_playback_window_days:9,free_minimum_playback_minutes:45,inactivity_policy:{firstPlaybackGraceDays:99,noPlaybackDays:99,minimumPlaybackMinutes:999,playbackWindowDays:99}},globalPolicy);
+assert.equal(serverOwned.firstPlaybackGraceDays,4,'the assigned server must own first-play grace');
+assert.equal(serverOwned.noPlaybackDays,9,'the assigned server activity window must own inactivity recency');
+assert.equal(serverOwned.playbackWindowDays,9,'the assigned server activity window must own rolling playback');
+assert.equal(serverOwned.minimumPlaybackMinutes,45,'the assigned server must own minimum playback');
+assert.equal(serverOwned.thresholdOwner,'free_server','effective inactivity policy must identify server ownership');
 
 const now=Date.parse('2026-09-07T12:00:00.000Z');
 const restored=inactivity.assessUsage({
@@ -134,6 +141,9 @@ assert.match(base,/EXISTS\(SELECT 1 FROM active_playback_sessions aps WHERE aps\
 assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) first_playback_at/,'first playback must be scoped to the effective Free allocation');
 assert.match(base,/FILTER\(WHERE ph\.started_at>=allocation\.allocation_start_at\) last_playback_at/,'last playback must ignore sessions from previous restored Free allocations');
 assert.match(base,/ph\.started_at>=GREATEST\(allocation\.allocation_start_at,NOW\(\)-/,'minimum-playback totals must be clipped to the effective allocation as well as the rolling window');
+assert.match(base,/js\.free_first_playback_grace_days/,'candidate policy must read the assigned server first-play grace');
+assert.match(base,/js\.free_playback_window_days/,'candidate policy and rolling usage must read the assigned server activity window');
+assert.match(base,/js\.free_minimum_playback_minutes/,'candidate policy must read the assigned server minimum playback');
 assert.match(base,/rawLastActivityAt=asDate\(row\.last_activity_at\)/,'retention assessment must consume the Jellyfin activity timestamp that fleet telemetry persists');
 assert.match(base,/const lastActivityAt=rawLastActivityAt&&\(!allocationStartAt/,'Jellyfin activity must be scoped to the current Free allocation');
 assert.match(base,/const playbackOrActivityAt=lastActivityAt&&lastPlaybackAt/,'recent activity must use the newest trustworthy Jellyfin activity or playback signal');
@@ -148,12 +158,12 @@ assert.match(grace,/if \(!row\?\.has_playback && firstPlaybackGraceDays != null 
 assert.match(status,/firstPlaybackAt:row\.first_playback_at\|\|null/,'customer status must expose first-play activation evidence to My Access');
 assert.match(status,/lastActivityAt:row\.last_activity_at\|\|null/,'customer status must expose Jellyfin activity evidence to My Access');
 assert.match(status,/allocationStartAt:row\.allocation_start_at\|\|null/,'customer status must expose the current allocation boundary to My Access');
-assert.match(adminPolicy,/Free Server activity rules/,'the Free plan editor must expose the activity policy');
-assert.match(adminPolicy,/name="firstPlaybackGraceDays"/,'the Free plan editor must expose first-play days');
-assert.match(adminPolicy,/name="activityWindowDays"/,'the Free plan editor must expose the ongoing activity window');
-assert.match(adminPolicy,/name="minimumPlaybackMinutes"/,'the Free plan editor must expose the playback minimum');
-assert.match(adminPolicy,/noPlaybackDays:activityWindowDays,playbackWindowDays:activityWindowDays/,'the admin activity window must drive both recency and rolling playback windows');
-assert.match(adminPolicy,/Restoring access starts a fresh activation window and old playback is ignored/,'the Free plan UI must explain restored-allocation semantics');
+assert.match(adminPolicy,/Inactivity thresholds are owned by the Free media server/,'the Free plan editor must identify the server as inactivity threshold owner');
+assert.match(adminPolicy,/href="\/admin\/servers"/,'the Free plan editor must link operators to server configuration');
+assert(!adminPolicy.includes('name="firstPlaybackGraceDays"'),'the Free plan editor must not expose an ineffective first-play override');
+assert(!adminPolicy.includes('name="activityWindowDays"'),'the Free plan editor must not expose an ineffective activity-window override');
+assert(!adminPolicy.includes('name="minimumPlaybackMinutes"'),'the Free plan editor must not expose an ineffective playback-minimum override');
+assert.match(adminPolicy,/server-owned settings are now the only enforcement authority/,'the legacy plan-level POST must fail closed without changing thresholds');
 assert.match(bulkOperations,/COALESCE\(NULLIF\(s\.service_type_snapshot,''\),p\.service_type,'jellyfin'\) IN \('jellyfin','bundle'\)/,'admin bulk primary-plan fallback must never select standalone Stremio or Emby subscriptions');
 
 console.log('Free Access inactivity consistency smoke: ok');
