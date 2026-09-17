@@ -88,14 +88,32 @@ if (customPolicy.freeFirstPlaybackGraceDays !== 5 || customPolicy.freePlaybackWi
 const effectiveCustomPolicy = inactivity.serverPolicy({
     free_first_playback_grace_days: customPolicy.freeFirstPlaybackGraceDays,
     free_playback_window_days: customPolicy.freePlaybackWindowDays,
-    free_minimum_playback_minutes: customPolicy.freeMinimumPlaybackMinutes
+    free_minimum_playback_minutes: customPolicy.freeMinimumPlaybackMinutes,
+    inactivity_policy: { firstPlaybackGraceDays: 99, noPlaybackDays: 99, minimumPlaybackMinutes: 999, playbackWindowDays: 99 }
 }, { enabled: true, dryRun: false });
-if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
+if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.noPlaybackDays !== 14 || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
     throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 policy');
 }
-const effectiveDefaults = inactivity.serverPolicy({}, { enabled: true, dryRun: false });
-if (effectiveDefaults.firstPlaybackGraceDays !== 3 || effectiveDefaults.playbackWindowDays !== 7 || effectiveDefaults.minimumPlaybackMinutes !== 30) {
-    throw new Error('Inactivity enforcement must retain 3 / 7 / 30 defaults for legacy Free servers');
+if (effectiveCustomPolicy.thresholdOwner !== 'free_server') throw new Error('Free inactivity threshold ownership must be the assigned server');
+const effectiveDefaults = inactivity.serverPolicy({}, { enabled: true, dryRun: true });
+if (effectiveDefaults.firstPlaybackGraceDays !== 3 || effectiveDefaults.playbackWindowDays !== 7 || effectiveDefaults.minimumPlaybackMinutes !== 30 || !effectiveDefaults.dryRun) {
+    throw new Error('Inactivity enforcement must retain 3 / 7 / 30 defaults while preserving the global dry-run switch');
+}
+
+const root = path.join(__dirname, '..');
+const inactivitySource = fs.readFileSync(path.join(root, 'src/automation/customer-inactivity.js'), 'utf8');
+for (const column of ['js.free_first_playback_grace_days', 'js.free_playback_window_days', 'js.free_minimum_playback_minutes']) {
+    if (!inactivitySource.includes(column)) throw new Error(`Inactivity candidate discovery must read ${column} from the assigned server`);
+}
+if (!inactivitySource.includes("COALESCE(js.free_playback_window_days,7)||' days'")) throw new Error('Rolling playback SQL must use the assigned server activity window');
+if (inactivitySource.includes("fa.inactivity_policy->>'playbackWindowDays'")) throw new Error('Rolling playback must not use the legacy per-plan threshold');
+const migrationSource = fs.readFileSync(path.join(root, 'db/migrations/20260917220000_free_server_inactivity_policy.sql'), 'utf8');
+for (const expected of ['DEFAULT 3', 'DEFAULT 7', 'DEFAULT 30']) {
+    if (!migrationSource.includes(expected)) throw new Error(`Per-server inactivity migration is missing ${expected}`);
+}
+const formView = fs.readFileSync(path.join(root, 'views/admin/server-form.ejs'), 'utf8');
+for (const field of ['freeFirstPlaybackGraceDays', 'freePlaybackWindowDays', 'freeMinimumPlaybackMinutes']) {
+    if (!formView.includes(`name="${field}"`)) throw new Error(`Server form must expose ${field}`);
 }
 
 const legacyDefault = parseServerForm({ ...valid, mediaServerType: undefined }, { apiKeyRequired: true });
