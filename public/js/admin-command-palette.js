@@ -23,11 +23,23 @@
     const href=String(command.href||'').trim();
     const label=String(command.label||'').trim();
     if(!href||!label)return;
-    if(list.some(item=>item.href===href))return;
+    const existing=list.find(item=>item.href===href);
+    if(existing){
+      existing.keywords=normalize(`${existing.keywords||''} ${existing.label||''} ${command.keywords||''} ${label}`);
+      existing.search=normalize(`${existing.label} ${existing.group||''} ${existing.keywords} ${href}`);
+      return;
+    }
     list.push({...command,href,label,search:normalize(`${label} ${command.group||''} ${command.keywords||''} ${href}`)});
   }
   function discoverCommands(){
     const list=[];
+    const registry=document.querySelector('[data-admin-command-index]');
+    if(registry){
+      try{
+        const seeded=JSON.parse(registry.textContent||'[]');
+        if(Array.isArray(seeded))seeded.forEach(command=>addCommand(list,command));
+      }catch(_error){}
+    }
     [
       {label:'Add customer',href:'/admin/users/new',group:'Customers',keywords:'new create invite'},
       {label:'Import Jellyfin users',href:'/admin/jellyfin-import',group:'Customers',keywords:'import existing accounts'},
