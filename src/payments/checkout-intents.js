@@ -8,7 +8,7 @@ const capacity = require('../entitlements/plan-capacity');
 
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
 const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
-const CUSTOMER_CHECKOUT_LOCK_MINUTES = 10;
+const CUSTOMER_CHECKOUT_LOCK_MINUTES = 2;
 
 function hash(raw) { return crypto.createHash('sha256').update(String(raw)).digest('hex'); }
 function rawNonce() { return crypto.randomBytes(32).toString('base64url'); }
@@ -149,17 +149,43 @@ async function createIntent({
             WHERE customer_id=$1
               AND state='open'
               AND (
-                expires_at<=NOW()
-                OR created_at<=NOW()-($2::int * INTERVAL '1 minute')
+                (
+                  provider_checkout_id IS NULL
+                  AND (
+                    expires_at<=NOW()
+                    OR created_at<=NOW()-($2::int * INTERVAL '1 minute')
+                  )
+                )
+                OR (
+                  provider_checkout_id IS NOT NULL
+                  AND provider_terminal_at IS NULL
+                  AND COALESCE(capacity_hold_until,expires_at)<=NOW()
+                )
+                OR (
+                  provider_checkout_id IS NOT NULL
+                  AND provider_terminal_at IS NOT NULL
+                )
               )
             RETURNING id
         `, [customerId, CUSTOMER_CHECKOUT_LOCK_MINUTES]);
         for (const x of expired.rows) await settleReservation(client, x.id, 'expired');
 
         const existing = await client.query(`
-            SELECT id,provider,checkout_mode,expires_at
+            SELECT
+                id,provider,checkout_mode,expires_at,
+                provider_checkout_id,provider_terminal_at,
+                capacity_hold_until,plan_id,plan_price_id
             FROM billing_checkout_intents
-            WHERE customer_id=$1 AND state='open'
+            WHERE customer_id=$1
+              AND (
+                state='open'
+                OR (
+                  provider_checkout_id IS NOT NULL
+                  AND provider_terminal_at IS NULL
+                  AND COALESCE(capacity_hold_until,expires_at)>NOW()
+                )
+              )
+            ORDER BY created_at DESC
             LIMIT 1 FOR UPDATE
         `, [customerId]);
         if (existing.rowCount) throw new Error(`A checkout is already in progress. Finish or cancel it, or wait up to ${CUSTOMER_CHECKOUT_LOCK_MINUTES} minutes before starting another one.`);
@@ -233,7 +259,16 @@ function verifyRow(row, {
     nonce, providerCheckoutId = null, scope = null, provider = null, ownerId = null
 } = {}) {
     if (!row) throw new Error('Checkout intent not found.');
-    if (row.state !== 'open' || new Date(row.expires_at) <= new Date()) throw new Error('Checkout intent has expired or was already used.');
+    const now = new Date();
+    const expiresAt = new Date(row.expires_at);
+    const capacityHoldUntil = row.capacity_hold_until ? new Date(row.capacity_hold_until) : null;
+    const localExpired = Number.isNaN(expiresAt.getTime()) || expiresAt <= now;
+    const attachedProviderWindow = Boolean(String(row.provider_checkout_id || '').trim())
+        && !row.provider_terminal_at
+        && capacityHoldUntil
+        && !Number.isNaN(capacityHoldUntil.getTime())
+        && capacityHoldUntil > now;
+    if (row.state !== 'open' || (localExpired && !attachedProviderWindow)) throw new Error('Checkout intent has expired or was already used.');
     if (!nonce || hash(nonce) !== row.nonce_hash) throw new Error('Checkout state verification failed.');
     if (providerCheckoutId && row.provider_checkout_id && String(row.provider_checkout_id) !== String(providerCheckoutId)) {
         throw new Error('Provider checkout does not match the local checkout intent.');
@@ -446,14 +481,48 @@ async function alreadyCompletedByOwner({ intentId, nonce, scope = null, provider
     return row;
 }
 
+async function getOutstandingForOwner(scope, ownerId) {
+    const result = await query(`
+        SELECT *
+        FROM billing_checkout_intents
+        WHERE customer_id=$1
+          AND (
+            (
+              provider_checkout_id IS NOT NULL
+              AND provider_terminal_at IS NULL
+              AND COALESCE(capacity_hold_until,expires_at)>NOW()
+            )
+            OR (
+              state='open'
+              AND provider_checkout_id IS NULL
+              AND expires_at>NOW()
+              AND created_at>NOW()-($2::int * INTERVAL '1 minute')
+            )
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+    `, [ownerId, CUSTOMER_CHECKOUT_LOCK_MINUTES]);
+    return result.rows[0] || null;
+}
+
 async function getOpenForOwner(scope, ownerId) {
     const result = await query(`
         SELECT *
         FROM billing_checkout_intents
         WHERE customer_id=$1
           AND state='open'
-          AND expires_at>NOW()
-          AND created_at>NOW()-($2::int * INTERVAL '1 minute')
+          AND (
+            (
+              provider_checkout_id IS NOT NULL
+              AND provider_terminal_at IS NULL
+              AND COALESCE(capacity_hold_until,expires_at)>NOW()
+            )
+            OR (
+              provider_checkout_id IS NULL
+              AND expires_at>NOW()
+              AND created_at>NOW()-($2::int * INTERVAL '1 minute')
+            )
+          )
         ORDER BY created_at DESC LIMIT 1
     `, [ownerId, CUSTOMER_CHECKOUT_LOCK_MINUTES]);
     return result.rows[0] || null;
@@ -495,6 +564,7 @@ module.exports = {
     verifiedProviderContract,
     alreadyCompletedByOwner,
     getOpenForOwner,
+    getOutstandingForOwner,
     cancelForOwner,
     hash,
     settleReservation,

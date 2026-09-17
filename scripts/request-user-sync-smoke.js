@@ -176,6 +176,114 @@ function assertSummary(summary, expected, metrics = null){for(const[key,value]of
     const collisionAccess=await requestSync.requestAccessForCustomer(collisionCustomer);assert.strictEqual(collisionAccess.external_user_id,null,'collision must not adopt the unrelated Seerr user id');assert.strictEqual(collisionAccess.status,'failed');
     await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute',status='expired' WHERE customer_id=$1`,[collisionCustomer]);const deleteCallsBeforeCollisionCleanup=remote.deleteCalls.length;const collisionExpired=await requestSync.syncOneCustomer(collisionCustomer);assert.strictEqual(collisionExpired.status,'ignored','invalid entitlement without a linked Seerr id must not delete by username or email');assert.strictEqual(remote.deleteCalls.length,deleteCallsBeforeCollisionCleanup);assert.strictEqual(userById(777),collisionRemote,'unlinked colliding Seerr user must remain untouched');
 
+    const boundCollisionRemote={
+        id:9901,
+        email:'cf-bound-collision@captainfin.invalid',
+        username:'BoundCollisionUser',
+        permissions:32,
+        settings:{
+            username:'BoundCollisionUser',
+            email:'cf-bound-collision@captainfin.invalid',
+            locale:'en',
+            movieQuotaLimit:0,
+            movieQuotaDays:30,
+            tvQuotaLimit:0,
+            tvQuotaDays:30
+        }
+    };
+    const boundCollisionOccupant={
+        id:9902,
+        email:'boundcollisionuser',
+        username:'DifferentSeerrUser',
+        permissions:64,
+        settings:{
+            username:'DifferentSeerrUser',
+            email:'boundcollisionuser',
+            locale:'en',
+            movieQuotaLimit:7,
+            movieQuotaDays:30,
+            tvQuotaLimit:9,
+            tvQuotaDays:30
+        }
+    };
+    remote.users.push(boundCollisionRemote,boundCollisionOccupant);
+
+    const boundCollisionCustomer=await makeCustomer({
+        username:'BoundCollisionUser',
+        email:'bound-collision-owner@example.test',
+        serverIds:[firstServer],
+        planId
+    });
+
+    await query(`
+        INSERT INTO request_user_sync(
+            customer_id,
+            external_user_id,
+            external_email,
+            external_username,
+            status,
+            access_suspended
+        )
+        VALUES($1,$2,$3,$4,'synced',FALSE)
+    `,[
+        boundCollisionCustomer,
+        boundCollisionRemote.id,
+        boundCollisionRemote.email,
+        boundCollisionRemote.username
+    ]);
+
+    const boundCollisionCreates=remote.createCalls;
+    const boundCollisionResult=await requestSync.syncOneCustomer(boundCollisionCustomer);
+
+    assert.strictEqual(
+        boundCollisionResult.status,
+        'synced',
+        'an explicitly bound Seerr account must remain manageable when the preferred login is occupied'
+    );
+    assert.strictEqual(
+        boundCollisionResult.created,
+        false,
+        'a bound-login collision must not create another Seerr account'
+    );
+    assert.strictEqual(
+        remote.createCalls,
+        boundCollisionCreates,
+        'a bound-login collision must not attempt a create'
+    );
+
+    const boundCollisionAccess=await requestSync.requestAccessForCustomer(boundCollisionCustomer);
+
+    assert.strictEqual(
+        Number(boundCollisionAccess.external_user_id),
+        boundCollisionRemote.id,
+        'the existing explicit Seerr binding must be preserved'
+    );
+    assert.strictEqual(
+        boundCollisionAccess.external_email,
+        boundCollisionRemote.email,
+        'the existing unique Seerr login must be preserved when the preferred login is occupied'
+    );
+    assert.strictEqual(
+        userById(boundCollisionRemote.id).email,
+        boundCollisionRemote.email,
+        'sync must not overwrite the bound account login with the colliding login'
+    );
+    assert.strictEqual(
+        boundCollisionOccupant.email,
+        'boundcollisionuser',
+        'the unrelated account occupying the preferred login must remain untouched'
+    );
+    assert.strictEqual(
+        boundCollisionOccupant.permissions,
+        64,
+        'the unrelated colliding account permissions must remain untouched'
+    );
+    assert.strictEqual(
+        boundCollisionOccupant.settings.movieQuotaLimit,
+        7,
+        'the unrelated colliding account settings must remain untouched'
+    );
+
     const serialCustomer=await makeCustomer({username:'SerializedUser',email:'serialized@example.test',serverIds:[firstServer],planId});
     const createCallsBeforeSerial=remote.createCalls;
     const serialResults=await Promise.all([requestSync.syncOneCustomer(serialCustomer),requestSync.syncOneCustomer(serialCustomer)]);

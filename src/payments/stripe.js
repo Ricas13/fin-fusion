@@ -68,6 +68,43 @@ async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,di
     if(mode==='subscription')params.subscription_data={metadata};else params.payment_intent_data={metadata};
     const session=idempotencyKey?await stripe.checkout.sessions.create(params,{idempotencyKey:`checkout-${String(idempotencyKey)}`}):await stripe.checkout.sessions.create(params);return{id:session.id,url:session.url,mode};
 }
+async function resumeCheckout(sessionId) {
+    const id=String(sessionId||'').trim();
+    if(!/^cs_/i.test(id))return null;
+
+    const stripe=await getStripe();
+    const session=await stripe.checkout.sessions.retrieve(id);
+    if(!session?.id)return null;
+
+    const status=String(session.status||'').toLowerCase();
+    const paymentStatus=String(session.payment_status||'').toLowerCase();
+
+    if(status==='open'&&session.url){
+        return{
+            id:session.id,
+            url:session.url,
+            mode:session.mode,
+            resumed:true,
+            status
+        };
+    }
+
+    if(status==='complete'&&['paid','no_payment_required'].includes(paymentStatus)){
+        await activateCheckoutSession(session);
+        return{
+            internal:true,
+            message:'Payment confirmed. Your access has been updated.'
+        };
+    }
+
+    if(status==='expired'){
+        await checkoutIntents.completeVerifiedProvider('stripe',session.id,'cancelled');
+        return null;
+    }
+
+    return null;
+}
+
 async function createCustomerPortal({customerId,returnUrl}) {
     const mapping=await lifecycle.findPaymentCustomer(customerId,'stripe');if(!mapping)throw new Error('No Stripe customer exists for this account');
     const stripe=await getStripe(),session=await stripe.billingPortal.sessions.create({customer:mapping.provider_customer_id,return_url:returnUrl});return{url:session.url};
@@ -301,4 +338,4 @@ async function processWebhook(rawBody,signature) {
     const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:event.type,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};
 }
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='stripe')throw new Error('Stripe retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored Stripe payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};
+module.exports={enabled,createCheckout,resumeCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};
