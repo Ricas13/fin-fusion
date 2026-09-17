@@ -33,13 +33,12 @@
   }
   function discoverCommands(){
     const list=[];
-    const registry=document.querySelector('[data-admin-command-index]');
-    if(registry){
-      try{
-        const seeded=JSON.parse(registry.textContent||'[]');
-        if(Array.isArray(seeded))seeded.forEach(command=>addCommand(list,command));
-      }catch(_error){}
-    }
+    document.querySelectorAll('[data-admin-command-seed]').forEach(seed=>addCommand(list,{
+      label:seed.dataset.label||'',
+      href:seed.dataset.href||'',
+      group:seed.dataset.group||'Administration',
+      keywords:seed.dataset.keywords||''
+    }));
     [
       {label:'Add customer',href:'/admin/users/new',group:'Customers',keywords:'new create invite'},
       {label:'Import Jellyfin users',href:'/admin/jellyfin-import',group:'Customers',keywords:'import existing accounts'},
