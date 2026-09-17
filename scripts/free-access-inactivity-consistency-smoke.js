@@ -143,7 +143,9 @@ assert.match(base,/\(\$2::uuid IS NULL OR s\.customer_id=\$2::uuid\)/,'customer-
 assert.match(base,/MAX\(jal\.restored_at\).*restored_at/,'current allocation discovery must include explicit Free Server restoration time');
 assert.match(base,/metadata->>'restoredReason'='admin_reenable'/,'only a real administrator re-enable may reset established account playback history');
 assert.match(base,/metadata->>'explicitRestore'='true'/,'generic legacy lifecycle rows must not reset the customer-facing Free allocation');
-assert.match(base,/SELECT MIN\(ph\.started_at\) historical_first_playback_at/,'candidate discovery must find established playback evidence for the current managed Jellyfin account');
+assert.match(base,/MIN\(ph\.started_at\) FILTER\(WHERE ph\.started_at>=ja\.access_lane_changed_at\) historical_first_playback_at/,'candidate discovery must find established playback evidence for the current managed Jellyfin account');
+assert.match(base,/COUNT\(\*\)>0 any_playback_history/,'candidate discovery must distinguish true never-played accounts from ambiguous legacy playback');
+assert.match(base,/COALESCE\(historical\.any_playback_history,FALSE\) any_playback_history/,'candidate rows must carry the explicit historical-playback signal into legacy grace evaluation');
 assert((base.match(/ph\.jellyfin_account_id=ja\.id/g)||[]).length>=2,'both historical activation evidence and rolling usage must be scoped to the exact current Jellyfin account ID');
 assert.match(base,/FILTER\(WHERE ph\.started_at>=ja\.access_lane_changed_at\)/,'established playback evidence must never predate this account\'s current access_lane -- an account reused from the paid lane (adoptExistingFreeAccount) must not inherit its pre-flip paid-era playback as Free activation evidence');
 assert.match(base,/WHEN lifecycle\.restored_at IS NOT NULL THEN GREATEST\(fa\.starts_at,ja\.access_lane_changed_at,lifecycle\.restored_at\)/,'explicit restoration must remain the newest allocation boundary and discard old playback');
