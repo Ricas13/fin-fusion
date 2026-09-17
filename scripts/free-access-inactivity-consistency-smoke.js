@@ -154,6 +154,7 @@ assert.match(enforcement, /await accessHolds\.addHold\([\s\S]*?await provisionin
 assert(enforcement.indexOf("'customer.inactivity.remove_jellyfin'") > enforcement.indexOf('await verifyRemoved(row.account_id)'), 'successful removal audit must be written only after deletion is verified');
 assert.doesNotMatch(enforcement, /refreshServerUserActivity|candidate_user_not_observed_in_fresh_users_response/, 'login/user-inventory refresh must not be a retention rule');
 assert.doesNotMatch(enforcement, /massRemovalRisk|CIRCUIT_BREAKER_/, 'retired mass-removal rules must be gone');
+assert.doesNotMatch(enforcement, /forceDryRun/, 'configured dry-run must be the only execution-mode authority');
 assert.doesNotMatch(enforcement, /usageSatisfiedEarlierToday/, 'the same rolling playback query must be the single usage authority');
 
 // Server pins cannot erase blockers.
