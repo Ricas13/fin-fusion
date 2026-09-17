@@ -19,7 +19,10 @@ function serverPolicy(row={},globalCfg={}){
     enabled:Boolean(globalCfg.enabled),
     dryRun:Boolean(globalCfg.dryRun),
     firstPlaybackGraceDays:boundedInt(row.free_first_playback_grace_days,1,3650,FREE_POLICY_DEFAULTS.firstPlaybackGraceDays),
-    noPlaybackDays:playbackWindowDays,
+    // The Free Server policy has one post-activation requirement: meet the
+    // minimum watch time inside the rolling playback window. Jellyfin login/
+    // LastActivityDate is observational only and never keeps access alive.
+    noPlaybackDays:null,
     minimumPlaybackMinutes:boundedInt(row.free_minimum_playback_minutes,1,1000000,FREE_POLICY_DEFAULTS.minimumPlaybackMinutes),
     playbackWindowDays,
     inherited:{...legacy.inherited,firstPlaybackGraceDays:false,noPlaybackDays:false,minimumPlaybackMinutes:false,playbackWindowDays:false},
@@ -35,13 +38,10 @@ function assessUsage(row,policy,now=Date.now()){
   if(!firstPlaybackAt&&lastPlaybackAt)firstPlaybackAt=lastPlaybackAt;
   const hasPlayback=Boolean(firstPlaybackAt||lastPlaybackAt);
   const phasedActivation=policy.firstPlaybackGraceDays!=null;
-  // The modern phased Free policy separates activation, activity and watch time:
-  // first activation remains playback-only; after activation recency follows
-  // Jellyfin LastActivityDate/LastLoginDate with playback as a safe fallback.
-  // Legacy policies without a first-play phase retain their historical literal
-  // no-playback semantics so compatibility callers do not silently change meaning.
-  const playbackOrActivityAt=lastActivityAt&&lastPlaybackAt?(lastActivityAt.getTime()>=lastPlaybackAt.getTime()?lastActivityAt:lastPlaybackAt):lastActivityAt||lastPlaybackAt;
-  const referenceAt=(phasedActivation?playbackOrActivityAt:lastPlaybackAt)||allocationStartAt;
+  // Playback is the only activity signal that affects eligibility. Login,
+  // browsing and Jellyfin LastActivityDate must never satisfy either the first
+  // playback rule or the rolling playback requirement.
+  const referenceAt=lastPlaybackAt||allocationStartAt;
   const observationStartedAt=hasPlayback?(firstPlaybackAt||lastPlaybackAt):allocationStartAt;
   const activationAgeHours=allocationStartAt?Math.max(0,(now-allocationStartAt.getTime())/3600000):0;
   const ageHours=observationStartedAt?Math.max(0,(now-observationStartedAt.getTime())/3600000):0;
@@ -119,7 +119,7 @@ async function candidates(globalCfg=null,{customerId=null}={}){
     if(assessment.firstPlaybackEligible)triggers.push(`no first Free Server playback within ${policy.firstPlaybackGraceDays} day(s) of this allocation`);
     if(assessment.noPlaybackEligible)triggers.push(`no Free Server activity for ${policy.noPlaybackDays} day(s)`);
     if(assessment.usageEligible)triggers.push(`${Math.round(assessment.seconds/60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`);
-    return{...row,policy,first_playback_at:assessment.firstPlaybackAt,last_playback_at:assessment.lastPlaybackAt,last_activity_at:assessment.lastActivityAt,allocation_start_at:assessment.allocationStartAt,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,has_playback:assessment.hasPlayback,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled globally':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?(assessment.hasPlayback?'Free Server removal requires all configured retention rules to be breached':'first-play grace period has not expired'):null].filter(Boolean)};
+    return{...row,policy,first_playback_at:assessment.firstPlaybackAt,last_playback_at:assessment.lastPlaybackAt,last_activity_at:assessment.lastActivityAt,allocation_start_at:assessment.allocationStartAt,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,has_playback:assessment.hasPlayback,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled globally':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?(assessment.hasPlayback?'rolling Free Server playback requirement is currently satisfied or still inside its observation window':'first-play grace period has not expired'):null].filter(Boolean)};
   }).filter(row=>planPolicy.hasUsageTrigger(row.policy));
 }
 
