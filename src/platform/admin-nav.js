@@ -7,7 +7,7 @@ const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Overview','/admin'],['attention','Needs attention','/admin/attention']]},
   {key:'customers',label:'Customers',pages:[['users','All customers','/admin/users'],['tickets','Support','/admin/tickets']]},
   {key:'servers',label:'Servers',pages:[['servers','Jellyfin','/admin/servers'],['stremio-sources','Stremio','/admin/servers/stremio'],['activity','Playback','/admin/activity']]},
-  {key:'commerce',label:'Commerce',pages:[['plans','Plans','/admin/plans'],['orders','Orders','/admin/commerce/orders'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals'],['payments','Payments','/admin/payments']]},
+  {key:'commerce',label:'Commerce',pages:[['plans','Plans','/admin/plans'],['orders','Orders','/admin/commerce/orders'],['billing','Billing','/admin/billing'],['payments','Providers','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
   {key:'operations',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Automation','/admin/automation'],['backups','Backups','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings/integrations'],['system','System','/admin/system']]}
 ]);
@@ -32,7 +32,6 @@ const hiddenPages=Object.freeze({
   marketing:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'orders',page:Object.freeze(['marketing','Marketing','/admin/marketing'])}),
   'storefront-order':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['storefront-order','Storefront order','/admin/plans/order'])}),
   'plan-access-rules':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
-  billing:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   transactions:Object.freeze({kind:'view',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['transactions','Imported payment archive','/admin/payments/transactions'])}),
   refunds:Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['refunds','Prepaid refunds','/admin/refunds'])}),
   expenses:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
