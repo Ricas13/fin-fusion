@@ -7,7 +7,7 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const shell=read('src/platform/admin-html-core.js');
-for(const token of ['data-command-palette-open','data-admin-command-index','aria-haspopup="dialog"','role="dialog"','role="combobox"','role="listbox"','adminCommandResults','/js/admin-command-palette.js'])assert(shell.includes(token),`admin shell missing command palette contract: ${token}`);
+for(const token of ['data-command-palette-open','data-admin-command-seed','aria-haspopup="dialog"','role="dialog"','role="combobox"','role="listbox"','adminCommandResults','/js/admin-command-palette.js'])assert(shell.includes(token),`admin shell missing command palette contract: ${token}`);
 assert(shell.includes("action=\"\\/admin\\/search\""),'command palette enhancement must replace the existing canonical search launcher rather than introduce another search form');
 
 
@@ -20,7 +20,7 @@ for(const [label,href] of [['Billing','/admin/billing'],['Free Server inactivity
 const script=read('public/js/admin-command-palette.js');
 for(const token of ["event.metaKey||event.ctrlKey","event.key.toLowerCase()==='k'","event.key==='Escape'","event.key==='ArrowDown'","event.key==='ArrowUp'","event.key==='Enter'",'a.adminTab[href]','/admin/users/new','/admin/jellyfin-import','/admin/servers/new','/admin/search?q=','aria-activedescendant','window.location.assign'])assert(script.includes(token),`command palette behavior missing: ${token}`);
 assert(script.includes("href==='/logout'||link.target==='_blank'"),'command discovery must exclude sign-out and external account actions');
-assert(script.includes("document.querySelector('[data-admin-command-index]')"),'command palette must seed itself from the canonical server-rendered admin index');
+assert(script.includes("document.querySelectorAll('[data-admin-command-seed]')"),'command palette must seed itself from the canonical CSP-safe server-rendered admin index');
 assert(script.includes('.textContent=command.label')&&script.includes('.textContent=command.group'),'dynamic command labels must be written as text, not interpolated into HTML');
 assert(!script.includes('fetch('),'command palette must reuse canonical navigation/search instead of creating a second live-search API');
 
