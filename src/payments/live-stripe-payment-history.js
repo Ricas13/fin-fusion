@@ -19,7 +19,12 @@ function positiveInteger(value) {
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
-function occurredAt(charge) { const created = Number(charge?.created); return Number.isFinite(created) && created > 0 ? new Date(created * 1000) : new Date(); }
+function occurredAt(charge, balanceTransaction) {
+    const balanceCreated = Number(balanceTransaction?.created);
+    if (Number.isFinite(balanceCreated) && balanceCreated > 0) return new Date(balanceCreated * 1000);
+    const chargeCreated = Number(charge?.created);
+    return Number.isFinite(chargeCreated) && chargeCreated > 0 ? new Date(chargeCreated * 1000) : new Date();
+}
 function mergedMetadata(charge) {
     const paymentIntent = charge?.payment_intent && typeof charge.payment_intent === 'object' ? charge.payment_intent : null;
     return { ...(paymentIntent?.metadata || {}), ...(charge?.metadata || {}) };
@@ -49,6 +54,19 @@ async function resolveCustomerId(charge) {
         if (ids.length === 1) return ids[0];
     }
 
+    const paymentIntentId = paymentIntentReference(charge);
+    if (paymentIntentId) {
+        const legacy = await query(`
+            SELECT DISTINCT customer_id
+              FROM legacy_subscription_imports
+             WHERE provider='stripe'
+               AND provider_transaction_id=$1
+               AND customer_id IS NOT NULL
+             LIMIT 2
+        `, [paymentIntentId]);
+        if (legacy.rowCount === 1) return legacy.rows[0].customer_id;
+    }
+
     const email = String(charge?.billing_details?.email || '').trim().toLowerCase();
     if (email) {
         const matched = await query(`
@@ -71,29 +89,36 @@ async function expandedBalanceTransaction(stripe, charge) {
 }
 
 function historyValues(charge, balanceTransaction, customerId) {
-    const amount = positiveInteger(charge?.amount);
-    if (!charge?.id || !charge?.paid || amount == null || amount <= 0) return null;
+    // This is an accounting ledger. Stripe's balance transaction is the
+    // canonical identity and monetary source because it owns settlement
+    // currency, gross, fee and net.
+    const amount = positiveInteger(balanceTransaction?.amount);
+    if (!charge?.id || !charge?.paid || !balanceTransaction?.id || amount == null || amount <= 0) return null;
+
     const fee = positiveInteger(balanceTransaction?.fee);
     const rawNet = balanceTransaction?.net;
     const net = rawNet == null || rawNet === '' ? Number.NaN : Number(rawNet);
     if (fee == null || !Number.isFinite(net)) return null;
+
     const metadata = mergedMetadata(charge);
     return {
-        providerTransactionId: String(charge.id),
-        status: String(charge.status || 'succeeded'),
-        occurredAt: occurredAt(charge),
-        currency: String(charge.currency || balanceTransaction?.currency || '').toUpperCase(),
+        providerTransactionId: String(balanceTransaction.id),
+        status: String(balanceTransaction.status || charge.status || 'available'),
+        occurredAt: occurredAt(charge, balanceTransaction),
+        currency: String(balanceTransaction.currency || charge.currency || '').toUpperCase(),
         grossMinor: amount,
         feeMinor: fee,
         netMinor: Math.round(net),
         providerCustomerId: customerReference(charge),
         providerReferenceId: paymentIntentReference(charge),
-        providerSourceId: invoiceReference(charge),
+        providerSourceId: String(charge.id),
         customerId: customerId || null,
         metadata: {
             liveStripeSync: true,
             providerAuthoritative: true,
             feeDataAvailable: true,
+            balanceTransactionId: String(balanceTransaction.id),
+            chargeId: String(charge.id),
             paymentIntentId: paymentIntentReference(charge),
             invoiceId: invoiceReference(charge),
             checkoutIntentId: metadata.internal_checkout_intent_id || null,

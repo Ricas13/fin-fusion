@@ -533,13 +533,27 @@ async function resolveRequestCandidate(candidate) {
 }
 async function syncCustomerLocked(candidate, indexes = {}, options = {}) {
   candidate = await resolveRequestCandidate(candidate);
-  const username = cleanUsername(candidate?.username), email = requestLogin(candidate);
+  const username = cleanUsername(candidate?.username);
+  let email = requestLogin(candidate);
   const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
   let external = trustedExternalForCandidate(candidate, indexes), bindingSafe = Boolean(candidate.external_user_id);
   if (!candidate.entitlement_active || candidate.request_access_enabled === false) return removeCustomer(candidate, indexes, options);
   try {
     const collision = loginCollisionForCandidate(candidate, indexes, email, external);
-    if (collision) throw new Error(`Request-site login "${email}" is already used by another Seerr account; refusing to adopt or overwrite it.`);
+    if (collision) {
+      const boundLogin = candidate.external_user_id && external
+        ? externalIdentity(external.email)
+        : '';
+      const boundCollision = boundLogin
+        ? loginCollisionForCandidate(candidate, indexes, boundLogin, external)
+        : null;
+
+      if (boundLogin && !boundCollision) {
+        email = boundLogin;
+      } else {
+        throw new Error(`Request-site login "${email}" is already used by another Seerr account; refusing to adopt or overwrite it.`);
+      }
+    }
     let created = false, recoveredConcurrentCreate = false;
     if (!external) {
       const bootstrapPassword = suppliedPassword || crypto.randomBytes(30).toString('base64url');

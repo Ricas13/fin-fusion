@@ -75,12 +75,19 @@ async function main() {
     const expiryProviderId = `ORDER-expiry-${suffix}`;
     await intents.attachProviderCheckout(expiring.id, expiryProviderId);
     await query(`UPDATE billing_checkout_intents SET expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`, [expiring.id]);
-    const replacement = await intents.createIntent({ scope: 'customer', customerId: expiryCustomer.id, provider: 'stripe', checkoutMode: 'payment', commercialSnapshot: {} });
-    const naturallyExpired = await intents.findById(expiring.id);
-    expect(naturallyExpired.state === 'expired', 'starting a replacement checkout must mark the old local intent expired.');
-    expect(await capacityHoldCount(expiring.id) === 1, 'locally expired attached checkout must keep reserving capacity while provider settlement is possible.');
+    await expectReject(
+        () => intents.createIntent({ scope: 'customer', customerId: expiryCustomer.id, provider: 'stripe', checkoutMode: 'payment', commercialSnapshot: {} }),
+        /already in progress/i
+    );
+    const stillOutstanding = await intents.findById(expiring.id);
+    expect(stillOutstanding.state === 'open', 'local expiry must not invalidate an attached provider checkout while provider settlement remains possible.');
+    expect(await capacityHoldCount(expiring.id) === 1, 'attached unresolved checkout must retain capacity while provider settlement remains possible.');
+
     await intents.completeVerifiedProvider('paypal', expiryProviderId, 'cancelled');
-    expect(await capacityHoldCount(expiring.id) === 0, 'provider-terminal truth must release capacity retained past local expiry.');
+    expect(await capacityHoldCount(expiring.id) === 0, 'provider-terminal truth must release retained capacity immediately.');
+
+    const replacement = await intents.createIntent({ scope: 'customer', customerId: expiryCustomer.id, provider: 'stripe', checkoutMode: 'payment', commercialSnapshot: {} });
+    expect(replacement && replacement.id, 'a new provider checkout must succeed immediately after provider-terminal truth.');
     await intents.consume({ intentId: replacement.id, nonce: replacement.nonce, state: 'cancelled', scope: 'customer', provider: 'stripe', ownerId: expiryCustomer.id });
 
     const root = path.join(__dirname, '..');
@@ -94,7 +101,7 @@ async function main() {
     expect(routeSource.includes("/account/checkout/cancel-open"), 'a self-service cancel-open route must exist.');
     expect(routeSource.includes('checkoutStartLimit'), 'checkout-session creation must be rate limited.');
     expect(routeSource.includes('await assertProviderCheckoutReady(provider);'), 'server-side checkout must enforce provider callback readiness before starting a checkout.');
-    expect(routeSource.includes("router.get('/account/checkout/readiness',requireCustomer"), 'customer UI must receive authenticated provider checkout readiness.');
+    expect(routeSource.includes("router.get('/account/checkout/readiness',checkoutReadLimit,requireCustomer"), 'customer UI provider checkout readiness must be rate limited before customer authorization.');
     expect(routeSource.indexOf('await assertProviderCheckoutReady(provider);') < routeSource.indexOf('const intent=await intents.createIntent'), 'provider readiness must be checked before a local checkout intent is created.');
     expect(checkoutJs.includes("fetch('/account/checkout/readiness'"), 'customer checkout UI must consume provider readiness.');
     expect(checkoutJs.includes('form.checkoutForm[action='), 'customer checkout UI must hide unavailable provider forms.');
