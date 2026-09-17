@@ -11,6 +11,17 @@ const MAX_LIMIT = 100;
 const LOOKBACK_DAYS = 90;
 const PAYPAL_RECOVERABLE = new Set(['ACTIVE', 'SUSPENDED']);
 const PAYPAL_TERMINAL = new Set(['CANCELLED', 'CANCELED', 'EXPIRED']);
+const PAYPAL_LOCALLY_ABANDONED = new Set(['expired', 'cancelled']);
+
+function paypalResourceNotFound(error) {
+    if (String(error?.provider || '').toLowerCase() !== 'paypal') return false;
+    if (String(error?.code || '') !== 'http_error') return false;
+    if (Boolean(error?.retryable)) return false;
+    const status = Number(error?.status);
+    if (status === 404) return true;
+    if (status !== 422) return false;
+    return /specified resource does not exist|resource not found|not found/i.test(String(error?.message || ''));
+}
 
 function clampLimit(value) {
     return Math.max(1, Math.min(MAX_LIMIT, Number(value) || DEFAULT_LIMIT));
@@ -71,10 +82,8 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
           AND (
               (
                   i.checkout_mode='subscription'
-                  AND (
-                      i.state IN ('open','failed','expired')
-                      OR (i.state='cancelled' AND i.provider_terminal_at IS NULL)
-                  )
+                  AND i.state IN ('open','failed','expired','cancelled')
+                  AND i.provider_terminal_at IS NULL
               )
               OR (
                   i.provider='paypal'
@@ -143,7 +152,28 @@ async function recoverPayPalPayment(row, handlers) {
 async function recoverPayPal(row, handlers) {
     if (row.checkout_mode === 'payment') return recoverPayPalPayment(row, handlers);
 
-    const synced = await handlers.paypalStatus(row);
+    let synced;
+    try {
+        synced = await handlers.paypalStatus(row);
+    } catch (error) {
+        const localState = String(row?.state || '').trim().toLowerCase();
+
+        // An attached PayPal checkout that has already been abandoned locally
+        // must not poison recovery forever when PayPal confirms that the
+        // provider resource no longer exists. provider-http already attempts
+        // the legacy billing-agreement API before surfacing the final error.
+        //
+        // Keep open/failed checkouts visible: a 404 there can indicate a
+        // credential, environment or configuration mismatch rather than a
+        // genuinely abandoned checkout.
+        if (PAYPAL_LOCALLY_ABANDONED.has(localState) && paypalResourceNotFound(error)) {
+            await handlers.markTerminal(row);
+            return { state: 'terminal', detail: 'PROVIDER_NOT_FOUND' };
+        }
+
+        throw error;
+    }
+
     const providerStatus = paypal.paypalStatus(synced?.providerStatus || synced?.subscription?.status);
 
     // If a local subscription already exists, the provider checkout did settle at
@@ -216,6 +246,8 @@ module.exports = {
     LOOKBACK_DAYS,
     PAYPAL_RECOVERABLE,
     PAYPAL_TERMINAL,
+    PAYPAL_LOCALLY_ABANDONED,
+    paypalResourceNotFound,
     clampLimit,
     failureWarning,
     candidates,
