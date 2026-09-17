@@ -75,9 +75,10 @@ function freeInactivitySafetyContract(){
   const lifecycle=source('src/entitlements/jellyfin-lifecycle-policy.js');
 
   assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/,'Free inactivity must preserve current and orphaned same-customer/server playback continuity');
-  const historical=inactivity.match(/SELECT MIN\(ph\.started_at\) historical_first_playback_at[\s\S]*?\) historical ON TRUE/);
+  const historical=inactivity.match(/LEFT JOIN LATERAL \([\s\S]*?historical_first_playback_at,[\s\S]*?any_playback_history[\s\S]*?\) historical ON TRUE/);
   assert(historical,'historical playback continuity query must exist');
   assert(historical[0].includes('ph.started_at>=ja.access_lane_changed_at'),'historical Free activation evidence must be scoped to the current access lane so paid-era playback cannot activate a newly adopted Free allocation');
+  assert(historical[0].includes('COUNT(*)>0 any_playback_history'),'legacy safety must know when an account has positively never played');
 
   assert.match(lifecycle,/SAFE_UNCONFIGURED=Object\.freeze\(\{enabled:false,dryRun:true\}\)/,'missing lifecycle configuration must have an explicit fail-closed state');
   assert.equal(lifecyclePolicy.explicitlyConfigured({}),false,'empty lifecycle settings must not authorize destructive automation');
@@ -103,6 +104,7 @@ function freeInactivitySafetyContract(){
   assert.equal(spike.retired,true,'the historical mass-removal population breaker must stay explicitly retired');
   assert.doesNotMatch(scoped,/configuredDryRun \|\| circuitBreaker\.tripped/,'population-size diagnostics must not override the configured live/dry-run mode');
   assert.match(scoped,/eligible\.slice\(0, MAX_ENFORCEMENTS_PER_RUN\)/,'large cleanups must be bounded by throughput rather than globally blocked');
+  assert(!scoped.includes("mode === 'forced_server'"),'admin server pinning must remain placement authority, not an inactivity exemption');
 }
 
 function deferredWebhookContract(){

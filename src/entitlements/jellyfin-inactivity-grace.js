@@ -43,6 +43,14 @@ function legacySafetyHours(row) {
     return windows.length ? Math.max(...windows) : 0;
 }
 
+function legacyResetNeedsGrace(row) {
+    // The one-time 2026-09 legacy reset exists only because old lane boundaries
+    // can make established playback ambiguous. A customer with positively no
+    // playback history has no ambiguity to protect: the normal first-play grace
+    // applies immediately from the effective allocation boundary.
+    return row?.any_playback_history !== false;
+}
+
 function laterGraceReference(accountRestoredAt, automationResumedAt) {
     const references = [
         accountRestoredAt ? { at: accountRestoredAt, source: 'admin_restore' } : null,
@@ -118,7 +126,7 @@ async function applyRestorationGrace(rows, { now = Date.now() } = {}) {
         if (ordinaryWindow) windows.push(ordinaryWindow);
 
         const legacyAt = legacyResetByAccount.get(String(row.account_id));
-        if (legacyAt) {
+        if (legacyAt && legacyResetNeedsGrace(row)) {
             const ms = new Date(legacyAt).getTime();
             const legacyWindow = graceWindow(
                 Number.isFinite(ms) ? { at: legacyAt, ms, source: 'legacy_lane_backfill' } : null,
@@ -148,4 +156,4 @@ async function applyRestorationGrace(rows, { now = Date.now() } = {}) {
     });
 }
 
-module.exports = { graceHours, legacySafetyHours, laterGraceReference, graceWindow, applyRestorationGrace };
+module.exports = { graceHours, legacySafetyHours, legacyResetNeedsGrace, laterGraceReference, graceWindow, applyRestorationGrace };

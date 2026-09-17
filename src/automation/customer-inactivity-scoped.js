@@ -157,11 +157,14 @@ async function usageSatisfiedEarlierToday(row) {
 function adminProtectedFreeEntitlement(entitlement) {
     if (!entitlement) return false;
     const mode = String(entitlement.admin_jellyfin_mode || '').toLowerCase();
+    // Placement is not protection. An admin server pin decides where the
+    // account lives; it must not silently exempt the customer from Free Server
+    // inactivity rules. Only permanent access or an explicit admin-present
+    // directive suppresses automated inactivity removal.
     return Boolean(
         entitlement.permanent_access
         || entitlement.admin_present
         || mode === 'present'
-        || mode === 'forced_server'
     );
 }
 
