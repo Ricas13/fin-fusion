@@ -255,7 +255,7 @@ async function removeEligibleAccount(row, actorUserId) {
     );
 }
 
-async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
+async function runPlanRules({ actorUserId = null } = {}) {
     const globalCfg = await lifecyclePolicy.get();
     const released = await base.releaseObsoletePlanHolds(actorUserId);
 
@@ -326,9 +326,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
                     }
 
                     const row = final.fresh;
-                    const dryRun = forceDryRun === null
-                        ? Boolean(row.policy.dryRun)
-                        : Boolean(forceDryRun);
+                    const dryRun = Boolean(row.policy.dryRun);
 
                     if (dryRun) {
                         await recordDryRun(row, actorUserId);
@@ -364,9 +362,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         safetySkipped,
         released,
         warning,
-        dryRun: Boolean(selected.length && selected.every(
-            row => forceDryRun === true || (forceDryRun === null && row.policy.dryRun)
-        )),
+        dryRun: Boolean(selected.length && selected.every(row => row.policy.dryRun)),
         telemetry,
         serverFailures: telemetry.unsafeTargetServers,
         examples: eligible.slice(0, 25).map(row => ({
