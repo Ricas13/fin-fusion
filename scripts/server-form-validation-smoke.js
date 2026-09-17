@@ -6,6 +6,7 @@ delete process.env.JELLYFIN_ALLOWED_HOSTS;
 const fs = require('fs');
 const path = require('path');
 const { parseServerForm, safeAdminErrorInfo } = require('../src/platform/admin-servers');
+const inactivity = require('../src/automation/customer-inactivity');
 const webhookAuth = require('../src/jellyfin/playback-webhook-auth');
 const webhookToken = require('./jellyfin-webhook-token');
 
@@ -84,6 +85,19 @@ if (customPolicy.freeFirstPlaybackGraceDays !== 5 || customPolicy.freePlaybackWi
     throw new Error('Free Server inactivity overrides must survive form parsing');
 }
 
+const effectiveCustomPolicy = inactivity.serverPolicy({
+    free_first_playback_grace_days: customPolicy.freeFirstPlaybackGraceDays,
+    free_playback_window_days: customPolicy.freePlaybackWindowDays,
+    free_minimum_playback_minutes: customPolicy.freeMinimumPlaybackMinutes
+}, { enabled: true, dryRun: false });
+if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
+    throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 policy');
+}
+const effectiveDefaults = inactivity.serverPolicy({}, { enabled: true, dryRun: false });
+if (effectiveDefaults.firstPlaybackGraceDays !== 3 || effectiveDefaults.playbackWindowDays !== 7 || effectiveDefaults.minimumPlaybackMinutes !== 30) {
+    throw new Error('Inactivity enforcement must retain 3 / 7 / 30 defaults for legacy Free servers');
+}
+
 const legacyDefault = parseServerForm({ ...valid, mediaServerType: undefined }, { apiKeyRequired: true });
 if (legacyDefault.mediaServerType !== 'jellyfin') throw new Error('Missing media server type must remain backward-compatible with Jellyfin');
 
@@ -113,4 +127,4 @@ if (!webhookRoute.includes('verifyServerSecret') || !webhookRoute.includes('JELL
 if (webhookRoute.includes("sameSecret(req.get('x-fin-fusion-webhook-secret'),secret)")) throw new Error('Jellyfin webhook route must not authenticate every server with the raw shared secret');
 if (!webhookRoute.includes("require('express-rate-limit')") || !webhookRoute.includes('jellyfinWebhookRateLimit,requestMaintenanceGuard')) throw new Error('Authenticated Jellyfin playback webhooks must be rate-limited before the handler runs');
 
-console.log('Jellyfin/Emby server form validation and playback webhook isolation smoke: ok');
+console.log('Jellyfin/Emby server form validation, Free Server inactivity policy and playback webhook isolation smoke: ok');
