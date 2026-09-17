@@ -21,7 +21,7 @@ const SAFE_ERROR_PREFIXES = [
     'Jellyfin API key format is invalid.', 'Emby API key is required.', 'Emby API key format is invalid.',
     'Media-server API key is required.', 'Media-server API key format is invalid.',
     'Priority must be between ', 'Maximum users must be between ',
-    'Initial playback grace days must be between ', 'Activity window days must be between ',
+    'Initial playback grace days must be between ', 'Playback window days must be between ',
     'Minimum playback minutes must be between ', 'Invalid server class.',
     'Invalid media server type.', 'Jellyfin returned HTTP ', 'Emby returned HTTP ',
     'Jellyfin returned an unexpected response.', 'Emby returned an unexpected response.',
@@ -111,7 +111,7 @@ function parseServerForm(body, { apiKeyRequired = false } = {}) {
         priority: intField(body.priority, { min: 0, max: 10000, field: 'priority', label: 'Priority' }),
         maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: true, field: 'maxUsers', label: 'Maximum users' }),
         freeFirstPlaybackGraceDays: intField(defaulted(body.freeFirstPlaybackGraceDays, FREE_POLICY_DEFAULTS.firstPlaybackGraceDays), { min: 1, max: 3650, field: 'freeFirstPlaybackGraceDays', label: 'Initial playback grace days' }),
-        freePlaybackWindowDays: intField(defaulted(body.freePlaybackWindowDays, FREE_POLICY_DEFAULTS.playbackWindowDays), { min: 1, max: 365, field: 'freePlaybackWindowDays', label: 'Activity window days' }),
+        freePlaybackWindowDays: intField(defaulted(body.freePlaybackWindowDays, FREE_POLICY_DEFAULTS.playbackWindowDays), { min: 1, max: 365, field: 'freePlaybackWindowDays', label: 'Playback window days' }),
         freeMinimumPlaybackMinutes: intField(defaulted(body.freeMinimumPlaybackMinutes, FREE_POLICY_DEFAULTS.minimumPlaybackMinutes), { min: 1, max: 1000000, field: 'freeMinimumPlaybackMinutes', label: 'Minimum playback minutes' }),
         allowNewUsers: boolField(body.allowNewUsers), trialEnabled: boolField(body.trialEnabled),
         paidEnabled: boolField(body.paidEnabled), apiKey: validateApiKey(body.apiKey, apiKeyRequired, type)
