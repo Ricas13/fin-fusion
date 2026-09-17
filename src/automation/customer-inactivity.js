@@ -143,6 +143,15 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
           js.free_minimum_playback_minutes,
           COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,
           COALESCE(c.email,u.email) email,
+          EXISTS(
+            SELECT 1
+            FROM customer_entitlement_overrides active_override
+            WHERE active_override.customer_id=fa.customer_id
+              AND active_override.subscription_id=fa.subscription_id
+              AND active_override.permanent_access=TRUE
+              AND active_override.revoked_at IS NULL
+          ) permanent_access,
+          admin_ctl.mode admin_jellyfin_mode,
           us.first_playback_at,
           us.last_playback_at,
           COALESCE(us.playback_seconds,0)::bigint playback_seconds,
@@ -160,6 +169,9 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
         FROM free_access fa
         JOIN customers c ON c.id=fa.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id
+        LEFT JOIN customer_service_admin_control admin_ctl
+          ON admin_ctl.customer_id=fa.customer_id
+         AND admin_ctl.service='jellyfin'
         JOIN jellyfin_accounts ja
           ON ja.customer_id=fa.customer_id
          AND ja.account_purpose='jellyfin'
@@ -227,7 +239,16 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
         const policy = serverPolicy(row, globalCfg);
         const assessment = assessUsage(row, policy);
         const usageTriggered = assessment.firstPlaybackEligible || assessment.usageEligible;
-        const eligible = policy.enabled && !row.currently_playing && usageTriggered;
+        const adminProtected = Boolean(
+            row.permanent_access
+            || String(row.admin_jellyfin_mode || '') === 'admin_present'
+        );
+        const adminRemoved = String(row.admin_jellyfin_mode || '') === 'admin_removed';
+        const eligible = policy.enabled
+            && !row.currently_playing
+            && !adminProtected
+            && !adminRemoved
+            && usageTriggered;
         const triggers = [];
 
         if (assessment.firstPlaybackEligible) {
@@ -242,6 +263,8 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
         const reasons = [];
         if (!policy.enabled) reasons.push('Free Server inactivity automation is paused');
         if (row.currently_playing) reasons.push('currently playing on Free Server');
+        if (adminProtected) reasons.push('explicit admin/permanent protection');
+        if (adminRemoved) reasons.push('Jellyfin access already marked removed by administrator');
         if (policy.enabled && !usageTriggered) {
             reasons.push(
                 assessment.hasPlayback
@@ -261,6 +284,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             inactive_reference_at: assessment.referenceAt,
             observation_started_at: assessment.observationStartedAt,
             has_playback: assessment.hasPlayback,
+            admin_protected: adminProtected,
             eligible,
             repairExistingHold: Boolean(row.already_held && eligible),
             triggers,
