@@ -15,14 +15,3 @@
 .widgetTimeframe{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}.widgetTimeframePill{padding:3px 8px;border-radius:99px;border:1px solid #2a3540;background:#151c24;color:#9eacba;text-decoration:none;font-size:9px;font-weight:700}.widgetTimeframePill.active{color:#eafaff;border-color:#2c8dad;background:var(--accent-soft)}
 @media(max-width:1180px){.analyticsCard.span-3,.analyticsCard.span-4,.analyticsCard.span-9{grid-column:span 6}}
 @media(max-width:820px){.analyticsCard.span-3,.analyticsCard.span-4,.analyticsCard.span-6,.analyticsCard.span-8,.analyticsCard.span-9,.analyticsCard.span-12{grid-column:auto}.chartDonutWrap{flex-direction:column;align-items:flex-start}}
-
-/* Keep the landing dashboard operational-first; deeper analytics remain one click away. */
-.dashboardDeepDive{margin-top:14px;border:1px solid var(--border);border-radius:12px;background:var(--panel);overflow:hidden}
-.dashboardDeepDive>summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;cursor:pointer;list-style:none}
-.dashboardDeepDive>summary::-webkit-details-marker{display:none}
-.dashboardDeepDive>summary strong{font-size:.9rem}
-.dashboardDeepDive>summary span{color:var(--muted);font-size:.75rem;text-align:right}
-.dashboardDeepDive[open]>summary{border-bottom:1px solid var(--border)}
-.dashboardDeepDiveBody{padding:16px}
-.dashboardHeadlineKpis{margin-top:12px}
-@media(max-width:760px){.dashboardDeepDive>summary{align-items:flex-start;flex-direction:column}.dashboardDeepDive>summary span{text-align:left}.dashboardDeepDiveBody{padding:10px}}
