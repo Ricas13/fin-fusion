@@ -19,6 +19,9 @@ const valid = {
     location: 'UK',
     priority: '100',
     maxUsers: '',
+    freeFirstPlaybackGraceDays: '3',
+    freePlaybackWindowDays: '7',
+    freeMinimumPlaybackMinutes: '30',
     allowNewUsers: 'on',
     trialEnabled: 'on',
     paidEnabled: 'on',
@@ -44,6 +47,9 @@ expectField('baseUrl', { baseUrl: 'file:///etc/passwd' }, 'http and https');
 expectField('publicUrl', { publicUrl: 'not-a-url' }, 'valid');
 expectField('priority', { priority: '-1' }, 'between');
 expectField('maxUsers', { maxUsers: '0' }, 'between');
+expectField('freeFirstPlaybackGraceDays', { freeFirstPlaybackGraceDays: '0' }, 'between');
+expectField('freePlaybackWindowDays', { freePlaybackWindowDays: '366' }, 'between');
+expectField('freeMinimumPlaybackMinutes', { freeMinimumPlaybackMinutes: '0' }, 'between');
 expectField('apiKey', { apiKey: 'short' }, 'format');
 
 const duplicate = safeAdminErrorInfo({ code: '23505', constraint: 'jellyfin_servers_slug_key' });
@@ -52,6 +58,30 @@ if (duplicate.field !== 'slug') throw new Error(`Duplicate slug should target sl
 const parsed = parseServerForm(valid, { apiKeyRequired: true });
 if (parsed.slug !== 'primary-server' || parsed.baseUrl !== 'https://allowed.example' || parsed.mediaServerType !== 'jellyfin') {
     throw new Error('Valid Jellyfin server form did not normalize as expected');
+}
+if (parsed.freeFirstPlaybackGraceDays !== 3 || parsed.freePlaybackWindowDays !== 7 || parsed.freeMinimumPlaybackMinutes !== 30) {
+    throw new Error('Free Server inactivity fields did not parse as expected');
+}
+
+const defaultedPolicy = parseServerForm({
+    ...valid,
+    freeFirstPlaybackGraceDays: undefined,
+    freePlaybackWindowDays: undefined,
+    freeMinimumPlaybackMinutes: undefined
+}, { apiKeyRequired: true });
+if (defaultedPolicy.freeFirstPlaybackGraceDays !== 3 || defaultedPolicy.freePlaybackWindowDays !== 7 || defaultedPolicy.freeMinimumPlaybackMinutes !== 30) {
+    throw new Error('Legacy server form submissions must inherit the 3 / 7 / 30 Free Server defaults');
+}
+
+const customPolicy = parseServerForm({
+    ...valid,
+    serverClass: 'free',
+    freeFirstPlaybackGraceDays: '5',
+    freePlaybackWindowDays: '14',
+    freeMinimumPlaybackMinutes: '60'
+}, { apiKeyRequired: true });
+if (customPolicy.freeFirstPlaybackGraceDays !== 5 || customPolicy.freePlaybackWindowDays !== 14 || customPolicy.freeMinimumPlaybackMinutes !== 60) {
+    throw new Error('Free Server inactivity overrides must survive form parsing');
 }
 
 const legacyDefault = parseServerForm({ ...valid, mediaServerType: undefined }, { apiKeyRequired: true });
