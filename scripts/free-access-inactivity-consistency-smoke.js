@@ -131,6 +131,7 @@ const adminControl = read('src/jellyfin/admin-control.js');
 const subscriptionState = read('src/entitlements/subscription-state.js');
 const lifecycleAdmin = read('src/platform/admin-jellyfin-lifecycle.js');
 const planAdmin = read('src/platform/admin-request-plan-policy.js');
+const pinPlacementMigration = read('db/migrations/20260918001000_server_pin_placement_only.sql');
 
 // Allocation is one boundary: subscription start, actual account creation,
 // lane transition, or a later return from Permanent Access -- whichever is newest.
@@ -164,6 +165,8 @@ assert(!pinBranch.includes('decorated.blocked=false'));
 assert.match(subscriptionState,/row=await applyOperatorSemantics\(db,row,\{includeBlocked:true\}\)/,'Free entitlement truth must decorate the real admin mode before deciding whether a hold is bypassed');
 assert.match(subscriptionState,/row\.permanent_access\|\|row\.admin_jellyfin_mode==='present'/,'only permanent or explicit admin-present may bypass a Free inactivity hold');
 assert.doesNotMatch(subscriptionState,/if\(row\.admin_present\)\{row\.blocked=false/,'server pin compatibility must never clear a Free inactivity hold');
+assert.match(pinPlacementMigration,/c\.mode='admin_present'/,'database admin-present authority must still protect explicit grants');
+assert.doesNotMatch(pinPlacementMigration,/mode IN \('admin_present','admin_server_pin'\)/,'database entitlement authority must not treat server pinning as access protection');
 
 // Restore/re-add complexity is reduced to the allocation clock. The grace
 // helper now only knows the one-time legacy migration marker.
