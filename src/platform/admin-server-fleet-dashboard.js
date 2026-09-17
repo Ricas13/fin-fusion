@@ -48,12 +48,18 @@ function placementReason(server, settings) {
     if (!planServers.healthEligible(server, settings.placementHealthMode)) return 'Health blocked';
     return 'Eligible';
 }
+function freeInactivityPolicy(server) {
+    if (String(server.server_class || '').toLowerCase() !== 'free') return null;
+    return {
+        firstPlaybackGraceDays: Number(server.free_first_playback_grace_days || serversAdmin.FREE_POLICY_DEFAULTS?.firstPlaybackGraceDays || 3),
+        playbackWindowDays: Number(server.free_playback_window_days || serversAdmin.FREE_POLICY_DEFAULTS?.playbackWindowDays || 7),
+        minimumPlaybackMinutes: Number(server.free_minimum_playback_minutes || serversAdmin.FREE_POLICY_DEFAULTS?.minimumPlaybackMinutes || 30)
+    };
+}
 function freeInactivitySummary(server) {
-    if (String(server.server_class || '').toLowerCase() !== 'free') return '';
-    const grace = Number(server.free_first_playback_grace_days || serversAdmin.FREE_POLICY_DEFAULTS?.firstPlaybackGraceDays || 3);
-    const windowDays = Number(server.free_playback_window_days || serversAdmin.FREE_POLICY_DEFAULTS?.playbackWindowDays || 7);
-    const minimum = Number(server.free_minimum_playback_minutes || serversAdmin.FREE_POLICY_DEFAULTS?.minimumPlaybackMinutes || 30);
-    return `<small class="serverFreePolicy"><strong>Free inactivity:</strong> first playback within ${esc(grace)}d · ${esc(minimum)} min / rolling ${esc(windowDays)}d</small>`;
+    const policy = freeInactivityPolicy(server);
+    if (!policy) return '';
+    return `<small class="serverFreePolicy"><strong>Free inactivity:</strong> first playback within ${esc(policy.firstPlaybackGraceDays)}d · ${esc(policy.minimumPlaybackMinutes)} min / rolling ${esc(policy.playbackWindowDays)}d</small>`;
 }
 
 async function dashboardRows() {
@@ -179,11 +185,7 @@ async function statusJson(_req, res, next) {
                     unmanagedStreams: activeStreams == null ? null : Math.max(0, activeStreams - managedStreams),
                     transcodeStreams: metrics?.transcode_streams == null ? null : Number(metrics.transcode_streams),
                     pausedStreams: metrics?.paused_streams == null ? null : Number(metrics.paused_streams),
-                    freeInactivityPolicy: String(server.server_class || '').toLowerCase() === 'free' ? {
-                        firstPlaybackGraceDays: Number(server.free_first_playback_grace_days || 3),
-                        playbackWindowDays: Number(server.free_playback_window_days || 7),
-                        minimumPlaybackMinutes: Number(server.free_minimum_playback_minutes || 30)
-                    } : null,
+                    freeInactivityPolicy: freeInactivityPolicy(server),
                     metricsObservedAt: isoDate(metrics?.observed_at), metricsError: metrics?.last_error || null
                 };
             })
@@ -205,4 +207,4 @@ function createAdminServerFleetDashboardRouter() {
     return router;
 }
 
-module.exports = { createAdminServerFleetDashboardRouter, dashboardRows, statusJson, pageData, placementEligible, freeInactivitySummary };
+module.exports = { createAdminServerFleetDashboardRouter, dashboardRows, statusJson, pageData, placementEligible, freeInactivityPolicy, freeInactivitySummary };
