@@ -68,7 +68,7 @@ async function finalEligibility(row, globalCfg) {
         return { ready: false, reason: 'activity_worker_stale', worker };
     }
 
-    const freshRows = await legacyGrace.applyRestorationGrace(
+    const freshRows = await legacyGrace.applyLegacySafetyWindow(
         await base.candidates(globalCfg, { customerId: row.customer_id })
     );
     const fresh = freshRows.find(item =>
@@ -291,7 +291,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         };
     }
 
-    const rows = await legacyGrace.applyRestorationGrace(await base.candidates(globalCfg));
+    const rows = await legacyGrace.applyLegacySafetyWindow(await base.candidates(globalCfg));
     const serverTelemetry = await refreshCandidateServers(rows);
     const eligible = eligibleOnReadyServers(rows, serverTelemetry);
     const unsafeEligible = rows.filter(
