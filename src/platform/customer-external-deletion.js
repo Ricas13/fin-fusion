@@ -179,8 +179,12 @@ async function revokeRequestTarget(target){
 
 async function cancelRecurringTarget(target){
   const meta=target.metadata||{};
-  const providerSubscriptionId=String(meta.providerSubscriptionId||target.external_identifier||'').trim();
-  if(!providerSubscriptionId)throw new Error(`${target.provider} recurring deletion target is missing its durable provider subscription identity.`);
+  const providerSubscriptionId=String(meta.providerSubscriptionId||'').trim();
+  const validProviderIdentity=(target.provider==='stripe'&&/^sub_/i.test(providerSubscriptionId))
+    ||(target.provider==='paypal'&&/^I-/i.test(providerSubscriptionId));
+  if(meta.invalidProviderIdentity===true||!validProviderIdentity){
+    throw new Error(`${target.provider} recurring deletion target has an invalid provider subscription identity; repair the billing reference before customer deletion can finalize.`);
+  }
   return billingControl.terminateRecurringForDeletion({
     id:meta.subscriptionId||null,
     customer_id:target.customer_id,
