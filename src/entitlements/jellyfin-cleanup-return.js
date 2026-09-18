@@ -9,32 +9,46 @@ const CLEANUP_HOLD_TYPE='jellyfin_cleanup';
 const INACTIVITY_HOLD_TYPE='inactivity_policy';
 
 async function returningCustomerStatus(customerId){
-  const [cleanupHolds,freeEntitlement]=await Promise.all([
+  const [cleanupHolds,restoreState]=await Promise.all([
     query(`SELECT source_key FROM customer_access_holds WHERE customer_id=$1 AND hold_type=$2 AND released_at IS NULL ORDER BY created_at`,[customerId,CLEANUP_HOLD_TYPE]),
-    subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true})
+    inactivityRestore.restoreStatus(customerId).catch(()=>({
+      eligible:false,
+      entitlement:null,
+      sourceKey:null
+    }))
   ]);
 
-  const inactivitySource=freeEntitlement?.plan_id?`plan:${freeEntitlement.plan_id}`:null;
-  const inactivityHold=inactivitySource?await query(`SELECT source_key FROM customer_access_holds WHERE customer_id=$1 AND hold_type=$2 AND source_key=$3 AND released_at IS NULL LIMIT 1`,[customerId,INACTIVITY_HOLD_TYPE,inactivitySource]):{rowCount:0,rows:[]};
-
-  // The binary present-or-deleted lifecycle retired jellyfin_account_lifecycle
-  // as the authority for current Free removal episodes. The active inactivity
-  // hold is now the durable source of truth: active Free entitlement + matching
-  // inactivity hold means the user is eligible to explicitly restore access.
-  const canRestoreDeletedFree=Boolean(freeEntitlement&&inactivityHold.rowCount);
+  const freeEntitlement=restoreState.entitlement||await subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}).catch(()=>null);
+  const inactivitySource=restoreState.sourceKey||(
+    freeEntitlement?.plan_id?`plan:${freeEntitlement.plan_id}`:null
+  );
+  const canRestoreDeletedFree=Boolean(restoreState.eligible);
   const cleanupSources=cleanupHolds.rows.map(row=>row.source_key);
+
   if(!cleanupSources.length&&!canRestoreDeletedFree){
-    return{eligible:false,cleanupSources:[],canRestoreDeletedFree:false,inactivitySource:null,freePlanId:freeEntitlement?.plan_id||null,freeSubscriptionId:freeEntitlement?.subscription_id||null};
+    return{
+      eligible:false,
+      cleanupSources:[],
+      canRestoreDeletedFree:false,
+      inactivitySource,
+      freePlanId:freeEntitlement?.plan_id||null,
+      freeSubscriptionId:freeEntitlement?.subscription_id||null
+    };
   }
 
-  // Generic cleanup holds intentionally make normal entitlement lookup blocked.
-  // Inspection is read-only: GET /account may call this helper to decide whether
-  // to offer recovery, but it must not release holds or contact Jellyfin.
   if(cleanupSources.length){
     const genericEntitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
     const delivery=String(genericEntitlement?.service_type_snapshot||genericEntitlement?.service_type||'jellyfin');
     if(!genericEntitlement||!['jellyfin','bundle'].includes(delivery)){
-      return{eligible:false,reason:'no_jellyfin_entitlement',cleanupSources,canRestoreDeletedFree,inactivitySource,freePlanId:freeEntitlement?.plan_id||null,freeSubscriptionId:freeEntitlement?.subscription_id||null};
+      return{
+        eligible:false,
+        reason:'no_jellyfin_entitlement',
+        cleanupSources,
+        canRestoreDeletedFree,
+        inactivitySource,
+        freePlanId:freeEntitlement?.plan_id||null,
+        freeSubscriptionId:freeEntitlement?.subscription_id||null
+      };
     }
   }
 
