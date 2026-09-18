@@ -108,7 +108,7 @@ const brokenAdvertHtml=controlCenter.renderControlCenter({
 });
 assert(brokenAdvertHtml.includes('dashboardControlCard warn')&&brokenAdvertHtml.includes('Discord not configured'),'Enabled Free advertising that cannot run must warn even when inactivity itself is healthy');
 assert(brokenAdvertHtml.includes('href="/admin/notifications/preferences"'),'Discord Free-advert configuration problems must link to notification-channel settings');
-assert(controlCenterSource.indexOf("!cfg.discordConfigured || !cfg.discordFreePlacesChannelId")<controlCenterSource.indexOf("!publicBaseUrlConfigured\n      ? '/admin/settings?section=general'"),'Free advert warning-link precedence must match the visible diagnosis: Discord/channel before public URL');
+assert(controlCenterSource.includes("const advertProblemHref = !cfg.discordConfigured || !cfg.discordFreePlacesChannelId\n    ? '/admin/notifications/preferences'\n    : !publicBaseUrlConfigured\n      ? '/admin/settings?section=general'"),'Free advert warning-link precedence must match the visible diagnosis: Discord/channel before public URL');
 const brokenCapacityHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:0,used:0,reserved:0,limit:0,waiting:0,waitingCapped:false,capacityConfigurationProblem:true,capacityProblemDetail:'No Jellyfin server user capacity is configured for this plan.',bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:true,inactivityDryRun:false,inactivityConfigurationMissing:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
