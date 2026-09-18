@@ -127,11 +127,13 @@ async function candidateWithGrace(customerId) {
 
     await query(`
         INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
-        VALUES($1,$2,$3,$4,$5,'Current Allocation Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '12 hours',NOW()-INTERVAL '12 hours'+INTERVAL '20 minutes',NOW()-INTERVAL '12 hours'+INTERVAL '20 minutes')
+        VALUES($1,$2,$3,$4,$5,'Boundary Crossing Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '1 day 5 minutes',NOW()-INTERVAL '23 hours 45 minutes',NOW()-INTERVAL '23 hours 45 minutes')
     `, [alwaysCustomerId, serverId, alwaysAccount.id, `lane-current-play-${suffix}`, `lane-current-session-${suffix}`]);
 
     const afterCurrentPlayback = await candidateFor(alwaysCustomerId);
-    assert.strictEqual(afterCurrentPlayback.has_playback, true, 'playback after the current allocation must activate it');
+    assert.strictEqual(afterCurrentPlayback.has_playback, true, 'a stream crossing into the current allocation must activate it from the allocation boundary');
+    assert(Number(afterCurrentPlayback.playback_seconds||0)>=14*60&&Number(afterCurrentPlayback.playback_seconds||0)<=16*60,
+        `only playback overlapping the current allocation should count; seconds=${afterCurrentPlayback.playback_seconds}`);
     assert.strictEqual(afterCurrentPlayback.eligible, false, 'an activated allocation must receive one full rolling playback window before retention enforcement');
 
     // Case 3: pre-column Free rows can have an access_lane_changed_at backfill
