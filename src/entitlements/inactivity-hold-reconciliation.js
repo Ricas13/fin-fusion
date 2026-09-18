@@ -5,16 +5,13 @@ const accessHolds = require('./access-holds');
 
 const HOLD_TYPE = 'inactivity_policy';
 
-// An inactivity hold means one thing: this live Free entitlement was removed
-// for inactivity and stays removed until explicit restoration. The hold becomes
-// obsolete only when that exact Free entitlement is no longer live.
-async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
+async function releaseObsolete({ customerId = null, actorUserId = null } = {}) {
     const holds = await query(`
-        SELECT h.source_key
+        SELECT h.customer_id,h.source_key
         FROM customer_access_holds h
-        WHERE h.customer_id=$1
-          AND h.hold_type=$2
+        WHERE h.hold_type=$1
           AND h.released_at IS NULL
+          AND ($2::uuid IS NULL OR h.customer_id=$2::uuid)
           AND NOT EXISTS(
             SELECT 1
             FROM subscriptions s
@@ -30,12 +27,12 @@ async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
               AND COALESCE(p.is_addon,FALSE)=FALSE
               AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
           )
-    `, [customerId, HOLD_TYPE]);
+    `, [HOLD_TYPE, customerId]);
 
     let released = 0;
     for (const hold of holds.rows) {
         released += await accessHolds.releaseHold({
-            customerId,
+            customerId: hold.customer_id,
             type: HOLD_TYPE,
             sourceKey: hold.source_key,
             actorUserId,
@@ -45,4 +42,17 @@ async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
     return released;
 }
 
-module.exports = { HOLD_TYPE, releaseObsoleteForCustomer };
+async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
+    return releaseObsolete({ customerId, actorUserId });
+}
+
+async function releaseObsoleteAll(actorUserId = null) {
+    return releaseObsolete({ actorUserId });
+}
+
+module.exports = {
+    HOLD_TYPE,
+    releaseObsolete,
+    releaseObsoleteForCustomer,
+    releaseObsoleteAll
+};
