@@ -13,6 +13,7 @@ const controlCenterSource=read('src/platform/admin-dashboard-control-center.js')
 const freeBackfillSource=read('src/automation/free-capacity-backfill.js');
 const dashboardPageSource=read('src/platform/admin-dashboard-page.js');
 const billingControlSource=read('src/payments/billing-control.js');
+const inactivityAuditIndexMigration=read('db/migrations/20260918173000_admin_dashboard_inactivity_audit_index.sql');
 const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const liveStreamSource=read('src/platform/admin-dashboard-live-streams.js');
 const liveStreamClient=read('public/js/admin-dashboard-live-streams.js');
@@ -50,6 +51,8 @@ assert(!controlCenterSource.includes("require('../payments/billing-control')")&&
 assert(billingControlSource.includes("ORDER BY CASE WHEN s.billing_mode='subscription'")&&billingControlSource.includes("ORDER BY CASE WHEN processed_at IS NULL"),'Bounded Billing reference lists must prioritise unresolved subscription/event problems before recent healthy history');
 assert(billingControlSource.includes('validRecurringProviderReference')&&billingControlSource.includes("BTRIM(COALESCE(s.provider_subscription_id,'')) !~* '^sub_'")&&billingControlSource.includes("BTRIM(COALESCE(s.provider_subscription_id,'')) !~* '^I-'"),'Billing must surface malformed live recurring provider references before they turn into provider-operation failures');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
+assert(controlCenterSource.includes("entity_type='customer'")&&controlCenterSource.includes('ORDER BY created_at DESC,id DESC'),'Recent inactivity audit reads must match the dedicated partial-index predicate and stable newest-first order');
+assert(inactivityAuditIndexMigration.includes('audit_log_dashboard_inactivity_recent_idx')&&inactivityAuditIndexMigration.includes('actor_user_id IS NULL')&&inactivityAuditIndexMigration.includes("entity_type='customer'")&&inactivityAuditIndexMigration.includes("'customer.inactivity.remove_failed'"),'Dashboard inactivity feed must have a narrow partial audit-log index instead of scanning append-only audit history');
 assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500, { planId: plan.id })')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500, { planId: plan.id })'),'Free Server waiting count must include both backlog types while staying scoped to the same canonical Free plan as capacity');
 assert(controlCenterSource.includes('const waitingCustomers = new Set(')&&controlCenterSource.includes('waiting: waitingCustomers.size'),'Free Server waiting summary must de-duplicate recovery/backfill rows that refer to the same customer');
 assert(freeBackfillSource.includes('pendingClaimCandidates(limit = 100, options = {})')&&freeBackfillSource.includes('waitingCandidates(limit = 100, options = {})')&&freeBackfillSource.includes('const planId = options?.planId || null'),'Backfill candidate readers must support optional plan scoping while tolerating legacy unscoped/null-style callers');
