@@ -125,9 +125,15 @@ async function candidates(globalCfg=null,{customerId=null}={}){
     ) allocation ON TRUE
     LEFT JOIN LATERAL (
       SELECT MIN(ph.started_at) FILTER(WHERE ph.started_at>=allocation.allocation_start_at) first_playback_at,
-             MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER(WHERE ph.started_at>=allocation.allocation_start_at) last_playback_at,
-             COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ph.ended_at,ph.last_seen_at)-ph.started_at))))
-               FILTER(WHERE ph.started_at>=GREATEST(allocation.allocation_start_at,NOW()-(COALESCE(js.free_playback_window_days,7)||' days')::interval)),0)::bigint playback_seconds
+             MAX(COALESCE(ph.ended_at,ph.last_seen_at)) FILTER(WHERE ph.started_at>=allocation.allocation_start_at) last_playback_at,
+             COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (
+               LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
+               - GREATEST(ph.started_at,NOW()-(COALESCE(js.free_playback_window_days,7)||' days')::interval)
+             )))) FILTER(
+               WHERE ph.started_at>=allocation.allocation_start_at
+                 AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(COALESCE(js.free_playback_window_days,7)||' days')::interval
+                 AND ph.started_at<NOW()
+             ),0)::bigint playback_seconds
       FROM playback_history ph
       WHERE ph.customer_id=fa.customer_id AND ph.server_id=ja.server_id
         AND (ph.jellyfin_account_id=ja.id OR ph.jellyfin_account_id IS NULL)
