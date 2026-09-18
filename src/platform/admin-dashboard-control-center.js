@@ -183,6 +183,15 @@ async function freeSnapshot(jobRows) {
   );
   const inactivityJob = (jobRows || []).find(row => row.job_key === 'customer_inactivity') || null;
   const actualRemaining = capacity.remaining == null ? null : Math.max(0, Number(capacity.remaining) || 0);
+  const capacityConfigurationProblem = Boolean(
+    capacity.fallbackReason ||
+    (capacity.model === 'fleet_users' && Number(capacity.limit || 0) <= 0)
+  );
+  const capacityProblemDetail = capacity.fallbackReason
+    ? String(capacity.fallbackReason)
+    : capacityConfigurationProblem
+      ? 'No eligible Free Server capacity is currently available.'
+      : null;
   const configuredChannel = String(cfg.discordFreePlacesChannelId || '');
   const digestChannel = String(digestState.channelId || '');
   const digestCurrent = Boolean(
@@ -210,6 +219,8 @@ async function freeSnapshot(jobRows) {
     limit: capacity.limit == null ? null : Number(capacity.limit),
     waiting: waitingCustomers.size,
     waitingCapped: waitingRows.length >= 500 || pendingClaims.length >= 500,
+    capacityConfigurationProblem,
+    capacityProblemDetail,
     bufferedPlaces,
     inactivityEnabled: Boolean(policy.enabled),
     inactivityDryRun: Boolean(policy.dryRun),
@@ -411,7 +422,7 @@ function freeCard(data = {}) {
   const inactivityBad = data.inactivityConfigurationMissing || (
     data.inactivityEnabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(data.inactivityState)
   );
-  const tone = inactivityBad || data.advertConfigurationProblem
+  const tone = inactivityBad || data.advertConfigurationProblem || data.capacityConfigurationProblem
     ? 'warn'
     : (!data.inactivityEnabled || data.inactivityDryRun ? 'neutral' : 'good');
   const waitingLabel = data.waitingCapped ? `${Number(data.waiting || 0)}+` : String(data.waiting || 0);
@@ -420,7 +431,7 @@ function freeCard(data = {}) {
     : data.inactivityEnabled
       ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState)
       : 'Paused';
-  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(inactivityLabel)} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
+  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.capacityProblemDetail || (data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`))}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(inactivityLabel)} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
 }
 
 function billingCard(data = {}) {
