@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const registry = require('../src/jellyfin/registry');
 const lifecycle = require('../src/automation/customer-inactivity-scoped');
+const freeCapacityBackfill = require('../src/automation/free-capacity-backfill');
+const planCapacity = require('../src/entitlements/plan-capacity');
 const lifecyclePolicy = require('../src/entitlements/jellyfin-lifecycle-policy');
 const inactivityRestore = require('../src/entitlements/jellyfin-inactivity-restore');
 const serviceAdminControl = require('../src/entitlements/service-admin-control');
@@ -136,6 +138,36 @@ const originalRequest = registry.request;
         const activeHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
         assert.strictEqual(activeHold.rowCount, 1, 'successful inactivity removal must leave the Free-lane hold active');
         assert.strictEqual(activeHold.rows[0].released_at, null, 'inactivity hold must remain active until explicit restoration');
+
+        // Capacity and vacancy backfill must apply the exact same Free-lane
+        // blocker semantics as entitlement truth before LIMIT. Otherwise a
+        // large set of inactivity-held customers can reserve phantom places or
+        // starve genuinely provisionable customers behind them.
+        const blockedCapacity = await planCapacity.usage(planId);
+        const blockedQueue = await freeCapacityBackfill.waitingCandidates(1000);
+        assert(!blockedQueue.some(row => String(row.customer_id) === String(customerId)),
+            'inactivity-held Free customer must not occupy the vacancy backfill candidate queue');
+
+        // Explicit admin-present authority is allowed to override automatic
+        // inactivity, so the same customer must become capacity-owning and
+        // backfill-eligible while that authority is active.
+        await serviceAdminControl.setPresent(customerId, 'jellyfin', {
+            reason: 'integration test: explicit admin grant overrides inactivity'
+        });
+        const grantedCapacity = await planCapacity.usage(planId);
+        assert.strictEqual(Number(grantedCapacity.pendingUsers), Number(blockedCapacity.pendingUsers) + 1,
+            'explicit admin-present Free access must reserve its owed server place despite the inactivity hold');
+        const grantedQueue = await freeCapacityBackfill.waitingCandidates(1000);
+        assert(grantedQueue.some(row => String(row.customer_id) === String(customerId)),
+            'explicit admin-present Free access must remain eligible for vacancy backfill');
+
+        // Return to placement-only pinning for the rest of the lifecycle test.
+        await serviceAdminControl.pinServer(customerId, serverId, {
+            reason: 'integration test: restore placement-only authority after blocker check'
+        });
+        const repinnedQueue = await freeCapacityBackfill.waitingCandidates(1000);
+        assert(!repinnedQueue.some(row => String(row.customer_id) === String(customerId)),
+            'server pin must not bypass the active inactivity hold in the backfill queue');
 
         const pinnedBlocked = await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true });
         assert.strictEqual(pinnedBlocked.admin_jellyfin_mode, 'forced_server', 'fixture must still be server-pinned after inactivity removal');
