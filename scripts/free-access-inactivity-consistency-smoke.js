@@ -163,8 +163,7 @@ assert.match(base, /COALESCE\(ph\.ended_at,ph\.last_seen_at,ph\.started_at\)>all
 assert.match(base, /LEAST\(COALESCE\(ph\.ended_at,ph\.last_seen_at\),NOW\(\)\)/);
 assert.match(base, /GREATEST\([\s\S]*?ph\.started_at[\s\S]*?allocation\.allocation_start_at[\s\S]*?NOW\(\)-\(js\.free_playback_window_days/);
 assert.match(base, /EXISTS\([\s\S]*?active_playback_sessions[\s\S]*?aps\.jellyfin_account_id=ja\.id/, 'currently-playing protection must target the exact account');
-assert.match(base, /FROM playback_history ph[\s\S]*?AND ph\.jellyfin_account_id=ja\.id/, 'Free playback usage must be attributed to the exact managed account');
-assert.doesNotMatch(base, /ph\.jellyfin_account_id IS NULL/, 'unattributed playback must not satisfy a Free account retention rule');
+assert.match(base, /ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/, 'Free playback must preserve orphaned same-customer/server history while allocation boundaries exclude old episodes');
 assert.doesNotMatch(base, /noPlaybackEligible|noPlaybackDays/, 'Free inactivity must have no login/activity timer');
 
 // Enforcement must delete exactly the selected Free account and persist a hold;
