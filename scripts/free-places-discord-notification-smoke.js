@@ -6,13 +6,17 @@ const freePlaces=require('../src/automation/free-places-digest');
 const settings={
   discordFreePlacesDigestEnabled:true,
   discordConfigured:true,
-  discordFreePlacesChannelId:'123456789012345678'
+  discordFreePlacesChannelId:'123456789012345678',
+  discordFreePlacesTimezone:'UTC',
+  discordFreePlacesTime1:'00:00',
+  discordFreePlacesTime2:'12:00',
+  discordFreePlacesMinRemaining:1
 };
 const operationsConfig={publicBaseUrl:'https://store.example.test'};
 
 function harness(){
   let remaining=0,stored=null,sendSequence=0,failNextSend=false,missingNextEdit=false,lockCount=0;
-  const sends=[],edits=[];
+  const sends=[],edits=[],removes=[];
   const client={query:async(sql,params=[])=>{
     const text=String(sql);
     if(text.includes('pg_advisory_xact_lock')){lockCount++;return{rows:[]};}
@@ -37,9 +41,10 @@ function harness(){
     if(missingNextEdit){missingNextEdit=false;throw new Error('Discord HTTP 404 unknown message');}
     return{id:args.messageId};
   };
-  const sync=()=>freePlaces.syncPersistent({settings,operationsConfig,usage,send,edit,transactionFn});
+  const remove=async args=>{removes.push(args);return{};};
+  const sync=now=>freePlaces.syncPersistent({settings,operationsConfig,usage,send,edit,remove,transactionFn,now:new Date(now)});
   return{
-    sync,sends,edits,
+    sync,sends,edits,removes,
     setRemaining:value=>{remaining=value;},
     getStored:()=>stored&&{...stored},
     setStored:value=>{stored=value&&{...value};},
@@ -50,100 +55,153 @@ function harness(){
 }
 
 (async()=>{
-  assert.strictEqual(freePlaces.becameAvailable(0,1),true,'known 0 -> positive capacity must be a reopen transition');
-  assert.strictEqual(freePlaces.becameAvailable(0,10),true,'0 -> many free places must be a reopen transition');
-  assert.strictEqual(freePlaces.becameAvailable(null,1),false,'legacy/no prior capacity must not create a false reopen notification');
-  assert.strictEqual(freePlaces.becameAvailable(1,2),false,'positive -> positive is a routine status edit');
-  assert.strictEqual(freePlaces.becameAvailable(1,0),false,'positive -> zero is a routine status edit');
-  assert.strictEqual(freePlaces.becameAvailable(0,0),false,'zero -> zero must not create a new message');
+  assert.strictEqual(freePlaces.advertSlotKey(settings,new Date('2026-09-18T11:59:00Z')),'2026-09-18T00:00');
+  assert.strictEqual(freePlaces.advertSlotKey(settings,new Date('2026-09-18T12:00:00Z')),'2026-09-18T12:00');
+  assert.strictEqual(freePlaces.advertSlotKey(settings,new Date('2026-09-19T00:00:00Z')),'2026-09-19T00:00');
 
   const h=harness();
 
-  // First installation creates the canonical status message once.
+  // Initial setup publishes exactly one canonical status message and establishes
+  // the current advert slot. Setup is not treated as a reopening alert.
   h.setRemaining(0);
-  let result=await h.sync();
-  assert.strictEqual(result.created,1,'first status publication must create a Discord message');
-  assert.strictEqual(result.availabilityRestored,0,'first publication is not a 0 -> positive transition');
+  let result=await h.sync('2026-09-18T09:00:00Z');
+  assert.strictEqual(result.created,1);
+  assert.strictEqual(result.availabilityRestored,0);
   assert.strictEqual(h.sends.length,1);
-  assert.strictEqual(h.edits.length,0);
   assert.strictEqual(h.getStored().remaining,0);
-  assert.strictEqual(h.getStored().messageId,'message-1');
+  assert.strictEqual(h.getStored().observedRemaining,0);
+  assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-18T00:00');
 
-  // No capacity change is a durable no-op.
-  result=await h.sync();
-  assert.strictEqual(result.unchanged,true,'identical zero-capacity state should not touch Discord');
+  // Capacity reopens before noon. The worker observes and stores it but does not
+  // edit or POST Discord yet; newly freed places accumulate silently.
+  h.setRemaining(1);
+  result=await h.sync('2026-09-18T09:05:00Z');
+  assert.strictEqual(result.buffered,true);
+  assert.strictEqual(result.remaining,0);
+  assert.strictEqual(result.observedRemaining,1);
   assert.strictEqual(h.sends.length,1);
   assert.strictEqual(h.edits.length,0);
 
-  // This is the important notification edge: full -> available POSTS fresh.
+  h.setRemaining(3);
+  result=await h.sync('2026-09-18T10:30:00Z');
+  assert.strictEqual(result.buffered,true);
+  assert.strictEqual(result.remaining,0);
+  assert.strictEqual(result.observedRemaining,3);
+  assert.strictEqual(h.sends.length,1);
+  assert.strictEqual(h.edits.length,0);
+
+  // At the noon slot all accumulated availability is advertised once. The old
+  // canonical message is removed and one fresh Discord message is posted.
+  result=await h.sync('2026-09-18T12:00:00Z');
+  assert.strictEqual(result.advertised,1);
+  assert.strictEqual(result.created,1);
+  assert.strictEqual(result.availabilityRestored,1);
+  assert.strictEqual(result.remaining,3);
+  assert.strictEqual(h.removes.length,1);
+  assert.strictEqual(h.sends.length,2);
+  assert.strictEqual(h.edits.length,0);
+  assert.strictEqual(h.getStored().messageId,'message-2');
+  assert.strictEqual(h.getStored().remaining,3);
+  assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-18T12:00');
+
+  // Filling advertised places is always quiet and edits the current message
+  // downward immediately.
   h.setRemaining(2);
-  result=await h.sync();
-  assert.strictEqual(result.availabilityRestored,1,'0 -> positive must be identified as availability reopening');
-  assert.strictEqual(result.created,1,'0 -> positive must POST a fresh Discord message');
-  assert.strictEqual(h.sends.length,2,'reopening must create exactly one additional message');
-  assert.strictEqual(h.edits.length,0,'reopening must bypass PATCH of the old full-capacity message');
-  assert.strictEqual(h.sends[1].allowEveryone,false,'fresh reopen message must not use @everyone spam');
-  assert.strictEqual(h.getStored().messageId,'message-2','fresh reopen message must become the canonical editable message');
+  result=await h.sync('2026-09-18T12:05:00Z');
+  assert.strictEqual(result.created,0);
+  assert.strictEqual(h.edits.length,1);
   assert.strictEqual(h.getStored().remaining,2);
 
-  // Once open, changing the count only edits the new canonical message.
-  h.setRemaining(1);
-  result=await h.sync();
-  assert.strictEqual(result.created,0,'positive -> positive must not create another Discord message');
-  assert.strictEqual(result.availabilityRestored,0);
-  assert.strictEqual(h.sends.length,2);
-  assert.strictEqual(h.edits.length,1);
-  assert.strictEqual(h.edits[0].messageId,'message-2','routine changes must PATCH the newest canonical message');
-
-  // Becoming full also edits in place, so filling the final place is quiet.
   h.setRemaining(0);
-  result=await h.sync();
-  assert.strictEqual(result.created,0,'positive -> zero must be an in-place edit');
-  assert.strictEqual(h.sends.length,2);
+  result=await h.sync('2026-09-18T13:00:00Z');
+  assert.strictEqual(result.created,0);
   assert.strictEqual(h.edits.length,2);
   assert.strictEqual(h.getStored().remaining,0);
 
-  result=await h.sync();
-  assert.strictEqual(result.unchanged,true,'zero -> zero must remain quiet');
+  // Reopening again after noon is buffered all the way to midnight. Multiple
+  // frees do not create repeated channel posts.
+  h.setRemaining(1);
+  await h.sync('2026-09-18T14:00:00Z');
+  h.setRemaining(2);
+  await h.sync('2026-09-18T18:00:00Z');
+  h.setRemaining(4);
+  result=await h.sync('2026-09-18T23:59:00Z');
+  assert.strictEqual(result.buffered,true);
   assert.strictEqual(h.sends.length,2);
   assert.strictEqual(h.edits.length,2);
+  assert.strictEqual(h.getStored().remaining,0);
+  assert.strictEqual(h.getStored().observedRemaining,4);
 
-  // A failed reopen POST must not consume the durable transition. Retry should
-  // still see previous=0 and publish one fresh message when Discord recovers.
-  h.setRemaining(3);
-  h.failSend();
-  await assert.rejects(h.sync(),/simulated Discord POST failure/,'failed reopen POST must surface as a job failure');
-  assert.strictEqual(h.getStored().remaining,0,'failed POST must leave durable prior capacity at zero');
-  assert.strictEqual(h.getStored().messageId,'message-2','failed POST must leave the prior canonical message id intact');
-  result=await h.sync();
-  assert.strictEqual(result.availabilityRestored,1,'retry must still recognize the 0 -> positive transition');
+  result=await h.sync('2026-09-19T00:00:00Z');
+  assert.strictEqual(result.advertised,1);
   assert.strictEqual(result.created,1);
+  assert.strictEqual(result.remaining,4);
+  assert.strictEqual(h.sends.length,3);
+  assert.strictEqual(h.removes.length,2);
+  assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-19T00:00');
+
+  // The first worker pass owns each slot. Availability appearing later in the
+  // same slot is buffered until the next scheduled advert rather than leaking a
+  // second post 30 seconds later.
+  h.setRemaining(0);
+  await h.sync('2026-09-19T00:00:10Z');
+  h.setRemaining(2);
+  result=await h.sync('2026-09-19T00:00:40Z');
+  assert.strictEqual(result.buffered,true);
+  assert.strictEqual(h.sends.length,3);
+  assert.strictEqual(h.getStored().remaining,0);
+
+  result=await h.sync('2026-09-19T12:00:00Z');
+  assert.strictEqual(result.advertised,1);
+  assert.strictEqual(h.sends.length,4);
+  assert.strictEqual(h.getStored().remaining,2);
+
+  // A failed scheduled POST must not consume the slot transition durably. The
+  // next worker pass retries the same batched advert.
+  h.setRemaining(0);
+  await h.sync('2026-09-19T12:10:00Z');
+  h.setRemaining(3);
+  await h.sync('2026-09-19T18:00:00Z');
+  h.failSend();
+  await assert.rejects(h.sync('2026-09-20T00:00:00Z'),/simulated Discord POST failure/);
+  assert.strictEqual(h.getStored().remaining,0);
+  assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-19T12:00');
+  result=await h.sync('2026-09-20T00:00:30Z');
+  assert.strictEqual(result.advertised,1);
   assert.strictEqual(h.getStored().remaining,3);
-  assert.strictEqual(h.getStored().messageId,'message-3');
+  assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-20T00:00');
 
-  // A deleted canonical message is recreated, but this is recovery rather than
-  // a false availability-restored signal.
-  h.setRemaining(4);
+  // A missing canonical message during a downward edit is recreated as recovery
+  // but is not treated as a scheduled availability advert.
+  h.setRemaining(1);
   h.missEdit();
-  result=await h.sync();
+  const sendCountBeforeRecovery=h.sends.length;
+  result=await h.sync('2026-09-20T00:05:00Z');
+  assert.strictEqual(result.created,1);
   assert.strictEqual(result.availabilityRestored,0);
-  assert.strictEqual(result.created,1,'Discord 404 during a routine edit must recreate the status message');
-  assert.strictEqual(h.getStored().messageId,'message-4');
+  assert.strictEqual(h.sends.length,sendCountBeforeRecovery+1);
 
-  // Existing installations that predate the durable remaining field must not
-  // falsely notify merely because they are upgraded while places are open.
-  const sendCountBeforeLegacy=h.sends.length,editCountBeforeLegacy=h.edits.length;
-  h.setStored({channelId:settings.discordFreePlacesChannelId,messageId:'legacy-message',text:'legacy-signature',remaining:null,updatedAt:null});
+  // Existing deployments without scheduled-state fields are baselined by a
+  // quiet PATCH, not by a surprise fresh notification during deployment.
+  const sendCountBeforeLegacy=h.sends.length;
+  h.setStored({
+    channelId:settings.discordFreePlacesChannelId,
+    messageId:'legacy-message',
+    text:'legacy-signature',
+    remaining:null,
+    updatedAt:null
+  });
   h.setRemaining(5);
-  result=await h.sync();
-  assert.strictEqual(result.availabilityRestored,0,'unknown prior capacity is not proof of a 0 -> positive transition');
-  assert.strictEqual(result.created,0,'legacy state with a valid message must be PATCHed rather than creating notification spam');
+  result=await h.sync('2026-09-20T08:00:00Z');
+  assert.strictEqual(result.legacyBaseline,true);
+  assert.strictEqual(result.created,0);
   assert.strictEqual(h.sends.length,sendCountBeforeLegacy);
-  assert.strictEqual(h.edits.length,editCountBeforeLegacy+1);
-  assert.strictEqual(h.edits.at(-1).messageId,'legacy-message');
+  assert.strictEqual(h.getStored().remaining,5);
+  assert.strictEqual(h.getStored().observedRemaining,5);
+  assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-20T00:00');
 
-  assert(h.lockCount()>=9,'every digest mutation decision must run under the advisory transaction lock');
-  console.log('free places Discord notification smoke: ok');
+  assert(h.lockCount()>=16,'every digest observation/mutation must remain serialized');
+  console.log('free places Discord scheduled batching smoke: ok');
 })().catch(error=>{
   console.error(error);
   process.exitCode=1;
