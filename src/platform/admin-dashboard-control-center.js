@@ -162,8 +162,8 @@ async function freeSnapshot(jobRows) {
 
   const [capacity, waitingRows, pendingClaims] = await Promise.all([
     planCapacity.usage(plan.id),
-    freeBackfill.waitingCandidates(500),
-    freeBackfill.pendingClaimCandidates(500)
+    freeBackfill.waitingCandidates(500, { planId: plan.id }),
+    freeBackfill.pendingClaimCandidates(500, { planId: plan.id })
   ]);
   const inactivityJob = (jobRows || []).find(row => row.job_key === 'customer_inactivity') || null;
   const actualRemaining = capacity.remaining == null ? null : Math.max(0, Number(capacity.remaining) || 0);
