@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const subscriptionState = require('../entitlements/subscription-state');
+const planCapacity = require('../entitlements/plan-capacity');
 
 function noCapacity(error) {
   return /no eligible jellyfin server|no jellyfin server is currently available/i.test(String(error?.message || error || ''));
@@ -52,6 +53,7 @@ async function waitingCandidates(limit = 100) {
         AND s.superseded_by IS NULL
         AND s.starts_at<=NOW()
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
+        AND ${planCapacity.freePendingUnblockedSql('s','free_pending_hold')}
         AND (
           (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
           OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
