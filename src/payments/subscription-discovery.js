@@ -22,8 +22,7 @@ function objectId(value) { return typeof value === 'string' ? clean(value, 255) 
 // additionally requires a real provider recurring object before calling a row
 // "linked", so legacy/corrupt pi_/PAY-* references stay repairable.
 function recurringId(provider, id) {
-    const value = clean(id, 255);
-    return (provider === 'stripe' && /^sub_/i.test(value)) || (provider === 'paypal' && /^I-/i.test(value));
+    return billingMode.validRecurringProviderId(provider, clean(id, 255));
 }
 function localRecurring(row) {
     return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
