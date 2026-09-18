@@ -12,6 +12,7 @@ const dashboardMainSource=read('src/platform/admin-dashboard-main.js');
 const controlCenterSource=read('src/platform/admin-dashboard-control-center.js');
 const freeBackfillSource=read('src/automation/free-capacity-backfill.js');
 const dashboardPageSource=read('src/platform/admin-dashboard-page.js');
+const billingControlSource=read('src/payments/billing-control.js');
 const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const liveStreamSource=read('src/platform/admin-dashboard-live-streams.js');
 const liveStreamClient=read('public/js/admin-dashboard-live-streams.js');
@@ -45,6 +46,7 @@ assert(controlCenterSource.includes("require('../automation/job-health')")&&cont
 assert(controlCenterSource.includes("require('./operations-settings')")&&controlCenterSource.includes('publicBaseUrlConfigured'),'Free advert status must mirror the digest worker public-base-URL prerequisite without making an external request');
 assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("NULLIF(BTRIM(processing_error),'') IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage and count all recurring sync/event exceptions without dashboard row limits');
 assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()'),'Billing integrity must not derive global health from the Billing page\'s intentionally limited 500-subscription / 50-event display rows');
+assert(billingControlSource.includes("ORDER BY CASE WHEN s.billing_mode='subscription'")&&billingControlSource.includes("ORDER BY CASE WHEN processed_at IS NULL"),'Bounded Billing reference lists must prioritise unresolved subscription/event problems before recent healthy history');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
 assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500, { planId: plan.id })')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500, { planId: plan.id })'),'Free Server waiting count must include both backlog types while staying scoped to the same canonical Free plan as capacity');
 assert(freeBackfillSource.includes('pendingClaimCandidates(limit = 100, options = {})')&&freeBackfillSource.includes('waitingCandidates(limit = 100, options = {})')&&freeBackfillSource.includes('const planId = options?.planId || null'),'Backfill candidate readers must support optional plan scoping while tolerating legacy unscoped/null-style callers');
