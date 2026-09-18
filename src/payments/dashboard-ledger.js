@@ -245,6 +245,12 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     const eventRowsScanned = await scanPaymentEventsInRange(range, async row => {
         const extracted = eventRecords(row, refundState, warnings);
         if (isCovered(coverage, row.provider, row.created_at)) return;
+        if (
+            (row.provider === 'stripe' && ['charge.dispute.created','charge.dispute.closed'].includes(row.event_type))
+            || (row.provider === 'paypal' && ['CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED'].includes(row.event_type))
+        ) {
+            addWarning(warnings, 'A payment dispute or chargeback falls outside imported provider-history coverage. Live webhook data cannot safely reconstruct every cash withdrawal and recovery; run Payment History import before treating affected profit/refund totals as complete.');
+        }
         const captureId = paypalCaptureIdFromEvent(row);
         if (captureId && authoritativePaypalCaptures.has(captureId)) return;
         for (const record of extracted) await visit(record);
