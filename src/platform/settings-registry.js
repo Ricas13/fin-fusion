@@ -46,7 +46,7 @@ const SETTINGS=Object.freeze([
 
   {key:'notification.channels',owner:'communications',label:'Notification channels',href:'/admin/notifications/preferences',keywords:'telegram discord messaging events preferences'},
   {key:'notification.customerEvents',owner:'communications',label:'Customer notification events',href:'/admin/notifications/preferences',keywords:'customer alerts messages preferences'},
-  {key:'notification.email',owner:'communications',label:'Transactional email / SMTP',href:'/admin/notifications/email',keywords:'smtp email verification password reset queue gateway'},
+  {key:'notification.email',owner:'communications',label:'Transactional email / SMTP',href:'/admin/notifications',keywords:'smtp email verification password reset queue gateway'},
   {key:'integration.requestService',owner:'communications',label:'Request service / Jellyseerr',href:'/admin/request-users',keywords:'overseerr seerr jellyseerr request api key sync users'},
   {key:'integration.requestPolicy',owner:'communications',label:'Request quotas and permissions',href:'/admin/request-plan-policy',keywords:'movie tv quota permissions jellyseerr plan'},
 
