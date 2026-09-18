@@ -44,7 +44,7 @@ assert(dashboardSource.includes("require('./admin-dashboard-control-center')")&&
 assert(dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}'),'Operational control-centre state must sit between the headline hero and live playback, before historical analytics');
 assert(controlCenterSource.includes("require('../automation/job-health')")&&controlCenterSource.includes("require('../automation/free-places-digest')")&&controlCenterSource.includes("require('../entitlements/plan-capacity')"),'Control centre must reuse canonical automation, Free digest and capacity authorities');
 assert(controlCenterSource.includes("require('./operations-settings')")&&controlCenterSource.includes('publicBaseUrlConfigured'),'Free advert status must mirror the digest worker public-base-URL prerequisite without making an external request');
-assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("NULLIF(BTRIM(processing_error),'') IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage and count all recurring sync/event exceptions without dashboard row limits');
+assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("require('../payments/provider-settings')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("NULLIF(BTRIM(processing_error),'') IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage, provider configuration state, and count all recurring sync/event exceptions without dashboard row limits');
 assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()'),'Billing integrity must not derive global health from the Billing page\'s intentionally limited 500-subscription / 50-event display rows');
 assert(billingControlSource.includes("ORDER BY CASE WHEN s.billing_mode='subscription'")&&billingControlSource.includes("ORDER BY CASE WHEN processed_at IS NULL"),'Bounded Billing reference lists must prioritise unresolved subscription/event problems before recent healthy history');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
@@ -70,21 +70,27 @@ assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',m
 assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:true}).includes('00:00 tomorrow'),'A missing persistent Discord status message must force baseline recovery instead of claiming an advert is due');
 const controlHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:7,used:13,limit:20,waiting:2,waitingCapped:false,bufferedPlaces:3,nextAdvert:'00:00 tomorrow · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
-  commerce:{needsReview:true,missing:1,syncProblems:0,pastDue:0,providerEventErrors:0},
+  commerce:{needsReview:true,missing:1,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
   recent:[{kind:'good',label:'Free Jellyfin account removed',detail:'FREE · inactivity policy',at:new Date().toISOString(),href:'/admin/users/example'}]
 });
 for(const token of ['Free Server','Billing integrity','What Fin Fusion just did','Buffered advert','Missing link'])assert(controlHtml.includes(token),`Dashboard control centre missing ${token}`);
 assert(!controlHtml.includes('<form'),'Dashboard control centre must remain summary/navigation only; mutations stay on their owning pages');
+const providerProblemHtml=controlCenter.renderControlCenter({
+  free:{configured:false},
+  commerce:{needsReview:true,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:1},
+  recent:[]
+});
+assert(providerProblemHtml.includes('Billing integrity')&&providerProblemHtml.includes('Needs review')&&providerProblemHtml.includes('Provider / sync')&&providerProblemHtml.includes('>1</strong>'),'An enabled but unconfigured Stripe/PayPal provider must make Billing integrity visibly require review');
 const pausedFreeHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:2,used:8,reserved:1,limit:11,waiting:800,waitingCapped:true,bufferedPlaces:0,nextAdvert:'Advertising disabled',inactivityEnabled:false,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
-  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
   recent:[]
 });
 assert(pausedFreeHtml.includes('dashboardControlCard neutral')&&pausedFreeHtml.includes('Inactivity:</strong> Paused'),'Intentionally paused Free inactivity must be neutral rather than a false warning');
 assert(pausedFreeHtml.includes('800+')&&pausedFreeHtml.includes('used / eligible capacity'),'Free waiting lower bounds and capacity labels must stay numerically honest when candidate reads are capped');
 const brokenFreeHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'12:00 today · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
-  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
   recent:[]
 });
 assert(brokenFreeHtml.includes('dashboardControlCard warn')&&brokenFreeHtml.includes('Inactivity:</strong> disabled'),'Enabled Free inactivity with a disabled worker must remain visible as an operational problem');
