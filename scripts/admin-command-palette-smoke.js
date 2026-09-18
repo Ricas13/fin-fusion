@@ -15,7 +15,7 @@ const commandIndex=require('../src/platform/admin-command-index');
 const indexed=commandIndex.all();
 assert(commandIndex.markup().includes('data-admin-command-seed'),'canonical command index must render CSP-safe seed elements');
 assert(shell.includes('commandIndex.markup()'),'admin shell must render the canonical command index without inline JavaScript');
-for(const [label,href] of [['Billing','/admin/billing'],['Free Server inactivity policy','/admin/servers'],['Transactional email / SMTP','/admin/notifications/email'],['Provider transaction ledger','/admin/payments/transactions'],['Add customer','/admin/users/new'],['Add Jellyfin server','/admin/servers/new'],['Import from Jellyfin','/admin/jellyfin-import'],['Needs attention','/admin/attention'],['Search','/admin/search']]){
+for(const [label,href] of [['Billing','/admin/billing'],['Free Server inactivity policy','/admin/servers'],['Transactional email / SMTP','/admin/notifications'],['Provider transaction ledger','/admin/payments/transactions'],['Add customer','/admin/users/new'],['Add Jellyfin server','/admin/servers/new'],['Import from Jellyfin','/admin/jellyfin-import'],['Needs attention','/admin/attention'],['Search','/admin/search']]){
   assert(indexed.some(item=>item.label===label&&item.href===href),`canonical command index missing ${label} → ${href}`);
 }
 
