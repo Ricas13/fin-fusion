@@ -112,7 +112,6 @@ function freeAccessHealth(status,{now=Date.now()}={}){
       minimumMet:false,
       playbackMinutes,
       firstPlaybackGraceDays,
-      noPlaybackDays:null,
       minimumPlaybackMinutes,
       playbackWindowDays,
       enforcementNote
@@ -146,7 +145,6 @@ function freeAccessHealth(status,{now=Date.now()}={}){
     minimumMet,
     playbackMinutes,
     firstPlaybackGraceDays,
-    noPlaybackDays:null,
     minimumPlaybackMinutes,
     playbackWindowDays,
     enforcementNote
