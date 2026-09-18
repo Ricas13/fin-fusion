@@ -19,11 +19,12 @@ const originalRequest = registry.request;
     let customerId = null, userId = null, planId = null, serverId = null, accountId = null;
     let deleteCalls = 0;
     let deleteShouldFail = false;
+    let livePlayback = false;
     const staleActivity = new Date(Date.now() - 10 * 86400000).toISOString();
 
     registry.request = async (_serverId, endpoint, options = {}) => {
         if (endpoint === '/Users') return [{ Id: remoteUserId, Name: `Free_${suffix}`, LastActivityDate: staleActivity }];
-        if (endpoint === '/Sessions') return [];
+        if (endpoint === '/Sessions') return livePlayback ? [{ Id:`session-${suffix}`, UserId:remoteUserId, NowPlayingItem:{ Id:'item-1' } }] : [];
         if (endpoint.endsWith('/Policy') && String(options.method || 'GET').toUpperCase() === 'POST') return {};
         if (endpoint === `/Users/${encodeURIComponent(remoteUserId)}` && String(options.method || '').toUpperCase() === 'DELETE') {
             deleteCalls += 1;
@@ -91,6 +92,19 @@ const originalRequest = registry.request;
                 last_error=NULL,
                 updated_at=NOW()
         `, [serverId]);
+
+        // If playback starts after DB eligibility but before the destructive
+        // action, the live-session guard must skip removal without creating a
+        // new inactivity hold.
+        livePlayback = true;
+        const liveSkip = await lifecycle.runPlanRules();
+        assert.strictEqual(liveSkip.enforced, 0, 'active playback at the destructive boundary must not be removed');
+        assert.strictEqual(liveSkip.failed, 0, 'active playback is a safety skip, not a deletion failure');
+        assert.strictEqual(liveSkip.safetySkipped, 1, 'the live-session race must be counted as a safety skip');
+        assert.strictEqual(deleteCalls, 0, 'live playback must block the remote DELETE');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND released_at IS NULL`, [customerId])).rows[0].n, 0,
+            'live playback detected before the hold must leave entitlement state unchanged');
+        livePlayback = false;
 
         // A failed remote deletion keeps one durable inactivity hold. The exact
         // account remains present and the next inactivity run retries it.
