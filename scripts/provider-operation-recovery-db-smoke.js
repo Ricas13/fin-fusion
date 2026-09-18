@@ -191,6 +191,33 @@ async function testJOldOperationCannotOverwriteNewerDecision() {
     assert.strictEqual(providerMutationCount, before, 'J: stale operation must not mutate provider state');
 }
 
+async function testKProviderBillingIdentitySingleOwner() {
+    const tag = suffix(), firstCustomer = await customer(`k-first-${tag}`), secondCustomer = await customer(`k-second-${tag}`);
+    const firstPlan = await plan(`recovery-k-first-${tag}`, 'Provider identity first', 1200);
+    const secondPlan = await plan(`recovery-k-second-${tag}`, 'Provider identity second', 1200);
+    const providerId = `sub_provider_owner_${tag}`;
+    const pool = getPool(), one = await pool.connect(), two = await pool.connect();
+    let secondError = null;
+    try {
+        await one.query('BEGIN');
+        await two.query('BEGIN');
+        await one.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [firstCustomer.id, firstPlan.id, providerId]);
+        const competing = two.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [secondCustomer.id, secondPlan.id, providerId]).catch(error => { secondError = error; return null; });
+        await new Promise(resolve => setTimeout(resolve, 80));
+        await one.query('COMMIT');
+        await competing;
+        if (secondError) await two.query('ROLLBACK'); else await two.query('COMMIT');
+    } finally {
+        try { await one.query('ROLLBACK'); } catch (_) {}
+        try { await two.query('ROLLBACK'); } catch (_) {}
+        one.release(); two.release();
+    }
+    assert(secondError, 'K: concurrent customers must not claim the same external provider billing identity');
+    assert.match(String(secondError.message || secondError), /already attached to another subscription/i, 'K: provider identity guard must reject the duplicate at the database boundary');
+    const owners = await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1`, [providerId]);
+    assert.strictEqual(Number(owners.rows[0].n), 1, 'K: exactly one local subscription may own the provider identity after the race');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -201,7 +228,8 @@ async function main() {
     await testFDefinitiveProviderFailure();
     await testGAmbiguousProviderResult();
     await testJOldOperationCannotOverwriteNewerDecision();
-    console.log('provider operation recovery DB smoke: A-J ok');
+    await testKProviderBillingIdentitySingleOwner();
+    console.log('provider operation recovery DB smoke: A-K ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });
