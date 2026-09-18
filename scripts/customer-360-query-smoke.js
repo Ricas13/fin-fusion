@@ -27,7 +27,7 @@ assert(compactSource.includes('payment_incidents'), 'Payments must surface dispu
 assert(compactSource.includes("['Transaction',row.provider_transaction_id]"), 'Payments must label the provider transaction identifier');
 assert(compactSource.includes("['Reference',row.provider_reference_id]"), 'Payments must expose provider reference identifiers rather than collapsing to one ID');
 assert(compactSource.includes('<details class="providerRefs"><summary>Identifiers</summary>'),'raw provider identifiers must be hidden behind an explicit diagnostic disclosure by default');
-assert(compactSource.includes("customerInactivityStatus.customerStatus(customerId)"),'Customer 360 Free activity must use the canonical status service so assessment remains visible even while enforcement is paused');
+assert(compactSource.includes("customerInactivityStatus.customerStatus(customerId,{refreshUserActivity:false})"),'Customer 360 Free activity must reuse the canonical status service without triggering a live Jellyfin /Users refresh on a read-only page');
 assert(compactSource.includes('Free activity'),'Customer 360 must surface the effective Free activity requirement when one applies');
 assert(compactSource.includes('Refunds, disputes & payment incidents'), 'Payments must explicitly distinguish provider incidents from ordinary transaction rows');
 assert(compactSource.includes("function logsDisclosure(detail){const runs=(detail.runs||[]).slice(0,20)"), 'Logs must remain operational provisioning/reconciliation history while staying progressive');
