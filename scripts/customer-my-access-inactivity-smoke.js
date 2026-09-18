@@ -28,7 +28,7 @@ assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-
 
 assert.match(route,/const missedFirstPlaybackDeadline=Boolean\(firstPlayback&&status\.firstPlaybackOnTime===false\)/,'My Access must distinguish late playback from valid activation');
 assert.match(route,/const activated=Boolean\(!missedFirstPlaybackDeadline&&\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)\)/,'activation must come from on-time playback, never login/browse activity');
-assert.match(route,/label:'Play something to activate'/,'pre-activation status must tell the customer exactly what to do');
+assert.match(route,/label:missedFirstPlaybackDeadline\?'First-play deadline missed':'Play something to activate'/,'pre-activation status must distinguish a still-actionable place from a missed first-play deadline');
 assert.match(route,/const minimumMet=playbackMinutes>=minimumPlaybackMinutes/,'post-activation health must depend only on rolling watched minutes');
 assert.match(route,/const tone=minimumMet\?'good':'bad'/,'there must be no invented third/yellow activity rule');
 assert.doesNotMatch(route,/activityReference=inactiveReference\|\|lastActivity\|\|lastPlayback/,'Jellyfin login/activity must not affect retention health');
@@ -54,6 +54,7 @@ const preFirst=freeAccessHealth({
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
 assert.equal(preFirst.tone,'bad');
 assert.equal(preFirst.activated,false,'recent login activity must not activate the allocation');
+assert.equal(preFirst.label,'Play something to activate','an in-grace unactivated place must tell the customer exactly what to do');
 assert.equal(preFirst.removalAt.toISOString(),'2026-09-08T12:00:00.000Z');
 
 const lateFirst=freeAccessHealth({
