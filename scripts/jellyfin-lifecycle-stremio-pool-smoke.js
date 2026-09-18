@@ -52,7 +52,7 @@ assert(controlledFields.includes('IsDisabled')&&controlledFields.includes('Enabl
 assert(drift.includes("differences:[{field:'AccountPresence',expected:'absent',actual:'present'}]"),'access consistency must still detect obsolete managed accounts that should be absent');
 assert(!fs.existsSync(path.join(root,'src/automation/jellyfin-lifecycle.js')),'superseded standalone Jellyfin lifecycle worker must stay removed');
 assert(jobs.includes('async customer_inactivity(){return customerInactivity.run()}'),'automation must route customer inactivity through the current plan-aware owner');
-assert(inactivity.includes('minimumPlaybackMinutes')&&inactivity.includes('activityWorkerTelemetry()'),'current inactivity owner must keep plan-aware playback and telemetry safety checks');
+assert(inactivity.includes('activityWorkerTelemetry()')&&inactivity.includes('async function finalEligibility')&&inactivity.includes('subscriptionState.liveFreeJellyfinSubscription'),'current inactivity owner must keep fresh playback telemetry and exact-entitlement safety checks');
 assert(inactivity.includes("customer.inactivity.remove_jellyfin"),'Free inactivity enforcement must remove Jellyfin access instead of disabling it');
 assert(!/UPDATE\s+customers|DELETE\s+FROM\s+customers/i.test(inactivity),'current inactivity lifecycle must never update/delete portal customers');
 assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
