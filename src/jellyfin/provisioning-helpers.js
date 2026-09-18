@@ -33,6 +33,7 @@ const {
   setLibrarySelection,
   effectivePolicyForCustomer,
   usernameAvailable,
+  assertNoActivePlaybackBeforeDelete,
   markPrimaryAccount,
   renameJellyfinAccount
 } = core;
@@ -401,6 +402,7 @@ module.exports = {
   usernameAvailable,
   applyPolicy,
   disableJellyfinAccount,
+  assertNoActivePlaybackBeforeDelete,
   deleteJellyfinAccount,
   markPrimaryAccount,
   renameJellyfinAccount,
