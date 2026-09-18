@@ -337,13 +337,13 @@ function freeCard(data = {}) {
   }
   const capacity = data.limit == null
     ? `${data.available ?? '—'} available`
-    : `${Math.max(0, Number(data.limit || 0) - Number(data.available || 0))} / ${data.limit}`;
+    : `${data.used == null ? Math.max(0, Number(data.limit || 0) - Number(data.available || 0) - Number(data.reserved || 0)) : Number(data.used)} / ${data.limit}`;
   const inactivityBad = !data.inactivityEnabled || ['failed','degraded','stale','missing'].includes(data.inactivityState);
   const tone = inactivityBad ? 'warn' : 'good';
   const policy = (data.serverPolicies || []).map(row =>
     `${row.name}: first play ${row.firstPlaybackGraceDays}d · ${row.minimumPlaybackMinutes} min / ${row.playbackWindowDays}d`
   ).join(' | ');
-  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : 'used / configured')}${metric('Waiting', `${data.waitingCapped ? '500+' : data.waiting}`, 'eligible customers without a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p>${policy ? `<p class="dashboardControlPolicy">${esc(policy)}</p>` : ''}</a>`;
+  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / configured · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', `${data.waitingCapped ? '500+' : data.waiting}`, 'eligible customers without a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p>${policy ? `<p class="dashboardControlPolicy">${esc(policy)}</p>` : ''}</a>`;
 }
 
 function billingCard(data = {}) {
