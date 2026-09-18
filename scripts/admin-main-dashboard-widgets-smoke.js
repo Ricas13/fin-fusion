@@ -57,6 +57,7 @@ async function main(){
     for(const spec of specs){const html=await spec.render(ctx);assert(typeof html==='string'&&html.length>0,`widget ${spec.key} must render non-empty HTML`);}
     assert(ctx.data.profitability&&Number.isFinite(Number(ctx.data.profitability.current.profitMinor)),'dashboard must expose current-month profit');
     assert(ctx.data.profitability&&Number.isFinite(Number(ctx.data.profitability.ytd.profitMinor)),'dashboard must expose YTD profit');
+    assert(Array.isArray(ctx.data.financialWarnings),'dashboard context must preserve canonical financial-integrity warnings for the shared alert surface');
     assert(ctx.data.userGauge&&Number.isFinite(Number(ctx.data.userGauge.active))&&Number.isFinite(Number(ctx.data.userGauge.capacity)),'dashboard must expose managed customers over configured user capacity');
     assert(ctx.data.growthAnalytics,'dashboard must expose canonical growth/server analytics data');
     assert(Array.isArray(ctx.data.growthAnalytics.growth.rows)&&ctx.data.growthAnalytics.growth.rows.length>0,'growth analytics must expose a filled historical series');
@@ -78,6 +79,8 @@ async function main(){
     const dashboardSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard.js'),'utf8');
     const publicAuthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/customer-public-auth.js'),'utf8');
     assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardProfitability'),'home dashboard profit must use the shared profitability owner');
+    assert(mainSource.includes('profit.current?.revenue?.warnings')&&mainSource.includes('profit.ytd?.revenue?.warnings'),'home dashboard must propagate canonical ledger warnings after retiring the legacy dashboard-data path');
+    assert(mainSource.includes("showFinancialWarning:false"),'main analytics grid must suppress its internal warning copy because Home renders that alert above the collapsed analytics section');
     assert(!mainSource.includes("require('./admin-dashboard-data')")&&!mainSource.includes('dashboardData(range,reporting)'),'home dashboard must not execute the legacy dashboard analytics stack in parallel with current growth/server analytics');
     assert(mainSource.includes("require('./admin-dashboard-growth-data')")&&mainSource.includes('growthData.growthServerAnalytics'),'home dashboard growth/server cards must use their canonical data owner');
     for(const key of expected)assert(mainSource.includes(`registry.register('main','${key}'`),`home dashboard must register ${key}`);
