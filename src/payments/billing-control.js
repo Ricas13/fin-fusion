@@ -23,11 +23,7 @@ function isRecurring(row) {
 }
 
 function validRecurringProviderReference(row) {
-    const source = String(row?.source || '').trim().toLowerCase();
-    const id = String(row?.provider_subscription_id || '').trim();
-    if (source === 'stripe') return /^sub_/i.test(id);
-    if (source === 'paypal') return /^I-/i.test(id);
-    return false;
+    return billingMode.validRecurringProviderReference(row);
 }
 
 function providerMissing(error) {
