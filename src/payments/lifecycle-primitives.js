@@ -9,6 +9,7 @@ const discounts = require('./discounts');
 const referrals = require('../referrals');
 const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
+const serviceCreditReservations = require('./service-credit-reservations');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -331,6 +332,12 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
             }
             if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
+                // A mixed provider + service-credit checkout is one commercial
+                // settlement. Debit the reserved service credit in the same DB
+                // transaction that activates access so a late provider payment
+                // can never commit a full entitlement after its credit portion
+                // was released/expired and spent elsewhere.
+                await serviceCreditReservations.settle(client, settlementCheckoutIntentId, 'completed');
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
             await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null })]);
