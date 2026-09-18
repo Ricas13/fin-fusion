@@ -90,6 +90,8 @@ const brokenFreeHtml=controlCenter.renderControlCenter({
 assert(brokenFreeHtml.includes('dashboardControlCard warn')&&brokenFreeHtml.includes('Inactivity:</strong> disabled'),'Enabled Free inactivity with a disabled worker must remain visible as an operational problem');
 const failedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'failed',last_error:'boom',last_failed_count:1,last_processed_count:99}],5)[0];
 assert(failedAction&&failedAction.detail==='1 failed','A failed automation run must not reuse the previous successful run\'s processed count');
+const degradedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'degraded',last_warning:'partial',last_failed_count:2,last_processed_count:7}],5)[0];
+assert(degradedAction&&degradedAction.kind==='warn'&&degradedAction.detail.includes('7 processed')&&degradedAction.detail.includes('2 failed')&&degradedAction.detail.includes('completed with warnings'),'A degraded job outcome must stay visible as a warning with its completed-run counts');
 
 const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10}}});
 assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Customers / capacity')&&clear.includes('Automation'),'Dashboard hero must expose profit, customer capacity and automation health');
