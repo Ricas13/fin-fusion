@@ -26,7 +26,7 @@ function financialWarningBanner(ctx) {
 // save, and the widget picker would have nothing to un-hide. Both hidden
 // and lazy widgets get a skeleton + a data-lazy-src fragment URL instead of
 // a server render, so hiding widgets doesn't cost anything server-side.
-async function renderWidgetGrid(dashboardKey, req, ctx) {
+async function renderWidgetGrid(dashboardKey, req, ctx, { showFinancialWarning = true } = {}) {
     const saved = await layoutModule.getLayout(req.session.authUserId, dashboardKey);
     const merged = layoutModule.mergeWithDefaults(dashboardKey, saved);
     const body = (await Promise.all(merged.map(async row => {
@@ -57,7 +57,7 @@ async function renderWidgetGrid(dashboardKey, req, ctx) {
         <link rel="stylesheet" href="/css/admin-dashboard-widget-layout.css">
         <div class="dashboardCustomizeBar"><button type="button" class="button secondary btn-sm" data-dashboard-customize-toggle>Customize dashboard</button></div>
         <div class="notice error widgetHidden" data-dashboard-layout-error role="alert"></div>
-        ${financialWarningBanner(ctx)}
+        ${showFinancialWarning ? financialWarningBanner(ctx) : ''}
         <div class="widgetPicker widgetHidden" data-widget-picker><h3>Show/hide widgets</h3><div class="widgetPickerList">${picker}</div><div class="buttonRow" style="margin-top:10px"><button type="button" class="button secondary btn-sm" data-dashboard-reset>Restore defaults</button></div></div>
         <div class="analyticsGrid" data-dashboard-key="${esc(dashboardKey)}" data-csrf-token="${esc(csrf.token(req))}">${body}</div>
         <script src="/js/admin-dashboard-widgets.js" defer></script>
