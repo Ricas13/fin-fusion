@@ -73,13 +73,29 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
     }
 
     const otherBlocker = await db.query(`
-        SELECT hold_type,source_key
-        FROM customer_access_holds
-        WHERE customer_id=$1
-          AND released_at IS NULL
-          AND NOT (hold_type=$2 AND source_key=$3)
+        SELECT h.hold_type,h.source_key
+        FROM customer_access_holds h
+        WHERE h.customer_id=$1
+          AND h.released_at IS NULL
+          AND (
+            -- Payment delinquency belongs to the affected paid provider
+            -- subscription and must never block the independent Free lane.
+            -- Other inactivity holds belong to other Free allocation episodes.
+            h.hold_type NOT IN ('payment_delinquency','inactivity_policy','jellyfin_cleanup')
+            OR (
+              h.hold_type='jellyfin_cleanup'
+              AND EXISTS(
+                SELECT 1
+                FROM jellyfin_accounts ja
+                WHERE ja.customer_id=$1
+                  AND ja.account_purpose='jellyfin'
+                  AND ja.access_lane='free'
+                  AND h.source_key=('server:'||ja.server_id::text)
+              )
+            )
+          )
         LIMIT 1
-    `, [customerId, HOLD_TYPE, sourceKey]);
+    `, [customerId]);
     if (otherBlocker.rowCount) {
         return {
             eligible: false,
