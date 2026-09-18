@@ -157,7 +157,29 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
       stored.lastAdvertSlot=currentSlot;
     }
 
-    const displayedRemaining=stored.remaining==null?actualRemaining:Math.max(0,Math.floor(Number(stored.remaining)||0));
+    if(stored.remaining==null){
+      const message=persistentMessage(actualRemaining,publicBaseUrl);
+      let sent=null,created=false;
+      try{sent=await edit({channelId,messageId:stored.messageId,text:persistentText(actualRemaining,publicBaseUrl),message});}
+      catch(error){if(!discordMissing(error))throw error;}
+      if(!sent){
+        sent=await send({channelId,text:persistentText(actualRemaining,publicBaseUrl),message,allowEveryone:false});
+        created=true;
+      }
+      const messageId=String(sent?.id||stored.messageId||'');
+      if(!messageId)throw new Error('Discord did not return an availability message ID.');
+      await saveState(db,{
+        channelId,
+        messageId,
+        text:JSON.stringify(message),
+        remaining:actualRemaining,
+        observedRemaining:actualRemaining,
+        lastAdvertSlot:stored.lastAdvertSlot
+      });
+      return{processed:1,updated:1,created:created?1:0,availabilityRestored:0,remaining:actualRemaining,observedRemaining:actualRemaining,messageId,legacyBaseline:true};
+    }
+
+    const displayedRemaining=Math.max(0,Math.floor(Number(stored.remaining)||0));
     const slotAdvanced=Boolean(currentSlot&&stored.lastAdvertSlot!==currentSlot);
     const increaseBuffered=actualRemaining>displayedRemaining;
     const publishIncrease=Boolean(slotAdvanced&&increaseBuffered&&actualRemaining>=minRemaining);
