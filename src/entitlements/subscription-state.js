@@ -131,10 +131,9 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
  LIMIT 1
  `,[customerId]);
  let row=result.rows[0]||null;if(!row)return null;
- // subscription_admin_present() intentionally treats a server pin as authority
- // for keeping a subscription discoverable, but a pin is placement only for
- // Free inactivity. Decorate first so we can distinguish explicit PRESENT from
- // FORCED_SERVER instead of trusting the conflated SQL helper boolean.
+ // Decorate the service-scoped administrator mode before applying Free-lane
+ // holds. Permanent Access and explicit admin-present may override automatic
+ // inactivity; a server pin is placement-only and never clears a hold.
  row=await applyOperatorSemantics(db,row,{includeBlocked:true});
  if(row.admin_jellyfin_removed){row.blocked=true;return includeBlocked?row:null;}
  if(row.permanent_access||row.admin_jellyfin_mode==='present'){row.blocked=false;return row;}
