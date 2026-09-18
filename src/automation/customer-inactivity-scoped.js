@@ -204,7 +204,7 @@ async function removeEligibleAccount(row, actorUserId) {
     try {
         await provisioning.deleteJellyfinAccount(
             deleteAccountShape(row),
-            { reason, actorUserId }
+            { reason, actorUserId, requireNoActivePlayback: true }
         );
         await verifyRemoved(row.account_id);
     } catch (error) {
