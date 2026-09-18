@@ -110,6 +110,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.plan_id,
             s.starts_at,
             s.current_period_end,
+            s.created_at subscription_created_at,
             p.code plan_code,
             p.name plan_name
           FROM subscriptions s
@@ -164,6 +165,13 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
               AND h.hold_type=$1
               AND h.source_key=('plan:'||fa.plan_id::text)
               AND h.released_at IS NULL
+              AND (
+                h.metadata->>'subscriptionId'=fa.subscription_id::text
+                OR (
+                  h.metadata->>'subscriptionId' IS NULL
+                  AND h.created_at>=fa.subscription_created_at
+                )
+              )
           ) already_held
         FROM free_access fa
         JOIN customers c ON c.id=fa.customer_id
