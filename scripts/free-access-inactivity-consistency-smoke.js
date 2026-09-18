@@ -36,6 +36,18 @@ const stillInGrace = inactivity.assessUsage({
 }, policy, now);
 assert.equal(stillInGrace.firstPlaybackEligible, false, 'new allocations must receive the full first-play grace');
 
+// A late first playback must not retroactively satisfy Rule 1 just because the
+// worker did not run exactly at the deadline.
+const lateFirstPlayback = inactivity.assessUsage({
+    allocation_start_at: '2026-09-15T12:00:00.000Z',
+    first_playback_at: '2026-09-18T12:00:01.000Z',
+    last_playback_at: '2026-09-18T12:10:00.000Z',
+    playback_seconds: 10 * 60
+}, policy, Date.parse('2026-09-18T12:10:01.000Z'));
+assert.equal(lateFirstPlayback.firstPlaybackEligible, true, 'first playback after the grace deadline must still fail Rule 1');
+assert.equal(lateFirstPlayback.firstPlaybackOnTime, false, 'late playback must not activate the allocation');
+assert.equal(lateFirstPlayback.usageEligible, false, 'Rule 2 must not replace a missed first-play deadline');
+
 // Playback before the current allocation is irrelevant.
 const oldPlayback = inactivity.assessUsage({
     allocation_start_at: '2026-09-15T12:00:00.000Z',
@@ -154,6 +166,7 @@ assert.doesNotMatch(base, /noPlaybackEligible|noPlaybackDays/, 'Free inactivity 
 // Enforcement must delete exactly the selected Free account and persist a hold;
 // it must not route deletion through the broad entitlement reconciler.
 assert.match(enforcement, /await provisioning\.deleteJellyfinAccount\(/);
+assert.match(enforcement, /entitlement\.subscription_id[\s\S]*?fresh\.subscription_id/, 'final destructive recheck must require the exact Free subscription episode');
 assert.doesNotMatch(enforcement, /await provisioning\.reconcileCustomer\(/, 'inactivity removal must not invoke broad reconciliation');
 assert.match(enforcement, /await accessHolds\.addHold\([\s\S]*?await provisioning\.deleteJellyfinAccount/, 'the durable inactivity hold must exist before deletion');
 assert(enforcement.indexOf("'customer.inactivity.remove_jellyfin'") > enforcement.indexOf('await verifyRemoved(row.account_id)'), 'successful removal audit must be written only after deletion is verified');
