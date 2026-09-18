@@ -58,7 +58,9 @@ async function entitlementSemantics(entitlement,{client=null}={}){
     decorated.blocked=false;
     decorated.admin_jellyfin_mode='present';
   }else if(control.mode==='admin_server_pin'&&control.server_id){
-    decorated.blocked=false;
+    // A server pin controls placement only. It must not clear a lifecycle,
+    // billing or inactivity blocker; doing so would make pinned Free accounts
+    // impossible to remove when they legitimately fail retention policy.
     decorated.admin_jellyfin_mode='forced_server';
     decorated.admin_forced_server_id=control.server_id;
     decorated.admin_forced_server_name=control.forced_server_name||null;

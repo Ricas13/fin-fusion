@@ -41,6 +41,7 @@ const DEFAULT_JOB_INTERVALS=Object.freeze({
 const CRITICAL_JOB_KEYS=Object.freeze(criticalJobs.names());
 let stopping = false;
 let running = new Set();
+let runningJobs = new Set();
 let heartbeatTimer = null;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
@@ -146,18 +147,27 @@ async function runOne(row) {
     }
 }
 
-async function runBatch(rows) {
-    let index = 0;
-    const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, rows.length) }, async () => {
-        while (!stopping) {
-            const row = rows[index++];
-            if (!row) break;
-            const promise = runOne(row);
-            running.add(promise);
-            try { await promise; } finally { running.delete(promise); }
-        }
-    });
-    await Promise.all(workers);
+function dispatchDue(rows) {
+    let capacity = Math.max(0, MAX_CONCURRENCY - running.size);
+    if (!capacity || stopping) return 0;
+
+    let launched = 0;
+    for (const row of rows) {
+        if (!capacity || stopping) break;
+        const jobKey = row.job_key;
+        if (runningJobs.has(jobKey)) continue;
+
+        runningJobs.add(jobKey);
+        const promise = runOne(row);
+        running.add(promise);
+        promise.finally(() => {
+            running.delete(promise);
+            runningJobs.delete(jobKey);
+        });
+        launched += 1;
+        capacity -= 1;
+    }
+    return launched;
 }
 
 async function loop() {
@@ -184,7 +194,7 @@ async function loop() {
         try {
             await heartbeat();
             const due = await dueJobs();
-            if (due.length) await runBatch(due);
+            if (due.length) dispatchDue(due);
         } catch (error) {
             console.error('Automation scheduler iteration failed:', safeLog(error.message || error, 1000));
         }
