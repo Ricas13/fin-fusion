@@ -55,7 +55,7 @@ assert(jobs.includes('async customer_inactivity(){return customerInactivity.run(
 assert(inactivity.includes('activityWorkerTelemetry()')&&inactivity.includes('async function finalEligibility')&&inactivity.includes('subscriptionState.liveFreeJellyfinSubscription'),'current inactivity owner must keep fresh playback telemetry and exact-entitlement safety checks');
 assert(inactivity.includes("customer.inactivity.remove_jellyfin"),'Free inactivity enforcement must remove Jellyfin access instead of disabling it');
 assert(!/UPDATE\s+customers|DELETE\s+FROM\s+customers/i.test(inactivity),'current inactivity lifecycle must never update/delete portal customers');
-assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
+assert(/portalAccountPreserved\s*:\s*true/.test(policy),'policy audit must record portal preservation');
 assert(/source_kind = 'owned'::text\) OR \(authorization_confirmed = true/.test(migration),'external Stremio sources must require authorization');
 assert(pool.includes('Confirm that you are authorized'),'external source connection must enforce authorization');
 assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTAiNFiN attribution for operator-side source diagnostics');
