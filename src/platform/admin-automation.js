@@ -14,7 +14,7 @@ const LABELS = {
     entitlements: ['Entitlements', 'Expires due subscriptions and reconciles active customer access.'],
     free_capacity_backfill: ['Free Server capacity recovery', 'Assigns waiting Free Server entitlements as soon as eligible Jellyfin user capacity becomes available.'],
     policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTAiNFiN policy with live managed Jellyfin users.'],
-    customer_inactivity: ['Customer inactivity', 'Applies configured Jellyfin inactivity and cleanup rules.'],
+    customer_inactivity: ['Customer inactivity', 'Applies the two Free Server playback rules and removes eligible Free Jellyfin accounts.'],
     bulk_jobs: ['Bulk operations', 'Processes queued bulk customer actions.'],
     stale_reclaim: ['Stale job reclaim', 'Recovers abandoned running bulk items safely.'],
     email_outbox: ['Transactional email', 'Delivers due messages from the encrypted outbox.'],
