@@ -302,8 +302,20 @@
     metrics.dataset.summaryUnified='1';
     metrics.classList.add('customerMockMetricsUnified');
     [...glance.children].forEach(card=>{
-      const label=text(card.querySelector('span'));
+      const sourceLabel=card.querySelector(':scope > span');
+      const sourceSub=card.querySelector(':scope > small');
+      const label=text(sourceLabel);
       if(label==='Current plan'){card.remove();return;}
+      if(sourceLabel){
+        const normalizedLabel=document.createElement('small');
+        normalizedLabel.textContent=label;
+        sourceLabel.replaceWith(normalizedLabel);
+      }
+      if(sourceSub){
+        const normalizedSub=document.createElement('span');
+        normalizedSub.textContent=text(sourceSub);
+        sourceSub.replaceWith(normalizedSub);
+      }
       card.classList.add('customerMockMetric');
       metrics.appendChild(card);
     });
