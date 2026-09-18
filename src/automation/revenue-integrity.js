@@ -119,6 +119,7 @@ async function scan() {
         permanentRefunds,
         invalidRecurringProviderRefs,
         duplicateProviderIdentities,
+        staleAppliedRenewalCredits,
         manualProviderOps,
         deletionFailures,
         staleCreationIntents,
@@ -165,6 +166,16 @@ async function scan() {
             GROUP BY source,provider_subscription_id
             HAVING COUNT(*)>1
             ORDER BY COUNT(*) DESC,source,provider_subscription_id
+            LIMIT 100
+        `),
+        query(`
+            SELECT r.id,r.customer_id,r.subscription_id,r.provider_invoice_id,
+                   r.provider_adjustment_id,r.currency,r.amount_minor,r.applied_at
+            FROM affiliate_credit_renewal_reservations r
+            WHERE r.state='provider_applied'
+              AND r.applied_at IS NOT NULL
+              AND r.applied_at<NOW()-INTERVAL '48 hours'
+            ORDER BY r.applied_at
             LIMIT 100
         `),
         query(`
@@ -326,6 +337,7 @@ async function scan() {
     for (const row of permanentRefunds.rows) findings.push(finding('refunded_permanent_access', row, `Refund-terminated subscription ${row.subscription_id} still has Permanent Access.`));
     for (const row of invalidRecurringProviderRefs.rows) findings.push(finding('invalid_recurring_provider_reference', row, `${row.source} recurring subscription ${row.subscription_id} has unusable provider reference ${row.provider_subscription_id || '(missing)'}.`));
     for (const row of duplicateProviderIdentities.rows) findings.push(finding('duplicate_provider_billing_identity', row, `${row.source} provider identity ${row.provider_subscription_id} is attached to ${row.subscription_count} local subscriptions across customer(s) ${(row.customer_ids || []).join(', ')}.`));
+    for (const row of staleAppliedRenewalCredits.rows) findings.push(finding('renewal_service_credit_unsettled', row, `Stripe invoice ${row.provider_invoice_id} has had ${row.amount_minor} ${row.currency} of service credit applied at the provider since ${row.applied_at} but the local credit debit is still unsettled.`));
     for (const row of manualProviderOps.rows) findings.push(finding('provider_manual_review', row, `${row.provider} ${row.operation_type} requires manual review${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of deletionFailures.rows) findings.push(finding('customer_deletion_stuck', row, `Customer deletion ${row.id} is ${row.status} after ${row.attempt_count || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of staleCreationIntents.rows) findings.push(finding('jellyfin_creation_intent_stale', row, `Jellyfin creation intent ${row.id} remains ${row.status} on server ${row.server_id}${row.last_error ? `: ${row.last_error}` : ''}`));
