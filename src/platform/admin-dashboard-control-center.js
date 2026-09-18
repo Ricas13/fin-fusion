@@ -11,7 +11,6 @@ const notificationSettings = require('../integrations/notification-settings');
 const operationsSettings = require('./operations-settings');
 const discovery = require('../payments/subscription-discovery');
 const providerSettings = require('../payments/provider-settings');
-const billingControl = require('../payments/billing-control');
 const { esc } = require('./admin-html');
 
 const JOB_LABELS = Object.freeze({
@@ -254,11 +253,11 @@ async function freeSnapshot(jobRows) {
 }
 
 async function billingSnapshot() {
-  const [coverage, integrity, providerCounts, stripeStatus, paypalStatus] = await Promise.all([
+  const [coverage, integrity, stripeStatus, paypalStatus] = await Promise.all([
     discovery.coverageStats(),
     query(`
       WITH recurring AS (
-        SELECT s.id,s.status,s.cancel_at_period_end,ps.last_error
+        SELECT s.id,s.source,s.status,s.cancel_at_period_end,ps.last_error
           FROM subscriptions s
           LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id
          WHERE s.billing_mode='subscription'
@@ -268,13 +267,14 @@ async function billingSnapshot() {
       SELECT
         (SELECT COUNT(*)::int FROM recurring WHERE NULLIF(BTRIM(last_error),'') IS NOT NULL) AS sync_problems,
         (SELECT COUNT(*)::int FROM recurring WHERE status='past_due' AND COALESCE(cancel_at_period_end,FALSE)=FALSE) AS past_due,
+        (SELECT COUNT(*)::int FROM recurring WHERE source='stripe') AS stripe_recurring,
+        (SELECT COUNT(*)::int FROM recurring WHERE source='paypal') AS paypal_recurring,
         (SELECT COUNT(*)::int
            FROM payment_events
           WHERE provider IN('stripe','paypal')
             AND NULLIF(BTRIM(processing_error),'') IS NOT NULL
             AND processed_at IS NULL) AS provider_event_errors
     `),
-    billingControl.recurringProviderCounts(),
     providerSettings.status('stripe'),
     providerSettings.status('paypal')
   ]);
@@ -283,8 +283,12 @@ async function billingSnapshot() {
   const syncProblems = Number(row.sync_problems || 0);
   const pastDue = Number(row.past_due || 0);
   const providerEventErrors = Number(row.provider_event_errors || 0);
+  const providerCounts = {
+    stripe: Number(row.stripe_recurring || 0),
+    paypal: Number(row.paypal_recurring || 0)
+  };
   const providerSetupProblems = [stripeStatus, paypalStatus].filter(status => {
-    const liveRecurring = Number(providerCounts?.[status.provider] || 0);
+    const liveRecurring = Number(providerCounts[status.provider] || 0);
     return status.enabled ? !status.configured : liveRecurring > 0;
   }).length;
   return {
