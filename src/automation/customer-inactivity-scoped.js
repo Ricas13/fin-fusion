@@ -362,7 +362,7 @@ async function runPlanRules({ actorUserId = null } = {}) {
         safetySkipped,
         released,
         warning,
-        dryRun: Boolean(selected.length && selected.every(row => row.policy.dryRun)),
+        dryRun: Boolean(globalCfg.dryRun),
         telemetry,
         serverFailures: telemetry.unsafeTargetServers,
         examples: eligible.slice(0, 25).map(row => ({
