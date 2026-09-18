@@ -79,7 +79,7 @@ async function main(){
     const growthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard-growth-data.js'),'utf8');
     const dashboardSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard.js'),'utf8');
     const publicAuthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/customer-public-auth.js'),'utf8');
-    assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardProfitability'),'home dashboard profit must use the shared profitability owner');
+    assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardHeadlineProfitability')&&!mainSource.includes('profitability.dashboardProfitability(reporting)'),'home dashboard profit must use the shared headline-only profitability owner without calculating unused weekly windows');
     assert(mainSource.includes('profit.current?.revenue?.warnings')&&mainSource.includes('profit.ytd?.revenue?.warnings'),'home dashboard must propagate canonical ledger warnings after retiring the legacy dashboard-data path');
     assert(mainSource.includes("showFinancialWarning:false"),'main analytics grid must suppress its internal warning copy because Home renders that alert above the collapsed analytics section');
     assert(!mainSource.includes("require('./admin-dashboard-data')")&&!mainSource.includes('dashboardData(range,reporting)'),'home dashboard must not execute the legacy dashboard analytics stack in parallel with current growth/server analytics');
