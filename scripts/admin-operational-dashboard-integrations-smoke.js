@@ -38,7 +38,8 @@ assert(!dashboardSource.includes('Needs attention'),'Home must rely on the persi
 assert(dashboardSource.includes("require('./admin-dashboard-control-center')")&&dashboardSource.includes('controlCenter.controlCenterData()'),'Dashboard must aggregate the control-centre snapshot through the dedicated read-only module');
 assert(dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}'),'Operational control-centre state must sit between the headline hero and live playback, before historical analytics');
 assert(controlCenterSource.includes("require('../automation/job-health')")&&controlCenterSource.includes("require('../automation/free-places-digest')")&&controlCenterSource.includes("require('../entitlements/plan-capacity')"),'Control centre must reuse canonical automation, Free digest and capacity authorities');
-assert(controlCenterSource.includes("require('../payments/billing-control')")&&controlCenterSource.includes("require('../payments/subscription-discovery')"),'Billing integrity must reuse the same billing/discovery authorities as the Billing page');
+assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("processing_error IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage and count all recurring sync/event exceptions without dashboard row limits');
+assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()'),'Billing integrity must not derive global health from the Billing page\'s intentionally limited 500-subscription / 50-event display rows');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
 assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500)')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500)'),'Free Server waiting count must include both verified claim retries and already-entitled customers awaiting an account');
 assert(controlCenter.RECENT_JOB_KEYS.has('free_capacity_backfill')&&!controlCenter.RECENT_JOB_KEYS.has('health')&&!controlCenter.RECENT_JOB_KEYS.has('free_places_digest'),'Recent automation feed must keep meaningful customer-impacting work and exclude high-frequency heartbeat/digest noise');
@@ -56,6 +57,21 @@ const controlHtml=controlCenter.renderControlCenter({
 });
 for(const token of ['Free Server','Billing integrity','What Fin Fusion just did','Buffered advert','Missing link'])assert(controlHtml.includes(token),`Dashboard control centre missing ${token}`);
 assert(!controlHtml.includes('<form'),'Dashboard control centre must remain summary/navigation only; mutations stay on their owning pages');
+const pausedFreeHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:2,used:8,reserved:1,limit:11,waiting:800,waitingCapped:true,bufferedPlaces:0,nextAdvert:'Advertising disabled',inactivityEnabled:false,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0},
+  recent:[]
+});
+assert(pausedFreeHtml.includes('dashboardControlCard neutral')&&pausedFreeHtml.includes('Inactivity:</strong> Paused'),'Intentionally paused Free inactivity must be neutral rather than a false warning');
+assert(pausedFreeHtml.includes('800+')&&pausedFreeHtml.includes('used / eligible capacity'),'Free waiting lower bounds and capacity labels must stay numerically honest when candidate reads are capped');
+const brokenFreeHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'12:00 today · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0},
+  recent:[]
+});
+assert(brokenFreeHtml.includes('dashboardControlCard warn')&&brokenFreeHtml.includes('Inactivity:</strong> disabled'),'Enabled Free inactivity with a disabled worker must remain visible as an operational problem');
+const failedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'failed',last_error:'boom',last_failed_count:1,last_processed_count:99}],5)[0];
+assert(failedAction&&failedAction.detail==='1 failed','A failed automation run must not reuse the previous successful run\'s processed count');
 
 const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10}}});
 assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Customers / capacity')&&clear.includes('Automation'),'Dashboard hero must expose profit, customer capacity and automation health');
