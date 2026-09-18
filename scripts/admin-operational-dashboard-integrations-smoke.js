@@ -88,11 +88,12 @@ const pausedFreeHtml=controlCenter.renderControlCenter({
 });
 assert(pausedFreeHtml.includes('dashboardControlCard neutral')&&pausedFreeHtml.includes('Inactivity:</strong> Paused'),'Intentionally paused Free inactivity must be neutral rather than a false warning');
 const missingPolicyHtml=controlCenter.renderControlCenter({
-  free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:false,inactivityDryRun:true,inactivityConfigurationMissing:true,inactivityState:'disabled',inactivityLastCompletedAt:null},
+  free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:false,inactivityDryRun:true,inactivityConfigurationMissing:true,inactivityState:'disabled',inactivityLastCompletedAt:null,actionHref:'/admin/settings/jellyfin-lifecycle'},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
   recent:[]
 });
 assert(missingPolicyHtml.includes('dashboardControlCard warn')&&missingPolicyHtml.includes('Inactivity:</strong> Not configured'),'Safe-unconfigured Free inactivity must warn distinctly from an intentional operator pause');
+assert(missingPolicyHtml.includes('href="/admin/settings/jellyfin-lifecycle"'),'Missing lifecycle configuration must link directly to its owning settings page');
 assert(pausedFreeHtml.includes('≥800')&&pausedFreeHtml.includes('used / eligible capacity'),'Free waiting lower bounds and capacity labels must stay numerically honest when candidate reads are capped');
 const brokenFreeHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'12:00 today · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
@@ -101,11 +102,12 @@ const brokenFreeHtml=controlCenter.renderControlCenter({
 });
 assert(brokenFreeHtml.includes('dashboardControlCard warn')&&brokenFreeHtml.includes('Inactivity:</strong> disabled'),'Enabled Free inactivity with a disabled worker must remain visible as an operational problem');
 const brokenAdvertHtml=controlCenter.renderControlCenter({
-  free:{configured:true,available:4,used:6,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Discord not configured',advertConfigurationProblem:true,inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
+  free:{configured:true,available:4,used:6,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Discord not configured',advertConfigurationProblem:true,inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString(),actionHref:'/admin/notifications/preferences'},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
   recent:[]
 });
 assert(brokenAdvertHtml.includes('dashboardControlCard warn')&&brokenAdvertHtml.includes('Discord not configured'),'Enabled Free advertising that cannot run must warn even when inactivity itself is healthy');
+assert(brokenAdvertHtml.includes('href="/admin/notifications/preferences"'),'Discord Free-advert configuration problems must link to notification-channel settings');
 const brokenCapacityHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:0,used:0,reserved:0,limit:0,waiting:0,waitingCapped:false,capacityConfigurationProblem:true,capacityProblemDetail:'No Jellyfin server user capacity is configured for this plan.',bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:true,inactivityDryRun:false,inactivityConfigurationMissing:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
