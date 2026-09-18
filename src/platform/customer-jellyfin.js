@@ -81,7 +81,8 @@ function freeAccessHealth(status,{now=Date.now()}={}){
   const minimumPlaybackMinutes=Number(policy.minimumPlaybackMinutes);
   const allocationStart=asDate(status.allocationStartAt);
   const firstPlayback=asDate(status.firstPlaybackAt);
-  const activated=Boolean(firstPlayback||status.hasPlayback||status.currentlyPlaying);
+  const missedFirstPlaybackDeadline=Boolean(firstPlayback&&status.firstPlaybackOnTime===false);
+  const activated=Boolean(!missedFirstPlaybackDeadline&&(firstPlayback||status.hasPlayback||status.currentlyPlaying));
   const playbackMinutes=Math.max(0,Number(status.playbackMinutes)||0);
   const rulesText=`Free Server rules: play your first stream within ${firstPlaybackGraceDays} day${firstPlaybackGraceDays===1?'':'s'} of receiving a place, then watch at least ${minimumPlaybackMinutes} minutes in each rolling ${playbackWindowDays}-day window.`;
   const enforcementNote=status.automationProtected
@@ -97,15 +98,17 @@ function freeAccessHealth(status,{now=Date.now()}={}){
       ?addHours(allocationStart,firstPlaybackGraceDays*24)
       :null;
     const remainingHours=removalAt?hoursUntil(removalAt,now):null;
-    let detail=remainingHours==null
-      ?'Play something on the Free Server to activate this place.'
-      :remainingHours<=0
-        ?'The first-play deadline has been reached.'
-        :`Play something within about ${Math.max(1,Math.ceil(remainingHours))} hours to activate this place.`;
+    let detail=missedFirstPlaybackDeadline
+      ?'Your first playback began after the activation deadline, so this Free Server place no longer satisfies the first-play rule.'
+      :remainingHours==null
+        ?'Play something on the Free Server to activate this place.'
+        :remainingHours<=0
+          ?'The first-play deadline has been reached.'
+          :`Play something within about ${Math.max(1,Math.ceil(remainingHours))} hours to activate this place.`;
     if(enforcementNote)detail+=` ${enforcementNote}`;
     return{
       tone:'bad',
-      label:'Play something to activate',
+      label:missedFirstPlaybackDeadline?'First-play deadline missed':'Play something to activate',
       detail,
       rulesText,
       removalAt,
