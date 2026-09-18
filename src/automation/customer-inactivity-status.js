@@ -61,6 +61,7 @@ async function customerStatus(customerId) {
         playbackSeconds,
         playbackMinutes: Math.floor(playbackSeconds / 60),
         currentlyPlaying: Boolean(row.currently_playing),
+        automationProtected: Boolean(row.admin_protected),
         alreadyHeld: Boolean(row.already_held),
         policyEligible: Boolean(row.eligible),
         eligible: Boolean(row.eligible && globalCfg.enabled && enforcementReady),
