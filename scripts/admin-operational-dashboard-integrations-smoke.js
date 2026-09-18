@@ -94,6 +94,12 @@ const brokenFreeHtml=controlCenter.renderControlCenter({
   recent:[]
 });
 assert(brokenFreeHtml.includes('dashboardControlCard warn')&&brokenFreeHtml.includes('Inactivity:</strong> disabled'),'Enabled Free inactivity with a disabled worker must remain visible as an operational problem');
+const brokenAdvertHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:4,used:6,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Discord not configured',advertConfigurationProblem:true,inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(brokenAdvertHtml.includes('dashboardControlCard warn')&&brokenAdvertHtml.includes('Discord not configured'),'Enabled Free advertising that cannot run must warn even when inactivity itself is healthy');
 const failedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'failed',last_error:'boom',last_failed_count:1,last_processed_count:99}],5)[0];
 assert(failedAction&&failedAction.detail==='1 failed','A failed automation run must not reuse the previous successful run\'s processed count');
 const degradedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'degraded',last_warning:'partial',last_failed_count:2,last_processed_count:7}],5)[0];
