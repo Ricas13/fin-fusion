@@ -177,7 +177,6 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
                   AND access_lane='free'
                   AND disabled=FALSE
                 ORDER BY created_at DESC
-                LIMIT 1
             `, [customerId])
         ]);
 
