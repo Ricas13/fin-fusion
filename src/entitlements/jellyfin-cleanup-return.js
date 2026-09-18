@@ -4,6 +4,7 @@ const {query}=require('../db');
 const accessHolds=require('./access-holds');
 const subscriptionState=require('./subscription-state');
 const subscriptionTermination=require('../payments/subscription-termination');
+const inactivityRestore=require('./jellyfin-inactivity-restore');
 const CLEANUP_HOLD_TYPE='jellyfin_cleanup';
 const INACTIVITY_HOLD_TYPE='inactivity_policy';
 
@@ -78,30 +79,58 @@ async function restoreReturningCustomer(customerId,{reconcile}={}){
   const status=await returningCustomerStatus(customerId);
   if(!status.eligible)return{restored:false,reason:status.reason||null};
 
+  // Generic cleanup holds are separate from Free inactivity. Release them
+  // because the customer explicitly requested restoration.
   for(const sourceKey of status.cleanupSources){
-    await accessHolds.releaseHold({customerId,type:CLEANUP_HOLD_TYPE,sourceKey});
-  }
-  if(status.canRestoreDeletedFree){
-    await accessHolds.releaseHold({customerId,type:INACTIVITY_HOLD_TYPE,sourceKey:status.inactivitySource});
-  }
-
-  // Close any historical lifecycle rows if they exist, but never require that
-  // retired ledger for present-day restore eligibility.
-  if(status.canRestoreDeletedFree){
-    await query(`UPDATE jellyfin_account_lifecycle SET restored_at=COALESCE(restored_at,NOW()),metadata=metadata||$2::jsonb,updated_at=NOW() WHERE customer_id=$1 AND category='free' AND deleted_at IS NOT NULL AND restored_at IS NULL`,[customerId,JSON.stringify({portalReturn:true,reprovisionRequestedAfterDeletion:true,explicitRestore:true,restoredFromInactivityHold:true})]).catch(()=>{});
+    await accessHolds.releaseHold({
+      customerId,
+      type:CLEANUP_HOLD_TYPE,
+      sourceKey,
+      resolutionReason:'Customer explicitly requested access restoration'
+    });
   }
 
+  let freeRestore=null;
   try{
-    if(typeof reconcile==='function')await reconcile(customerId);
+    if(status.canRestoreDeletedFree){
+      // One canonical inactivity restoration path: release the exact hold,
+      // reprovision, restore the hold on failure, and verify one Free account.
+      freeRestore=await inactivityRestore.restoreDisabledFreeAccess(customerId,{reconcile});
+    }else if(typeof reconcile==='function'){
+      await reconcile(customerId);
+    }
   }catch(error){
-    await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({releasedCleanupHolds:status.cleanupSources.length,releasedInactivityHold:status.canRestoreDeletedFree,portalReturn:true,explicitRestore:true,freePlanId:status.freePlanId,reprovisionPending:true,error:String(error?.message||error).slice(0,500)})]).catch(()=>{});
+    await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[
+      customerId,
+      JSON.stringify({
+        releasedCleanupHolds:status.cleanupSources.length,
+        releasedInactivityHold:false,
+        portalReturn:true,
+        explicitRestore:true,
+        freePlanId:status.freePlanId,
+        reprovisionPending:true,
+        error:String(error?.message||error).slice(0,500)
+      })
+    ]).catch(()=>{});
     throw error;
   }
 
-  if(status.canRestoreDeletedFree){
-    await query(`UPDATE jellyfin_account_lifecycle SET metadata=metadata||$2::jsonb,updated_at=NOW() WHERE customer_id=$1 AND category='free' AND restored_at IS NOT NULL`,[customerId,JSON.stringify({reprovisionedAfterDeletion:true,explicitRestore:true})]).catch(()=>{});
-  }
-  await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({releasedCleanupHolds:status.cleanupSources.length,releasedInactivityHold:status.canRestoreDeletedFree,portalReturn:true,explicitRestore:true,freePlanId:status.freePlanId,reprovisionPending:false})]);
-  return{restored:true,released:Number(status.cleanupSources.length)+Number(status.canRestoreDeletedFree),freeLifecycleRestored:status.canRestoreDeletedFree};
+  await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[
+    customerId,
+    JSON.stringify({
+      releasedCleanupHolds:status.cleanupSources.length,
+      releasedInactivityHold:Boolean(freeRestore?.restored),
+      portalReturn:true,
+      explicitRestore:true,
+      freePlanId:status.freePlanId,
+      reprovisionPending:false
+    })
+  ]);
+
+  return{
+    restored:true,
+    released:Number(status.cleanupSources.length)+Number(Boolean(freeRestore?.restored)),
+    freeLifecycleRestored:Boolean(freeRestore?.restored)
+  };
 }
 module.exports={CLEANUP_HOLD_TYPE,INACTIVITY_HOLD_TYPE,returningCustomerStatus,declineDeletedFreeAccess,restoreReturningCustomer};
