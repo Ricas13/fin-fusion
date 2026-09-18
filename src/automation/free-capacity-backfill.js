@@ -9,7 +9,8 @@ function noCapacity(error) {
   return /no eligible jellyfin server|no jellyfin server is currently available/i.test(String(error?.message || error || ''));
 }
 
-async function pendingClaimCandidates(limit = 100, { planId = null } = {}) {
+async function pendingClaimCandidates(limit = 100, options = {}) {
+  const planId = options?.planId || null;
   const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
   const planFilter = planId ? 'AND r.plan_id=$2::uuid' : '';
   const result = await query(`
@@ -36,7 +37,8 @@ async function pendingClaimCandidates(limit = 100, { planId = null } = {}) {
   return result.rows;
 }
 
-async function waitingCandidates(limit = 100, { planId = null } = {}) {
+async function waitingCandidates(limit = 100, options = {}) {
+  const planId = options?.planId || null;
   const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
   const planFilter = planId ? 'AND p.id=$2::uuid' : '';
   const result = await query(`
