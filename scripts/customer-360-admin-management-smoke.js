@@ -20,6 +20,7 @@ const automationJobs=read('src/automation/jobs.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
 const customerOperatorClient=read('public/js/admin-customer-operator.js');
+const customerPrimaryActionsClient=read('public/js/admin-customer-primary-actions.js');
 const customerClaimUi=read('public/js/admin-customer-claim.js');
 const customerClaims=read('src/customer-claims.js');
 const adminHtml=read('src/platform/admin-html.js');
@@ -134,5 +135,7 @@ assert(viewV2.includes('Customer record')&&viewV2.includes('detailTab active'),'
 assert(!fs.existsSync(path.join(root,'public/js/customer-360-navigation.js')),'the retired multi-tab navigation stabilizer must not be reintroduced');
 assert(!adminHtml.includes('/js/customer-360-navigation.js'),'admin pages must no longer load the retired Customer 360 navigation stabilizer');
 assert(customerOperatorClient.includes('relocatePortalAndTopActions'),'the impersonation relocation into the customer nav must remain available to the legacy enrichment layer');
+assert(!customerPrimaryActionsClient.includes('foldPaymentIncidents')&&!customerPrimaryActionsClient.includes('customerPaymentIncidentsFolded'),'Customer 360 client enhancement must not retain the removed duplicate payment-incident folding layer');
+assert(!customerPrimaryActionsClient.includes('min-height:238px!important')&&customerPrimaryActionsClient.includes('min-height:0!important'),'Customer 360 client enhancement must not reintroduce fixed card heights after the server renderer removed them');
 
 console.log('customer 360 admin management smoke: ok');
