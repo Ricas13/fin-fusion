@@ -11,6 +11,7 @@ const viewSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-
 const truthSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-service-truth.js'), 'utf8');
 const compactSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-compact.js'), 'utf8');
 const holdsSource = fs.readFileSync(path.join(root, 'src', 'platform', 'admin-customer-access-holds.js'), 'utf8');
+const primaryActionsSource = fs.readFileSync(path.join(root, 'public', 'js', 'admin-customer-primary-actions.js'), 'utf8');
 
 assert(source.includes("entity_type='customer' AND entity_id::text=$1::text"), 'Customer 360 audit lookup must compare audit entity UUIDs through a consistent text cast');
 assert(source.includes("entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)"), 'Customer 360 subscription audit lookup must cast the route parameter explicitly before comparing it with subscriptions.customer_id');
@@ -41,6 +42,11 @@ assert(viewSource.includes("statusTone=banned?'bad'"), 'Banned customer status m
 assert(viewSource.includes('/access-ban'), 'Customer 360 must expose a direct Ban customer workflow');
 assert(viewSource.includes('/access-ban/revoke'), 'Customer 360 must expose a direct Remove ban workflow');
 assert(!viewSource.includes('/admin/customers/bulk/preview'), 'Customer 360 ban controls must never route through the bulk preview workflow');
+assert(viewSource.includes("const portal=(c.app_user_id||c.user_id)?"), 'Customer 360 hero must keep the portal impersonation action visible for either customer user-id shape');
+assert(primaryActionsSource.includes('function consolidateSummaryMetrics()'), 'Customer 360 must consolidate duplicate summary strips into the hero metrics row');
+assert(primaryActionsSource.includes("if(label==='Current plan'){card.remove();return;}"), 'Customer 360 must remove the duplicated lower Current plan metric');
+assert(primaryActionsSource.includes("metrics.appendChild(card)"), 'Customer 360 must move the remaining glance metrics into the hero summary');
+assert(primaryActionsSource.includes('form[data-customer-portal-primary="1"]'), 'Customer 360 client enhancement must recover the canonical portal action if the hero did not render it');
 
 assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban'"), 'single-customer ban route must exist');
 assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban/revoke'"), 'single-customer unban route must exist');
