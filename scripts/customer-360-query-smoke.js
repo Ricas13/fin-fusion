@@ -46,6 +46,9 @@ assert(viewSource.includes("const portal=(c.app_user_id||c.user_id)?"), 'Custome
 assert(primaryActionsSource.includes('function consolidateSummaryMetrics()'), 'Customer 360 must consolidate duplicate summary strips into the hero metrics row');
 assert(primaryActionsSource.includes("if(label==='Current plan'){card.remove();return;}"), 'Customer 360 must remove the duplicated lower Current plan metric');
 assert(primaryActionsSource.includes("metrics.appendChild(card)"), 'Customer 360 must move the remaining glance metrics into the hero summary');
+assert(primaryActionsSource.includes("sourceLabel.replaceWith(normalizedLabel)")&&primaryActionsSource.includes("sourceSub.replaceWith(normalizedSub)"), 'Unified summary cards must normalize label/subtext markup to match hero metric typography');
+assert(primaryActionsSource.includes("@media(max-width:760px){.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(2,minmax(0,1fr))!important}}"), 'Unified summary metrics must collapse to two columns on tablet widths');
+assert(primaryActionsSource.includes(".customerMockMetrics.customerMockMetricsUnified{grid-template-columns:1fr!important}"), 'Unified summary metrics must collapse to one column on narrow mobile');
 assert(primaryActionsSource.includes('form[data-customer-portal-primary="1"]'), 'Customer 360 client enhancement must recover the canonical portal action if the hero did not render it');
 
 assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban'"), 'single-customer ban route must exist');
