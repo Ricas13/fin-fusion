@@ -30,9 +30,9 @@ async function applyLegacySafetyWindow(rows, { now = Date.now() } = {}) {
         return {
             ...row,
             eligible: false,
-            restoration_grace: true,
-            restoration_grace_source: 'legacy_lane_backfill',
-            restoration_grace_until: until,
+            legacy_safety_window: true,
+            legacy_safety_source: 'legacy_lane_backfill',
+            legacy_safety_until: until,
             reasons: [
                 ...(row.reasons || []),
                 `legacy Free-lane safety window until ${until.toISOString()}`
