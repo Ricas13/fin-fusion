@@ -55,6 +55,8 @@ expect(webhook.includes("registry.request(serverId, '/Sessions?activeWithinSecon
 expect(webhook.includes('ON CONFLICT(server_id,playback_key) DO UPDATE'),'Webhook/poll observations must share the playback_history idempotency key.');
 expect(webhook.includes("ended_at=COALESCE(ended_at,$3)")&&webhook.includes("ended_reason=COALESCE(ended_reason,'webhook_stop')"),'Duplicate Stop events must close a playback history row once.');
 expect(webhook.includes('last_seen_at=GREATEST(last_seen_at,$3)'),'Playback Progress, including paused progress, must advance last-seen evidence.');
+expect(webhook.includes('function startedAt(_payload, at)')&&webhook.includes('return at;'),'Webhook history must start at the observed event time, not at the media position.');
+expect(!webhook.includes('at.getTime() - elapsedMs'),'Jellyfin media position must never be converted into historical watched minutes.');
 
 const migration=source('db/migrations/108_activity_poll_trust.sql');
 expect(migration.includes('jellyfin_activity_poll_state'),'Per-server activity poll state migration must exist.');
