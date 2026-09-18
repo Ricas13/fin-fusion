@@ -20,13 +20,13 @@ for(const [label,href] of [['Billing','/admin/billing'],['Free Server inactivity
 }
 
 const script=read('public/js/admin-command-palette.js');
-for(const token of ["event.metaKey||event.ctrlKey","event.key.toLowerCase()==='k'","event.key==='Escape'","event.key==='ArrowDown'","event.key==='ArrowUp'","event.key==='Enter'",'a.adminTab[href]','/admin/search?q=','aria-activedescendant','window.location.assign'])assert(script.includes(token),`command palette behavior missing: ${token}`);
+for(const token of ["event.metaKey||event.ctrlKey","event.key.toLowerCase()==='k'","event.key==='Escape'","event.key==='ArrowDown'","event.key==='ArrowUp'","event.key==='Enter'",'/admin/search?q=','aria-activedescendant','window.location.assign'])assert(script.includes(token),`command palette behavior missing: ${token}`);
 assert(script.includes("href==='/logout'||link.target==='_blank'"),'command discovery must exclude sign-out and external account actions');
 assert(script.includes("document.querySelectorAll('[data-admin-command-seed]')"),'command palette must seed itself from the canonical CSP-safe server-rendered admin index');
 assert(script.includes('.textContent=command.label')&&script.includes('.textContent=command.group'),'dynamic command labels must be written as text, not interpolated into HTML');
 assert(!script.includes('fetch('),'command palette must reuse canonical navigation/search instead of creating a second live-search API');
 assert(script.includes("const candidates=q?commands:commands.filter(command=>!String(command.group||'').includes(' · '))"),'empty command palette must stay focused on primary destinations while specialist settings remain searchable');
-assert(!script.includes("{label:'Add customer'")&&!script.includes('Import Jellyfin users'),'special command actions must not be duplicated in client-side state');
+assert(!script.includes("{label:'Add customer'")&&!script.includes('Import Jellyfin users')&&!script.includes('a.adminTab[href]'),'canonical navigation commands must not be rebuilt from a second client-side registry or DOM scan');
 
 const capability=read('public/css/admin-capability.css');
 assert(capability.includes("@import url('/css/admin-command-palette.css')"),'admin shell must load command palette styles');
