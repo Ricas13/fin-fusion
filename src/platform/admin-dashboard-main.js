@@ -72,7 +72,7 @@ function fleetCapacity(rows){
 async function buildContext(req){
     const range=dashboardRange(req.query||{}),reporting=await reportingCurrency.getForUser(req.session.authUserId);
     const [profit,analytics,fleet,planState,mix]=await Promise.all([
-        profitability.dashboardProfitability(reporting),
+        profitability.dashboardHeadlineProfitability(reporting),
         growthData.growthServerAnalytics(range,reporting),
         fleetDashboard.dashboardRows(),
         query('SELECT EXISTS(SELECT 1 FROM plans) AS has_plans'),
