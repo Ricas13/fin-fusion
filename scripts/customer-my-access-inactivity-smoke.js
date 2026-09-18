@@ -26,7 +26,8 @@ assert.match(view,/class="freeWatchLabel">Watch status</,'Free Server access mus
 assert.match(view,/freeAccessHealth--<%= freeHealth\.tone %>/,'My Access styling must be driven by shared Free Server health state');
 assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current rolling window');
 
-assert.match(route,/const activated=Boolean\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)/,'activation must come from playback, never login/browse activity');
+assert.match(route,/const missedFirstPlaybackDeadline=Boolean\(firstPlayback&&status\.firstPlaybackOnTime===false\)/,'My Access must distinguish late playback from valid activation');
+assert.match(route,/const activated=Boolean\(!missedFirstPlaybackDeadline&&\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)\)/,'activation must come from on-time playback, never login/browse activity');
 assert.match(route,/label:'Play something to activate'/,'pre-activation status must tell the customer exactly what to do');
 assert.match(route,/const minimumMet=playbackMinutes>=minimumPlaybackMinutes/,'post-activation health must depend only on rolling watched minutes');
 assert.match(route,/const tone=minimumMet\?'good':'bad'/,'there must be no invented third/yellow activity rule');
@@ -54,6 +55,22 @@ const preFirst=freeAccessHealth({
 assert.equal(preFirst.tone,'bad');
 assert.equal(preFirst.activated,false,'recent login activity must not activate the allocation');
 assert.equal(preFirst.removalAt.toISOString(),'2026-09-08T12:00:00.000Z');
+
+const lateFirst=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-09-05T12:00:00.000Z',
+  firstPlaybackAt:'2026-09-08T12:00:01.000Z',
+  hasPlayback:true,
+  firstPlaybackOnTime:false,
+  playbackMinutes:10,
+  currentlyPlaying:false,
+  enforcementReady:true,
+  eligible:true
+},{now:Date.parse('2026-09-08T12:10:00.000Z')});
+assert.equal(lateFirst.activated,false,'late playback must not be presented as a valid activation');
+assert.equal(lateFirst.label,'First-play deadline missed');
+assert.match(lateFirst.detail,/after the activation deadline/i);
 
 const belowMinimum=freeAccessHealth({
   applies:true,
