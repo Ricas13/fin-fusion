@@ -58,6 +58,7 @@ async function customerStatus(customerId) {
         inactiveReferenceAt: row.inactive_reference_at || null,
         observationStartedAt: row.observation_started_at || null,
         hasPlayback: Boolean(row.has_playback),
+        firstPlaybackOnTime: Boolean(row.first_playback_on_time),
         playbackSeconds,
         playbackMinutes: Math.floor(playbackSeconds / 60),
         currentlyPlaying: Boolean(row.currently_playing),
