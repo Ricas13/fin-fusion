@@ -40,6 +40,9 @@ assert.match(route,/const tone=allMet\?'good':metCount>0\?'warn':'bad'/,'post-ac
 assert.match(status,/const discoveryCfg=globalCfg\.enabled\?globalCfg:\{\.\.\.globalCfg,enabled:true\}/,'My Access health must remain discoverable when lifecycle enforcement is globally paused');
 assert.match(status,/lastActivityAt:row\.last_activity_at\|\|null/,'My Access status must expose refreshed Jellyfin account activity');
 assert.match(status,/eligible:Boolean\(row\.eligible&&globalCfg\.enabled&&enforcementReady\)/,'a paused global lifecycle must never be presented as removal-eligible');
+assert.match(status,/candidateEvidence=refreshUserActivity\?scoped\.candidateUserEvidence\(server,row\):null/,'live inactivity readiness must verify that the exact candidate Jellyfin user was observed');
+assert.match(status,/enforcementReady=Boolean\(refreshUserActivity&&telemetryReady&&candidateEvidence\?\.present\)/,'removal readiness must require fresh candidate-user evidence, not only a healthy server poll');
+assert.match(status,/if\(refreshUserActivity\)\{[\s\S]*?refreshCandidateUserActivity/,'the status service must retain live user refresh by default for customer-facing My Access health');
 assert.match(status,/playbackMinutes:Math\.floor\(playbackSeconds\/60\)/,'My Access must count only completed playback minutes so it cannot show 30 minutes before the backend threshold is actually met');
 
 const preFirst=freeAccessHealth({
