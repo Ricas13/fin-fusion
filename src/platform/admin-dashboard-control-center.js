@@ -294,13 +294,13 @@ function recentJobActions(rows, limit = 5) {
       const processed = outcome === 'failed'
         ? 0
         : row.last_processed_count == null ? 0 : Math.max(0, Number(row.last_processed_count) || 0);
-      if (!processed && !failed && !['failed','warning'].includes(outcome)) return null;
+      if (!processed && !failed && !['failed','degraded'].includes(outcome)) return null;
       const details = [];
       if (processed) details.push(`${processed} processed`);
       if (failed) details.push(`${failed} failed`);
-      if (outcome === 'warning' && row.last_warning) details.push('completed with warnings');
+      if (outcome === 'degraded' && row.last_warning) details.push('completed with warnings');
       return {
-        kind: outcome === 'failed' ? 'bad' : outcome === 'warning' || failed ? 'warn' : 'good',
+        kind: outcome === 'failed' ? 'bad' : outcome === 'degraded' || failed ? 'warn' : 'good',
         label: jobLabel(row.job_key),
         detail: details.join(' · ') || outcome || 'completed',
         at: row.last_completed_at || row.last_success_at,
