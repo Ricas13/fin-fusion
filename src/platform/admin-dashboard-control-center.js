@@ -270,8 +270,8 @@ async function billingSnapshot() {
         (SELECT COUNT(*)::int FROM recurring WHERE source='stripe') AS stripe_recurring,
         (SELECT COUNT(*)::int FROM recurring WHERE source='paypal') AS paypal_recurring,
         (SELECT COUNT(*)::int FROM recurring
-          WHERE (source='stripe' AND COALESCE(provider_subscription_id,'') !~* '^sub_')
-             OR (source='paypal' AND COALESCE(provider_subscription_id,'') !~* '^I-')) AS invalid_recurring_refs,
+          WHERE (source='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^sub_')
+             OR (source='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-')) AS invalid_recurring_refs,
         (SELECT COUNT(*)::int
            FROM payment_events
           WHERE provider IN('stripe','paypal')
