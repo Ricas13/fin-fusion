@@ -77,4 +77,4 @@ function createAdminCustomer360Router(){
  router.use('/admin/users/:customerId',async(error,_req,res,_next)=>{console.error('Customer 360 route error:',error.message);await runtimeSettings.ensureLoaded().catch(()=>{});return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Customer unavailable',message:'The customer profile could not be loaded safely.',link:'/admin/users',linkText:'Back to Customers'})});
  return router;
 }
-module.exports={createAdminCustomer360Router,incidentPanel};
+module.exports={createAdminCustomer360Router};
