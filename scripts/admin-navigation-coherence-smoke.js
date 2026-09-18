@@ -28,17 +28,17 @@ assert(labels(nav.settingsFor('stremio-sources')).includes('IP access'),'Stremio
 const commercePages=nav.groups.find(group=>group.key==='commerce').pages;
 assert.deepStrictEqual(labels(commercePages),['Plans','Orders','Billing','Providers','Discounts','Affiliates'],'Commerce must expose clear plan/order/billing/provider ownership as permanent destinations');
 assert(!labels(nav.relatedPages('orders')).includes('Discounts')&&!labels(nav.relatedPages('orders')).includes('Affiliates'),'Discounts and Affiliates must not remain hidden Orders-related pages');
-assert(!labels(nav.relatedPages('payments')).includes('Billing')&&labels(nav.relatedPages('payments')).includes('Expenses & Profitability'),'Billing must be first-class while profitability remains related to provider/finance tooling');
+assert(!labels(nav.relatedPages('payments')).includes('Billing')&&!labels(nav.relatedPages('payments')).includes('Expenses & Profitability')&&labels(nav.relatedPages('billing')).includes('Expenses & Profitability'),'Billing must own profitability while Providers remains infrastructure-focused');
 assert(labels(nav.tasksFor('backups')).includes('Export data')&&labels(nav.tasksFor('backups')).includes('Configuration Transfer'),'Backups must own portability tasks');
 
-for(const [key,parent] of [['expenses','payments'],['transactions','payments'],['refunds','payments'],['data-export','backups'],['legacy-paid-import','backups'],['libraries','servers']]){
+for(const [key,parent] of [['expenses','billing'],['transactions','payments'],['refunds','billing'],['data-export','backups'],['legacy-paid-import','backups'],['libraries','servers']]){
   assert.strictEqual(nav.sidebarKey(key),parent,`${key} must keep ${parent} highlighted as its owning rail destination`);
 }
 assert.strictEqual(nav.sidebarKey('discounts'),'discounts','Discounts must highlight its own permanent Commerce destination');
 assert.strictEqual(nav.sidebarKey('referrals'),'referrals','Affiliates must highlight its own permanent Commerce destination');
 
 const expenseHeader=base.header('expenses','CAPTAiNFiN');
-assert(/adminTab active[^>]*href="\/admin\/payments"/.test(expenseHeader),'Expenses must keep Payments highlighted as its parent');
+assert(/adminTab active[^>]*href="\/admin\/billing"/.test(expenseHeader),'Expenses must keep Billing highlighted as its parent');
 assert(!expenseHeader.includes('class="adminSubTab'),'Expenses must not manufacture a third-level sidebar entry');
 assert(!expenseHeader.includes('href="/admin/expenses"'),'Expenses must remain outside permanent rail markup');
 assert(expenseHeader.includes('href="/admin/billing"'),'Billing must remain directly reachable from the Commerce rail');
@@ -48,7 +48,7 @@ assert(/adminTab active[^>]*href="\/admin\/backups"/.test(migrationHeader),'Paid
 assert(!migrationHeader.includes('href="/admin/payments/legacy-import"'),'Paid-user migration must not become a third-level rail entry');
 
 const expenseCrumb=context.breadcrumb('expenses');
-assert(expenseCrumb.includes('<a href="/admin/payments">Payments</a>'),'Expense breadcrumb must link back to its owning main page');
+assert(expenseCrumb.includes('<a href="/admin/billing">Billing</a>'),'Expense breadcrumb must link back to its owning Billing page');
 assert(expenseCrumb.includes('<strong>Expenses &amp; Profitability</strong>'),'Expense breadcrumb must identify the specialist page');
 
 const rendered=html.layout({
