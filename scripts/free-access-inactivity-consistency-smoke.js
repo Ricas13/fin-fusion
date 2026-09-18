@@ -70,19 +70,20 @@ assert.equal(activatedRecently.usageEligible, false, 'activation must receive on
 
 const belowMinimum = inactivity.assessUsage({
     allocation_start_at: '2026-09-01T12:00:00.000Z',
-    first_playback_at: '2026-09-10T12:00:00.000Z',
-    last_playback_at: '2026-09-16T12:00:00.000Z',
+    first_playback_at: '2026-09-03T12:00:00.000Z',
+    last_playback_at: '2026-09-09T12:00:00.000Z',
     last_activity_at: '2026-09-18T11:59:00.000Z',
     playback_seconds: 29 * 60
-}, policy, Date.parse('2026-09-18T12:00:01.000Z'));
+}, policy, Date.parse('2026-09-10T12:00:01.000Z'));
+assert.equal(belowMinimum.firstPlaybackOnTime, true, 'rolling-minimum fixture must first satisfy the first-play grace');
 assert.equal(belowMinimum.usageEligible, true, '29 minutes must fail after the full seven-day observation window');
 
 const minimumMet = inactivity.assessUsage({
     allocation_start_at: '2026-09-01T12:00:00.000Z',
-    first_playback_at: '2026-09-10T12:00:00.000Z',
-    last_playback_at: '2026-09-16T12:00:00.000Z',
+    first_playback_at: '2026-09-03T12:00:00.000Z',
+    last_playback_at: '2026-09-09T12:00:00.000Z',
     playback_seconds: 30 * 60
-}, policy, Date.parse('2026-09-18T12:00:01.000Z'));
+}, policy, Date.parse('2026-09-10T12:00:01.000Z'));
 assert.equal(minimumMet.usageEligible, false, '30 minutes must satisfy the rolling requirement');
 
 // Server settings are the only threshold source.
