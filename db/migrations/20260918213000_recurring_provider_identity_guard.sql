@@ -12,6 +12,7 @@ ALTER TABLE public.subscriptions
     CHECK (
         billing_mode <> 'subscription'
         OR source NOT IN ('stripe','paypal')
+        OR status NOT IN ('active','trialing','past_due','paused')
         OR (
             source='stripe'
             AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^sub_'
