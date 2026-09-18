@@ -319,14 +319,14 @@ function automationHeroCard(snapshot = {}) {
   const warnings = Number(snapshot.warningCount || 0);
   const disabled = Number(snapshot.disabled || 0);
   const tone = warnings ? 'bad' : total ? 'good' : 'neutral';
-  const detail = warnings
-    ? `${warnings} critical ${warnings === 1 ? 'job needs' : 'jobs need'} review`
-    : running
-      ? `${running} running · no critical failures`
-      : disabled
-        ? `${disabled} intentionally disabled · no critical failures`
-        : 'Critical automation healthy';
-  return `<a class="profitHeroCard ${tone}" href="/admin/automation"><span>Automation</span><strong>${esc(total ? `${healthy}/${total} healthy` : 'Unavailable')}</strong><small>${esc(detail)} · last critical ${esc(ageLabel(snapshot.latestCriticalCompletedAt))}</small></a>`;
+  const states = [
+    healthy ? `${healthy} healthy` : null,
+    running ? `${running} running` : null,
+    disabled ? `${disabled} paused` : null
+  ].filter(Boolean).join(' · ');
+  const headline = !total ? 'Unavailable' : warnings ? `${warnings} need review` : 'Healthy';
+  const detail = [states, total ? `last job ${ageLabel(snapshot.latestCriticalCompletedAt)}` : null].filter(Boolean).join(' · ');
+  return `<a class="profitHeroCard ${tone}" href="/admin/automation"><span>Automation</span><strong>${esc(headline)}</strong><small>${esc(detail)}</small></a>`;
 }
 
 function metric(label, value, detail = '') {
