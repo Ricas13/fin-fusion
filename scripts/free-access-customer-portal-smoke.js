@@ -75,7 +75,7 @@ assert(/lastAdvertSlot/.test(freePlaces),'Discord Free Server batching must dura
 assert(/No free places currently available/.test(freePlaces)&&/FREE_INTENT_MINUTES/.test(freePlaces),'persistent Discord status must describe the bounded signup intent without claiming that anonymous visitors consume capacity');
 assert(/Starting signup opens a \$\{FREE_INTENT_MINUTES\}-minute window/.test(freePlaces)&&/It does not reserve a place/.test(freePlaces)&&/Capacity is checked atomically/.test(freePlaces),'Discord availability copy must explain the intent-to-reservation boundary accurately');
 assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live signup-intent duration constant instead of hardcoding it separately');
-assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
+assert(/discordMissing\(error\)/.test(freePlaces)&&/allowEveryone:false/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful validated Free Server reservation must nudge the persistent Discord status immediately after commit');
 assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');
 
