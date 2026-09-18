@@ -93,7 +93,7 @@ const missingPolicyHtml=controlCenter.renderControlCenter({
   recent:[]
 });
 assert(missingPolicyHtml.includes('dashboardControlCard warn')&&missingPolicyHtml.includes('Inactivity:</strong> Not configured'),'Safe-unconfigured Free inactivity must warn distinctly from an intentional operator pause');
-assert(pausedFreeHtml.includes('800+')&&pausedFreeHtml.includes('used / eligible capacity'),'Free waiting lower bounds and capacity labels must stay numerically honest when candidate reads are capped');
+assert(pausedFreeHtml.includes('≥800')&&pausedFreeHtml.includes('used / eligible capacity'),'Free waiting lower bounds and capacity labels must stay numerically honest when candidate reads are capped');
 const brokenFreeHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'12:00 today · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
