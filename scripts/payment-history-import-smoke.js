@@ -115,12 +115,13 @@ const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments
 for (const eventType of [
     'PAYMENT.SALE.REVERSED',
     'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
+    'BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED',
     'PAYMENT.CAPTURE.DENIED',
     'CHECKOUT.PAYMENT-APPROVAL.REVERSED'
 ]) {
     assert.ok(paypalSource.includes(`case '${eventType}'`), `PayPal webhook coverage must explicitly handle ${eventType}`);
 }
-assert.ok(paypalSource.includes('recordSaleReversal') && paypalSource.includes('recordSubscriptionPaymentFailure'), 'PayPal money-loss and failed-renewal events must use dedicated auditable handlers');
+assert.ok(paypalSource.includes('recordSaleReversal') && paypalSource.includes('recordSubscriptionPaymentFailure') && paypalSource.includes('recordSubscriptionPaymentSuccess'), 'PayPal money-loss and renewal recovery events must use dedicated auditable handlers');
 
 const flexibleCheckoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'flexible-checkout.js'), 'utf8');
 const discountsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'discounts.js'), 'utf8');
