@@ -26,7 +26,8 @@ function financialWarningBanner(ctx) {
 // save, and the widget picker would have nothing to un-hide. Both hidden
 // and lazy widgets get a skeleton + a data-lazy-src fragment URL instead of
 // a server render, so hiding widgets doesn't cost anything server-side.
-async function renderWidgetGrid(dashboardKey, req, ctx, { showFinancialWarning = true } = {}) {
+async function renderWidgetGrid(dashboardKey, req, ctx, options = {}) {
+    const showFinancialWarning = options?.showFinancialWarning !== false;
     const saved = await layoutModule.getLayout(req.session.authUserId, dashboardKey);
     const merged = layoutModule.mergeWithDefaults(dashboardKey, saved);
     const body = (await Promise.all(merged.map(async row => {
