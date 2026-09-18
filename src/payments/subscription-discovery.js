@@ -377,7 +377,7 @@ async function coverageStats() {
                    ) AS linked,
                    (
                        COALESCE(commercial_snapshot->>'kind','')='legacy_import'
-                       OR commercial_snapshot->'migrated'='true'::jsonb
+                       OR COALESCE(commercial_snapshot->'migrated'='true'::jsonb,FALSE)
                    ) AS legacy_import,
                    LOWER(BTRIM(COALESCE(commercial_snapshot->>'providerLinkDisposition','')))='ending' AS ending_disposition
               FROM premium
