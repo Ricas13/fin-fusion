@@ -153,6 +153,8 @@ const adminHolds = read('src/platform/admin-customer-access-holds.js');
 assert.match(base, /GREATEST\([\s\S]*?fa\.starts_at[\s\S]*?ja\.created_at[\s\S]*?ja\.access_lane_changed_at[\s\S]*?automation_resume\.resumed_at/);
 assert.doesNotMatch(base, /historical_first_playback_at|any_playback_history|WHEN historical\./, 'historical activation heuristics must be gone');
 assert.doesNotMatch(base, /lifecycle\.restored_at/, 'newly-created restored accounts must use their own creation boundary');
+assert.match(base, /COALESCE\(s\.service_extension_days,0\)>0[\s\S]*?s\.current_period_end\+\(\(s\.service_extension_days\|\|' days'\)::interval\)>NOW\(\)/, 'Free inactivity discovery must include the same live service-extension episodes as canonical entitlement truth');
+assert.match(base, /ORDER BY s\.customer_id,s\.created_at DESC/, 'Free inactivity discovery must choose the canonical newest Free subscription episode');
 
 // Rolling watch time must count only the overlap with the exact rolling window,
 // not discard a whole session merely because it started just before the cutoff.
