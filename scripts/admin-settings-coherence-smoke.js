@@ -32,6 +32,8 @@ const sourcePool=read('src/stremio/source-pool.js');
 const settingsRegistry=require('../src/platform/settings-registry');
 
 assert(shell.includes("require('./admin-html-core-base')"),'admin shell must wrap the stable base layout');
+assert.equal(new Set(settingsRegistry.SETTINGS.map(item=>item.key)).size,settingsRegistry.SETTINGS.length,'settings registry keys must remain unique');
+assert(settingsRegistry.SETTINGS.every(item=>settingsRegistry.ownerForSetting(item.key)),'every searchable setting must resolve to one canonical owner');
 const inactivityResults=settingsRegistry.search('free inactivity');
 assert(inactivityResults.some(item=>item.key==='server.freeInactivity'&&item.href==='/admin/servers'),'settings search must send Free inactivity to the server-owned control surface');
 assert(!inactivityResults.some(item=>item.href==='/admin/activity/inactivity-policy'),'settings search must not resurrect the retired Playback-owned inactivity screen');
