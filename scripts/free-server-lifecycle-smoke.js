@@ -91,8 +91,8 @@ const originalRequest = registry.request;
                 updated_at=NOW()
         `, [serverId]);
 
-        // A failed remote deletion must not strand the customer behind an
-        // inactivity hold. The exact account stays present and the next run can retry.
+        // A failed remote deletion keeps one durable inactivity hold. The exact
+        // account remains present and the next inactivity run retries it.
         deleteShouldFail = true;
         const failedRemoval = await lifecycle.runPlanRules();
         assert.strictEqual(failedRemoval.enforced, 0, 'failed remote removal must not count as enforced');
@@ -101,9 +101,9 @@ const originalRequest = registry.request;
         const stillPresent = await query('SELECT disabled FROM jellyfin_accounts WHERE id=$1', [accountId]);
         assert.strictEqual(stillPresent.rowCount, 1, 'local mapping must survive failed remote deletion');
         assert.strictEqual(stillPresent.rows[0].disabled, false, 'failed deletion must leave the existing account enabled');
-        const rolledBackHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
-        assert.strictEqual(rolledBackHold.rowCount, 1, 'failed enforcement should have created an inactivity hold before reconciliation');
-        assert(rolledBackHold.rows[0].released_at, 'failed deletion must roll the inactivity hold back');
+        const pendingHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
+        assert.strictEqual(pendingHold.rowCount, 1, 'failed enforcement must leave exactly one inactivity hold for retry');
+        assert.strictEqual(pendingHold.rows[0].released_at, null, 'failed deletion must keep the inactivity hold active until retry succeeds or access is explicitly restored');
 
         // Once the activity policy is breached there is no separate disabled
         // grace state. The successful retry removes the Jellyfin identity now.
