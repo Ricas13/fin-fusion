@@ -112,7 +112,7 @@ function automationSnapshot(rows) {
   };
 }
 
-function nextAdvertLabel(cfg, state, now = new Date()) {
+function nextAdvertLabel(cfg, state, now = new Date(), { pending = false } = {}) {
   if (!cfg?.discordFreePlacesDigestEnabled) return 'Advertising disabled';
   if (!cfg.discordConfigured) return 'Discord not configured';
   if (!cfg.discordFreePlacesChannelId) return 'Channel not configured';
@@ -129,9 +129,9 @@ function nextAdvertLabel(cfg, state, now = new Date()) {
   const stateChannel = String(state?.channelId || '');
   const hasCurrentBaseline = Boolean(
     state?.lastAdvertSlot &&
-    (!stateChannel || stateChannel === currentChannel)
+    stateChannel === currentChannel
   );
-  if (hasCurrentBaseline && currentDueKey && state.lastAdvertSlot !== currentDueKey) return `Due now · ${zone}`;
+  if (pending && hasCurrentBaseline && currentDueKey && state.lastAdvertSlot !== currentDueKey) return `Due now · ${zone}`;
 
   const today = times.find(value => value > stamp.time);
   if (today) return `${today} today · ${zone}`;
@@ -156,7 +156,7 @@ async function freeSnapshot(jobRows) {
       bufferedPlaces: 0,
       inactivityEnabled: Boolean(policy.enabled),
       inactivityState: 'missing',
-      nextAdvert: nextAdvertLabel(cfg, digestState)
+      nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending })
     };
   }
 
@@ -173,15 +173,16 @@ async function freeSnapshot(jobRows) {
     cfg.discordFreePlacesDigestEnabled &&
     cfg.discordConfigured &&
     configuredChannel &&
-    (!digestChannel || digestChannel === configuredChannel)
+    digestChannel === configuredChannel
   );
   const advertisedRemaining = digestCurrent && digestState.remaining != null
     ? Math.max(0, Number(digestState.remaining) || 0)
     : null;
   const minimumAdvertRemaining = Math.max(1, Number(cfg.discordFreePlacesMinRemaining) || 1);
-  const bufferedPlaces = actualRemaining == null || advertisedRemaining == null || actualRemaining < minimumAdvertRemaining
+  const bufferedPlaces = actualRemaining == null || advertisedRemaining == null
     ? 0
     : Math.max(0, actualRemaining - advertisedRemaining);
+  const advertPending = bufferedPlaces > 0 && actualRemaining >= minimumAdvertRemaining;
 
   return {
     configured: true,
