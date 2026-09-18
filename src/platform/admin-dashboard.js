@@ -9,6 +9,7 @@ const reportingCurrency = require('./reporting-currency');
 const runtimeSettings = require('./runtime-settings');
 const { money, number } = require('./admin-dashboard-format');
 const { renderLiveStreamsPanel } = require('./admin-dashboard-live-streams');
+const controlCenter = require('./admin-dashboard-control-center');
 
 function isNativeAdmin(req){return Boolean(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId);}
 function primaryAction(stats){if(!stats.setup?.counts?.plans)return'<a class="button" href="/admin/plans">+ Create plan</a>';if(!stats.setup?.counts?.servers)return'<a class="button" href="/admin/servers/new">+ Add server</a>';return'<a class="button" href="/admin/users/new">+ Add customer</a>';}
@@ -19,7 +20,8 @@ function dashboardHero(ctx){
   const stats=ctx.data||{},profit=stats.profitability||{},currency=profit.currency||ctx.reporting?.currency||'GBP',current=Number(profit.current?.profitMinor||0),ytd=Number(profit.ytd?.profitMinor||0),gauge=stats.userGauge||{active:0,capacity:0},active=Number(gauge.active||0),capacity=Number(gauge.capacity||0),attention=Number(stats.attention?.count||0),used=capacity>0?Math.min(100,Math.max(0,Math.round(active/capacity*100))):0,basis=profit.ytd?.basisText||'Net provider receipts (imported history + webhooks) minus booked expenses. Bank payouts are transfers, not costs.';
   return `<section class="profitHeroGrid" aria-label="Business and operational summary">
     <a class="profitHeroCard profitHeroCard--profit ${current>=0&&ytd>=0?'good':'bad'}" href="/admin/expenses" title="${esc(basis)}"><span>Profit</span><div class="profitMetricPair"><div><small>Profit this month</small><strong>${esc(money(current,currency))}</strong><em>${profitDelta(profit,currency)}</em></div><div><small>Profit YTD</small><strong>${esc(money(ytd,currency))}</strong><em>Net provider receipts minus booked expenses</em></div></div></a>
-    <a class="profitHeroCard info" href="/admin/servers"><span>Server users</span><strong>${esc(number(active))} / ${capacity?esc(number(capacity)):'—'}</strong><div class="profitGauge" aria-hidden="true"><i style="width:${used}%"></i></div><small>managed customers / configured user capacity</small></a>
+    <a class="profitHeroCard info" href="/admin/servers"><span>Customers / capacity</span><strong>${esc(number(active))} / ${capacity?esc(number(capacity)):'—'}</strong><div class="profitGauge" aria-hidden="true"><i style="width:${used}%"></i></div><small>managed customers / configured user capacity</small></a>
+    ${controlCenter.automationHeroCard(stats.controlCenter?.automation)}
     <a class="profitHeroCard ${attention>0?'bad':'good'}" href="/admin/attention"><span>Needs attention</span><strong>${esc(number(attention))}</strong><small>${attention?`${attention} current ${attention===1?'issue':'issues'} require review`:'No current intervention required'}</small></a>
   </section><div class="subText profitBasisText">${esc(basis)}</div>`;
 }
@@ -29,9 +31,11 @@ async function dashboardPage(req,res){
   res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');
   try{
     await Promise.all([runtimeSettings.ensureLoaded(),reportingCurrency.refreshRates().catch(()=>null)]);
-    const{ctx,html}=await renderMain(req),stats=ctx.data;
+    const[{ctx,html},control]=await Promise.all([renderMain(req),controlCenter.controlCenterData()]);
+    ctx.data.controlCenter=control;
+    const stats=ctx.data;
     const analytics=`<details class="dashboardAnalyticsDisclosure"><summary><strong>Analytics & trends</strong><span>Growth, MRR, churn, plan mix and playback trends</span></summary><div class="dashboardAnalyticsDisclosureBody">${rangeControls(ctx.range)}${html}</div></details>`;
-    const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${analytics}</div>`;
+    const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}${analytics}</div>`;
     return res.send(layout({siteName:runtimeSettings.siteName(),active:'dashboard',title:'Admin Dashboard',subtitle:`Operational health first · ${ctx.reporting.currency} reporting`,body,action:primaryAction(stats),pageClass:'page-dashboard'}));
   }catch(error){
     console.error('Admin dashboard failed:',error.message);
