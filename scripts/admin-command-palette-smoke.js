@@ -25,6 +25,7 @@ assert(script.includes("href==='/logout'||link.target==='_blank'"),'command disc
 assert(script.includes("document.querySelectorAll('[data-admin-command-seed]')"),'command palette must seed itself from the canonical CSP-safe server-rendered admin index');
 assert(script.includes('.textContent=command.label')&&script.includes('.textContent=command.group'),'dynamic command labels must be written as text, not interpolated into HTML');
 assert(!script.includes('fetch('),'command palette must reuse canonical navigation/search instead of creating a second live-search API');
+assert(script.includes("const candidates=q?commands:commands.filter(command=>!String(command.group||'').includes(' · '))"),'empty command palette must stay focused on primary destinations while specialist settings remain searchable');
 assert(!script.includes("{label:'Add customer'")&&!script.includes('Import Jellyfin users'),'special command actions must not be duplicated in client-side state');
 
 const capability=read('public/css/admin-capability.css');
