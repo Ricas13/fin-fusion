@@ -35,6 +35,11 @@ assert(dashboard.includes('managed server users / configured user capacity')&&da
 assert(dashboard.includes("renderLiveStreamsPanel(req)"),'Live Playback panel must remain directly owned by the existing live-stream renderer');
 assert(dashboard.includes('adminDashboardCompactBody')&&dashboard.includes('profitMetricPair'),'Dashboard must keep the compact top-body contract and paired month/YTD profit');
 
+assert(main.includes('profitability.dashboardHeadlineProfitability(reporting)')&&!main.includes('profitability.dashboardProfitability(reporting)'),'Home must use the headline-only profitability read instead of calculating unused weekly ledger windows');
+const headlineProfitSource=profit.slice(profit.indexOf('async function dashboardHeadlineProfitability'),profit.indexOf('async function dashboardProfitability'));
+assert(headlineProfitSource.includes('current:')&&headlineProfitSource.includes('previous:')&&headlineProfitSource.includes('ytd:'),'Headline profitability must preserve current, previous-month and YTD figures used by the hero');
+assert((headlineProfitSource.match(/dashboardLedger\.commerceRevenue/g)||[]).length===2,'Headline profitability must use only the base YTD/current and previous-month ledger reads, not weekly scans');
+
 assert(growthData.includes('before_count=0 AND after_count>0')&&growthData.includes('before_count>0 AND after_count=0'),'growth analytics must derive activation/churn from customer access transitions rather than mutable cancellation timestamps');
 assert(growthData.includes('COUNT(DISTINCT s.customer_id)::int active')&&growthData.includes('opening_active'),'active-subscriber and churn-rate series must be customer-level with an opening denominator');
 assert(growthData.includes("t.occurred_at<>f.first_at")&&growthView.includes('Reactivated'),'reactivations must be separated from first-time customers so net growth reconciles');
