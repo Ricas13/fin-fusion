@@ -31,7 +31,7 @@ assert.match(route,/label:'Play something to activate'/,'pre-activation status m
 assert.match(route,/const minimumMet=playbackMinutes>=minimumPlaybackMinutes/,'post-activation health must depend only on rolling watched minutes');
 assert.match(route,/const tone=minimumMet\?'good':'bad'/,'there must be no invented third/yellow activity rule');
 assert.doesNotMatch(route,/activityReference=inactiveReference\|\|lastActivity\|\|lastPlayback/,'Jellyfin login/activity must not affect retention health');
-assert.match(route,/noPlaybackDays:null/,'My Access must expose no separate login/activity rule');
+assert.doesNotMatch(route,/noPlaybackDays/,'My Access must not expose the retired login/activity rule');
 
 assert.match(status,/const discoveryCfg = globalCfg\.enabled[\s\S]*?\{ \.\.\.globalCfg, enabled: true \}/,'My Access health must remain discoverable when lifecycle enforcement is paused');
 assert.match(status,/eligible: Boolean\(row\.eligible && globalCfg\.enabled && enforcementReady\)/,'paused lifecycle must never be shown as removal-eligible');
@@ -54,7 +54,6 @@ const preFirst=freeAccessHealth({
 assert.equal(preFirst.tone,'bad');
 assert.equal(preFirst.activated,false,'recent login activity must not activate the allocation');
 assert.equal(preFirst.removalAt.toISOString(),'2026-09-08T12:00:00.000Z');
-assert.equal(preFirst.noPlaybackDays,null);
 
 const belowMinimum=freeAccessHealth({
   applies:true,
