@@ -18,7 +18,7 @@ assert(!source.includes("entity_id=$1::text"), '360 audit queries must not compa
 
 // The compact operator page has three deliberately separate concepts:
 // playback activity, financial/provider history, and operational logs.
-assert(compactSource.includes("const rows=(detail.playback||[]).slice(0,75)"), 'Customer 360 Activity must be driven by playback history rather than the generic audit timeline');
+assert(compactSource.includes("const rows=(detail.playback||[]).slice(0,30)"), 'Customer 360 Activity must stay playback-specific while capping default diagnostic volume');
 assert(!compactSource.includes("function activityDisclosure(detail){const rows=(detail.timeline||[])"), 'generic customer/audit events must not be presented as playback Activity');
 assert(compactSource.includes('No playback activity recorded yet.'), 'Activity must use clear playback-specific empty copy');
 assert(compactSource.includes('provider_transaction_id,provider_reference_id,provider_source_id,provider_customer_id'), 'Payments must load provider identifiers needed for provider-side reconciliation');
@@ -26,8 +26,11 @@ assert(compactSource.includes("s.source='plisio'"), 'Customer 360 Payments must 
 assert(compactSource.includes('payment_incidents'), 'Payments must surface disputes, refunds, chargebacks and other payment incidents');
 assert(compactSource.includes("['Transaction',row.provider_transaction_id]"), 'Payments must label the provider transaction identifier');
 assert(compactSource.includes("['Reference',row.provider_reference_id]"), 'Payments must expose provider reference identifiers rather than collapsing to one ID');
+assert(compactSource.includes('<details class="providerRefs"><summary>Identifiers</summary>'),'raw provider identifiers must be hidden behind an explicit diagnostic disclosure by default');
+assert(compactSource.includes("customerInactivityStatus.customerStatus(customerId)")&&!compactSource.includes('refreshUserActivity'),'Customer 360 Free activity must reuse the canonical playback-only status service without a retired Jellyfin /Users refresh option');
+assert(compactSource.includes('Free activity'),'Customer 360 must surface the effective Free activity requirement when one applies');
 assert(compactSource.includes('Refunds, disputes & payment incidents'), 'Payments must explicitly distinguish provider incidents from ordinary transaction rows');
-assert(compactSource.includes("function logsDisclosure(detail){const runs=(detail.runs||[]).slice(0,50)"), 'Logs must remain the operational provisioning/reconciliation history');
+assert(compactSource.includes("function logsDisclosure(detail){const runs=(detail.runs||[]).slice(0,20)"), 'Logs must remain operational provisioning/reconciliation history while staying progressive');
 
 // Customer 360 bans are single-customer controls, not a bridge to the bulk
 // workflow. A ban is also a top-level customer state, so it must outrank the

@@ -25,7 +25,7 @@ const cards=require('../src/platform/admin-integration-card');
 assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Dashboard must read the canonical Needs Attention list instead of recreating operational queries');
 assert(!dashboardDataSource.includes('attention.openSummary().catch'),'Dashboard must not query the same attention source once for summary and again for detail');
 assert(dashboardDataSource.includes('items: sources.slice(0, 5)'),'Dashboard must cap attention detail while preserving the total count');
-assert(dashboardSource.includes('${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${rangeControls(ctx.range)}${html}'),'Live streams must render directly below Profit / Server users / Needs attention and before historical range analytics');
+assert(dashboardSource.includes('dashboardAnalyticsDisclosure')&&dashboardSource.includes('${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${analytics}'),'Live streams must remain directly below the operational hero while historical analytics are progressively disclosed');
 assert(!dashboardSource.includes('function attentionOverview')&&!dashboardSource.includes('setupCompact'),'Home must not reintroduce separate Needs Attention or setup tiles outside the target hero + live streams + three-widget layout');
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
 

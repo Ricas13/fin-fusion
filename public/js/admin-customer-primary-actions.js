@@ -41,8 +41,8 @@
     .customerMockMoreMenu a:hover,.customerMockMoreMenu button:hover{background:#182633}
 
     .customer360Core{gap:6px!important}
-    .customer360Core .opGrid{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:10px!important;align-items:stretch!important}
-    .customer360Core .opCard{min-height:238px!important;padding:11px!important;border-radius:8px!important;background:#101922!important;display:flex!important;flex-direction:column!important}
+    .customer360Core .opGrid{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:10px!important;align-items:start!important}
+    .customer360Core .opCard{min-height:0!important;padding:11px!important;border-radius:8px!important;background:#101922!important;display:flex!important;flex-direction:column!important}
     .customer360Core .opCardHead{margin-bottom:7px!important}
     .customer360Core .opCardHead h2{font-size:.83rem!important}
     .customer360Core .opCardBody{flex:1!important;gap:3px!important}
@@ -65,9 +65,6 @@
     .approvedAdvanced>summary span,.customer360Core .opDisclosure>summary small{font-size:.56rem!important}
     .customer360Core .opDisclosure+.opDisclosure,.approvedAdvanced+.opDisclosure{margin-top:4px!important}
 
-    .customerPaymentIncidentsFolded{margin-top:9px;border-top:1px solid var(--border);padding-top:8px}
-    .customerPaymentIncidentsFolded>.sectionHead{margin-bottom:6px}
-    .customerPaymentIncidentsFolded>.sectionHead h2{font-size:.75rem}
     .mockDangerWarning{grid-column:1/-1;border:1px solid rgba(215,154,59,.45);border-radius:6px;background:rgba(141,90,18,.14);padding:8px 9px;color:#d9ae67;font-size:.60rem;line-height:1.3}
     .mockCardButton{display:inline-flex;align-items:center;justify-content:center;border:1px solid #315a78;background:transparent;color:var(--text);cursor:pointer;text-decoration:none;text-align:center}
     .mockCardButton:hover{border-color:#4fb8f4}
@@ -283,15 +280,6 @@
     if(activity)core.insertBefore(advanced,activity);else core.appendChild(advanced);
   }
 
-  function foldPaymentIncidents(){
-    const sections=[...document.querySelectorAll('.content > section.section')];
-    const incident=sections.find(section=>text(section.querySelector('.sectionHead h2'))==='Payment incidents');
-    if(!incident||incident.dataset.folded==='1')return;
-    const payments=[...document.querySelectorAll('.customer360Core > .opDisclosure')].find(node=>text(node.querySelector('summary > span'))==='Payments');
-    const body=payments?.querySelector('.opDisclosureBody');
-    if(!body)return;
-    incident.dataset.folded='1';incident.classList.add('customerPaymentIncidentsFolded');body.appendChild(incident);
-  }
 
   function plusDays(dateText,days){const date=new Date(`${dateText}T00:00:00Z`);if(Number.isNaN(date.getTime()))return'';date.setUTCDate(date.getUTCDate()+Number(days||30));return date.toISOString().slice(0,10);}
 
@@ -305,7 +293,7 @@
     });
   }
 
-  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();foldPaymentIncidents();wireManualGrantForms();}
+  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();wireManualGrantForms();}
   enhance();
   requestAnimationFrame(enhance);
   setTimeout(enhance,250);

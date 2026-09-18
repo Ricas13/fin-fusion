@@ -7,7 +7,7 @@ const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Overview','/admin'],['attention','Needs attention','/admin/attention']]},
   {key:'customers',label:'Customers',pages:[['users','All customers','/admin/users'],['tickets','Support','/admin/tickets']]},
   {key:'servers',label:'Servers',pages:[['servers','Jellyfin','/admin/servers'],['stremio-sources','Stremio','/admin/servers/stremio'],['activity','Playback','/admin/activity']]},
-  {key:'commerce',label:'Commerce',pages:[['plans','Plans','/admin/plans'],['orders','Orders','/admin/commerce/orders'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals'],['payments','Payments','/admin/payments']]},
+  {key:'commerce',label:'Commerce',pages:[['plans','Plans','/admin/plans'],['orders','Orders','/admin/commerce/orders'],['billing','Billing','/admin/billing'],['payments','Providers','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
   {key:'operations',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Automation','/admin/automation'],['backups','Backups','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings/integrations'],['system','System','/admin/system']]}
 ]);
@@ -18,7 +18,6 @@ const hiddenPages=Object.freeze({
   'servers-dashboard':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['servers-dashboard','Fleet dashboard','/admin/servers/dashboard'])}),
   'fleet-operations':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['fleet-operations','Placement & capacity','/admin/servers/operations'])}),
   libraries:Object.freeze({kind:'page',groupKey:'servers',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
-  'inactivity-policy':Object.freeze({kind:'setting',groupKey:'servers',parentKey:'activity',page:Object.freeze(['inactivity-policy','Free-user inactivity rules','/admin/activity/inactivity-policy'])}),
   'my-activity':Object.freeze({kind:'view',groupKey:'servers',parentKey:'activity',page:Object.freeze(['my-activity','My activity','/admin/activity/me'])}),
 
   'stremio-playback':Object.freeze({kind:'setting',groupKey:'servers',parentKey:'stremio-sources',page:Object.freeze(['stremio-playback','IP access','/admin/stremio/playback'])}),
@@ -32,10 +31,9 @@ const hiddenPages=Object.freeze({
   marketing:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'orders',page:Object.freeze(['marketing','Marketing','/admin/marketing'])}),
   'storefront-order':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['storefront-order','Storefront order','/admin/plans/order'])}),
   'plan-access-rules':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
-  billing:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   transactions:Object.freeze({kind:'view',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['transactions','Imported payment archive','/admin/payments/transactions'])}),
-  refunds:Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['refunds','Prepaid refunds','/admin/refunds'])}),
-  expenses:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
+  refunds:Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'billing',page:Object.freeze(['refunds','Prepaid refunds','/admin/refunds'])}),
+  expenses:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'billing',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
   'provider-mappings':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['provider-mappings','Provider mappings','/admin/provider-mappings'])}),
   'payment-risk-policy':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
 
@@ -78,7 +76,7 @@ const aliases=Object.freeze({
   people:'users','jellyfin-import-users':'jellyfin-import','automation':'automation-jobs'
 });
 
-// The rail is flat: six sections, nineteen destinations, two levels. Every
+// The rail is flat: six sections, twenty destinations, two levels. Every
 // other page is surfaced by its parent page according to its kind, or found
 // with the command palette:
 //

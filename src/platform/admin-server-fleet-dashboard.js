@@ -48,6 +48,19 @@ function placementReason(server, settings) {
     if (!planServers.healthEligible(server, settings.placementHealthMode)) return 'Health blocked';
     return 'Eligible';
 }
+function freeInactivityPolicy(server) {
+    if (String(server.server_class || '').toLowerCase() !== 'free') return null;
+    return {
+        firstPlaybackGraceDays: Number(server.free_first_playback_grace_days || serversAdmin.FREE_POLICY_DEFAULTS?.firstPlaybackGraceDays || 3),
+        playbackWindowDays: Number(server.free_playback_window_days || serversAdmin.FREE_POLICY_DEFAULTS?.playbackWindowDays || 7),
+        minimumPlaybackMinutes: Number(server.free_minimum_playback_minutes || serversAdmin.FREE_POLICY_DEFAULTS?.minimumPlaybackMinutes || 30)
+    };
+}
+function freeInactivitySummary(server) {
+    const policy = freeInactivityPolicy(server);
+    if (!policy) return '';
+    return `<small class="serverFreePolicy"><strong>Free inactivity:</strong> first playback within ${esc(policy.firstPlaybackGraceDays)}d · ${esc(policy.minimumPlaybackMinutes)} min / rolling ${esc(policy.playbackWindowDays)}d</small>`;
+}
 
 async function dashboardRows() {
     const [servers, metrics, placement] = await Promise.all([
@@ -124,7 +137,7 @@ function serverTable(req, rows, settings) {
             const reason = placementReason(server, settings), eligible = reason === 'Eligible';
             const capacityText=max==null?`${managed} users`:`${managed}/${max}${managed>max?` · OVER +${managed-max}`:managed===max?' · FULL':` · ${Math.max(0,max-managed)} free`}`;
             return `<tr id="server-${esc(server.id)}">
-                <td class="serverControlIdentity"><strong>${esc(server.name)}</strong><small>${esc(server.server_class)}${server.location ? ` · ${esc(server.location)}` : ''} · priority ${esc(server.priority)}</small></td>
+                <td class="serverControlIdentity"><strong>${esc(server.name)}</strong><small>${esc(server.server_class)}${server.location ? ` · ${esc(server.location)}` : ''} · priority ${esc(server.priority)}</small>${freeInactivitySummary(server)}</td>
                 <td>${healthPill(server.health_status)}<small>Checked ${esc(formatDate(server.last_health_check))}</small></td>
                 <td><strong>${esc(capacityText)}</strong><small>Managed customer users only</small></td>
                 <td><strong>${live}</strong><small>${metricNumber(server, 'transcode_streams', 0)} transcoding</small></td>
@@ -149,7 +162,7 @@ async function body(req) {
     return `${notice(req.query.message)}${notice(req.query.error, 'error')}${overview(summary)}
         <section class="section serverControlSection" id="placement" data-admin-surface="control">
             <div class="sectionHead"><div><h2>Servers</h2><p>Health, customer-user capacity, placement and library maintenance in one place.</p></div><span class="muted">${data.rows.length} configured</span></div>
-            <div class="serverControlHint"><strong>Capacity:</strong> one managed Jellyfin customer uses one place, regardless of that customer's concurrent-stream plan. <strong>Placement:</strong> Active can receive new customers; Drain and Maintenance stop new assignments without moving existing users.</div>
+            <div class="serverControlHint"><strong>Capacity:</strong> one managed Jellyfin customer uses one place, regardless of that customer's concurrent-stream plan. <strong>Placement:</strong> Active can receive new customers; Drain and Maintenance stop new assignments without moving existing users. <strong>Free inactivity:</strong> the canonical first-play grace and rolling playback requirement are shown directly on each Free Server; choose Manage to change them.</div>
             ${serverTable(req, data.rows, data.settings)}
             <div class="securityNote">API keys stay write-only. Library Scan asks Jellyfin to refresh its library; it does not change plan library access.</div>
         </section>`;
@@ -172,6 +185,7 @@ async function statusJson(_req, res, next) {
                     unmanagedStreams: activeStreams == null ? null : Math.max(0, activeStreams - managedStreams),
                     transcodeStreams: metrics?.transcode_streams == null ? null : Number(metrics.transcode_streams),
                     pausedStreams: metrics?.paused_streams == null ? null : Number(metrics.paused_streams),
+                    freeInactivityPolicy: freeInactivityPolicy(server),
                     metricsObservedAt: isoDate(metrics?.observed_at), metricsError: metrics?.last_error || null
                 };
             })
@@ -193,4 +207,4 @@ function createAdminServerFleetDashboardRouter() {
     return router;
 }
 
-module.exports = { createAdminServerFleetDashboardRouter, dashboardRows, statusJson, pageData, placementEligible };
+module.exports = { createAdminServerFleetDashboardRouter, dashboardRows, statusJson, pageData, placementEligible, freeInactivityPolicy, freeInactivitySummary };

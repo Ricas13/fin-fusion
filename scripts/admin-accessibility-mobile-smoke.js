@@ -35,7 +35,7 @@ assert(navSource.includes("Object.defineProperty(groupFor,'renderHeader'")&&navS
 assert(!legacyNav.includes('require('),'legacy EJS partial must not import CommonJS modules at render time');
 assert(!legacyNav.includes('iconPaths')&&!legacyNav.includes('adminSubTab'),'legacy EJS rail must not duplicate icons or third-level navigation');
 assert.deepStrictEqual(navRegistry.childPages('activity'),[],'Playback must not render third-level rail children');
-assert(navRegistry.settingsFor('activity').some(page=>page[0]==='inactivity-policy'),'Playback inactivity rules must remain discoverable as a parent-owned setting');
+assert(!navRegistry.settingsFor('activity').some(page=>page[0]==='inactivity-policy'),'Playback must not own the server-scoped Free inactivity policy');
 assert(navRegistry.relatedPages('servers').some(page=>page[0]==='libraries'),'Libraries must remain reachable from its parent without occupying the rail');
 
 const rail=read('public/js/admin-rail.js');

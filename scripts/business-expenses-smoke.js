@@ -45,7 +45,7 @@ assert(admin.includes('height:32px')&&admin.includes('padding:5px 7px!important'
 assert(admin.includes('<details class="section expenseAddDisclosure"')&&admin.includes("addOpen=String(req.query.add||'')==='1'"),'Add expense must be collapsed by default and open deliberately from the page action');
 assert(!admin.includes('<label>Sort by</label>'),'Column headings must replace the redundant Sort by filter control');
 assert(profit.includes('dashboardLedger.commerceRevenue')&&profit.includes('revenue.netMinor-booked.totalMinor'),'shared profitability must read the Commerce ledger and subtract only booked business expenses');
-assert(nav.includes("expenses:Object.freeze")&&nav.includes("['expenses','Expenses & Profitability','/admin/expenses']"),'Expenses must be a Payments & Billing child workflow');
+assert(nav.includes("expenses:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'billing'")&&nav.includes("['expenses','Expenses & Profitability','/admin/expenses']"),'Expenses must remain a Billing-owned specialist workflow');
 assert(routes.includes('createAdminExpensesRouter')&&routes.includes("require('./admin-commerce-expense-widgets')"),'expense routes and profitability widgets must be mounted');
 assert(widgets.includes("registry.register('commerce','operatingExpenses'")&&widgets.includes("registry.register('commerce','netProfit'"),'Commerce must show operating expenses and net profit');
 assert(widgets.includes('ctx.data.revenue.netMinor')&&widgets.includes('summary.totalMinor'),'Net profit must subtract recorded expenses from net revenue');

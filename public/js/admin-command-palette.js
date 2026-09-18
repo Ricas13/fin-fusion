@@ -15,34 +15,26 @@
   let returnFocus=null;
 
   function normalize(value){return String(value||'').toLowerCase().replace(/\s+/g,' ').trim();}
-  function cleanGroup(section){
-    const label=section?.querySelector('.navSectionHome span:last-child')?.textContent||'';
-    return String(label).trim()||'Navigation';
-  }
   function addCommand(list,command){
     const href=String(command.href||'').trim();
     const label=String(command.label||'').trim();
     if(!href||!label)return;
-    if(list.some(item=>item.href===href))return;
+    const existing=list.find(item=>item.href===href&&normalize(item.label)===normalize(label));
+    if(existing){
+      existing.keywords=normalize(`${existing.keywords||''} ${existing.label||''} ${command.keywords||''} ${label}`);
+      existing.search=normalize(`${existing.label} ${existing.group||''} ${existing.keywords} ${href}`);
+      return;
+    }
     list.push({...command,href,label,search:normalize(`${label} ${command.group||''} ${command.keywords||''} ${href}`)});
   }
   function discoverCommands(){
     const list=[];
-    [
-      {label:'Add customer',href:'/admin/users/new',group:'Customers',keywords:'new create invite'},
-      {label:'Import Jellyfin users',href:'/admin/jellyfin-import',group:'Customers',keywords:'import existing accounts'},
-      {label:'Add Jellyfin server',href:'/admin/servers/new',group:'Jellyfin',keywords:'new create server'},
-      {label:'Needs Attention',href:'/admin/attention',group:'Dashboard',keywords:'alerts problems issues review'}
-    ].forEach(command=>addCommand(list,command));
-
-    document.querySelectorAll('a.adminTab[href],a.adminSubTab[href]').forEach(link=>{
-      addCommand(list,{
-        label:(link.textContent||'').trim(),
-        href:link.getAttribute('href'),
-        group:cleanGroup(link.closest('.navSection')),
-        keywords:link.getAttribute('title')||''
-      });
-    });
+    document.querySelectorAll('[data-admin-command-seed]').forEach(seed=>addCommand(list,{
+      label:seed.dataset.label||'',
+      href:seed.dataset.href||'',
+      group:seed.dataset.group||'Administration',
+      keywords:seed.dataset.keywords||''
+    }));
     document.querySelectorAll('.headerActions a.headerButton[href]').forEach(link=>{
       const href=link.getAttribute('href')||'';
       if(!href||href==='/logout'||link.target==='_blank')return;
@@ -91,7 +83,8 @@
   function render(){
     const raw=input.value||'';
     const q=normalize(raw);
-    const ranked=commands
+    const candidates=q?commands:commands.filter(command=>!String(command.group||'').includes(' · '));
+    const ranked=candidates
       .map(command=>({command,score:score(command,q)}))
       .filter(item=>item.score>0)
       .sort((a,b)=>b.score-a.score||a.command.label.localeCompare(b.command.label))

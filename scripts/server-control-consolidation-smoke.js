@@ -7,6 +7,7 @@ const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const fleet = read('src/platform/admin-server-fleet-dashboard.js');
+const serversAdmin = read('src/platform/admin-servers.js');
 const operations = read('src/platform/admin-fleet-operations.js');
 const libraries = read('src/platform/admin-libraries.js');
 const serverTabs = read('src/platform/admin-server-tabs.js');
@@ -25,6 +26,9 @@ const renderedBody = fleet.slice(fleet.indexOf('async function body(req) {'), fl
 assert(!renderedBody.includes('Placement health policy') && !renderedBody.includes('Future capacity preview'), 'advanced placement panels must not render on the compact Servers page');
 assert(!renderedBody.includes('serverAdvancedGrid') && !renderedBody.includes('operatorDetails'), 'Servers page must end after the primary fleet control section');
 assert(!fleet.includes('sellable stream capacity'), 'server capacity must never be described as stream inventory');
+assert(serversAdmin.includes('js.free_first_playback_grace_days,js.free_playback_window_days,js.free_minimum_playback_minutes'),'fleet data must carry the canonical per-Free-server inactivity fields');
+assert(fleet.includes('function freeInactivitySummary(server)')&&fleet.includes('Free inactivity:')&&fleet.includes('first playback within'),'Free Server rows must expose their inactivity policy without requiring the operator to open Edit');
+assert(fleet.includes('freeInactivityPolicy: freeInactivityPolicy(server)'),'fleet status JSON must reuse the same canonical Free inactivity helper as the rendered fleet row');
 
 assert(operations.includes("res.redirect(302,forward(req,'placement'))"), 'legacy Fleet operations GET must redirect to Servers');
 assert(operations.includes('/admin/servers?message=') && operations.includes('#capacity-preview'), 'legacy placement mutations/previews must return to Servers');
