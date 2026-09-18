@@ -110,7 +110,7 @@ registry.register('main','playMethodBreakdown',{title:'Play method breakdown',su
 registry.register('main','mostUsedPlayers',{title:'Most used players',subtitle:'Normalized client/player families ranked by managed watch time.',defaultOrder:9,defaultSpan:4,render:async ctx=>growthView.players(ctx.data.growthAnalytics)});
 
 async function renderMain(req){
-    const ctx=await buildContext(req),grid=await renderWidgetGrid('main',req,ctx);
+    const ctx=await buildContext(req),grid=await renderWidgetGrid('main',req,ctx,{showFinancialWarning:false});
     const header=`<div class="growthAnalyticsHeader"><div><h2>Growth & server analytics</h2><p>Business health, plan mix and managed playback use the same selected reporting period.</p></div><span>Playback uses ${esc(ctx.data.growthAnalytics.playback.grain)} buckets · growth uses ${esc(ctx.data.growthAnalytics.growth.grain)} buckets</span></div>`;
     return{ctx,html:`<link rel="stylesheet" href="/css/admin-profit-dashboard.css">${header}${grid}<link rel="stylesheet" href="/css/admin-dashboard-growth.css">`};
 }
