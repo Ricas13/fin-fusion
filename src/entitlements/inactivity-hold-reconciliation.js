@@ -43,24 +43,7 @@ async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
     return released;
 }
 
-async function releaseObsoleteAll(actorUserId = null) {
-    const customers = await query(`
-        SELECT DISTINCT customer_id
-        FROM customer_access_holds
-        WHERE hold_type=$1
-          AND released_at IS NULL
-        ORDER BY customer_id
-    `, [HOLD_TYPE]);
-
-    let released = 0;
-    for (const row of customers.rows) {
-        released += await releaseObsoleteForCustomer(row.customer_id, actorUserId);
-    }
-    return released;
-}
-
 module.exports = {
     HOLD_TYPE,
-    releaseObsoleteForCustomer,
-    releaseObsoleteAll
+    releaseObsoleteForCustomer
 };
