@@ -8,6 +8,7 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const dashboardSource=read('src/platform/admin-dashboard.js');
 const dashboardDataSource=read('src/platform/admin-dashboard-data.js');
+const dashboardMainSource=read('src/platform/admin-dashboard-main.js');
 const controlCenterSource=read('src/platform/admin-dashboard-control-center.js');
 const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const liveStreamSource=read('src/platform/admin-dashboard-live-streams.js');
@@ -25,12 +26,15 @@ const controlCenter=require('../src/platform/admin-dashboard-control-center');
 const liveStreams=require('../src/platform/admin-dashboard-live-streams');
 const cards=require('../src/platform/admin-integration-card');
 
-assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Dashboard must read the canonical Needs Attention list instead of recreating operational queries');
+assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Legacy dashboardData compatibility must keep the canonical Needs Attention source instead of recreating operational queries');
 assert(!dashboardDataSource.includes('attention.openSummary().catch'),'Dashboard must not query the same attention source once for summary and again for detail');
 assert(dashboardDataSource.includes('items: sources.slice(0, 5)'),'Dashboard must cap attention detail while preserving the total count');
 assert(dashboardSource.includes('dashboardAnalyticsDisclosure')&&dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}${analytics}'),'Operational control-centre state and live streams must remain above progressively disclosed historical analytics');
 assert(!dashboardSource.includes('function attentionOverview')&&!dashboardSource.includes('setupCompact'),'Home must not reintroduce separate Needs Attention or setup tiles outside the target hero + live streams + three-widget layout');
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
+assert(!dashboardMainSource.includes("require('./admin-dashboard-data')")&&!dashboardMainSource.includes('dashboardData(range,reporting)'),'Live /admin must not execute the retired full legacy dashboard analytics stack beside the current growth/server analytics');
+assert(dashboardMainSource.includes("SELECT EXISTS(SELECT 1 FROM plans) AS has_plans"),'Home setup action must use a minimal prerequisite read instead of loading full setup-readiness diagnostics');
+assert(!dashboardSource.includes('Needs attention'),'Home must rely on the persistent Alerts header instead of duplicating Needs Attention as another hero card');
 assert(dashboardSource.includes("require('./admin-dashboard-control-center')")&&dashboardSource.includes('controlCenter.controlCenterData()'),'Dashboard must aggregate the control-centre snapshot through the dedicated read-only module');
 assert(dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}'),'Operational control-centre state must sit between the headline hero and live playback, before historical analytics');
 assert(controlCenterSource.includes("require('../automation/job-health')")&&controlCenterSource.includes("require('../automation/free-places-digest')")&&controlCenterSource.includes("require('../entitlements/plan-capacity')"),'Control centre must reuse canonical automation, Free digest and capacity authorities');
@@ -46,19 +50,19 @@ assert(criticalSnapshot.total>1&&criticalSnapshot.healthy===1&&criticalSnapshot.
 const advertCfg={discordFreePlacesDigestEnabled:true,discordFreePlacesTimezone:'Europe/London',discordFreePlacesTime1:'12:00',discordFreePlacesTime2:'00:00'};
 assert(controlCenter.nextAdvertLabel(advertCfg,{lastAdvertSlot:'2026-09-18T12:00'},new Date('2026-09-18T15:00:00+01:00')).includes('00:00 tomorrow'),'Free availability card must expose the next configured batched advert slot');
 const controlHtml=controlCenter.renderControlCenter({
-  free:{configured:true,available:7,used:13,limit:20,waiting:2,waitingCapped:false,bufferedPlaces:3,nextAdvert:'00:00 tomorrow · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString(),serverPolicies:[{name:'Free 1',firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7}]},
-  commerce:{issueCount:1,premium:20,linked:19,ending:0,missing:1,syncProblems:0,pastDue:0,providerEventErrors:0,healthyRecurring:19},
+  free:{configured:true,available:7,used:13,limit:20,waiting:2,waitingCapped:false,bufferedPlaces:3,nextAdvert:'00:00 tomorrow · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
+  commerce:{needsReview:true,missing:1,syncProblems:0,pastDue:0,providerEventErrors:0},
   recent:[{kind:'good',label:'Free Jellyfin account removed',detail:'FREE · inactivity policy',at:new Date().toISOString(),href:'/admin/users/example'}]
 });
 for(const token of ['Free Server','Billing integrity','What Fin Fusion just did','Buffered advert','Missing link'])assert(controlHtml.includes(token),`Dashboard control centre missing ${token}`);
 assert(!controlHtml.includes('<form'),'Dashboard control centre must remain summary/navigation only; mutations stay on their owning pages');
 
-const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10},attention:{count:0}}});
-assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Customers / capacity')&&clear.includes('Automation')&&clear.includes('Needs attention'),'Dashboard hero must expose profit, customer capacity, automation health and attention state');
+const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10}}});
+assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Customers / capacity')&&clear.includes('Automation'),'Dashboard hero must expose profit, customer capacity and automation health');
 assert(clear.includes('2 / 10')&&clear.includes('managed customers / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
-assert(clear.includes('No current intervention required')&&clear.includes('/admin/attention'),'Clear attention state must remain linked to the canonical operational inbox');
-const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8},attention:{count:2}}});
-assert(problems.includes('profitHeroCard bad')&&problems.includes('2 current issues require review'),'Negative profit and non-zero attention must use meaningful danger styling/copy in the hero');
+assert(!clear.includes('Needs attention')&&!clear.includes('/admin/attention'),'Dashboard hero must not duplicate the persistent Alerts/Needs Attention signal');
+const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8}}});
+assert(problems.includes('profitHeroCard bad'),'Negative profit must retain meaningful danger styling in the hero');
 
 const livePanel=liveStreams.renderLiveStreamsPanel({session:{authUserId:'admin-smoke',authRole:'admin',adminId:'admin-smoke'}});
 assert(livePanel.includes('data-admin-live-streams')&&livePanel.includes('Now Playing')&&livePanel.includes('/js/admin-dashboard-live-streams.js')&&livePanel.includes('/css/admin-dashboard-live-streams.css'),'Dashboard live streams must use the dedicated asynchronous row surface');
