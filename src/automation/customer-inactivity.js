@@ -127,15 +127,24 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
           FROM subscriptions s
           JOIN plans p ON p.id=s.plan_id
           WHERE s.superseded_by IS NULL
-            AND s.status IN ('active','trialing','past_due','paused')
             AND s.starts_at<=NOW()
-            AND s.current_period_end>NOW()
+            AND (
+              (
+                s.status IN ('active','trialing','past_due','paused')
+                AND s.current_period_end>NOW()
+              )
+              OR (
+                COALESCE(s.service_extension_days,0)>0
+                AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
+                AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+              )
+            )
             AND p.is_free_tier=TRUE
             AND p.price_minor=0
             AND COALESCE(p.is_addon,FALSE)=FALSE
             AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
             AND ($2::uuid IS NULL OR s.customer_id=$2::uuid)
-          ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
+          ORDER BY s.customer_id,s.created_at DESC
         )
         SELECT
           fa.*,
