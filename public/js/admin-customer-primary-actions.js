@@ -17,7 +17,7 @@
     .customerPrimaryActions{display:none!important}
 
     /* Approved Customer 360 proportions */
-    .customerMockHero{margin:0 0 10px!important;gap:18px!important}
+    .customerMockHero{grid-template-columns:minmax(300px,.8fr) minmax(0,3.2fr)!important;margin:0 0 10px!important;gap:18px!important}
     .customerMockIdentity{grid-template-columns:74px minmax(0,1fr)!important;gap:18px!important}
     .customerMockAvatar{width:74px!important;height:74px!important}
     .customerMockName h2{font-size:1.24rem!important}
@@ -28,6 +28,8 @@
     .customerMockTopActions>.plainForm{margin:0!important}
     .mockTopButton{min-height:30px!important;padding:5px 12px!important;border-radius:7px!important;font-size:.67rem!important}
     .customerMockMetrics{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:9px!important}
+    .customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(auto-fit,minmax(125px,1fr))!important}
+    .customerMockMetricsUnified .customerMockMetric{min-width:0!important}
     .customerMockMetric{min-height:70px!important;padding:9px 12px!important;border-radius:8px!important;background:#101a23!important}
     .customerMockMetric small{font-size:.60rem!important}
     .customerMockMetric strong{font-size:.86rem!important;margin-top:4px!important}
@@ -100,6 +102,7 @@
     #customer-danger .actionPopover{right:0;left:auto}
 
     @media(max-width:1450px){.customer360Core .opGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+    @media(max-width:1180px){.customerMockHero{grid-template-columns:1fr!important}.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
     @media(max-width:620px){.customer360Core .opGrid,.customerMockMetrics{grid-template-columns:1fr!important}.customerMockMoreMenu{right:auto;left:0}.compactForcePopover,.compactMovedAction .actionPopover,#customer-danger .actionPopover{position:fixed!important;left:10px!important;right:10px!important;top:20vh!important;width:auto!important}}
   `;
   document.head.appendChild(style);
@@ -165,6 +168,16 @@
     const portalActions=document.querySelector('#customer-portal .opActions');
     const plansActions=document.querySelector('#customer-plans .opActions');
     const dangerActions=document.querySelector('#customer-danger .opActions');
+    const topActions=document.querySelector('.customerMockTopActions');
+
+    const portalPrimary=primary.querySelector('form[data-customer-portal-primary="1"]');
+    if(portalPrimary&&topActions&&!topActions.querySelector('form[action$="/impersonate"]')){
+      portalPrimary.className='plainForm';
+      const portalButton=portalPrimary.querySelector('button');
+      if(portalButton){portalButton.className='mockTopButton primary';portalButton.textContent='View customer portal ↗';}
+      const edit=[...topActions.querySelectorAll('a')].find(node=>text(node)==='Edit');
+      if(edit)edit.insertAdjacentElement('afterend',portalPrimary);else topActions.prepend(portalPrimary);
+    }
 
     const recovery=primary.querySelector('a.actionTile[href*="/portal-credential-recovery"]');
     if(recovery&&portalActions){
@@ -281,6 +294,21 @@
   }
 
 
+  function consolidateSummaryMetrics(){
+    const metrics=document.querySelector('.customerMockMetrics');
+    const glance=document.querySelector('.customer360Glance');
+    if(!metrics||!glance||metrics.dataset.summaryUnified==='1')return;
+    metrics.dataset.summaryUnified='1';
+    metrics.classList.add('customerMockMetricsUnified');
+    [...glance.children].forEach(card=>{
+      const label=text(card.querySelector('span'));
+      if(label==='Current plan'){card.remove();return;}
+      card.classList.add('customerMockMetric');
+      metrics.appendChild(card);
+    });
+    glance.remove();
+  }
+
   function plusDays(dateText,days){const date=new Date(`${dateText}T00:00:00Z`);if(Number.isNaN(date.getTime()))return'';date.setUTCDate(date.getUTCDate()+Number(days||30));return date.toISOString().slice(0,10);}
 
   function wireManualGrantForms(){
@@ -293,7 +321,7 @@
     });
   }
 
-  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();wireManualGrantForms();}
+  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();consolidateSummaryMetrics();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();wireManualGrantForms();}
   enhance();
   requestAnimationFrame(enhance);
   setTimeout(enhance,250);
