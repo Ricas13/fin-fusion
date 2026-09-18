@@ -395,6 +395,7 @@ module.exports = {
     revenueSummary,
     commerceRevenue,
     refundFromEvent,
+    historyRecord,
     eventRecords,
     rememberRecent
 };
