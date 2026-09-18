@@ -127,6 +127,9 @@ assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must insp
 assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T0002', 'T0003'])"), 'PayPal discovery must cover subscription and preapproved recurring payments');
 assert.ok(discoverySource.includes("paypal_reference_id_type || '').toUpperCase() === 'SUB'"), 'PayPal discovery must only treat SUB references as subscription IDs');
 assert.ok(discoverySource.includes("state: 'ending'"), 'subscription discovery must classify explicitly fixed paid terms as reference-only');
+assert.ok(discoverySource.includes("COUNT(*) FILTER(WHERE NOT linked AND NOT ending)::int AS missing"), 'coverage stats must aggregate provider-link integrity in SQL instead of materializing every premium customer row');
+assert.ok(discoverySource.includes("COALESCE(commercial_snapshot->'migrated'='true'::jsonb,FALSE)"), 'coverage SQL must treat a missing commercial snapshot as non-legacy, matching JavaScript fixed-term classification');
+assert.ok(!/async function coverageStats\(\)[\s\S]{0,200}premiumEntitlements\(\)/.test(discoverySource), 'coverage stats must not load the full premium entitlement identity rowset merely to count billing states');
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
