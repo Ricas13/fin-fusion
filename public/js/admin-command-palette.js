@@ -15,10 +15,6 @@
   let returnFocus=null;
 
   function normalize(value){return String(value||'').toLowerCase().replace(/\s+/g,' ').trim();}
-  function cleanGroup(section){
-    const label=section?.querySelector('.navSectionHome span:last-child')?.textContent||'';
-    return String(label).trim()||'Navigation';
-  }
   function addCommand(list,command){
     const href=String(command.href||'').trim();
     const label=String(command.label||'').trim();
@@ -39,14 +35,6 @@
       group:seed.dataset.group||'Administration',
       keywords:seed.dataset.keywords||''
     }));
-    document.querySelectorAll('a.adminTab[href],a.adminSubTab[href]').forEach(link=>{
-      addCommand(list,{
-        label:(link.textContent||'').trim(),
-        href:link.getAttribute('href'),
-        group:cleanGroup(link.closest('.navSection')),
-        keywords:link.getAttribute('title')||''
-      });
-    });
     document.querySelectorAll('.headerActions a.headerButton[href]').forEach(link=>{
       const href=link.getAttribute('href')||'';
       if(!href||href==='/logout'||link.target==='_blank')return;
