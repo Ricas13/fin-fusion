@@ -40,7 +40,7 @@ assert(!inactivityResults.some(item=>item.href==='/admin/activity/inactivity-pol
 const billingResults=settingsRegistry.search('billing integrity');
 assert(billingResults.some(item=>item.key==='commerce.billing'&&item.href==='/admin/billing'),'settings search must expose first-class Billing integrity');
 const smtpResults=settingsRegistry.search('smtp');
-assert(smtpResults.some(item=>item.href==='/admin/notifications/email'),'settings search must expose transactional email directly');
+assert(smtpResults.some(item=>item.href==='/admin/notifications'),'settings search must expose transactional email through the canonical email-infrastructure route');
 assert(shell.includes('/js/admin-setting-controls.js'),'compact setting enhancer must load on every admin page');
 assert(shellBase.includes('/css/admin-capability.css'),'base admin shell must load the shared capability stylesheet');
 assert(capability.includes("@import url('/css/admin-capability-base.css')")&&capability.includes("@import url('/css/admin-setting-controls.css')")&&capability.includes("@import url('/css/admin-provider-controls.css')"),'capability entrypoint must load layout, setting-control and provider-disclosure layers');
