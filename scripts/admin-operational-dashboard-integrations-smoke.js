@@ -106,6 +106,12 @@ const brokenAdvertHtml=controlCenter.renderControlCenter({
   recent:[]
 });
 assert(brokenAdvertHtml.includes('dashboardControlCard warn')&&brokenAdvertHtml.includes('Discord not configured'),'Enabled Free advertising that cannot run must warn even when inactivity itself is healthy');
+const brokenCapacityHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:0,used:0,reserved:0,limit:0,waiting:0,waitingCapped:false,capacityConfigurationProblem:true,capacityProblemDetail:'No Jellyfin server user capacity is configured for this plan.',bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:true,inactivityDryRun:false,inactivityConfigurationMissing:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(brokenCapacityHtml.includes('dashboardControlCard warn')&&brokenCapacityHtml.includes('No Jellyfin server user capacity is configured for this plan.'),'A Free plan with no usable server capacity must warn instead of looking like an ordinary full pool');
 const failedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'failed',last_error:'boom',last_failed_count:1,last_processed_count:99}],5)[0];
 assert(failedAction&&failedAction.detail==='1 failed','A failed automation run must not reuse the previous successful run\'s processed count');
 const degradedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'degraded',last_warning:'partial',last_failed_count:2,last_processed_count:7}],5)[0];
