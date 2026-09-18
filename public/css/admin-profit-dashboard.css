@@ -11,7 +11,7 @@
 .adminDashboardCompactBody .chartSvg{min-height:158px;max-height:178px}
 .adminDashboardCompactBody .chartEmpty{height:158px}
 
-.profitHeroGrid{display:grid;grid-template-columns:1.35fr repeat(3,minmax(0,1fr));gap:10px;margin:0}
+.profitHeroGrid{display:grid;grid-template-columns:1.35fr repeat(2,minmax(0,1fr));gap:10px;margin:0}
 .profitHeroCard{display:grid;align-content:start;gap:6px;min-height:106px;padding:13px 14px;border:1px solid #2d3a48;border-radius:11px;background:#131b24;text-decoration:none;color:#eaf0f5}
 .profitHeroCard>span{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:#97a5b5}
 .profitHeroCard>strong{font-size:23px;line-height:1.05;color:#fff}
@@ -32,7 +32,6 @@
 .profitDelta.bad{color:var(--status-bad)}
 .profitGauge{height:6px;border-radius:999px;background:#25313d;overflow:hidden;margin-top:1px}
 .profitGauge>i{display:block;height:100%;border-radius:inherit;background:var(--status-info)}
-.profitBasisText{margin:0;font-size:11px;line-height:1.4;color:#6f7e8f}
 
 .profitBars{display:grid;gap:7px}
 .profitBarRow{display:grid;grid-template-columns:56px minmax(0,1fr);gap:8px;align-items:center}
@@ -107,7 +106,6 @@
 .dashboardControlMetric>small{font-size:10px;line-height:1.3;color:#8998a8}
 .dashboardControlCard>p{margin:0;font-size:10px;line-height:1.45;color:#9aa8b7}
 .dashboardControlCard>p strong{color:#d7e0e8}
-.dashboardControlPolicy{padding-top:7px;border-top:1px solid rgba(255,255,255,.07)}
 .dashboardAutomationFeed{padding:11px 13px}
 .dashboardAutomationFeed>.dashboardControlHead{margin-bottom:4px}
 .dashboardAutomationEvent{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:9px;align-items:center;padding:7px 0;border-top:1px solid rgba(255,255,255,.055);color:#eaf0f5;text-decoration:none}
