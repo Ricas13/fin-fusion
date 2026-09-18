@@ -3,6 +3,8 @@ const assert=require('assert');
 const {query,getPool}=require('../src/db');
 const reservations=require('../src/payments/service-credit-reservations');
 const checkoutIntents=require('../src/payments/checkout-intents');
+const lifecycle=require('../src/payments/lifecycle');
+const affiliateCredits=require('../src/affiliate-credits');
 const {encryptWithEnv}=require('../src/security/purpose-crypto');
 
 // Fleet capacity fails closed for any jellyfin premium/free plan with no
@@ -54,6 +56,35 @@ async function main(){
  const none=await reservations.reserveForIntent({customerId:customer.id,checkoutIntentId:second.id,currency:'GBP',maxAmountMinor:550,expiresAt:new Date(Date.now()+55*60*1000)});
  assert.equal(none.amountMinor,0,'spent credit must not be reusable');
  await checkoutIntents.consume({intentId:second.id,nonce:second.nonce,scope:'customer',provider:'paypal',ownerId:customer.id,state:'cancelled'});
+
+ // Late provider settlement after the service-credit reservation is no longer
+ // financially backed must fail before local access commits.
+ const lateUser=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,'x','customer',TRUE) RETURNING id`,[`mixed-late-${suffix}`,`mixed-late-${suffix}@example.invalid`])).rows[0];
+ const lateCustomer=(await query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING id`,[lateUser.id,`Mixed Late ${suffix}`,`mixed-late-${suffix}@example.invalid`])).rows[0];
+ await query(`INSERT INTO affiliate_profiles(customer_id,active) VALUES($1,TRUE)`,[lateCustomer.id]);
+ await query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id,note) VALUES($1,'GBP',400,'adjustment','available',$2,'late mixed smoke')`,[lateCustomer.id,`mixed-late-seed-${suffix}`]);
+ const lateIntent=await checkoutIntents.createIntent({
+   scope:'customer',customerId:lateCustomer.id,planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',
+   commercialSnapshot:{kind:'direct_plan',planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',priceMinor:600,discountedMinor:200,currency:'GBP',durationDays:30,planName:'Mixed plan',planCode:`mixed-plan-${suffix}`,serviceCreditMinor:400}
+ });
+ await reservations.reserveForIntent({customerId:lateCustomer.id,checkoutIntentId:lateIntent.id,currency:'GBP',maxAmountMinor:400,expiresAt:new Date(Date.now()+60*60*1000)});
+ await query(`UPDATE affiliate_credit_checkout_reservations SET expires_at=NOW()-INTERVAL '1 minute' WHERE checkout_intent_id=$1`,[lateIntent.id]);
+ await affiliateCredits.adminAdjustCredit({customerId:lateCustomer.id,currency:'GBP',amountMinor:-400,reason:'simulate credit spent after reservation expiry'});
+ await assert.rejects(
+   lifecycle.activatePurchase({
+     customerId:lateCustomer.id,
+     planId:plan.id,
+     provider:'stripe',
+     providerSubscriptionId:`pi_late_mixed_${suffix}`,
+     providerStatus:'active',
+     commercialSnapshot:{kind:'direct_plan',planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',priceMinor:600,discountedMinor:200,currency:'GBP',durationDays:30,planName:'Mixed plan',planCode:`mixed-plan-${suffix}`,serviceCreditMinor:400,checkoutIntentId:lateIntent.id}
+   }),
+   /settled after its service-credit reservation was released or expired/i,
+   'late provider cash must not activate full access when the promised service-credit portion is no longer available'
+ );
+ const leaked=await query(`SELECT id FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1`,[`pi_late_mixed_${suffix}`]);
+ assert.equal(leaked.rowCount,0,'mixed-payment settlement failure must roll back entitlement activation atomically');
+
  console.log('affiliate mixed-payment smoke: ok');
 }
 main().then(()=>getPool().end()).catch(async e=>{console.error(e.stack||e);try{await getPool().end()}catch{}process.exit(1)});
