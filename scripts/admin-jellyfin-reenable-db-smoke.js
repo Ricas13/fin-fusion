@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const accessHolds = require('../src/entitlements/access-holds');
 const restore = require('../src/entitlements/jellyfin-inactivity-restore');
+const subscriptionState = require('../src/entitlements/subscription-state');
+const inactivityHoldReconciliation = require('../src/entitlements/inactivity-hold-reconciliation');
 
 (async () => {
     const suffix = crypto.randomBytes(5).toString('hex');
@@ -27,14 +29,14 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
         `, [`Restore ${label} ${suffix}`, `restore-${label}-${suffix}`]);
         const serverId = server.rows[0].id;
         created.servers.push(serverId);
-        await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days')`, [customerId, planId]);
+        const subscription = await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days') RETURNING id,created_at`, [customerId, planId]);
         const hold = await accessHolds.addHold({
             customerId,
             type: 'inactivity_policy',
             sourceKey: `plan:${planId}`,
             reason: 'Free-plan Jellyfin usage rule: DB smoke'
         });
-        return { customerId, planId, serverId, holdId: hold.id };
+        return { customerId, planId, serverId, holdId: hold.id, subscriptionId: subscription.rows[0].id };
     }
 
     try {
@@ -107,6 +109,22 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
         );
         const postconditionHolds = await accessHolds.activeHolds(postcondition.customerId);
         assert(postconditionHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed restore postcondition must restore the inactivity hold');
+
+        // A hold belongs to one removal episode, not forever to the canonical
+        // Free plan. A later Free subscription for the same plan must start clean.
+        const stale = await fixture('stale-hold');
+        await query(`UPDATE subscriptions SET status='expired',current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1`,[stale.subscriptionId]);
+        const replacementSubscription = await query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'active','free_claim',NOW(),NOW()+INTERVAL '3000 days')
+            RETURNING id
+        `,[stale.customerId,stale.planId]);
+        const replacementEntitlement = await subscriptionState.liveFreeJellyfinSubscription(stale.customerId,{includeBlocked:true});
+        assert.strictEqual(String(replacementEntitlement.subscription_id),String(replacementSubscription.rows[0].id),'new Free subscription must become canonical');
+        assert.strictEqual(Boolean(replacementEntitlement.blocked),false,'an inactivity hold created before the new Free subscription must not block the new allocation');
+        const releasedStale = await inactivityHoldReconciliation.releaseObsoleteForCustomer(stale.customerId);
+        assert.strictEqual(releasedStale,1,'customer reconciliation must retire the previous Free allocation hold');
+        assert((await query(`SELECT released_at FROM customer_access_holds WHERE id=$1`,[stale.holdId])).rows[0].released_at,'previous allocation hold must be released');
 
         console.log('admin jellyfin present-or-deleted db smoke: ok');
     } finally {
