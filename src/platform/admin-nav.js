@@ -32,8 +32,8 @@ const hiddenPages=Object.freeze({
   'storefront-order':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['storefront-order','Storefront order','/admin/plans/order'])}),
   'plan-access-rules':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
   transactions:Object.freeze({kind:'view',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['transactions','Imported payment archive','/admin/payments/transactions'])}),
-  refunds:Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['refunds','Prepaid refunds','/admin/refunds'])}),
-  expenses:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
+  refunds:Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'billing',page:Object.freeze(['refunds','Prepaid refunds','/admin/refunds'])}),
+  expenses:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'billing',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
   'provider-mappings':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['provider-mappings','Provider mappings','/admin/provider-mappings'])}),
   'payment-risk-policy':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
 
