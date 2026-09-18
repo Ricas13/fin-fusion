@@ -105,7 +105,10 @@ async function finalEligibility(row, globalCfg) {
     if (!entitlement) {
         return { ready: false, reason: 'free_entitlement_no_longer_active', worker, server, fresh };
     }
-    if (String(entitlement.plan_id || '') !== String(fresh.plan_id || '')) {
+    if (
+        String(entitlement.subscription_id || '') !== String(fresh.subscription_id || '')
+        || String(entitlement.plan_id || '') !== String(fresh.plan_id || '')
+    ) {
         return { ready: false, reason: 'free_entitlement_changed', worker, server, fresh, entitlement };
     }
     if (entitlement.admin_jellyfin_removed) {
