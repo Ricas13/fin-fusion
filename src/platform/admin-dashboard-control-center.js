@@ -425,7 +425,7 @@ function freeCard(data = {}) {
   const tone = inactivityBad || data.advertConfigurationProblem || data.capacityConfigurationProblem
     ? 'warn'
     : (!data.inactivityEnabled || data.inactivityDryRun ? 'neutral' : 'good');
-  const waitingLabel = data.waitingCapped ? `${Number(data.waiting || 0)}+` : String(data.waiting || 0);
+  const waitingLabel = data.waitingCapped ? `≥${Number(data.waiting || 0)}` : String(data.waiting || 0);
   const inactivityLabel = data.inactivityConfigurationMissing
     ? 'Not configured'
     : data.inactivityEnabled
