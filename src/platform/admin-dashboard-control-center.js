@@ -132,15 +132,11 @@ function nextAdvertLabel(cfg, state, now = new Date()) {
 }
 
 async function freeSnapshot(jobRows) {
-  const [plan, policy, cfg, digestState, freeServers] = await Promise.all([
+  const [plan, policy, cfg, digestState] = await Promise.all([
     freeDigest.freePlan(),
     inactivityPolicy.get(),
     notificationSettings.status(),
-    freeDigest.loadState(),
-    query(`SELECT id,name,free_first_playback_grace_days,free_playback_window_days,free_minimum_playback_minutes
-             FROM jellyfin_servers
-            WHERE enabled=TRUE AND server_class='free'
-            ORDER BY priority,name`)
+    freeDigest.loadState()
   ]);
 
   if (!plan) {
@@ -171,29 +167,18 @@ async function freeSnapshot(jobRows) {
 
   return {
     configured: true,
-    planId: plan.id,
     available: actualRemaining,
     used: capacity.used == null ? null : Number(capacity.used),
     reserved: capacity.reserved == null ? null : Number(capacity.reserved),
     limit: capacity.limit == null ? null : Number(capacity.limit),
     waiting: waitingRows.length + pendingClaims.length,
     waitingCapped: waitingRows.length >= 500 || pendingClaims.length >= 500,
-    advertisedRemaining,
     bufferedPlaces,
     inactivityEnabled: Boolean(policy.enabled),
     inactivityDryRun: Boolean(policy.dryRun),
-    inactivityConfigurationMissing: Boolean(policy.configurationMissing),
     inactivityState: jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing'),
     inactivityLastCompletedAt: inactivityJob?.last_completed_at || inactivityJob?.last_success_at || null,
-    nextAdvert: nextAdvertLabel(cfg, digestState),
-    advertisingEnabled: Boolean(cfg.discordFreePlacesDigestEnabled),
-    serverPolicies: freeServers.rows.map(row => ({
-      id: String(row.id),
-      name: row.name,
-      firstPlaybackGraceDays: Number(row.free_first_playback_grace_days || 0),
-      playbackWindowDays: Number(row.free_playback_window_days || 0),
-      minimumPlaybackMinutes: Number(row.free_minimum_playback_minutes || 0)
-    }))
+    nextAdvert: nextAdvertLabel(cfg, digestState)
   };
 }
 
@@ -206,21 +191,13 @@ async function billingSnapshot() {
   const syncProblems = recurring.filter(row => Boolean(row.last_error)).length;
   const pastDue = recurring.filter(row => row.status === 'past_due' && !row.cancel_at_period_end).length;
   const providerEventErrors = data.events.filter(row => row.processing_error && !row.processed_at).length;
-  const healthyRecurring = recurring.filter(row =>
-    ['active', 'trialing'].includes(String(row.status || '').toLowerCase()) && !row.last_error
-  ).length;
-
+  const missing = Number(coverage.missing || 0);
   return {
-    recurring: recurring.length,
-    healthyRecurring,
-    premium: Number(coverage.premium || 0),
-    linked: Number(coverage.linked || 0),
-    ending: Number(coverage.ending || 0),
-    missing: Number(coverage.missing || 0),
+    missing,
     syncProblems,
     pastDue,
     providerEventErrors,
-    issueCount: Number(coverage.missing || 0) + syncProblems + pastDue + providerEventErrors
+    needsReview: missing > 0 || syncProblems > 0 || pastDue > 0 || providerEventErrors > 0
   };
 }
 
@@ -260,7 +237,7 @@ async function inactivityAuditActions(limit = 5) {
   });
 }
 
-function recentJobActions(rows, limit = 8) {
+function recentJobActions(rows, limit = 5) {
   return (rows || [])
     .filter(row => RECENT_JOB_KEYS.has(String(row.job_key || '')) && (row.last_completed_at || row.last_success_at))
     .map(row => {
@@ -282,12 +259,12 @@ function recentJobActions(rows, limit = 8) {
     })
     .filter(Boolean)
     .sort((a, b) => dateMs(b.at) - dateMs(a.at))
-    .slice(0, Math.max(1, Number(limit) || 8));
+    .slice(0, Math.max(1, Number(limit) || 5));
 }
 
 async function recentAutomation(rows) {
-  const audit = await inactivityAuditActions(5).catch(() => []);
-  const combined = [...audit, ...recentJobActions(rows, 10)]
+  const audit = await inactivityAuditActions(4).catch(() => []);
+  const combined = [...audit, ...recentJobActions(rows, 6)]
     .sort((a, b) => dateMs(b.at) - dateMs(a.at));
   const seen = new Set();
   return combined.filter(item => {
@@ -295,7 +272,7 @@ async function recentAutomation(rows) {
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).slice(0, 8);
+  }).slice(0, 5);
 }
 
 async function safePart(name, fn) {
@@ -368,18 +345,15 @@ function freeCard(data = {}) {
     : `${data.used == null ? Math.max(0, Number(data.limit || 0) - Number(data.available || 0) - Number(data.reserved || 0)) : Number(data.used)} / ${data.limit}`;
   const inactivityBad = !data.inactivityEnabled || ['failed','degraded','stale','missing','unavailable'].includes(data.inactivityState);
   const tone = inactivityBad ? 'warn' : 'good';
-  const policy = (data.serverPolicies || []).map(row =>
-    `${row.name}: first play ${row.firstPlaybackGraceDays}d · ${row.minimumPlaybackMinutes} min / ${row.playbackWindowDays}d`
-  ).join(' | ');
-  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / configured · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', `${data.waitingCapped ? '500+' : data.waiting}`, 'eligible customers without a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p>${policy ? `<p class="dashboardControlPolicy">${esc(policy)}</p>` : ''}</a>`;
+  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / configured · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', `${data.waitingCapped ? '500+' : data.waiting}`, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
 }
 
 function billingCard(data = {}) {
   if (data.unavailable) {
     return `<a class="dashboardControlCard bad" href="/admin/billing"><div class="dashboardControlHead"><span>Billing integrity</span><strong>Unavailable</strong></div><p>${esc(data.error || 'Billing status could not be read.')}</p></a>`;
   }
-  const issues = Number(data.issueCount || 0);
-  return `<a class="dashboardControlCard ${issues ? 'warn' : 'good'}" href="/admin/billing"><div class="dashboardControlHead"><span>Billing integrity</span><strong>${issues ? `${issues} signal${issues === 1 ? '' : 's'}` : 'Clear'}</strong></div><div class="dashboardControlMetrics">${metric('Provider linked', String(data.linked || 0), `${data.premium || 0} premium users`)}${metric('Missing link', String(data.missing || 0), `${data.ending || 0} intentionally ending`)}${metric('Sync / events', String((data.syncProblems || 0) + (data.providerEventErrors || 0)), `${data.pastDue || 0} past due`)}</div><p>${esc(data.healthyRecurring || 0)} healthy recurring subscription${Number(data.healthyRecurring || 0) === 1 ? '' : 's'} currently verified locally.</p></a>`;
+  const needsReview = Boolean(data.needsReview);
+  return `<a class="dashboardControlCard ${needsReview ? 'warn' : 'good'}" href="/admin/billing"><div class="dashboardControlHead"><span>Billing integrity</span><strong>${needsReview ? 'Needs review' : 'Clear'}</strong></div><div class="dashboardControlMetrics">${metric('Missing link', String(data.missing || 0))}${metric('Sync / events', String((data.syncProblems || 0) + (data.providerEventErrors || 0)))}${metric('Past due', String(data.pastDue || 0))}</div></a>`;
 }
 
 function recentFeed(items = [], unavailable = false) {
