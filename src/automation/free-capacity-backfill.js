@@ -11,6 +11,7 @@ function noCapacity(error) {
 
 async function pendingClaimCandidates(limit = 100, { planId = null } = {}) {
   const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
+  const planFilter = planId ? 'AND r.plan_id=$2::uuid' : '';
   const result = await query(`
     SELECT r.id AS reservation_id,
            r.customer_id,
@@ -28,15 +29,16 @@ async function pendingClaimCandidates(limit = 100, { planId = null } = {}) {
       AND r.expires_at>NOW()
       AND p.consumed_at IS NOT NULL
       AND c.user_id IS NOT NULL
-      AND ($2::uuid IS NULL OR r.plan_id=$2::uuid)
+      ${planFilter}
     ORDER BY r.created_at ASC,r.id ASC
     LIMIT $1
-  `, [bounded, planId]);
+  `, planId ? [bounded, planId] : [bounded]);
   return result.rows;
 }
 
 async function waitingCandidates(limit = 100, { planId = null } = {}) {
   const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
+  const planFilter = planId ? 'AND p.id=$2::uuid' : '';
   const result = await query(`
     WITH current_free AS (
       SELECT DISTINCT ON (s.customer_id)
@@ -49,7 +51,7 @@ async function waitingCandidates(limit = 100, { planId = null } = {}) {
       LEFT JOIN customer_entitlement_overrides o
         ON o.customer_id=s.customer_id AND o.subscription_id=s.id
       WHERE p.is_free_tier=TRUE
-        AND ($2::uuid IS NULL OR p.id=$2::uuid)
+        ${planFilter}
         AND COALESCE(p.is_addon,FALSE)=FALSE
         AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
         AND s.superseded_by IS NULL
@@ -80,7 +82,7 @@ async function waitingCandidates(limit = 100, { planId = null } = {}) {
     FROM current_free
     ORDER BY created_at ASC,customer_id ASC
     LIMIT $1
-  `, [bounded, planId]);
+  `, planId ? [bounded, planId] : [bounded]);
   return result.rows;
 }
 
