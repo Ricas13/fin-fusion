@@ -34,10 +34,23 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
           AND hold_type=$2
           AND source_key=$3
           AND released_at IS NULL
+          AND (
+            metadata->>'subscriptionId'=$4::text
+            OR (
+              metadata->>'subscriptionId' IS NULL
+              AND created_at>=$5::timestamptz
+            )
+          )
         ORDER BY created_at,id
         LIMIT 1
         ${lock ? 'FOR UPDATE' : ''}
-    `, [customerId, HOLD_TYPE, sourceKey]);
+    `, [
+        customerId,
+        HOLD_TYPE,
+        sourceKey,
+        entitlement.subscription_id,
+        entitlement.subscription_created_at
+    ]);
 
     if (!hold.rowCount) {
         return {
