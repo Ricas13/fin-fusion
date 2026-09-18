@@ -156,7 +156,7 @@ async function freeSnapshot(jobRows) {
       bufferedPlaces: 0,
       inactivityEnabled: Boolean(policy.enabled),
       inactivityState: 'missing',
-      nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending })
+      nextAdvert: nextAdvertLabel(cfg, digestState)
     };
   }
 
@@ -197,7 +197,7 @@ async function freeSnapshot(jobRows) {
     inactivityDryRun: Boolean(policy.dryRun),
     inactivityState: jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing'),
     inactivityLastCompletedAt: inactivityJob?.last_completed_at || inactivityJob?.last_success_at || null,
-    nextAdvert: nextAdvertLabel(cfg, digestState)
+    nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending })
   };
 }
 
