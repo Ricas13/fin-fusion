@@ -48,8 +48,10 @@ assert(dashboardCss.includes('.dashboardControlCenter')&&dashboardCss.includes('
 
 const criticalSnapshot=controlCenter.automationSnapshot([{job_key:'health',enabled:true,interval_seconds:300,last_completed_at:new Date().toISOString(),last_success_at:new Date().toISOString(),last_outcome:'success'}]);
 assert(criticalSnapshot.total>1&&criticalSnapshot.healthy===1&&criticalSnapshot.warningCount===criticalSnapshot.total-1,'Missing critical automation jobs must be visible as dashboard warnings rather than silently treated as healthy');
-const advertCfg={discordFreePlacesDigestEnabled:true,discordFreePlacesTimezone:'Europe/London',discordFreePlacesTime1:'12:00',discordFreePlacesTime2:'00:00'};
-assert(controlCenter.nextAdvertLabel(advertCfg,{lastAdvertSlot:'2026-09-18T12:00'},new Date('2026-09-18T15:00:00+01:00')).includes('00:00 tomorrow'),'Free availability card must expose the next configured batched advert slot');
+const advertCfg={discordFreePlacesDigestEnabled:true,discordConfigured:true,discordFreePlacesChannelId:'123456789012345678',discordFreePlacesTimezone:'Europe/London',discordFreePlacesTime1:'12:00',discordFreePlacesTime2:'00:00'};
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',lastAdvertSlot:'2026-09-18T12:00'},new Date('2026-09-18T15:00:00+01:00')).includes('00:00 tomorrow'),'Free availability card must expose the next configured batched advert slot');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',lastAdvertSlot:null},new Date('2026-09-18T15:00:00+01:00')).includes('00:00 tomorrow'),'A fresh or legacy digest baseline must not falsely claim the current slot is due for an advert');
+assert(controlCenter.nextAdvertLabel({...advertCfg,discordFreePlacesChannelId:'999999999999999999'},{channelId:'123456789012345678',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00')).includes('00:00 tomorrow'),'Changing the advert channel must invalidate the old slot baseline rather than advertising immediately');
 const controlHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:7,used:13,limit:20,waiting:2,waitingCapped:false,bufferedPlaces:3,nextAdvert:'00:00 tomorrow · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
   commerce:{needsReview:true,missing:1,syncProblems:0,pastDue:0,providerEventErrors:0},
