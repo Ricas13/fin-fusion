@@ -161,6 +161,7 @@ async function freeSnapshot(jobRows) {
       waiting: 0,
       bufferedPlaces: 0,
       inactivityEnabled: Boolean(policy.enabled),
+      inactivityConfigurationMissing: Boolean(policy.configurationMissing),
       inactivityState: 'missing',
       advertConfigurationProblem: Boolean(
         cfg.discordFreePlacesDigestEnabled &&
@@ -212,6 +213,7 @@ async function freeSnapshot(jobRows) {
     bufferedPlaces,
     inactivityEnabled: Boolean(policy.enabled),
     inactivityDryRun: Boolean(policy.dryRun),
+    inactivityConfigurationMissing: Boolean(policy.configurationMissing),
     inactivityState: jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing'),
     inactivityLastCompletedAt: inactivityJob?.last_completed_at || inactivityJob?.last_success_at || null,
     advertConfigurationProblem: Boolean(
@@ -406,12 +408,19 @@ function freeCard(data = {}) {
   const capacity = data.limit == null
     ? `${data.available ?? '—'} available`
     : `${data.used == null ? Math.max(0, Number(data.limit || 0) - Number(data.available || 0) - Number(data.reserved || 0)) : Number(data.used)} / ${data.limit}`;
-  const inactivityBad = data.inactivityEnabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(data.inactivityState);
+  const inactivityBad = data.inactivityConfigurationMissing || (
+    data.inactivityEnabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(data.inactivityState)
+  );
   const tone = inactivityBad || data.advertConfigurationProblem
     ? 'warn'
     : (!data.inactivityEnabled || data.inactivityDryRun ? 'neutral' : 'good');
   const waitingLabel = data.waitingCapped ? `${Number(data.waiting || 0)}+` : String(data.waiting || 0);
-  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
+  const inactivityLabel = data.inactivityConfigurationMissing
+    ? 'Not configured'
+    : data.inactivityEnabled
+      ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState)
+      : 'Paused';
+  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(inactivityLabel)} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
 }
 
 function billingCard(data = {}) {
