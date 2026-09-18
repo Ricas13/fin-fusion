@@ -64,8 +64,6 @@ stub('src/platform/bulk-jobs.js',{
   queuePlanDiscordReconciliation:async(id,actor,params)=>{queued={id,actor,params};return{id:'job'};}
 });
 stub('src/platform/admin-html.js',{esc:value=>String(value??'').replace(/[&<>"']/g,ch=>({"&":'&amp;',"<":'&lt;',">":'&gt;',"\"":'&quot;',"'":'&#39;'}[ch])),layout:({body})=>body});
-stub('src/entitlements/plan-lifecycle-policy.js',{effectiveForFreePlan:()=>({enabled:false,dryRun:true,noPlaybackDays:null,minimumPlaybackMinutes:null,playbackWindowDays:7,minimumObservationHours:48,deleteAfterDisableDays:1,inherited:{}}),save:async()=>{}});
-stub('src/entitlements/jellyfin-lifecycle-policy.js',{get:async()=>({freeNoPlaybackDays:7}),categoryFor:()=> 'free',deleteDays:()=>({days:1})});
 stub('src/platform/admin-checkbox-form.js',{explicitCheckboxes:body=>body});
 
 const editor=require('../src/platform/admin-jellyfin-plan-editor');
