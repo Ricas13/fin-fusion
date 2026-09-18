@@ -33,12 +33,13 @@ function hasHistoryCoverage(coverage,start,end){
 }
 function basisFor(coverage,start,end){
   const webhookOnly=!hasHistoryCoverage(coverage,start,end);
-  return{webhookOnly,basisText:`${PROFIT_BASIS}${webhookOnly?' webhook-only for this range.':''}`};
+  return{webhookOnly,basisText:`${PROFIT_BASIS}${webhookOnly?' Webhook-only for this range: exact provider fees are unavailable until Payment History is imported.':''}`};
 }
 function revenueFromLedger(ledger,start,end,{includePrevious=false}={}){
   const grossMinor=Number(ledger?.grossMinor||0)+(includePrevious?Number(ledger?.previousGrossMinor||0):0);
   const refundMinor=Number(ledger?.refundMinor||0)+(includePrevious?Number(ledger?.previousRefundMinor||0):0);
-  return{grossMinor,refundMinor,netMinor:grossMinor-refundMinor,coverage:ledger?.coverage||{},warnings:ledger?.warnings||[],...basisFor(ledger?.coverage,start,end)};
+  const feeMinor=Number(ledger?.feeMinor||0)+(includePrevious?Number(ledger?.previousFeeMinor||0):0);
+  return{grossMinor,refundMinor,feeMinor,netMinor:grossMinor-refundMinor-feeMinor,coverage:ledger?.coverage||{},warnings:ledger?.warnings||[],...basisFor(ledger?.coverage,start,end)};
 }
 async function revenueSummary(start,end,reporting){
   const ledger=await dashboardLedger.commerceRevenue(ledgerRange(start,end),reporting,reportingCurrency);
