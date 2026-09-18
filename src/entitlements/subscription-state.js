@@ -107,6 +107,7 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
+        s.created_at AS subscription_created_at,
         CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
                   OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
              THEN 'infinity'::timestamptz ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval) END AS access_expires_at,
