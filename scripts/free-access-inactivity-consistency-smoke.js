@@ -132,6 +132,9 @@ const subscriptionState = read('src/entitlements/subscription-state.js');
 const lifecycleAdmin = read('src/platform/admin-jellyfin-lifecycle.js');
 const planAdmin = read('src/platform/admin-request-plan-policy.js');
 const pinPlacementMigration = read('db/migrations/20260918001000_server_pin_placement_only.sql');
+const cleanupReturn = read('src/entitlements/jellyfin-cleanup-return.js');
+const inactivityRestore = read('src/entitlements/jellyfin-inactivity-restore.js');
+const adminHolds = read('src/platform/admin-customer-access-holds.js');
 
 // Allocation is one boundary: subscription start, actual account creation,
 // lane transition, or a later return from Permanent Access -- whichever is newest.
@@ -177,6 +180,13 @@ assert.doesNotMatch(grace, /customer_entitlement_overrides|jellyfin_account_life
 assert.match(grace, /async function applyLegacySafetyWindow/);
 assert.match(grace, /inactivity_observation_reset_at/);
 assert.match(grace, /module\.exports = \{ applyLegacySafetyWindow \}/,'legacy safety module must expose one runtime concept only');
+
+// Every normal restore entry point must use the same hold-release/reprovision
+// owner so a failed restore cannot silently leave inactivity authority cleared.
+assert.match(cleanupReturn, /inactivityRestore\.restoreDisabledFreeAccess\(customerId,\{reconcile\}\)/,'customer portal restore must delegate to canonical inactivity restoration');
+assert.match(adminHolds, /inactivityRestore\.restoreDisabledFreeAccess\(customerId,/,'admin inactivity-hold release must delegate to canonical inactivity restoration');
+assert.match(inactivityRestore, /FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED/,'restore must verify the resulting Free account');
+assert.match(inactivityRestore, /catch \(error\) \{[\s\S]*?await accessHolds\.addHold\(/,'any failed restore or postcondition must put the inactivity hold back');
 
 // Status and admin UI must describe the same two rules.
 assert.doesNotMatch(status, /refreshCandidateUserActivity/);
