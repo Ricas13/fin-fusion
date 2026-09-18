@@ -58,9 +58,11 @@ const rendered=html.layout({
   action:'<a class="button" href="/admin/expenses?new=1">Add expense</a>',
   body:'<section id="navigation-coherence-sentinel">sentinel</section><section class="coherenceOwnedTools"><a href="/admin/expenses">old hidden directory</a></section>'
 });
-assert(rendered.includes('href="/admin/payments"'),'Payments must remain a permanent rail destination');
+const permanentRailHrefs=[...rendered.matchAll(/<a class="adminTab[^"]*" href="([^"]+)"/g)].map(match=>match[1]);
+assert(permanentRailHrefs.includes('/admin/payments'),'Providers must remain a permanent rail destination');
+assert(permanentRailHrefs.includes('/admin/billing'),'Billing must remain a permanent rail destination');
 for(const hiddenHref of ['/admin/expenses','/admin/payments/transactions','/admin/refunds','/admin/payments/export','/admin/provider-mappings','/admin/payments/risk-policy']){
-  assert(!rendered.includes(`href="${hiddenHref}"`),`${hiddenHref} must stay out of permanent rail navigation`);
+  assert(!permanentRailHrefs.includes(hiddenHref),`${hiddenHref} must stay out of permanent rail navigation`);
 }
 assert(!rendered.includes('old hidden directory'),'Legacy bottom-of-page navigation directories must be stripped');
 assert(!rendered.includes('class="workflowCardGrid coherenceSectionTabs"'),'Main section tabs must not duplicate the sidebar');
