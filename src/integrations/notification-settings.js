@@ -6,7 +6,7 @@ const { encryptWithEnv, decryptWithEnv } = require('../security/purpose-crypto')
 
 const KEY='notification_delivery_v1';
 const SECRET_ENV='DATA_ENCRYPTION_KEY';
-const COMMUNITY_DEFAULTS=Object.freeze({discordInviteUrl:'',discordFreePlacesDigestEnabled:false,discordFreePlacesChannelId:'',discordFreePlacesTimezone:'Europe/London',discordFreePlacesTime1:'06:00',discordFreePlacesTime2:'18:00',discordFreePlacesMinRemaining:1,discordFreePlacesMentionEveryone:false,stremioMetadataAddonUrl:''});
+const COMMUNITY_DEFAULTS=Object.freeze({discordInviteUrl:'',discordFreePlacesDigestEnabled:false,discordFreePlacesChannelId:'',discordFreePlacesTimezone:'Europe/London',discordFreePlacesTime1:'00:00',discordFreePlacesTime2:'12:00',discordFreePlacesMinRemaining:1,discordFreePlacesMentionEveryone:false,stremioMetadataAddonUrl:''});
 let cache=null;
 function bool(v){return v===true||v==='true'||v==='1'||v==='on'}
 function clean(v,n=300){return String(v||'').trim().slice(0,n)}

@@ -66,18 +66,16 @@ assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrog
 assert(!/public, max-age=60/.test(storefront),'storefront must not retain the old one-minute public capacity cache');
 
 assert(/STATE_KEY='discord_free_places_status_v1'/.test(freePlaces),'Discord Free Server availability must persist the canonical message identity');
-assert(/persistentMessage\(remaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Start Free Access signup/.test(freePlaces),'Discord Free Server availability must render a structured status card with an accurate signup action');
-assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===signature/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged structured capacity');
-assert(/availabilityRestored=becameAvailable\(stored\.remaining,remaining\)/.test(freePlaces),'Discord availability must explicitly recognize a durable zero-to-positive reopening');
-const routinePatchGuard=/stored\.messageId&&!availabilityRestored/.test(freePlaces)||/else if\(stored\.messageId\)/.test(freePlaces);
-assert(routinePatchGuard,'routine capacity changes must PATCH the canonical message while reopening bypasses the edit path');
-if(/deleteDiscordMessage/.test(freePlaces)){
-  assert(/stored\.messageId&&availabilityRestored/.test(freePlaces)&&/await remove\(\{channelId,messageId:stored\.messageId\}\)/.test(freePlaces),'reopened Free availability must retire the stale full message before posting the fresh notification');
-}
+assert(/persistentMessage\(actualRemaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Start Free Access signup/.test(freePlaces),'Discord Free Server availability must render a structured status card with an accurate signup action');
+assert(/method:'PATCH'/.test(freePlaces)&&/actualRemaining<displayedRemaining/.test(freePlaces),'Discord availability must edit the canonical message downward in place as advertised places are taken');
+assert(/observedRemaining/.test(freePlaces)&&/increaseBuffered=actualRemaining>displayedRemaining/.test(freePlaces),'newly freed places must be accumulated in durable observed capacity instead of posting immediately');
+assert(/slotAdvanced&&increaseBuffered/.test(freePlaces)&&/advertSlotKey\(cfg,now\)/.test(freePlaces),'buffered Free places must only become eligible for a fresh advert after the configured slot advances');
+assert(/await remove\(\{channelId,messageId:stored\.messageId\}\)/.test(freePlaces)&&/advertised:1/.test(freePlaces),'scheduled accumulated availability must replace the prior canonical message with one fresh Discord advert');
+assert(/lastAdvertSlot/.test(freePlaces),'Discord Free Server batching must durably remember the last processed advert slot');
 assert(/No free places currently available/.test(freePlaces)&&/FREE_INTENT_MINUTES/.test(freePlaces),'persistent Discord status must describe the bounded signup intent without claiming that anonymous visitors consume capacity');
 assert(/Starting signup opens a \$\{FREE_INTENT_MINUTES\}-minute window/.test(freePlaces)&&/It does not reserve a place/.test(freePlaces)&&/Capacity is checked atomically/.test(freePlaces),'Discord availability copy must explain the intent-to-reservation boundary accurately');
 assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live signup-intent duration constant instead of hardcoding it separately');
-assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
+assert(/discordMissing\(error\)/.test(freePlaces)&&/allowEveryone:false/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful validated Free Server reservation must nudge the persistent Discord status immediately after commit');
 assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');
 
