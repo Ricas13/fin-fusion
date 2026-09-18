@@ -11,14 +11,10 @@ const INACTIVITY_HOLD_TYPE='inactivity_policy';
 async function returningCustomerStatus(customerId){
   const [cleanupHolds,restoreState]=await Promise.all([
     query(`SELECT source_key FROM customer_access_holds WHERE customer_id=$1 AND hold_type=$2 AND released_at IS NULL ORDER BY created_at`,[customerId,CLEANUP_HOLD_TYPE]),
-    inactivityRestore.restoreStatus(customerId).catch(()=>({
-      eligible:false,
-      entitlement:null,
-      sourceKey:null
-    }))
+    inactivityRestore.restoreStatus(customerId)
   ]);
 
-  const freeEntitlement=restoreState.entitlement||await subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}).catch(()=>null);
+  const freeEntitlement=restoreState.entitlement||null;
   const inactivitySource=restoreState.sourceKey||(
     freeEntitlement?.plan_id?`plan:${freeEntitlement.plan_id}`:null
   );
