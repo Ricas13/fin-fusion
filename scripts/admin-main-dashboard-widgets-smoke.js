@@ -66,6 +66,7 @@ async function main(){
     assert(Array.isArray(ctx.data.growthAnalytics.mrr.rows),'MRR analytics must expose a range-adjusted series');
     assert(Array.isArray(ctx.data.growthAnalytics.playback.rows),'server analytics must expose playback/concurrency buckets even when playback history is empty');
     assert(Array.isArray(ctx.data.growthAnalytics.players.rows),'player analytics must expose a normalized player ranking');
+    assert(ctx.data.serviceMix&&['jellyfin','stremio','free'].every(key=>Number.isFinite(Number(ctx.data.serviceMix[key]))),'compatibility service mix must remain available to other callers');
 
     const now=new Date(),ytdStart=profitability.yearStart(now),ytdEnd=profitability.utcDayAfter(now),header=await profitability.headerProfitability(ctx.reporting,{now});
     const analyticsYtd=await dashboardLedger.commerceRevenue({start:ytdStart,end:ytdEnd,previousStart:ytdStart,previousEnd:ytdStart,bucket:'month'},ctx.reporting,reportingCurrency);
