@@ -5,10 +5,7 @@ const settings=require('./settings-registry');
 
 const EXTRA=Object.freeze([
   Object.freeze({label:'Add customer',href:'/admin/users/new',group:'Customers',keywords:'new create invite customer'}),
-  Object.freeze({label:'Import Jellyfin users',href:'/admin/jellyfin-import',group:'Customers',keywords:'import existing jellyfin accounts users'}),
-  Object.freeze({label:'Add Jellyfin server',href:'/admin/servers/new',group:'Servers',keywords:'new create jellyfin server'}),
-  Object.freeze({label:'Needs Attention',href:'/admin/attention',group:'Dashboard',keywords:'alerts problems issues review intervention'}),
-  Object.freeze({label:'Global record search',href:'/admin/search',group:'Dashboard',keywords:'customer plan server billing provider reference id'})
+  Object.freeze({label:'Add Jellyfin server',href:'/admin/servers/new',group:'Servers',keywords:'new create jellyfin server'})
 ]);
 
 function groupLabel(groupKey){
