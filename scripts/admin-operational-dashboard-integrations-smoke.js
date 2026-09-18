@@ -48,6 +48,7 @@ assert(controlCenterSource.includes("require('./operations-settings')")&&control
 assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("require('../payments/provider-settings')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("NULLIF(BTRIM(processing_error),'') IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage, provider configuration state, and count all recurring sync/event exceptions without dashboard row limits');
 assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()')&&controlCenterSource.includes("source='stripe'")&&controlCenterSource.includes("source='paypal'"),'Home billing integrity must keep live-provider counts inside its exhaustive local read instead of loading the full billing/lifecycle stack or using bounded Billing display rows');
 assert(billingControlSource.includes("ORDER BY CASE WHEN s.billing_mode='subscription'")&&billingControlSource.includes("ORDER BY CASE WHEN processed_at IS NULL"),'Bounded Billing reference lists must prioritise unresolved subscription/event problems before recent healthy history');
+assert(billingControlSource.includes('validRecurringProviderReference')&&billingControlSource.includes("COALESCE(s.provider_subscription_id,'') !~* '^sub_'")&&billingControlSource.includes("COALESCE(s.provider_subscription_id,'') !~* '^I-'"),'Billing must surface malformed live recurring provider references before they turn into provider-operation failures');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
 assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500, { planId: plan.id })')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500, { planId: plan.id })'),'Free Server waiting count must include both backlog types while staying scoped to the same canonical Free plan as capacity');
 assert(controlCenterSource.includes('const waitingCustomers = new Set(')&&controlCenterSource.includes('waiting: waitingCustomers.size'),'Free Server waiting summary must de-duplicate recovery/backfill rows that refer to the same customer');
@@ -82,6 +83,12 @@ const providerProblemHtml=controlCenter.renderControlCenter({
   recent:[]
 });
 assert(providerProblemHtml.includes('Billing integrity')&&providerProblemHtml.includes('Needs review')&&providerProblemHtml.includes('Provider / sync')&&providerProblemHtml.includes('>1</strong>'),'An enabled but unconfigured Stripe/PayPal provider must make Billing integrity visibly require review');
+const malformedProviderHtml=controlCenter.renderControlCenter({
+  free:{configured:false},
+  commerce:{needsReview:true,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0,invalidRecurringRefs:1},
+  recent:[]
+});
+assert(malformedProviderHtml.includes('Needs review')&&malformedProviderHtml.includes('Provider / sync')&&malformedProviderHtml.includes('>1</strong>'),'A malformed live recurring provider ID must make Home billing integrity require review');
 const disabledProviderHero=adminBilling.billingHero(
   {subscriptions:[]},
   {provider:'stripe',enabled:false,configured:false},
@@ -98,6 +105,11 @@ const unusedDisabledProviderHero=adminBilling.billingHero(
   {stripe:0,paypal:0}
 );
 assert(unusedDisabledProviderHero.includes('Recurring billing is clear'),'An intentionally disabled provider with no live recurring contracts must remain a valid clear state');
+const malformedRecurring={recurring:true,source:'stripe',provider_subscription_id:'pi_not_a_subscription',status:'active',cancel_at_period_end:false,last_error:null,customer_id:'customer-bad',display_name:'Bad Ref',email:'bad-ref@example.invalid',plan_name:'Stremio',price_minor:500,currency:'GBP'};
+assert.strictEqual(adminBilling.recurringProblems({subscriptions:[malformedRecurring]}).length,1,'Malformed recurring IDs must be operator problems even before the first provider sync fails');
+assert.strictEqual(adminBilling.recurringProblems({subscriptions:[{...malformedRecurring,provider_subscription_id:'sub_valid'}]}).length,0,'A healthy recurring ID must not become an operator problem without another billing failure');
+const malformedRow=adminBilling.subscriptionRow({},malformedRecurring);
+assert(malformedRow.includes('Invalid provider ID')&&malformedRow.includes('Repair required')&&malformedRow.includes('Repair provider ID before provider actions')&&!malformedRow.includes('Sync now')&&!malformedRow.includes('Stop renewal'),'Malformed recurring IDs must be visible and must not expose provider mutations that are guaranteed to fail');
 const pausedFreeHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:2,used:8,reserved:1,limit:11,waiting:800,waitingCapped:true,bufferedPlaces:0,nextAdvert:'Advertising disabled',inactivityEnabled:false,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
