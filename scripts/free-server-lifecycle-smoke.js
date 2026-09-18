@@ -16,10 +16,14 @@ const originalRequest = registry.request;
     let customerId = null, userId = null, planId = null, serverId = null, accountId = null;
     let deleteCalls = 0;
     let deleteShouldFail = false;
+    let livePlaybackAtDeleteBoundary = false;
     const staleActivity = new Date(Date.now() - 10 * 86400000).toISOString();
 
     registry.request = async (_serverId, endpoint, options = {}) => {
         if (endpoint === '/Users') return [{ Id: remoteUserId, Name: `Free_${suffix}`, LastActivityDate: staleActivity }];
+        if (endpoint === '/Sessions') return livePlaybackAtDeleteBoundary
+            ? [{ Id: `race-session-${suffix}`, UserId: remoteUserId, NowPlayingItem: { Id: `race-item-${suffix}` } }]
+            : [];
         if (endpoint.endsWith('/Policy') && String(options.method || 'GET').toUpperCase() === 'POST') return {};
         if (endpoint === `/Users/${encodeURIComponent(remoteUserId)}` && String(options.method || '').toUpperCase() === 'DELETE') {
             deleteCalls += 1;
@@ -82,6 +86,19 @@ const originalRequest = registry.request;
                 last_error=NULL,
                 updated_at=NOW()
         `, [serverId]);
+
+        // The normal eligibility checks can race a playback start. Recheck the
+        // exact Jellyfin user at the destructive boundary and fail closed.
+        livePlaybackAtDeleteBoundary = true;
+        const racedRemoval = await lifecycle.runPlanRules();
+        assert.strictEqual(racedRemoval.enforced, 0, 'playback that starts at the delete boundary must block inactivity removal');
+        assert.strictEqual(racedRemoval.failed, 1, 'blocked destructive attempt must remain retryable');
+        assert.strictEqual(deleteCalls, 0, 'live playback must stop the inactivity path before Jellyfin DELETE');
+        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE id=$1', [accountId])).rows[0].n, 1, 'delete-boundary playback must preserve the Jellyfin mapping');
+        const raceHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
+        assert.strictEqual(raceHold.rowCount, 1);
+        assert(raceHold.rows[0].released_at, 'delete-boundary playback must roll the temporary inactivity hold back');
+        livePlaybackAtDeleteBoundary = false;
 
         // A failed remote deletion must not strand the customer behind an
         // inactivity hold. They remain present + enabled until deletion can be
