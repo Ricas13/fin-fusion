@@ -166,7 +166,7 @@ async function freeSnapshot(jobRows) {
     inactivityEnabled: Boolean(policy.enabled),
     inactivityDryRun: Boolean(policy.dryRun),
     inactivityConfigurationMissing: Boolean(policy.configurationMissing),
-    inactivityState: inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing',
+    inactivityState: jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing'),
     inactivityLastCompletedAt: inactivityJob?.last_completed_at || inactivityJob?.last_success_at || null,
     nextAdvert: nextAdvertLabel(cfg, digestState),
     advertisingEnabled: Boolean(cfg.discordFreePlacesDigestEnabled),
@@ -289,17 +289,23 @@ async function safePart(name, fn) {
 }
 
 async function controlCenterData() {
-  const jobRows = await jobHealth.list().catch(error => {
-    console.warn('Dashboard automation snapshot unavailable:', cleanError(error));
-    return [];
-  });
+  let jobRows = null;
+  let automationError = null;
+  try {
+    jobRows = await jobHealth.list();
+  } catch (error) {
+    automationError = cleanError(error);
+    console.warn('Dashboard automation snapshot unavailable:', automationError);
+  }
   const [free, commerce, recent] = await Promise.all([
     safePart('Free Server', () => freeSnapshot(jobRows)),
     safePart('billing integrity', billingSnapshot),
-    safePart('recent automation', () => recentAutomation(jobRows))
+    jobRows == null ? Promise.resolve({ unavailable: true, error: automationError }) : safePart('recent automation', () => recentAutomation(jobRows))
   ]);
   return {
-    automation: automationSnapshot(jobRows),
+    automation: jobRows == null
+      ? { unavailable: true, error: automationError, total: 0, healthy: 0, running: 0, disabled: 0, warningCount: 0, latestCriticalCompletedAt: null, warnings: [] }
+      : automationSnapshot(jobRows),
     free,
     commerce,
     recent: Array.isArray(recent) ? recent : [],
@@ -308,6 +314,9 @@ async function controlCenterData() {
 }
 
 function automationHeroCard(snapshot = {}) {
+  if (snapshot.unavailable) {
+    return `<a class="profitHeroCard bad" href="/admin/automation"><span>Automation</span><strong>Unavailable</strong><small>${esc(snapshot.error || 'Job health could not be read.')}</small></a>`;
+  }
   const total = Number(snapshot.total || 0);
   const healthy = Number(snapshot.healthy || 0);
   const running = Number(snapshot.running || 0);
@@ -338,7 +347,7 @@ function freeCard(data = {}) {
   const capacity = data.limit == null
     ? `${data.available ?? '—'} available`
     : `${data.used == null ? Math.max(0, Number(data.limit || 0) - Number(data.available || 0) - Number(data.reserved || 0)) : Number(data.used)} / ${data.limit}`;
-  const inactivityBad = !data.inactivityEnabled || ['failed','degraded','stale','missing'].includes(data.inactivityState);
+  const inactivityBad = !data.inactivityEnabled || ['failed','degraded','stale','missing','unavailable'].includes(data.inactivityState);
   const tone = inactivityBad ? 'warn' : 'good';
   const policy = (data.serverPolicies || []).map(row =>
     `${row.name}: first play ${row.firstPlaybackGraceDays}d · ${row.minimumPlaybackMinutes} min / ${row.playbackWindowDays}d`
