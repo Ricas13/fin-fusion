@@ -23,6 +23,7 @@ const originalRequest = registry.request;
 
     registry.request = async (_serverId, endpoint, options = {}) => {
         if (endpoint === '/Users') return [{ Id: remoteUserId, Name: `Free_${suffix}`, LastActivityDate: staleActivity }];
+        if (endpoint === '/Sessions') return [];
         if (endpoint.endsWith('/Policy') && String(options.method || 'GET').toUpperCase() === 'POST') return {};
         if (endpoint === `/Users/${encodeURIComponent(remoteUserId)}` && String(options.method || '').toUpperCase() === 'DELETE') {
             deleteCalls += 1;
