@@ -105,7 +105,7 @@ const unusedDisabledProviderHero=adminBilling.billingHero(
   {stripe:0,paypal:0}
 );
 assert(unusedDisabledProviderHero.includes('Recurring billing is clear'),'An intentionally disabled provider with no live recurring contracts must remain a valid clear state');
-const malformedRecurring={recurring:true,source:'stripe',provider_subscription_id:'pi_not_a_subscription',status:'active',cancel_at_period_end:false,last_error:null,customer_id:'customer-bad',display_name:'Bad Ref',email:'bad-ref@example.invalid',plan_name:'Stremio',price_minor:500,currency:'GBP'};
+const malformedRecurring={recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'pi_not_a_subscription',status:'active',cancel_at_period_end:false,last_error:null,customer_id:'customer-bad',display_name:'Bad Ref',email:'bad-ref@example.invalid',plan_name:'Stremio',price_minor:500,currency:'GBP'};
 assert.strictEqual(adminBilling.recurringProblems({subscriptions:[malformedRecurring]}).length,1,'Malformed recurring IDs must be operator problems even before the first provider sync fails');
 assert.strictEqual(adminBilling.recurringProblems({subscriptions:[{...malformedRecurring,provider_subscription_id:'sub_valid'}]}).length,0,'A healthy recurring ID must not become an operator problem without another billing failure');
 const malformedRow=adminBilling.subscriptionRow({},malformedRecurring);
