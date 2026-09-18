@@ -26,6 +26,7 @@ const personalNotificationsSource=read('src/platform/admin-personal-notification
 const formFeedbackSource=read('public/js/admin-form-feedback.js');
 const dashboard=require('../src/platform/admin-dashboard');
 const controlCenter=require('../src/platform/admin-dashboard-control-center');
+const adminBilling=require('../src/platform/admin-billing');
 const liveStreams=require('../src/platform/admin-dashboard-live-streams');
 const cards=require('../src/platform/admin-integration-card');
 
@@ -45,7 +46,7 @@ assert(dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderCont
 assert(controlCenterSource.includes("require('../automation/job-health')")&&controlCenterSource.includes("require('../automation/free-places-digest')")&&controlCenterSource.includes("require('../entitlements/plan-capacity')"),'Control centre must reuse canonical automation, Free digest and capacity authorities');
 assert(controlCenterSource.includes("require('./operations-settings')")&&controlCenterSource.includes('publicBaseUrlConfigured'),'Free advert status must mirror the digest worker public-base-URL prerequisite without making an external request');
 assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("require('../payments/provider-settings')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("NULLIF(BTRIM(processing_error),'') IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage, provider configuration state, and count all recurring sync/event exceptions without dashboard row limits');
-assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()'),'Billing integrity must not derive global health from the Billing page\'s intentionally limited 500-subscription / 50-event display rows');
+assert(controlCenterSource.includes("require('../payments/billing-control')")&&controlCenterSource.includes('billingControl.recurringProviderCounts()')&&!controlCenterSource.includes('billing.dashboardData()'),'Billing integrity may reuse canonical exhaustive recurring-provider counts but must not derive global health from the Billing page\'s intentionally limited 500-subscription / 50-event display rows');
 assert(billingControlSource.includes("ORDER BY CASE WHEN s.billing_mode='subscription'")&&billingControlSource.includes("ORDER BY CASE WHEN processed_at IS NULL"),'Bounded Billing reference lists must prioritise unresolved subscription/event problems before recent healthy history');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
 assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500, { planId: plan.id })')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500, { planId: plan.id })'),'Free Server waiting count must include both backlog types while staying scoped to the same canonical Free plan as capacity');
@@ -81,6 +82,22 @@ const providerProblemHtml=controlCenter.renderControlCenter({
   recent:[]
 });
 assert(providerProblemHtml.includes('Billing integrity')&&providerProblemHtml.includes('Needs review')&&providerProblemHtml.includes('Provider / sync')&&providerProblemHtml.includes('>1</strong>'),'An enabled but unconfigured Stripe/PayPal provider must make Billing integrity visibly require review');
+const disabledProviderHero=adminBilling.billingHero(
+  {subscriptions:[]},
+  {provider:'stripe',enabled:false,configured:false},
+  {provider:'paypal',enabled:false,configured:false},
+  {premium:1,linked:1,ending:0,missing:0},
+  {stripe:1,paypal:0}
+);
+assert(disabledProviderHero.includes('payment provider is unavailable for live recurring billing')&&disabledProviderHero.includes('Setup incomplete'),'A disabled provider with live recurring contracts must not allow the Billing owner page to claim recurring billing is clear');
+const unusedDisabledProviderHero=adminBilling.billingHero(
+  {subscriptions:[]},
+  {provider:'stripe',enabled:false,configured:false},
+  {provider:'paypal',enabled:false,configured:false},
+  {premium:0,linked:0,ending:0,missing:0},
+  {stripe:0,paypal:0}
+);
+assert(unusedDisabledProviderHero.includes('Recurring billing is clear'),'An intentionally disabled provider with no live recurring contracts must remain a valid clear state');
 const pausedFreeHtml=controlCenter.renderControlCenter({
   free:{configured:true,available:2,used:8,reserved:1,limit:11,waiting:800,waitingCapped:true,bufferedPlaces:0,nextAdvert:'Advertising disabled',inactivityEnabled:false,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
   commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
