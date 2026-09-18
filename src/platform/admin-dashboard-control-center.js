@@ -151,6 +151,11 @@ async function freeSnapshot(jobRows) {
     operationsSettings.get()
   ]);
   const publicBaseUrlConfigured = Boolean(String(operations.publicBaseUrl || '').trim());
+  const advertProblemHref = !publicBaseUrlConfigured
+    ? '/admin/settings?section=general'
+    : (!cfg.discordConfigured || !cfg.discordFreePlacesChannelId)
+      ? '/admin/notifications/preferences'
+      : null;
 
   if (!plan) {
     return {
@@ -231,7 +236,16 @@ async function freeSnapshot(jobRows) {
       cfg.discordFreePlacesDigestEnabled &&
       (!cfg.discordConfigured || !cfg.discordFreePlacesChannelId || !publicBaseUrlConfigured)
     ),
-    nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending, publicBaseUrlConfigured })
+    nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending, publicBaseUrlConfigured }),
+    actionHref: capacityConfigurationProblem
+      ? '/admin/servers'
+      : policy.configurationMissing
+        ? '/admin/settings/jellyfin-lifecycle'
+        : (policy.enabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing')))
+          ? '/admin/automation'
+          : (cfg.discordFreePlacesDigestEnabled && advertProblemHref)
+            ? advertProblemHref
+            : '/admin/servers'
   };
 }
 
@@ -410,8 +424,9 @@ function metric(label, value, detail = '') {
 }
 
 function freeCard(data = {}) {
+  const href = data.actionHref || '/admin/servers';
   if (data.unavailable) {
-    return `<a class="dashboardControlCard bad" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>Unavailable</strong></div><p>${esc(data.error || 'Status could not be read.')}</p></a>`;
+    return `<a class="dashboardControlCard bad" href="${esc(href)}"><div class="dashboardControlHead"><span>Free Server</span><strong>Unavailable</strong></div><p>${esc(data.error || 'Status could not be read.')}</p></a>`;
   }
   if (!data.configured) {
     return `<a class="dashboardControlCard neutral" href="/admin/plans"><div class="dashboardControlHead"><span>Free Server</span><strong>Not configured</strong></div><p>No active direct Free Jellyfin plan was found.</p></a>`;
@@ -431,7 +446,7 @@ function freeCard(data = {}) {
     : data.inactivityEnabled
       ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState)
       : 'Paused';
-  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.capacityProblemDetail || (data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`))}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(inactivityLabel)} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
+  return `<a class="dashboardControlCard ${tone}" href="${esc(href)}"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.capacityProblemDetail || (data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`))}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(inactivityLabel)} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
 }
 
 function billingCard(data = {}) {
