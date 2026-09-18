@@ -49,7 +49,7 @@ const group=key=>nav.groups.find(item=>item.key===key);
 const pageKeys=key=>group(key).pages.map(item=>item[0]);
 const childKeys=key=>nav.childPages(key).map(item=>item[0]);
 assert.deepStrictEqual(nav.groups.map(item=>item.key),['dashboard','customers','servers','commerce','operations','settings'],'Admin navigation must retain the fixed six-section rail');
-assert.strictEqual(nav.groups.reduce((sum,item)=>sum+item.pages.length,0),19,'Admin navigation must retain exactly nineteen permanent destinations');
+assert.strictEqual(nav.groups.reduce((sum,item)=>sum+item.pages.length,0),20,'Admin navigation must retain exactly twenty permanent destinations');
 assert(!pageKeys('dashboard').includes('search'),'Search must not be a primary sidebar destination');
 assert(nav.hiddenPages.search?.parentKey==='dashboard'&&!childKeys('dashboard').includes('search'),'Quick-find results must retain Dashboard ownership without appearing as a nested sidebar item');
 assert(pageKeys('customers').includes('users')&&customersList.includes('/admin/jellyfin-import'),'Customers navigation must expose the shared customer list and link to Jellyfin Import');
@@ -57,7 +57,7 @@ assert(!pageKeys('customers').includes('invitations'),'Retired Invitations must 
 assert(nav.hiddenPages['jellyfin-import']?.groupKey==='customers'&&nav.hiddenPages['jellyfin-import']?.parentKey==='users'&&nav.tasksFor('users').some(page=>page[0]==='jellyfin-import'),'Jellyfin Import must remain a Customers-owned task without creating a third rail level');
 assert(nav.hiddenPages['customer-claims']?.groupKey==='customers'&&nav.hiddenPages['customer-claims']?.parentKey==='users'&&nav.tasksFor('users').some(page=>page[0]==='customer-claims'),'Imported-user claims must remain discoverable as a Customers-owned task');
 assert(pageKeys('servers').includes('stremio-sources')&&pageKeys('servers').includes('activity'),'Servers navigation must foreground Stremio and Playback health in the fixed rail');
-assert(group('commerce').pages.some(item=>item[0]==='payments'&&item[1]==='Payments'),'Payments must remain the visible Commerce billing control room');
+assert(group('commerce').pages.some(item=>item[0]==='billing'&&item[1]==='Billing')&&group('commerce').pages.some(item=>item[0]==='payments'&&item[1]==='Providers'),'Commerce must expose Billing for customer billing work and Providers for payment infrastructure');
 assert(nav.hiddenPages['request-service']?.groupKey==='settings'&&nav.hiddenPages['request-service']?.parentKey==='settings-integrations'&&nav.relatedPages('settings-integrations').some(page=>page[0]==='request-service'),'Request service settings must remain discoverable from Settings → Connections without a third rail level');
 assert(!nav.hiddenPages['request-plan-limits']&&!pageKeys('commerce').includes('request-plan-limits'),'Request policy must not return as a standalone Request limits navigation destination');
 assert(/Requests \/ Jellyseerr/.test(requestPlanPolicy)&&/requestPlanPolicy\.planCard\(req, p\)/.test(jellyfinPlanEditor)&&/requestPlanPolicy\.planCard\(req, p, \{ variant: 'stremio' \}\)/.test(stremioPlanEditor),'Jellyseerr request policy must live inside the canonical Jellyfin and Stremio plan editors');
