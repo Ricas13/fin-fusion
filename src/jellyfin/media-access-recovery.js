@@ -153,11 +153,11 @@ async function setRemovalReason(customerId, account, reason) {
   const lane = normalizeLane(account.access_lane);
   await query(`
     UPDATE customer_media_access_recovery
-       SET removal_reason=$4,
+       SET removal_reason=$4::text,
            removal_history=CASE
              WHEN jsonb_array_length(removal_history)>0 THEN
                jsonb_set(removal_history, ARRAY[(jsonb_array_length(removal_history)-1)::text],
-                 (removal_history->(jsonb_array_length(removal_history)-1)) || jsonb_build_object('reason',$4))
+                 (removal_history->(jsonb_array_length(removal_history)-1)) || jsonb_build_object('reason',$4::text))
              ELSE removal_history
            END,
            updated_at=NOW()
