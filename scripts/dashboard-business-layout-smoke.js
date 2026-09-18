@@ -60,7 +60,7 @@ assert(analyticsCss.includes('.chartDonutSlice{fill:none}')&&analyticsCss.includ
 assert(analyticsCss.includes('.barTrack{')&&analyticsCss.includes('.barFill{'),'Orders plan-performance bars must retain their shared track and fill styling');
 assert(ordersPolishCss.includes('.page-commerce-orders .ordersChartCard')&&ordersPolishCss.includes('.page-commerce-orders .ordersAnalyticsGrid'),'Orders-specific chart cards and analytics layout must retain their scoped visual-polish layer');
 
-assert(dashboardCss.includes('.profitHeroGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Dashboard summary must keep the compact three-column top-card rhythm');
+assert(dashboardCss.includes('.profitHeroGrid{display:grid;grid-template-columns:1.35fr repeat(3,minmax(0,1fr))'),'Dashboard summary must keep the compact four-card top rhythm with a wider Profit card');
 assert(profit.includes('revenue.netMinor-booked.totalMinor'),'Profit must remain net provider receipts minus booked expenses');
 assert(profit.includes("provider IN('stripe','paypal')"),'Profit must stay aligned with the current Expenses provider scope');
 assert(reporting.includes('async function getForUser(_userId)')&&reporting.includes('masterCurrency:true'),'Dashboard reporting currency must resolve to the platform master currency');
