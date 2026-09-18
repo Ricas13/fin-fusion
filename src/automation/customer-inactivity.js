@@ -224,12 +224,12 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
         ) allocation ON TRUE
         LEFT JOIN LATERAL (
           SELECT
-            MIN(GREATEST(ph.started_at,allocation.allocation_start_at)) FILTER (
-              WHERE COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)>allocation.allocation_start_at
+            MIN(ph.started_at) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
                 AND ph.started_at<NOW()
             ) first_playback_at,
             MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER (
-              WHERE COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)>allocation.allocation_start_at
+              WHERE ph.started_at>=allocation.allocation_start_at
                 AND ph.started_at<NOW()
             ) last_playback_at,
             COALESCE(SUM(
@@ -239,17 +239,14 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
                   LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
                   - GREATEST(
                       ph.started_at,
-                      allocation.allocation_start_at,
                       NOW()-(js.free_playback_window_days||' days')::interval
                     )
                 ))
               )
             ) FILTER (
-              WHERE COALESCE(ph.ended_at,ph.last_seen_at)>GREATEST(
-                allocation.allocation_start_at,
-                NOW()-(js.free_playback_window_days||' days')::interval
-              )
-              AND ph.started_at<NOW()
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(js.free_playback_window_days||' days')::interval
+                AND ph.started_at<NOW()
             ),0)::bigint playback_seconds
           FROM playback_history ph
           WHERE ph.customer_id=fa.customer_id
