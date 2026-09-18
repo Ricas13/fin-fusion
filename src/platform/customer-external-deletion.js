@@ -76,23 +76,25 @@ async function persistTargets(job){
       SELECT id,source,provider_subscription_id,status,current_period_end,cancel_at_period_end
       FROM subscriptions
       WHERE customer_id=$1
-        AND (
-          (source='stripe' AND provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\')
-          OR (source='paypal' AND provider_subscription_id LIKE 'I-%')
-        )
+        AND billing_mode='subscription'
+        AND source IN ('stripe','paypal')
       ORDER BY created_at,id
     `,[job.customer_id]);
     for(const subscription of recurring.rows){
+      const providerSubscriptionId=String(subscription.provider_subscription_id||'').trim()||null;
       await insertTarget(client,{
         jobId:job.id,customerId:job.customer_id,provider:subscription.source,resourceType:'recurring_subscription',
-        externalIdentifier:subscription.provider_subscription_id,desiredState:'cancelled',
+        externalIdentifier:providerSubscriptionId||`invalid-local-subscription:${subscription.id}`,desiredState:'cancelled',
         metadata:{
           subscriptionId:subscription.id,
-          providerSubscriptionId:subscription.provider_subscription_id,
+          providerSubscriptionId,
+          invalidProviderIdentity:!providerSubscriptionId
+            || (subscription.source==='stripe'&&!/^sub_/i.test(providerSubscriptionId))
+            || (subscription.source==='paypal'&&!/^I-/i.test(providerSubscriptionId)),
           localStatus:subscription.status,
           currentPeriodEnd:subscription.current_period_end,
           cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),
-          inventoryVersion:2
+          inventoryVersion:3
         }
       });
     }
