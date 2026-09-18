@@ -151,10 +151,10 @@ async function freeSnapshot(jobRows) {
     operationsSettings.get()
   ]);
   const publicBaseUrlConfigured = Boolean(String(operations.publicBaseUrl || '').trim());
-  const advertProblemHref = !publicBaseUrlConfigured
-    ? '/admin/settings?section=general'
-    : (!cfg.discordConfigured || !cfg.discordFreePlacesChannelId)
-      ? '/admin/notifications/preferences'
+  const advertProblemHref = !cfg.discordConfigured || !cfg.discordFreePlacesChannelId
+    ? '/admin/notifications/preferences'
+    : !publicBaseUrlConfigured
+      ? '/admin/settings?section=general'
       : null;
 
   if (!plan) {
