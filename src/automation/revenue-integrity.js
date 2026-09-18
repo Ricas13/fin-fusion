@@ -117,6 +117,7 @@ async function scan() {
     // watchdog the same wrong answer.
     const [
         permanentRefunds,
+        invalidRecurringProviderRefs,
         manualProviderOps,
         deletionFailures,
         staleCreationIntents,
@@ -137,6 +138,20 @@ async function scan() {
             WHERE o.permanent_access=TRUE AND o.revoked_at IS NULL
               AND s.refund_terminated_at IS NOT NULL
             ORDER BY o.updated_at
+            LIMIT 100
+        `),
+        query(`
+            SELECT id AS subscription_id,customer_id,source,provider_subscription_id,status
+            FROM subscriptions
+            WHERE billing_mode='subscription'
+              AND source IN('stripe','paypal')
+              AND status IN('active','trialing','past_due','paused')
+              AND (
+                (source='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^sub_')
+                OR
+                (source='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-')
+              )
+            ORDER BY updated_at
             LIMIT 100
         `),
         query(`
@@ -296,6 +311,7 @@ async function scan() {
     ]);
 
     for (const row of permanentRefunds.rows) findings.push(finding('refunded_permanent_access', row, `Refund-terminated subscription ${row.subscription_id} still has Permanent Access.`));
+    for (const row of invalidRecurringProviderRefs.rows) findings.push(finding('invalid_recurring_provider_reference', row, `${row.source} recurring subscription ${row.subscription_id} has unusable provider reference ${row.provider_subscription_id || '(missing)'}.`));
     for (const row of manualProviderOps.rows) findings.push(finding('provider_manual_review', row, `${row.provider} ${row.operation_type} requires manual review${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of deletionFailures.rows) findings.push(finding('customer_deletion_stuck', row, `Customer deletion ${row.id} is ${row.status} after ${row.attempt_count || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of staleCreationIntents.rows) findings.push(finding('jellyfin_creation_intent_stale', row, `Jellyfin creation intent ${row.id} remains ${row.status} on server ${row.server_id}${row.last_error ? `: ${row.last_error}` : ''}`));
