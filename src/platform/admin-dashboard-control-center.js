@@ -187,6 +187,9 @@ async function freeSnapshot(jobRows) {
       .filter(Boolean)
   );
   const inactivityJob = (jobRows || []).find(row => row.job_key === 'customer_inactivity') || null;
+  const inactivityState = jobRows == null
+    ? 'unavailable'
+    : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing');
   const actualRemaining = capacity.remaining == null ? null : Math.max(0, Number(capacity.remaining) || 0);
   const capacityConfigurationProblem = Boolean(
     capacity.fallbackReason ||
@@ -230,7 +233,7 @@ async function freeSnapshot(jobRows) {
     inactivityEnabled: Boolean(policy.enabled),
     inactivityDryRun: Boolean(policy.dryRun),
     inactivityConfigurationMissing: Boolean(policy.configurationMissing),
-    inactivityState: jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing'),
+    inactivityState,
     inactivityLastCompletedAt: inactivityJob?.last_completed_at || inactivityJob?.last_success_at || null,
     advertConfigurationProblem: Boolean(
       cfg.discordFreePlacesDigestEnabled &&
@@ -241,7 +244,7 @@ async function freeSnapshot(jobRows) {
       ? '/admin/servers'
       : policy.configurationMissing
         ? '/admin/settings/jellyfin-lifecycle'
-        : (policy.enabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing')))
+        : (policy.enabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(inactivityState))
           ? '/admin/automation'
           : (cfg.discordFreePlacesDigestEnabled && advertProblemHref)
             ? advertProblemHref
