@@ -162,6 +162,7 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
 
         return {
             planId: state.entitlement.plan_id,
+            subscriptionId: state.entitlement.subscription_id,
             sourceKey: state.sourceKey,
             restoredAt: new Date()
         };
@@ -210,6 +211,7 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
             reason: 'Free Server inactivity restore pending successful reprovisioning',
             actorUserId,
             metadata: {
+                subscriptionId: prepared.subscriptionId,
                 restoreReconcileFailed: true,
                 error: String(error?.message || error).slice(0, 500)
             }
