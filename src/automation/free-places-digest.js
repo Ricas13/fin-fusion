@@ -61,7 +61,7 @@ function persistentMessage(remaining,publicBaseUrl){
       inline:false
     }],
     url:open?signupUrl:base,
-    footer:'CAPTAiN FiN • Live Free Server availability',
+    footer:'CAPTAiN FiN • Newly freed places announced twice daily',
     buttonLabel:open?'Start Free Access signup':'View Free Server',
     buttonUrl:open?signupUrl:base
   });
@@ -72,7 +72,7 @@ function becameAvailable(previousRemaining,remaining){
 }
 function advertSlotKey(cfg,now=new Date()){
   const due=dueSlot(cfg,now);
-  return due?\`${due.date}T${due.slot}\`:null;
+  return due?`${due.date}T${due.slot}`:null;
 }
 async function sendDiscordMessage({channelId,text,message=null,allowEveryone=false}){
   const channel=notificationSettings.snowflake(channelId);
@@ -116,7 +116,7 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 
   return transactionFn(async client=>{
     const db=(sql,params)=>client.query(sql,params);
-    await client.query(\`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:discord-free-places-status',$1::bigint))\`,[LOCK_SEED]);
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:discord-free-places-status',$1::bigint))`,[LOCK_SEED]);
     const plan=await freePlan(db);
     if(!plan)return{processed:1,updated:0,skipped:'free_plan_not_found'};
     const capacityState=await usage(plan.id,db);
