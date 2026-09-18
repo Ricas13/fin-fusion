@@ -140,8 +140,26 @@ async function scenarioK(){
   }
 
   const source=fs.readFileSync(path.join(__dirname,'../src/platform/customer-external-deletion.js'),'utf8');
-  assert.match(source,/FROM subscriptions[\s\S]+source='stripe'[\s\S]+source='paypal'/,'K: deletion inventory must snapshot recurring Stripe and PayPal identifiers');
+  assert(source.includes("billing_mode='subscription'")&&source.includes("source IN ('stripe','paypal')"),'K: deletion inventory must snapshot every locally recurring Stripe/PayPal contract, including malformed historical provider references');
+  assert(source.includes('invalid-local-subscription:')&&source.includes('invalidProviderIdentity'),'K: malformed recurring billing rows must become durable blocking deletion targets instead of being silently skipped');
+  assert(source.includes('repair the billing reference before customer deletion can finalize'),'K: invalid recurring provider identities must fail closed before any provider mutation');
   assert.doesNotMatch(source,/if\(current\.targets_persisted_at\)/,'K: old deletion snapshots must be refreshed so newly-recognized billing resources cannot be skipped');
+}
+
+async function scenarioK2(){
+  const billingPath=require.resolve('../src/payments/billing-control'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const saved=new Map([billingPath,externalPath].map(key=>[key,require.cache[key]]));
+  let providerCalls=0;
+  try{
+    require.cache[billingPath]={id:billingPath,filename:billingPath,loaded:true,exports:{terminateRecurringForDeletion:async()=>{providerCalls++;return{status:'cancelled'};}}};
+    delete require.cache[externalPath];
+    const fresh=require('../src/platform/customer-external-deletion');
+    const malformed={id:'stripe-malformed',customer_id:'customer-1',provider:'stripe',resource_type:'recurring_subscription',external_identifier:'invalid-local-subscription:sub-local',metadata:{subscriptionId:'sub-local',providerSubscriptionId:'pi_not_a_subscription',invalidProviderIdentity:true}};
+    await assert.rejects(fresh.executeTarget(malformed),/repair the billing reference before customer deletion can finalize/i,'K2: malformed recurring billing identity must block customer deletion');
+    assert.strictEqual(providerCalls,0,'K2: malformed recurring identity must never be sent to provider cancellation APIs');
+  }finally{
+    for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
+  }
 }
 
 async function scenarioL(){
@@ -170,7 +188,7 @@ async function scenarioL(){
 }
 
 (async()=>{
-  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();await scenarioL();
+  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();await scenarioK2();await scenarioL();
   assert.strictEqual(externalDeletion.retryMinutes(1),1);
   assert.strictEqual(externalDeletion.retryMinutes(99),360,'retry backoff must be bounded');
   console.log('customer deletion durable target runtime smoke passed (A-L)');
