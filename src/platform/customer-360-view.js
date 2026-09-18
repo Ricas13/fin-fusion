@@ -101,7 +101,7 @@ function mockHero(detail,token,permanent){
   const price=sub&&sub.price_minor!=null?moneyFormat.formatMinor(sub.price_minor,sub.currency||'GBP'):'—';
   const customerSince=fmtDate(c.registered_at||c.created_at);
   const idShort=String(c.id||'').slice(0,8)||'—';
-  const portal=c.app_user_id?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(c.id)}/impersonate">${csrfHidden(token)}<button class="mockTopButton primary" type="submit">View customer on portal ↗</button></form>`:'';
+  const portal=(c.app_user_id||c.user_id)?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(c.id)}/impersonate">${csrfHidden(token)}<button class="mockTopButton primary" type="submit">View customer portal ↗</button></form>`:'';
   const edit=`<a class="mockTopButton" href="/admin/users/${encodeURIComponent(c.id)}/edit-profile">Edit</a>`;
   const permanentRemove=isPermanent?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(c.id)}/manage/remove-permanent-user" data-native-submit="true">${csrfHidden(token)}<button class="mockInlineDanger" type="submit">Remove Permanent User</button></form>`:'';
   const identityStatus=banned?'<span class="pill bad">Banned</span>':`<span class="pill good">${c.login_active===false?'Portal disabled':'Active customer'}</span>`;
