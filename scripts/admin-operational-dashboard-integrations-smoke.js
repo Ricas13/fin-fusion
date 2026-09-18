@@ -62,7 +62,7 @@ assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.
 assert(clear.includes('2 / 10')&&clear.includes('managed customers / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
 assert(!clear.includes('Needs attention')&&!clear.includes('/admin/attention'),'Dashboard hero must not duplicate the persistent Alerts/Needs Attention signal');
 const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8}}});
-assert(problems.includes('profitHeroCard bad'),'Negative profit must retain meaningful danger styling in the hero');
+assert(problems.includes('profitHeroCard--profit bad'),'Negative profit must retain meaningful danger styling in the hero');
 
 const livePanel=liveStreams.renderLiveStreamsPanel({session:{authUserId:'admin-smoke',authRole:'admin',adminId:'admin-smoke'}});
 assert(livePanel.includes('data-admin-live-streams')&&livePanel.includes('Now Playing')&&livePanel.includes('/js/admin-dashboard-live-streams.js')&&livePanel.includes('/css/admin-dashboard-live-streams.css'),'Dashboard live streams must use the dedicated asynchronous row surface');
