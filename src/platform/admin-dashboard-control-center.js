@@ -313,13 +313,14 @@ async function inactivityAuditActions(limit = 5) {
     SELECT created_at,action,entity_id,metadata
       FROM audit_log
      WHERE actor_user_id IS NULL
+       AND entity_type='customer'
        AND created_at>=NOW()-INTERVAL '7 days'
        AND action IN(
          'customer.inactivity.remove_jellyfin',
          'customer.inactivity.remove_failed',
          'customer.inactivity.would_remove_jellyfin'
        )
-     ORDER BY created_at DESC
+     ORDER BY created_at DESC,id DESC
      LIMIT $1
   `, [bounded]);
 
