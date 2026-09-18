@@ -141,6 +141,8 @@ assert.doesNotMatch(base, /lifecycle\.restored_at/, 'newly-created restored acco
 
 // Rolling watch time must count only the overlap with the exact rolling window,
 // not discard a whole session merely because it started just before the cutoff.
+assert.match(base, /MIN\(GREATEST\(ph\.started_at,allocation\.allocation_start_at\)\)/,'a stream already in progress when allocation begins must count as playback from the allocation boundary');
+assert.match(base, /COALESCE\(ph\.ended_at,ph\.last_seen_at,ph\.started_at\)>allocation\.allocation_start_at/,'activation evidence must use session overlap, not only session start time');
 assert.match(base, /LEAST\(COALESCE\(ph\.ended_at,ph\.last_seen_at\),NOW\(\)\)/);
 assert.match(base, /GREATEST\([\s\S]*?ph\.started_at[\s\S]*?allocation\.allocation_start_at[\s\S]*?NOW\(\)-\(js\.free_playback_window_days/);
 assert.match(base, /EXISTS\([\s\S]*?active_playback_sessions[\s\S]*?aps\.jellyfin_account_id=ja\.id/, 'currently-playing protection must target the exact account');
