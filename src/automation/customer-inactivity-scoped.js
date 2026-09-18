@@ -191,6 +191,7 @@ async function removeEligibleAccount(row, actorUserId) {
         reason,
         actorUserId,
         metadata: {
+            subscriptionId: row.subscription_id,
             accountId: row.account_id,
             serverId: row.server_id,
             triggers: row.triggers
