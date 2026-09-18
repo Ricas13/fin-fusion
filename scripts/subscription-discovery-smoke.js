@@ -113,9 +113,9 @@ assert.strictEqual(matches[0].match, null, 'an intentionally ending paid term mu
 matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }], baseContext());
 assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptions must not be used to justify premium access');
 
-assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:true,last_error:null }] }).length, 0, 'past-due subscriptions intentionally ending after the current period must not stay in the operator problem queue');
-assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:false,last_error:null }] }).length, 1, 'past-due subscriptions still expected to renew must remain operator work');
-assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:true,last_error:'provider sync failed' }] }).length, 1, 'provider sync failures must remain operator work even when renewal is stopped');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:true,last_error:null }] }).length, 0, 'past-due subscriptions intentionally ending after the current period must not stay in the operator problem queue');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:false,last_error:null }] }).length, 1, 'past-due subscriptions still expected to renew must remain operator work');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:true,last_error:'provider sync failed' }] }).length, 1, 'provider sync failures must remain operator work even when renewal is stopped');
 
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
 const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
