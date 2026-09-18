@@ -50,7 +50,7 @@ assert(css.includes('.operatorHeroActions-compact{margin:0 0 12px}'), 'retired s
 assert(capability.includes("@import url('/css/admin-operator-clarity.css')"), 'operator clarity CSS must load through canonical admin capability bundle');
 
 assert(dashboard.includes('function dashboardHero(ctx)') && dashboard.includes('Profit this month') && dashboard.includes('Profit YTD'), 'Home must retain an explicit profit-first business hero');
-assert(dashboard.includes('managed customers / configured user capacity') && dashboard.includes('Needs attention'), 'Home hero must pair managed-user capacity with the canonical intervention count');
+assert(dashboard.includes('managed customers / configured user capacity') && dashboard.includes('Automation') && !dashboard.includes('Needs attention'), 'Home hero must keep unique capacity/automation state and leave intervention counts to the persistent Alerts header');
 assert(dashboard.indexOf('dashboardHero(ctx)') < dashboard.indexOf('rangeControls(ctx.range)'), 'Home hero must remain before analytics controls in composition');
 assert(!dashboard.includes('function attentionOverview') && !dashboard.includes('setupCompact'), 'Home must not reintroduce a second attention list or setup tile outside the focused hero');
 assert(attention.includes('Current problem & next step') && attention.includes('actionLabel'), 'Needs Attention must present the current problem and the concrete recovery action separately from workflow controls');
