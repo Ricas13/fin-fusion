@@ -116,7 +116,9 @@ for (const eventType of [
     'PAYMENT.SALE.REVERSED',
     'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
     'BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED',
+    'PAYMENT.CAPTURE.PENDING',
     'PAYMENT.CAPTURE.DENIED',
+    'CHECKOUT.ORDER.DECLINED',
     'CHECKOUT.PAYMENT-APPROVAL.REVERSED'
 ]) {
     assert.ok(paypalSource.includes(`case '${eventType}'`), `PayPal webhook coverage must explicitly handle ${eventType}`);
