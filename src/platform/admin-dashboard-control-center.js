@@ -221,12 +221,12 @@ async function billingSnapshot() {
            AND s.status IN('active','trialing','past_due','paused')
       )
       SELECT
-        (SELECT COUNT(*)::int FROM recurring WHERE last_error IS NOT NULL) AS sync_problems,
+        (SELECT COUNT(*)::int FROM recurring WHERE NULLIF(BTRIM(last_error),'') IS NOT NULL) AS sync_problems,
         (SELECT COUNT(*)::int FROM recurring WHERE status='past_due' AND COALESCE(cancel_at_period_end,FALSE)=FALSE) AS past_due,
         (SELECT COUNT(*)::int
            FROM payment_events
           WHERE provider IN('stripe','paypal')
-            AND processing_error IS NOT NULL
+            AND NULLIF(BTRIM(processing_error),'') IS NOT NULL
             AND processed_at IS NULL) AS provider_event_errors
     `)
   ]);
