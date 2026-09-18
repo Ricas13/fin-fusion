@@ -8,6 +8,7 @@ const freeDigest = require('../automation/free-places-digest');
 const planCapacity = require('../entitlements/plan-capacity');
 const inactivityPolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const notificationSettings = require('../integrations/notification-settings');
+const operationsSettings = require('./operations-settings');
 const discovery = require('../payments/subscription-discovery');
 const { esc } = require('./admin-html');
 
@@ -112,10 +113,11 @@ function automationSnapshot(rows) {
   };
 }
 
-function nextAdvertLabel(cfg, state, now = new Date(), { pending = false } = {}) {
+function nextAdvertLabel(cfg, state, now = new Date(), { pending = false, publicBaseUrlConfigured = true } = {}) {
   if (!cfg?.discordFreePlacesDigestEnabled) return 'Advertising disabled';
   if (!cfg.discordConfigured) return 'Discord not configured';
   if (!cfg.discordFreePlacesChannelId) return 'Channel not configured';
+  if (!publicBaseUrlConfigured) return 'Public URL not configured';
   const zone = cfg.discordFreePlacesTimezone || 'Europe/London';
   const times = [cfg.discordFreePlacesTime1, cfg.discordFreePlacesTime2]
     .filter(value => /^\d{2}:\d{2}$/.test(String(value || '')))
@@ -128,6 +130,7 @@ function nextAdvertLabel(cfg, state, now = new Date(), { pending = false } = {})
   const currentChannel = String(cfg.discordFreePlacesChannelId || '');
   const stateChannel = String(state?.channelId || '');
   const hasCurrentBaseline = Boolean(
+    state?.messageId &&
     state?.lastAdvertSlot &&
     stateChannel === currentChannel
   );
@@ -139,12 +142,14 @@ function nextAdvertLabel(cfg, state, now = new Date(), { pending = false } = {})
 }
 
 async function freeSnapshot(jobRows) {
-  const [plan, policy, cfg, digestState] = await Promise.all([
+  const [plan, policy, cfg, digestState, operations] = await Promise.all([
     freeDigest.freePlan(),
     inactivityPolicy.get(),
     notificationSettings.status(),
-    freeDigest.loadState()
+    freeDigest.loadState(),
+    operationsSettings.get()
   ]);
+  const publicBaseUrlConfigured = Boolean(String(operations.publicBaseUrl || '').trim());
 
   if (!plan) {
     return {
@@ -156,7 +161,7 @@ async function freeSnapshot(jobRows) {
       bufferedPlaces: 0,
       inactivityEnabled: Boolean(policy.enabled),
       inactivityState: 'missing',
-      nextAdvert: nextAdvertLabel(cfg, digestState)
+      nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { publicBaseUrlConfigured })
     };
   }
 
@@ -172,7 +177,9 @@ async function freeSnapshot(jobRows) {
   const digestCurrent = Boolean(
     cfg.discordFreePlacesDigestEnabled &&
     cfg.discordConfigured &&
+    publicBaseUrlConfigured &&
     configuredChannel &&
+    digestState.messageId &&
     digestChannel === configuredChannel
   );
   const advertisedRemaining = digestCurrent && digestState.remaining != null
@@ -197,7 +204,7 @@ async function freeSnapshot(jobRows) {
     inactivityDryRun: Boolean(policy.dryRun),
     inactivityState: jobRows == null ? 'unavailable' : (inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing'),
     inactivityLastCompletedAt: inactivityJob?.last_completed_at || inactivityJob?.last_success_at || null,
-    nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending })
+    nextAdvert: nextAdvertLabel(cfg, digestState, new Date(), { pending: advertPending, publicBaseUrlConfigured })
   };
 }
 
