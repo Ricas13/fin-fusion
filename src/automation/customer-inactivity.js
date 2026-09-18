@@ -197,11 +197,13 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
         ) allocation ON TRUE
         LEFT JOIN LATERAL (
           SELECT
-            MIN(ph.started_at) FILTER (
-              WHERE ph.started_at>=allocation.allocation_start_at
+            MIN(GREATEST(ph.started_at,allocation.allocation_start_at)) FILTER (
+              WHERE COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)>allocation.allocation_start_at
+                AND ph.started_at<NOW()
             ) first_playback_at,
             MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER (
-              WHERE ph.started_at>=allocation.allocation_start_at
+              WHERE COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)>allocation.allocation_start_at
+                AND ph.started_at<NOW()
             ) last_playback_at,
             COALESCE(SUM(
               GREATEST(
