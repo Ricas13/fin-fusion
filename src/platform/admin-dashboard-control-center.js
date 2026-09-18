@@ -170,6 +170,11 @@ async function freeSnapshot(jobRows) {
     freeBackfill.waitingCandidates(500, { planId: plan.id }),
     freeBackfill.pendingClaimCandidates(500, { planId: plan.id })
   ]);
+  const waitingCustomers = new Set(
+    [...waitingRows, ...pendingClaims]
+      .map(row => String(row.customer_id || '').trim())
+      .filter(Boolean)
+  );
   const inactivityJob = (jobRows || []).find(row => row.job_key === 'customer_inactivity') || null;
   const actualRemaining = capacity.remaining == null ? null : Math.max(0, Number(capacity.remaining) || 0);
   const configuredChannel = String(cfg.discordFreePlacesChannelId || '');
@@ -197,7 +202,7 @@ async function freeSnapshot(jobRows) {
     used: capacity.used == null ? null : Number(capacity.used),
     reserved: capacity.reserved == null ? null : Number(capacity.reserved),
     limit: capacity.limit == null ? null : Number(capacity.limit),
-    waiting: waitingRows.length + pendingClaims.length,
+    waiting: waitingCustomers.size,
     waitingCapped: waitingRows.length >= 500 || pendingClaims.length >= 500,
     bufferedPlaces,
     inactivityEnabled: Boolean(policy.enabled),
