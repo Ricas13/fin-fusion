@@ -114,6 +114,8 @@ function automationSnapshot(rows) {
 
 function nextAdvertLabel(cfg, state, now = new Date()) {
   if (!cfg?.discordFreePlacesDigestEnabled) return 'Advertising disabled';
+  if (!cfg.discordConfigured) return 'Discord not configured';
+  if (!cfg.discordFreePlacesChannelId) return 'Channel not configured';
   const zone = cfg.discordFreePlacesTimezone || 'Europe/London';
   const times = [cfg.discordFreePlacesTime1, cfg.discordFreePlacesTime2]
     .filter(value => /^\d{2}:\d{2}$/.test(String(value || '')))
@@ -123,7 +125,13 @@ function nextAdvertLabel(cfg, state, now = new Date()) {
 
   const stamp = freeDigest.localStamp(now, zone);
   const currentDueKey = freeDigest.advertSlotKey(cfg, now);
-  if (currentDueKey && state?.lastAdvertSlot !== currentDueKey) return `Due now · ${zone}`;
+  const currentChannel = String(cfg.discordFreePlacesChannelId || '');
+  const stateChannel = String(state?.channelId || '');
+  const hasCurrentBaseline = Boolean(
+    state?.lastAdvertSlot &&
+    (!stateChannel || stateChannel === currentChannel)
+  );
+  if (hasCurrentBaseline && currentDueKey && state.lastAdvertSlot !== currentDueKey) return `Due now · ${zone}`;
 
   const today = times.find(value => value > stamp.time);
   if (today) return `${today} today · ${zone}`;
@@ -159,8 +167,19 @@ async function freeSnapshot(jobRows) {
   ]);
   const inactivityJob = (jobRows || []).find(row => row.job_key === 'customer_inactivity') || null;
   const actualRemaining = capacity.remaining == null ? null : Math.max(0, Number(capacity.remaining) || 0);
-  const advertisedRemaining = digestState.remaining == null ? null : Math.max(0, Number(digestState.remaining) || 0);
-  const bufferedPlaces = actualRemaining == null || advertisedRemaining == null
+  const configuredChannel = String(cfg.discordFreePlacesChannelId || '');
+  const digestChannel = String(digestState.channelId || '');
+  const digestCurrent = Boolean(
+    cfg.discordFreePlacesDigestEnabled &&
+    cfg.discordConfigured &&
+    configuredChannel &&
+    (!digestChannel || digestChannel === configuredChannel)
+  );
+  const advertisedRemaining = digestCurrent && digestState.remaining != null
+    ? Math.max(0, Number(digestState.remaining) || 0)
+    : null;
+  const minimumAdvertRemaining = Math.max(1, Number(cfg.discordFreePlacesMinRemaining) || 1);
+  const bufferedPlaces = actualRemaining == null || advertisedRemaining == null || actualRemaining < minimumAdvertRemaining
     ? 0
     : Math.max(0, actualRemaining - advertisedRemaining);
 
@@ -191,6 +210,7 @@ async function billingSnapshot() {
           LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id
          WHERE s.billing_mode='subscription'
            AND s.source IN('stripe','paypal')
+           AND s.status IN('active','trialing','past_due','paused')
       )
       SELECT
         (SELECT COUNT(*)::int FROM recurring WHERE last_error IS NOT NULL) AS sync_problems,
