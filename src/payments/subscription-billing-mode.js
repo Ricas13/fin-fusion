@@ -19,6 +19,18 @@ function recurringProvider(row){
 
 function isRecurring(row){return Boolean(recurringProvider(row));}
 
+function validRecurringProviderId(provider,id){
+  const source=String(provider||'').trim().toLowerCase();
+  const value=String(id||'').trim();
+  if(source==='stripe')return /^sub_/i.test(value);
+  if(source==='paypal')return /^I-/i.test(value);
+  return false;
+}
+function validRecurringProviderReference(row){
+  const provider=recurringProvider(row);
+  return Boolean(provider&&validRecurringProviderId(provider,row?.provider_subscription_id));
+}
+
 function currencyOf(row){
   return String(row?.currency_snapshot||row?.currency||'').trim().toUpperCase();
 }
@@ -28,4 +40,4 @@ function sameCurrency(a,b){
   return Boolean(left&&right&&left===right);
 }
 
-module.exports={BILLING_MODES,PROVIDER_RECURRING_SOURCES,normalize,modeFor,recurringProvider,isRecurring,currencyOf,sameCurrency};
+module.exports={BILLING_MODES,PROVIDER_RECURRING_SOURCES,normalize,modeFor,recurringProvider,isRecurring,validRecurringProviderId,validRecurringProviderReference,currencyOf,sameCurrency};
