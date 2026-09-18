@@ -201,21 +201,43 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
         }
         account = accountResult.rows[0];
     } catch (error) {
-        // Any failed restore, including a failed postcondition after reconcile,
-        // returns to the same durable state: entitlement retained, inactivity
-        // hold active, no claim that access was restored.
-        await accessHolds.addHold({
-            customerId,
-            type: HOLD_TYPE,
-            sourceKey: prepared.sourceKey,
-            reason: 'Free Server inactivity restore pending successful reprovisioning',
-            actorUserId,
-            metadata: {
-                subscriptionId: prepared.subscriptionId,
-                restoreReconcileFailed: true,
-                error: String(error?.message || error).slice(0, 500)
+        // Any failed restore, including a failure in a later service after the
+        // Free Jellyfin account was already created, must fail closed. Restoring
+        // the inactivity hold is mandatory; silently losing this rollback would
+        // turn a reported restore failure into unintended active Free access.
+        let rollbackHoldError = null;
+        try {
+            await accessHolds.addHold({
+                customerId,
+                type: HOLD_TYPE,
+                sourceKey: prepared.sourceKey,
+                reason: 'Free Server inactivity restore pending successful reprovisioning',
+                actorUserId,
+                metadata: {
+                    subscriptionId: prepared.subscriptionId,
+                    restoreReconcileFailed: true,
+                    error: String(error?.message || error).slice(0, 500)
+                }
+            });
+        } catch (holdError) {
+            rollbackHoldError = holdError;
+        }
+
+        // If the hold was restored, immediately run the canonical reconciler
+        // again with that hold active. The first reconcile may have created the
+        // Free account before a later Stremio/Emby/Discord step failed; this
+        // compensation removes that transient access instead of waiting for a
+        // future worker retry. A later explicit admin/permanent authority is
+        // still respected because the canonical reconciler owns that decision.
+        let rollbackReconcileError = null;
+        if (!rollbackHoldError) {
+            try {
+                await reconcile(customerId);
+            } catch (reconcileError) {
+                rollbackReconcileError = reconcileError;
             }
-        }).catch(() => {});
+        }
+
         await query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'admin.customer.jellyfin.restore_free_access_failed','customer',$2,$3::jsonb)
@@ -224,9 +246,24 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
             customerId,
             JSON.stringify({
                 planId: prepared.planId,
-                error: String(error?.message || error).slice(0, 500)
+                error: String(error?.message || error).slice(0, 500),
+                rollbackHoldError: rollbackHoldError
+                    ? String(rollbackHoldError?.message || rollbackHoldError).slice(0, 500)
+                    : null,
+                rollbackReconcileError: rollbackReconcileError
+                    ? String(rollbackReconcileError?.message || rollbackReconcileError).slice(0, 500)
+                    : null
             })
         ]).catch(() => {});
+
+        if (rollbackHoldError) {
+            const rollbackFailure = new Error(
+                `Free Server restore failed and its inactivity hold could not be restored: ${String(rollbackHoldError?.message || rollbackHoldError).slice(0, 300)}`
+            );
+            rollbackFailure.code = 'FREE_JELLYFIN_RESTORE_ROLLBACK_FAILED';
+            rollbackFailure.cause = error;
+            throw rollbackFailure;
+        }
         throw error;
     }
 
