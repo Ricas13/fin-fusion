@@ -50,14 +50,15 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
         }
         return { minor: incremental, currency: String(object.currency || 'USD').toUpperCase() };
     }
-    if (row?.provider === 'paypal' && row.event_type === 'PAYMENT.SALE.REFUNDED') {
+    if (row?.provider === 'paypal' && ['PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED','PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED'].includes(row.event_type)) {
         const resource = payload.resource || {};
-        const text = String(resource.amount?.total ?? '').trim();
+        const amount = resource.amount || {};
+        const text = String(amount.total ?? amount.value ?? '').trim();
         if (!/^\d+(?:\.\d+)?$/.test(text)) return null;
         const [whole, fraction = ''] = text.split('.');
         const minor = Number(whole) * 100 + Number((fraction + '00').slice(0, 2));
         if (minor <= 0) return null;
-        return { minor, currency: String(resource.amount?.currency || 'USD').toUpperCase() };
+        return { minor, currency: String(amount.currency ?? amount.currency_code ?? 'USD').toUpperCase() };
     }
     return null;
 }
