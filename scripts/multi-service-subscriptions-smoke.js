@@ -39,7 +39,7 @@ function staticContracts(){
   // ledger is no longer authoritative: recovery requires a live Free-tier
   // entitlement plus its matching active inactivity hold, so an unrelated paid
   // Jellyfin visit cannot resurrect an abandoned Free account by itself.
-  assert(cleanupReturn.includes('liveFreeJellyfinSubscription')&&cleanupReturn.includes('canRestoreDeletedFree=Boolean(freeEntitlement&&inactivityHold.rowCount)'),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
+  assert(cleanupReturn.includes('inactivityRestore.restoreStatus(customerId)')&&cleanupReturn.includes('canRestoreDeletedFree=Boolean(restoreState.eligible)'),'paid Jellyfin portal visits must only expose explicit Free restoration when the canonical exact-episode inactivity restore state is eligible');
   assert(provisioning.includes("'reconcile','started'")&&!provisioning.includes("'reconcile_multi_access','started'"),'multi-access provisioning runs must use a schema-valid action');
   assert(migration.includes("CHECK (access_lane IN ('primary','free'))")&&migration.includes("p_source='free_claim'"),'applied migration must remain unchanged while runtime supplements legacy-source Free blocking');
 }
