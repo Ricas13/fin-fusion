@@ -10,6 +10,7 @@ const runtimeSettings = require('./runtime-settings');
 const { money, number } = require('./admin-dashboard-format');
 const { renderLiveStreamsPanel } = require('./admin-dashboard-live-streams');
 const controlCenter = require('./admin-dashboard-control-center');
+const { financialWarningBanner } = require('./admin-dashboard-page');
 
 function isNativeAdmin(req){return Boolean(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId);}
 function primaryAction(stats){if(!stats.setup?.counts?.plans)return'<a class="button" href="/admin/plans">+ Create plan</a>';if(!stats.setup?.counts?.servers)return'<a class="button" href="/admin/servers/new">+ Add server</a>';return'<a class="button" href="/admin/users/new">+ Add customer</a>';}
@@ -34,7 +35,7 @@ async function dashboardPage(req,res){
     ctx.data.controlCenter=control;
     const stats=ctx.data;
     const analytics=`<details class="dashboardAnalyticsDisclosure"><summary><strong>Analytics & trends</strong><span>Growth, MRR, churn, plan mix and playback trends</span></summary><div class="dashboardAnalyticsDisclosureBody">${rangeControls(ctx.range)}${html}</div></details>`;
-    const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}${analytics}</div>`;
+    const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${financialWarningBanner(ctx)}${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}${analytics}</div>`;
     return res.send(layout({siteName:runtimeSettings.siteName(),active:'dashboard',title:'Admin Dashboard',subtitle:`Operational health first · ${ctx.reporting.currency} reporting`,body,action:primaryAction(stats),pageClass:'page-dashboard'}));
   }catch(error){
     console.error('Admin dashboard failed:',error.message);
