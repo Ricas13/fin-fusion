@@ -29,6 +29,7 @@ const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
 const jobs=read('src/automation/jobs.js');
 const automationWorker=read('scripts/automation-worker.js');
 const inactivity=read('src/automation/customer-inactivity.js')+read('src/automation/customer-inactivity-scoped.js');
+const freeCapacityBackfill=read('src/automation/free-capacity-backfill.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
 // Jellyfin plans no longer own an inventory number. Server max_users is the
@@ -41,6 +42,8 @@ assert(!inventory.includes('server stream capacity')&&!inventory.includes('Fleet
 assert(serverForm.includes('Customer capacity')&&serverForm.includes('Every Jellyfin customer uses exactly one place'),'server configuration must define max_users as customer-user capacity');
 assert(!serverForm.includes('Sellable stream capacity')&&!serverForm.includes('3-stream plan consumes'),'server configuration must not describe capacity as stream inventory');
 assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'Jellyfin fleet availability must be expressed only in customer places');
+assert(capacitySource.includes("NOT public.subscription_admin_removed(s.customer_id,'jellyfin')")&&capacitySource.includes("NOT public.subscription_admin_removed(pending_subscription.customer_id,'jellyfin')"),'admin-removed Jellyfin customers must not consume storefront fleet capacity in either live usage or acquisition SQL');
+assert(freeCapacityBackfill.includes("NOT public.subscription_admin_removed(s.customer_id,'jellyfin')"),'Free capacity backfill must not treat explicit admin removals as customers waiting for a Jellyfin account');
 assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'capacity must not depend on plan streams or raw Jellyfin total-user metrics');
 assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource.includes('COUNT(DISTINCT customer_id)')&&userCapacitySource.includes("ja.account_purpose='jellyfin'")&&userCapacitySource.includes('ja.disabled=FALSE')&&userCapacitySource.includes('jellyfin_account_creation_intents')&&userCapacitySource.includes('jellyfin_server_placement_leases'),'canonical server capacity must count each managed customer exactly once across persisted accounts, creation intents and active placement leases');
 assert(capacitySource.includes("key=model==='fleet_users'?`fleet-users:${serverClass(plan)||'unclassified'}`"),'all Jellyfin plans sharing a server class must serialize acquisition against the same user-capacity lock');

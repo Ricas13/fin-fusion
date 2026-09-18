@@ -51,6 +51,7 @@ async function waitingCandidates(limit = 100) {
         AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
         AND s.superseded_by IS NULL
         AND s.starts_at<=NOW()
+        AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
         AND (
           (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
           OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)

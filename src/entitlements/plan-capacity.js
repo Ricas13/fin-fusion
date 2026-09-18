@@ -145,6 +145,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
         OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
       )
+      AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
       AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)
       AND NOT EXISTS(
         SELECT 1 FROM jellyfin_accounts existing
@@ -291,6 +292,7 @@ function fleetAvailableSql(alias='p'){
         OR (pending_subscription.status IN('active','trialing','past_due','paused') AND pending_subscription.current_period_end>NOW())
         OR (COALESCE(pending_subscription.service_extension_days,0)>0 AND pending_subscription.status IN('active','trialing','past_due','paused','cancelled','expired') AND (pending_subscription.current_period_end+((pending_subscription.service_extension_days||' days')::interval))>NOW())
       )
+      AND NOT public.subscription_admin_removed(pending_subscription.customer_id,'jellyfin')
       AND NOT EXISTS(SELECT 1 FROM customer_access_holds pending_hold
         WHERE pending_hold.customer_id=pending_subscription.customer_id
           AND pending_hold.hold_type IN('inactivity_policy','jellyfin_cleanup')
