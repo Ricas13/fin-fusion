@@ -84,6 +84,13 @@ assert(recurringIdentityMigration.includes('subscriptions_recurring_provider_ide
     && recurringIdentityMigration.includes("~* '^sub_'")
     && recurringIdentityMigration.includes("~* '^I-'"),
     'PostgreSQL must reject new malformed recurring provider identities without blocking upgrade on historical repair rows.');
+assert(recurringIdentityMigration.includes('guard_subscription_provider_identity')
+    && recurringIdentityMigration.includes("pg_advisory_xact_lock")
+    && recurringIdentityMigration.includes("s.provider_subscription_id=NEW.provider_subscription_id"),
+    'Provider billing identities must be serialized and single-owner at the database write boundary.');
+assert(revenueIntegrity.includes('duplicate_provider_billing_identity')
+    && revenueIntegrity.includes('HAVING COUNT(*)>1'),
+    'Revenue integrity must surface historical duplicate provider billing ownership.');
 for (const eventType of [
     'charge.refunded','charge.dispute.created','charge.dispute.closed',
     'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
