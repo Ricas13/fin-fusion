@@ -218,6 +218,17 @@ async function testKProviderBillingIdentitySingleOwner() {
     assert.strictEqual(Number(owners.rows[0].n), 1, 'K: exactly one local subscription may own the provider identity after the race');
 }
 
+async function testLRecurringIdentityStatusBoundary() {
+    const tag=suffix(), c=await customer(`l-${tag}`), p=await plan(`recovery-l-${tag}`,'Identity Boundary');
+    await assert.rejects(
+        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[c.id,p.id,`pi_invalid_live_${tag}`]),
+        /subscriptions_recurring_provider_identity_check|violates check constraint/i,
+        'L: a live recurring Stripe row must not be created with a non-sub_ provider identity'
+    );
+    const historical=await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'cancelled','stripe','subscription',NOW()-INTERVAL '60 days',NOW()-INTERVAL '30 days',NULL,'jellyfin') RETURNING id`,[c.id,p.id]);
+    assert.strictEqual(historical.rowCount,1,'L: terminal historical recurring rows may remain without an operable provider identity for audit/import compatibility');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -229,7 +240,8 @@ async function main() {
     await testGAmbiguousProviderResult();
     await testJOldOperationCannotOverwriteNewerDecision();
     await testKProviderBillingIdentitySingleOwner();
-    console.log('provider operation recovery DB smoke: A-K ok');
+    await testLRecurringIdentityStatusBoundary();
+    console.log('provider operation recovery DB smoke: A-L ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });
