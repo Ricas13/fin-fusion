@@ -1,7 +1,6 @@
 'use strict';
 
 const { query } = require('../db');
-const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange, fillSeries } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
 const subscriptionAnalytics = require('./subscription-analytics');
@@ -72,10 +71,19 @@ function fleetCapacity(rows){
 
 async function buildContext(req){
     const range=dashboardRange(req.query||{}),reporting=await reportingCurrency.getForUser(req.session.authUserId);
-    const [data,profit,analytics,fleet,mix]=await Promise.all([
-        dashboardData(range,reporting),profitability.dashboardProfitability(reporting),growthData.growthServerAnalytics(range,reporting),fleetDashboard.dashboardRows(),serviceMix()
+    const [profit,analytics,fleet,planState]=await Promise.all([
+        profitability.dashboardProfitability(reporting),
+        growthData.growthServerAnalytics(range,reporting),
+        fleetDashboard.dashboardRows(),
+        query('SELECT EXISTS(SELECT 1 FROM plans) AS has_plans')
     ]);
-    return{range,reporting,data:{...data,profitability:profit,growthAnalytics:analytics,serviceMix:mix,userGauge:fleetCapacity(fleet)}};
+    const hasPlans=Boolean(planState.rows[0]?.has_plans);
+    return{range,reporting,data:{
+        profitability:profit,
+        growthAnalytics:analytics,
+        userGauge:fleetCapacity(fleet),
+        setup:{counts:{plans:hasPlans?1:0,servers:fleet.length}}
+    }};
 }
 registry.registerContextBuilder('main',buildContext);
 
