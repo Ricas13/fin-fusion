@@ -66,7 +66,21 @@ assert(!worker.includes('if (due.length) await runBatch(due);'),
     'A long-running job must not block later scheduler polls for unrelated jobs');
 
 const automationJobs = read('src/automation/jobs.js');
+const revenueIntegrity = read('src/automation/revenue-integrity.js');
 const freeBackfill = read('src/automation/free-capacity-backfill.js');
+assert(revenueIntegrity.includes('payment_loss_event_without_incident')
+    && revenueIntegrity.includes("e.processed_at IS NOT NULL")
+    && revenueIntegrity.includes("NOT EXISTS(")
+    && revenueIntegrity.includes("FROM payment_incidents pi"),
+    'Revenue integrity must detect processed provider money-loss events that produced no durable incident.');
+for (const eventType of [
+    'charge.refunded','charge.dispute.created','charge.dispute.closed',
+    'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
+    'PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED',
+    'CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED'
+]) {
+    assert(revenueIntegrity.includes(eventType), `Revenue integrity must watch ${eventType} for processed-without-incident drift.`);
+}
 const compactFreeBackfill = compact(freeBackfill);
 assert(automationJobs.includes("freeCapacityBackfill=require('./free-capacity-backfill')")
     && automationJobs.includes('async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})}'),
