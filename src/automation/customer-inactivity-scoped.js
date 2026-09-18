@@ -187,6 +187,13 @@ async function recordDryRun(row, actorUserId) {
 
 async function removeEligibleAccount(row, actorUserId) {
     const reason = `Free Server inactivity: ${row.triggers.join('; ')}`;
+    const account = deleteAccountShape(row);
+
+    // Check the live Jellyfin session list before changing entitlement state.
+    // The delete primitive repeats the same check after the hold is created, so
+    // playback that begins in either race window fails closed.
+    await provisioning.assertNoActivePlaybackBeforeDelete(account);
+
     await accessHolds.addHold({
         customerId: row.customer_id,
         type: base.HOLD_TYPE,
@@ -203,14 +210,30 @@ async function removeEligibleAccount(row, actorUserId) {
 
     try {
         await provisioning.deleteJellyfinAccount(
-            deleteAccountShape(row),
+            account,
             { reason, actorUserId, requireNoActivePlayback: true }
         );
         await verifyRemoved(row.account_id);
     } catch (error) {
-        // The hold is the durable "removal pending/removed" authority. Keep it
-        // active on DELETE failure so the next run retries the exact account and
-        // no unrelated reconciliation can recreate access in between attempts.
+        if (error?.code === 'JELLYFIN_ACTIVE_PLAYBACK_DELETE_BLOCKED') {
+            // If this run created the hold and playback started between the
+            // preflight and destructive-boundary checks, undo only our new
+            // hold. A pre-existing retry hold remains authoritative.
+            if (!row.repairExistingHold) {
+                await accessHolds.releaseHold({
+                    customerId: row.customer_id,
+                    type: base.HOLD_TYPE,
+                    sourceKey: `plan:${row.plan_id}`,
+                    actorUserId,
+                    resolutionReason: 'Playback started before inactivity deletion'
+                });
+            }
+            throw error;
+        }
+
+        // The hold is the durable "removal pending/removed" authority for a
+        // genuine DELETE failure. Keep it active so the next run retries the
+        // exact account and unrelated reconciliation cannot recreate access.
         await query(
             `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
              VALUES($1,'customer.inactivity.remove_failed','customer',$2,$3::jsonb)`,
@@ -331,6 +354,11 @@ async function runPlanRules({ actorUserId = null } = {}) {
                 }
             );
         } catch (error) {
+            if (error?.code === 'JELLYFIN_ACTIVE_PLAYBACK_DELETE_BLOCKED') {
+                safetySkipped += 1;
+                await logSkip(original, actorUserId, 'active_playback_started_before_delete');
+                continue;
+            }
             failed += 1;
             console.error('Free Server inactivity removal failed:', {
                 accountId: original.account_id,
