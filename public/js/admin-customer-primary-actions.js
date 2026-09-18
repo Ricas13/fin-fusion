@@ -103,7 +103,8 @@
 
     @media(max-width:1450px){.customer360Core .opGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
     @media(max-width:1180px){.customerMockHero{grid-template-columns:1fr!important}.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
-    @media(max-width:620px){.customer360Core .opGrid,.customerMockMetrics{grid-template-columns:1fr!important}.customerMockMoreMenu{right:auto;left:0}.compactForcePopover,.compactMovedAction .actionPopover,#customer-danger .actionPopover{position:fixed!important;left:10px!important;right:10px!important;top:20vh!important;width:auto!important}}
+    @media(max-width:760px){.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+    @media(max-width:620px){.customer360Core .opGrid,.customerMockMetrics,.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:1fr!important}.customerMockMoreMenu{right:auto;left:0}.compactForcePopover,.compactMovedAction .actionPopover,#customer-danger .actionPopover{position:fixed!important;left:10px!important;right:10px!important;top:20vh!important;width:auto!important}}
   `;
   document.head.appendChild(style);
 
