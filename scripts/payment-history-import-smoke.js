@@ -51,6 +51,27 @@ assert.strictEqual(refund1.minor, 1000);
 assert.strictEqual(refund2.minor, 2000);
 assert.strictEqual(refund1.minor + refund2.minor, 3000, 'partial-refund webhooks must never sum cumulative totals');
 assert.deepStrictEqual(refundWarnings, []);
+
+const paypalCaptureRefund = dashboardLedger.refundFromEvent({
+    provider: 'paypal',
+    event_type: 'PAYMENT.CAPTURE.REFUNDED',
+    payload: { resource: { id: 'refund-modern', amount: { value: '12.34', currency_code: 'gbp' } } }
+});
+assert.deepStrictEqual(paypalCaptureRefund, { minor: 1234, currency: 'GBP' }, 'modern PayPal capture refunds must reduce live dashboard revenue immediately');
+
+const paypalCaptureReversal = dashboardLedger.refundFromEvent({
+    provider: 'paypal',
+    event_type: 'PAYMENT.CAPTURE.REVERSED',
+    payload: { resource: { id: 'capture-reversed', amount: { value: '30.00', currency_code: 'usd' } } }
+});
+assert.deepStrictEqual(paypalCaptureReversal, { minor: 3000, currency: 'USD' }, 'PayPal capture reversals must be treated as provider money loss in live accounting');
+
+const paypalSaleReversal = dashboardLedger.refundFromEvent({
+    provider: 'paypal',
+    event_type: 'PAYMENT.SALE.REVERSED',
+    payload: { resource: { id: 'sale-reversed', amount: { total: '9.99', currency: 'eur' } } }
+});
+assert.deepStrictEqual(paypalSaleReversal, { minor: 999, currency: 'EUR' }, 'legacy PayPal recurring sale reversals must reduce live revenue');
 const fallbackRefund = dashboardLedger.refundFromEvent({ provider: 'stripe', event_type: 'charge.refunded', payload: { data: { object: { id: 'ch_fallback', amount_refunded: 3000, currency: 'usd', refunds: { data: [{ id: 're_2', amount: 2000, created: 2 }, { id: 're_1', amount: 1000, created: 1 }] } } } } }, new Map(), []);
 assert.strictEqual(fallbackRefund.minor, 2000, 'when previous cumulative state is absent, use the refund object amount rather than charge.amount_refunded');
 const unsafeWarnings = [];
@@ -89,6 +110,17 @@ assert.ok(dashboardSource.includes('EVENT_PAGE_SIZE') && dashboardSource.include
 assert.ok(!dashboardSource.includes('LIMIT 25000'), 'Commerce financial totals must never silently stop at 25,000 payment events');
 assert.ok(dashboardSource.includes("status='completed'"), 'dashboard accounting may only trust completed import coverage');
 assert.ok(dashboardSource.includes('completed_at'), 'dashboard accounting must cap same-day coverage at the actual import completion time');
+
+const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
+for (const eventType of [
+    'PAYMENT.SALE.REVERSED',
+    'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
+    'PAYMENT.CAPTURE.DENIED',
+    'CHECKOUT.PAYMENT-APPROVAL.REVERSED'
+]) {
+    assert.ok(paypalSource.includes(`case '${eventType}'`), `PayPal webhook coverage must explicitly handle ${eventType}`);
+}
+assert.ok(paypalSource.includes('recordSaleReversal') && paypalSource.includes('recordSubscriptionPaymentFailure'), 'PayPal money-loss and failed-renewal events must use dedicated auditable handlers');
 
 const flexibleCheckoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'flexible-checkout.js'), 'utf8');
 const discountsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'discounts.js'), 'utf8');
