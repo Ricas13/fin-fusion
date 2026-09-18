@@ -113,9 +113,9 @@ assert.strictEqual(matches[0].match, null, 'an intentionally ending paid term mu
 matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }], baseContext());
 assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptions must not be used to justify premium access');
 
-assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:true,last_error:null }] }).length, 0, 'past-due subscriptions intentionally ending after the current period must not stay in the operator problem queue');
-assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:false,last_error:null }] }).length, 1, 'past-due subscriptions still expected to renew must remain operator work');
-assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:true,last_error:'provider sync failed' }] }).length, 1, 'provider sync failures must remain operator work even when renewal is stopped');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:true,last_error:null }] }).length, 0, 'past-due subscriptions intentionally ending after the current period must not stay in the operator problem queue');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:false,last_error:null }] }).length, 1, 'past-due subscriptions still expected to renew must remain operator work');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:true,last_error:'provider sync failed' }] }).length, 1, 'provider sync failures must remain operator work even when renewal is stopped');
 
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
 const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
@@ -127,6 +127,9 @@ assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must insp
 assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T0002', 'T0003'])"), 'PayPal discovery must cover subscription and preapproved recurring payments');
 assert.ok(discoverySource.includes("paypal_reference_id_type || '').toUpperCase() === 'SUB'"), 'PayPal discovery must only treat SUB references as subscription IDs');
 assert.ok(discoverySource.includes("state: 'ending'"), 'subscription discovery must classify explicitly fixed paid terms as reference-only');
+assert.ok(discoverySource.includes("COUNT(*) FILTER(WHERE NOT linked AND NOT ending)::int AS missing"), 'coverage stats must aggregate provider-link integrity in SQL instead of materializing every premium customer row');
+assert.ok(discoverySource.includes("COALESCE(commercial_snapshot->'migrated'='true'::jsonb,FALSE)"), 'coverage SQL must treat a missing commercial snapshot as non-legacy, matching JavaScript fixed-term classification');
+assert.ok(!/async function coverageStats\(\)[\s\S]{0,200}premiumEntitlements\(\)/.test(discoverySource), 'coverage stats must not load the full premium entitlement identity rowset merely to count billing states');
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
@@ -171,7 +174,7 @@ assert.ok(adminSource.includes('manualAttempt'), 'manual verification errors mus
 assert.ok(adminSource.includes('${verification}${table}'), 'manual verification feedback must render before the missing-subscription table, not after the full page');
 assert.ok(adminSource.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'intentional end-of-period cancellations must not remain in the urgent past-due queue');
 assert.ok(adminSource.includes("filter(item=>item.state!=='linked'&&item.state!=='ending')"), 'automatic discovery results must omit both healthy linked rows and fixed-term reference rows');
-assert.ok(adminSource.includes('Linked recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
+assert.ok(adminSource.includes('Recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
 
 console.log('Subscription discovery smoke passed.');

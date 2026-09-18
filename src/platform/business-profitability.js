@@ -68,6 +68,25 @@ async function headerProfitability(reporting,{now=new Date()}={}){
   const currentRevenue=revenueFromLedger(ledger,currentStart,end),ytdRevenue=revenueFromLedger(ledger,ytdStart,end,{includePrevious:true});
   return{currency:reporting.currency,current:summarizeWindow(currentStart,end,reporting,currentRevenue,expenseRows),ytd:summarizeWindow(ytdStart,end,reporting,ytdRevenue,expenseRows)};
 }
+async function dashboardHeadlineProfitability(reporting,{now=new Date()}={}){
+  const currentStart=monthStart(now),currentEnd=utcDayAfter(now),previousStart=monthStart(addDays(currentStart,-1)),ytdStart=yearStart(now);
+  const [expenseRows,baseLedger,previousLedger]=await Promise.all([
+    expenses.list(),
+    dashboardLedger.commerceRevenue(ledgerRange(currentStart,currentEnd,{previousStart:ytdStart,previousEnd:currentStart,bucket:'month'}),reporting,reportingCurrency),
+    dashboardLedger.commerceRevenue(ledgerRange(previousStart,currentStart),reporting,reportingCurrency)
+  ]);
+  const currentRevenue=revenueFromLedger(baseLedger,currentStart,currentEnd),ytdRevenue=revenueFromLedger(baseLedger,ytdStart,currentEnd,{includePrevious:true}),previousRevenue=revenueFromLedger(previousLedger,previousStart,currentStart);
+  const basis=basisFor(baseLedger.coverage,currentStart,currentEnd);
+  return{
+    currency:reporting.currency,
+    current:summarizeWindow(currentStart,currentEnd,reporting,currentRevenue,expenseRows),
+    previous:summarizeWindow(previousStart,currentStart,reporting,previousRevenue,expenseRows),
+    ytd:summarizeWindow(ytdStart,currentEnd,reporting,ytdRevenue,expenseRows),
+    basisText:basis.basisText,
+    webhookOnly:basis.webhookOnly
+  };
+}
+
 async function dashboardProfitability(reporting,{now=new Date(),weeks=8}={}){
   const currentStart=monthStart(now),currentEnd=utcDayAfter(now),previousStart=monthStart(addDays(currentStart,-1)),ytdStart=yearStart(now);
   const weekCount=Math.max(1,Math.min(26,Number(weeks)||8)),thisWeek=mondayStart(now),firstWeek=addDays(thisWeek,-7*(weekCount-1));
@@ -92,4 +111,4 @@ async function dashboardProfitability(reporting,{now=new Date(),weeks=8}={}){
   };
 }
 
-module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,revenueSummary,profitSummary,headerProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};
+module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};

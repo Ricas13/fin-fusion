@@ -1,7 +1,6 @@
 'use strict';
 
 const { query } = require('../db');
-const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange, fillSeries } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
 const subscriptionAnalytics = require('./subscription-analytics');
@@ -72,10 +71,27 @@ function fleetCapacity(rows){
 
 async function buildContext(req){
     const range=dashboardRange(req.query||{}),reporting=await reportingCurrency.getForUser(req.session.authUserId);
-    const [data,profit,analytics,fleet,mix]=await Promise.all([
-        dashboardData(range,reporting),profitability.dashboardProfitability(reporting),growthData.growthServerAnalytics(range,reporting),fleetDashboard.dashboardRows(),serviceMix()
+    const [profit,analytics,fleet,planState,mix]=await Promise.all([
+        profitability.dashboardHeadlineProfitability(reporting),
+        growthData.growthServerAnalytics(range,reporting),
+        fleetDashboard.dashboardRows(),
+        query('SELECT EXISTS(SELECT 1 FROM plans) AS has_plans'),
+        serviceMix()
     ]);
-    return{range,reporting,data:{...data,profitability:profit,growthAnalytics:analytics,serviceMix:mix,userGauge:fleetCapacity(fleet)}};
+    const hasPlans=Boolean(planState.rows[0]?.has_plans);
+    const financialWarnings=Array.from(new Set([
+        ...(profit.current?.revenue?.warnings||[]),
+        ...(profit.previous?.revenue?.warnings||[]),
+        ...(profit.ytd?.revenue?.warnings||[])
+    ].map(value=>String(value||'').trim()).filter(Boolean)));
+    return{range,reporting,data:{
+        profitability:profit,
+        financialWarnings,
+        growthAnalytics:analytics,
+        serviceMix:mix,
+        userGauge:fleetCapacity(fleet),
+        setup:{counts:{plans:hasPlans?1:0,servers:fleet.length}}
+    }};
 }
 registry.registerContextBuilder('main',buildContext);
 
@@ -96,7 +112,7 @@ registry.register('main','playMethodBreakdown',{title:'Play method breakdown',su
 registry.register('main','mostUsedPlayers',{title:'Most used players',subtitle:'Normalized client/player families ranked by managed watch time.',defaultOrder:9,defaultSpan:4,render:async ctx=>growthView.players(ctx.data.growthAnalytics)});
 
 async function renderMain(req){
-    const ctx=await buildContext(req),grid=await renderWidgetGrid('main',req,ctx);
+    const ctx=await buildContext(req),grid=await renderWidgetGrid('main',req,ctx,{showFinancialWarning:false});
     const header=`<div class="growthAnalyticsHeader"><div><h2>Growth & server analytics</h2><p>Business health, plan mix and managed playback use the same selected reporting period.</p></div><span>Playback uses ${esc(ctx.data.growthAnalytics.playback.grain)} buckets · growth uses ${esc(ctx.data.growthAnalytics.growth.grain)} buckets</span></div>`;
     return{ctx,html:`<link rel="stylesheet" href="/css/admin-profit-dashboard.css">${header}${grid}<link rel="stylesheet" href="/css/admin-dashboard-growth.css">`};
 }

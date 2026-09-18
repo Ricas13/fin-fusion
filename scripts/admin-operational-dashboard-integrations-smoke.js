@@ -8,6 +8,14 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const dashboardSource=read('src/platform/admin-dashboard.js');
 const dashboardDataSource=read('src/platform/admin-dashboard-data.js');
+const dashboardMainSource=read('src/platform/admin-dashboard-main.js');
+const controlCenterSource=read('src/platform/admin-dashboard-control-center.js');
+const freeBackfillSource=read('src/automation/free-capacity-backfill.js');
+const dashboardPageSource=read('src/platform/admin-dashboard-page.js');
+const billingControlSource=read('src/payments/billing-control.js');
+const adminBillingSource=read('src/platform/admin-billing.js');
+const inactivityAuditIndexMigration=read('db/migrations/20260918173000_admin_dashboard_inactivity_audit_index.sql');
+const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const liveStreamSource=read('src/platform/admin-dashboard-live-streams.js');
 const liveStreamClient=read('public/js/admin-dashboard-live-streams.js');
 const liveStreamCss=read('public/css/admin-dashboard-live-streams.css');
@@ -19,22 +27,129 @@ const cardCss=read('public/css/admin-integration-cards.css');
 const personalNotificationsSource=read('src/platform/admin-personal-notification-preferences-v2.js');
 const formFeedbackSource=read('public/js/admin-form-feedback.js');
 const dashboard=require('../src/platform/admin-dashboard');
+const controlCenter=require('../src/platform/admin-dashboard-control-center');
+const adminBilling=require('../src/platform/admin-billing');
 const liveStreams=require('../src/platform/admin-dashboard-live-streams');
 const cards=require('../src/platform/admin-integration-card');
 
-assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Dashboard must read the canonical Needs Attention list instead of recreating operational queries');
+assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Legacy dashboardData compatibility must keep the canonical Needs Attention source instead of recreating operational queries');
 assert(!dashboardDataSource.includes('attention.openSummary().catch'),'Dashboard must not query the same attention source once for summary and again for detail');
 assert(dashboardDataSource.includes('items: sources.slice(0, 5)'),'Dashboard must cap attention detail while preserving the total count');
-assert(dashboardSource.includes('dashboardAnalyticsDisclosure')&&dashboardSource.includes('${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${analytics}'),'Live streams must remain directly below the operational hero while historical analytics are progressively disclosed');
+assert(dashboardSource.includes('dashboardAnalyticsDisclosure')&&dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}${analytics}'),'Operational control-centre state and live streams must remain above progressively disclosed historical analytics');
 assert(!dashboardSource.includes('function attentionOverview')&&!dashboardSource.includes('setupCompact'),'Home must not reintroduce separate Needs Attention or setup tiles outside the target hero + live streams + three-widget layout');
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
+assert(!dashboardMainSource.includes("require('./admin-dashboard-data')")&&!dashboardMainSource.includes('dashboardData(range,reporting)'),'Live /admin must not execute the retired full legacy dashboard analytics stack beside the current growth/server analytics');
+assert(dashboardMainSource.includes("showFinancialWarning:false")&&dashboardSource.includes("${financialWarningBanner(ctx)}${dashboardHero(ctx)}"),'Financial integrity warnings must stay above the headline cards instead of being hidden inside collapsed analytics');
+assert(dashboardPageSource.includes('showFinancialWarning = options?.showFinancialWarning !== false')&&dashboardPageSource.includes('financialWarningBanner'),'Shared widget dashboards must preserve financial warnings by default while allowing Home to place them outside its disclosure');
+assert(dashboardMainSource.includes("SELECT EXISTS(SELECT 1 FROM plans) AS has_plans"),'Home setup action must use a minimal prerequisite read instead of loading full setup-readiness diagnostics');
+assert(!dashboardSource.includes('Needs attention'),'Home must rely on the persistent Alerts header instead of duplicating Needs Attention as another hero card');
+assert(dashboardSource.includes("require('./admin-dashboard-control-center')")&&dashboardSource.includes('controlCenter.controlCenterData()'),'Dashboard must aggregate the control-centre snapshot through the dedicated read-only module');
+assert(dashboardSource.includes('${dashboardHero(ctx)}${controlCenter.renderControlCenter(control)}${renderLiveStreamsPanel(req)}'),'Operational control-centre state must sit between the headline hero and live playback, before historical analytics');
+assert(controlCenterSource.includes("require('../automation/job-health')")&&controlCenterSource.includes("require('../automation/free-places-digest')")&&controlCenterSource.includes("require('../entitlements/plan-capacity')"),'Control centre must reuse canonical automation, Free digest and capacity authorities');
+assert(controlCenterSource.includes("require('./operations-settings')")&&controlCenterSource.includes('publicBaseUrlConfigured'),'Free advert status must mirror the digest worker public-base-URL prerequisite without making an external request');
+assert(controlCenterSource.includes("require('../payments/subscription-discovery')")&&controlCenterSource.includes("require('../payments/provider-settings')")&&controlCenterSource.includes("s.billing_mode='subscription'")&&controlCenterSource.includes("NULLIF(BTRIM(processing_error),'') IS NOT NULL"),'Billing integrity must reuse canonical provider-link coverage, provider configuration state, and count all recurring sync/event exceptions without dashboard row limits');
+assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()')&&controlCenterSource.includes("source='stripe'")&&controlCenterSource.includes("source='paypal'"),'Home billing integrity must keep live-provider counts inside its exhaustive local read instead of loading the full billing/lifecycle stack or using bounded Billing display rows');
+assert(billingControlSource.includes("ORDER BY CASE WHEN s.billing_mode='subscription'")&&billingControlSource.includes("ORDER BY CASE WHEN processed_at IS NULL"),'Bounded Billing reference lists must prioritise unresolved subscription/event problems before recent healthy history');
+assert(billingControlSource.includes('validRecurringProviderReference')&&billingControlSource.includes("BTRIM(COALESCE(s.provider_subscription_id,'')) !~* '^sub_'")&&billingControlSource.includes("BTRIM(COALESCE(s.provider_subscription_id,'')) !~* '^I-'"),'Billing must surface malformed live recurring provider references before they turn into provider-operation failures');
+assert(adminBillingSource.includes('const missingProviderSubscriptionIds=new Set(missingRows.map(row=>String(row.subscription_id)))')&&adminBillingSource.includes('recurringProblems(data).filter(row=>!missingProviderSubscriptionIds.has(String(row.id)))'),'Premium subscriptions already in the provider-link repair queue must not be duplicated in the generic recurring-problem queue');
+assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
+assert(controlCenterSource.includes("entity_type='customer'")&&controlCenterSource.includes('ORDER BY created_at DESC,id DESC'),'Recent inactivity audit reads must match the dedicated partial-index predicate and stable newest-first order');
+assert(inactivityAuditIndexMigration.includes('audit_log_dashboard_inactivity_recent_idx')&&inactivityAuditIndexMigration.includes('actor_user_id IS NULL')&&inactivityAuditIndexMigration.includes("entity_type='customer'")&&inactivityAuditIndexMigration.includes("'customer.inactivity.remove_failed'"),'Dashboard inactivity feed must have a narrow partial audit-log index instead of scanning append-only audit history');
+assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500, { planId: plan.id })')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500, { planId: plan.id })'),'Free Server waiting count must include both backlog types while staying scoped to the same canonical Free plan as capacity');
+assert(controlCenterSource.includes('const waitingCustomers = new Set(')&&controlCenterSource.includes('waiting: waitingCustomers.size'),'Free Server waiting summary must de-duplicate recovery/backfill rows that refer to the same customer');
+assert(freeBackfillSource.includes('pendingClaimCandidates(limit = 100, options = {})')&&freeBackfillSource.includes('waitingCandidates(limit = 100, options = {})')&&freeBackfillSource.includes('const planId = options?.planId || null'),'Backfill candidate readers must support optional plan scoping while tolerating legacy unscoped/null-style callers');
+assert(freeBackfillSource.includes("const planFilter = planId ? 'AND r.plan_id=$2::uuid' : ''")&&freeBackfillSource.includes("const planFilter = planId ? 'AND p.id=$2::uuid' : ''"),'Free backlog plan scoping must be enforced in SQL rather than filtered after a capped read');
+assert(freeBackfillSource.includes("planId ? [bounded, planId] : [bounded]"),'Unscoped automation reads must preserve the original one-parameter SQL shape instead of adding an OR-null planner branch');
+assert(controlCenter.RECENT_JOB_KEYS.has('free_capacity_backfill')&&!controlCenter.RECENT_JOB_KEYS.has('health')&&!controlCenter.RECENT_JOB_KEYS.has('free_places_digest'),'Recent automation feed must keep meaningful customer-impacting work and exclude high-frequency heartbeat/digest noise');
+assert(!controlCenterSource.includes('UPDATE ')&&!controlCenterSource.includes('DELETE FROM')&&!controlCenterSource.includes('INSERT INTO'),'Dashboard control-centre module must remain read-only');
+assert(dashboardCss.includes('.dashboardControlCenter')&&dashboardCss.includes('.dashboardAutomationFeed'),'Dashboard control-centre presentation must use the compact shared dashboard stylesheet');
 
-const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10},attention:{count:0}}});
-assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Server users')&&clear.includes('Needs attention'),'Dashboard hero must expose profit, server-user capacity and attention state');
-assert(clear.includes('2 / 10')&&clear.includes('managed customers / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
-assert(clear.includes('No current intervention required')&&clear.includes('/admin/attention'),'Clear attention state must remain linked to the canonical operational inbox');
-const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8},attention:{count:2}}});
-assert(problems.includes('profitHeroCard bad')&&problems.includes('2 current issues require review'),'Negative profit and non-zero attention must use meaningful danger styling/copy in the hero');
+const criticalSnapshot=controlCenter.automationSnapshot([{job_key:'health',enabled:true,interval_seconds:300,last_completed_at:new Date().toISOString(),last_success_at:new Date().toISOString(),last_outcome:'success'}]);
+assert(criticalSnapshot.total>1&&criticalSnapshot.healthy===1&&criticalSnapshot.warningCount===criticalSnapshot.total-1,'Missing critical automation jobs must be visible as dashboard warnings rather than silently treated as healthy');
+const advertCfg={discordFreePlacesDigestEnabled:true,discordConfigured:true,discordFreePlacesChannelId:'123456789012345678',discordFreePlacesTimezone:'Europe/London',discordFreePlacesTime1:'12:00',discordFreePlacesTime2:'00:00'};
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'987654321098765432',lastAdvertSlot:'2026-09-18T12:00'},new Date('2026-09-18T15:00:00+01:00')).includes('00:00 tomorrow'),'Free availability card must expose the next configured batched advert slot');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'987654321098765432',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:true}).includes('Due now'),'A publishable buffered increase must show the current unprocessed advert slot as due');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'987654321098765432',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:false}).includes('00:00 tomorrow'),'An unprocessed scheduler slot with no buffered increase must not masquerade as an advert');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'987654321098765432',lastAdvertSlot:null},new Date('2026-09-18T15:00:00+01:00'),{pending:true}).includes('00:00 tomorrow'),'A fresh or legacy digest baseline must not falsely claim the current slot is due for an advert');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'',messageId:'987654321098765432',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:true}).includes('00:00 tomorrow'),'A stored digest with no channel identity must be treated as stale because the worker will reset it');
+assert(controlCenter.nextAdvertLabel({...advertCfg,discordFreePlacesChannelId:'999999999999999999'},{channelId:'123456789012345678',messageId:'987654321098765432',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:true}).includes('00:00 tomorrow'),'Changing the advert channel must invalidate the old slot baseline rather than advertising immediately');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'987654321098765432',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:true,publicBaseUrlConfigured:false})==='Public URL not configured','Dashboard Free advert readiness must mirror the worker public-base-URL prerequisite');
+assert(controlCenter.nextAdvertLabel(advertCfg,{channelId:'123456789012345678',messageId:'',lastAdvertSlot:'2026-09-18T00:00'},new Date('2026-09-18T15:00:00+01:00'),{pending:true}).includes('00:00 tomorrow'),'A missing persistent Discord status message must force baseline recovery instead of claiming an advert is due');
+const controlHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:7,used:13,limit:20,waiting:2,waitingCapped:false,bufferedPlaces:3,nextAdvert:'00:00 tomorrow · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
+  commerce:{needsReview:true,missing:1,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[{kind:'good',label:'Free Jellyfin account removed',detail:'FREE · inactivity policy',at:new Date().toISOString(),href:'/admin/users/example'}]
+});
+for(const token of ['Free Server','Billing integrity','What Fin Fusion just did','Buffered advert','Missing link'])assert(controlHtml.includes(token),`Dashboard control centre missing ${token}`);
+assert(!controlHtml.includes('<form'),'Dashboard control centre must remain summary/navigation only; mutations stay on their owning pages');
+const providerProblemHtml=controlCenter.renderControlCenter({
+  free:{configured:false},
+  commerce:{needsReview:true,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:1},
+  recent:[]
+});
+assert(providerProblemHtml.includes('Billing integrity')&&providerProblemHtml.includes('Needs review')&&providerProblemHtml.includes('Provider / sync')&&providerProblemHtml.includes('>1</strong>'),'An enabled but unconfigured Stripe/PayPal provider must make Billing integrity visibly require review');
+const malformedProviderHtml=controlCenter.renderControlCenter({
+  free:{configured:false},
+  commerce:{needsReview:true,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0,invalidRecurringRefs:1},
+  recent:[]
+});
+assert(malformedProviderHtml.includes('Needs review')&&malformedProviderHtml.includes('Provider / sync')&&malformedProviderHtml.includes('>1</strong>'),'A malformed live recurring provider ID must make Home billing integrity require review');
+assert(
+  adminBillingSource.includes("const stripeRequired=Number(providerCounts.stripe||0)>0,paypalRequired=Number(providerCounts.paypal||0)>0") &&
+  adminBillingSource.includes("stripeStatus.enabled||stripeRequired ? 'warn' : ''") &&
+  adminBillingSource.includes("paypalStatus.enabled||paypalRequired ? 'warn' : ''"),
+  'Billing owner page must visibly warn on a disabled Stripe/PayPal provider while that provider still owns live recurring contracts'
+);
+const malformedRecurring={recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'pi_not_a_subscription',status:'active',cancel_at_period_end:false,last_error:null,customer_id:'customer-bad',display_name:'Bad Ref',email:'bad-ref@example.invalid',plan_name:'Stremio',price_minor:500,currency:'GBP'};
+assert.strictEqual(adminBilling.recurringProblems({subscriptions:[malformedRecurring]}).length,1,'Malformed recurring IDs must be operator problems even before the first provider sync fails');
+assert.strictEqual(adminBilling.recurringProblems({subscriptions:[{...malformedRecurring,provider_subscription_id:'sub_valid'}]}).length,0,'A healthy recurring ID must not become an operator problem without another billing failure');
+const malformedRow=adminBilling.subscriptionRow({},malformedRecurring);
+assert(malformedRow.includes('Invalid provider ID')&&malformedRow.includes('Repair required')&&malformedRow.includes('Repair provider ID before provider actions')&&!malformedRow.includes('Sync now')&&!malformedRow.includes('Stop renewal'),'Malformed recurring IDs must be visible and must not expose provider mutations that are guaranteed to fail');
+const pausedFreeHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:2,used:8,reserved:1,limit:11,waiting:800,waitingCapped:true,bufferedPlaces:0,nextAdvert:'Advertising disabled',inactivityEnabled:false,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(pausedFreeHtml.includes('dashboardControlCard neutral')&&pausedFreeHtml.includes('Inactivity:</strong> Paused'),'Intentionally paused Free inactivity must be neutral rather than a false warning');
+const missingPolicyHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:false,inactivityDryRun:true,inactivityConfigurationMissing:true,inactivityState:'disabled',inactivityLastCompletedAt:null,actionHref:'/admin/settings/jellyfin-lifecycle'},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(missingPolicyHtml.includes('dashboardControlCard warn')&&missingPolicyHtml.includes('Inactivity:</strong> Not configured'),'Safe-unconfigured Free inactivity must warn distinctly from an intentional operator pause');
+assert(missingPolicyHtml.includes('href="/admin/settings/jellyfin-lifecycle"'),'Missing lifecycle configuration must link directly to its owning settings page');
+assert(pausedFreeHtml.includes('≥800')&&pausedFreeHtml.includes('used / eligible capacity'),'Free waiting lower bounds and capacity labels must stay numerically honest when candidate reads are capped');
+const brokenFreeHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:2,used:8,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'12:00 today · Europe/London',inactivityEnabled:true,inactivityDryRun:false,inactivityState:'disabled',inactivityLastCompletedAt:null},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(brokenFreeHtml.includes('dashboardControlCard warn')&&brokenFreeHtml.includes('Inactivity:</strong> disabled'),'Enabled Free inactivity with a disabled worker must remain visible as an operational problem');
+const brokenAdvertHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:4,used:6,reserved:0,limit:10,waiting:0,waitingCapped:false,bufferedPlaces:0,nextAdvert:'Discord not configured',advertConfigurationProblem:true,inactivityEnabled:true,inactivityDryRun:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString(),actionHref:'/admin/notifications/preferences'},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(brokenAdvertHtml.includes('dashboardControlCard warn')&&brokenAdvertHtml.includes('Discord not configured'),'Enabled Free advertising that cannot run must warn even when inactivity itself is healthy');
+assert(brokenAdvertHtml.includes('href="/admin/notifications/preferences"'),'Discord Free-advert configuration problems must link to notification-channel settings');
+assert(controlCenterSource.includes("const advertProblemHref = !cfg.discordConfigured || !cfg.discordFreePlacesChannelId\n    ? '/admin/notifications/preferences'\n    : !publicBaseUrlConfigured\n      ? '/admin/settings?section=general'"),'Free advert warning-link precedence must match the visible diagnosis: Discord/channel before public URL');
+const brokenCapacityHtml=controlCenter.renderControlCenter({
+  free:{configured:true,available:0,used:0,reserved:0,limit:0,waiting:0,waitingCapped:false,capacityConfigurationProblem:true,capacityProblemDetail:'No Jellyfin server user capacity is configured for this plan.',bufferedPlaces:0,nextAdvert:'Advertising disabled',advertConfigurationProblem:false,inactivityEnabled:true,inactivityDryRun:false,inactivityConfigurationMissing:false,inactivityState:'healthy',inactivityLastCompletedAt:new Date().toISOString()},
+  commerce:{needsReview:false,missing:0,syncProblems:0,pastDue:0,providerEventErrors:0,providerSetupProblems:0},
+  recent:[]
+});
+assert(brokenCapacityHtml.includes('dashboardControlCard warn')&&brokenCapacityHtml.includes('No Jellyfin server user capacity is configured for this plan.'),'A Free plan with no usable server capacity must warn instead of looking like an ordinary full pool');
+const failedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'failed',last_error:'boom',last_failed_count:1,last_processed_count:99}],5)[0];
+assert(failedAction&&failedAction.detail==='1 failed','A failed automation run must not reuse the previous successful run\'s processed count');
+const degradedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:true,last_completed_at:new Date().toISOString(),last_outcome:'degraded',last_warning:'partial',last_failed_count:2,last_processed_count:7}],5)[0];
+assert(degradedAction&&degradedAction.kind==='warn'&&degradedAction.detail.includes('7 processed')&&degradedAction.detail.includes('2 failed')&&degradedAction.detail.includes('completed with warnings'),'A degraded job outcome must stay visible as a warning with its completed-run counts');
+
+const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10}}});
+assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Server users / capacity')&&clear.includes('Automation'),'Dashboard hero must expose profit, customer capacity and automation health');
+assert(clear.includes('2 / 10')&&clear.includes('managed server users / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
+assert(!clear.includes('Needs attention')&&!clear.includes('/admin/attention'),'Dashboard hero must not duplicate the persistent Alerts/Needs Attention signal');
+const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8}}});
+assert(problems.includes('profitHeroCard--profit bad'),'Negative profit must retain meaningful danger styling in the hero');
 
 const livePanel=liveStreams.renderLiveStreamsPanel({session:{authUserId:'admin-smoke',authRole:'admin',adminId:'admin-smoke'}});
 assert(livePanel.includes('data-admin-live-streams')&&livePanel.includes('Now Playing')&&livePanel.includes('/js/admin-dashboard-live-streams.js')&&livePanel.includes('/css/admin-dashboard-live-streams.css'),'Dashboard live streams must use the dedicated asynchronous row surface');

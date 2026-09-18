@@ -57,6 +57,7 @@ async function main(){
     for(const spec of specs){const html=await spec.render(ctx);assert(typeof html==='string'&&html.length>0,`widget ${spec.key} must render non-empty HTML`);}
     assert(ctx.data.profitability&&Number.isFinite(Number(ctx.data.profitability.current.profitMinor)),'dashboard must expose current-month profit');
     assert(ctx.data.profitability&&Number.isFinite(Number(ctx.data.profitability.ytd.profitMinor)),'dashboard must expose YTD profit');
+    assert(Array.isArray(ctx.data.financialWarnings),'dashboard context must preserve canonical financial-integrity warnings for the shared alert surface');
     assert(ctx.data.userGauge&&Number.isFinite(Number(ctx.data.userGauge.active))&&Number.isFinite(Number(ctx.data.userGauge.capacity)),'dashboard must expose managed customers over configured user capacity');
     assert(ctx.data.growthAnalytics,'dashboard must expose canonical growth/server analytics data');
     assert(Array.isArray(ctx.data.growthAnalytics.growth.rows)&&ctx.data.growthAnalytics.growth.rows.length>0,'growth analytics must expose a filled historical series');
@@ -78,13 +79,16 @@ async function main(){
     const growthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard-growth-data.js'),'utf8');
     const dashboardSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard.js'),'utf8');
     const publicAuthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/customer-public-auth.js'),'utf8');
-    assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardProfitability'),'home dashboard profit must use the shared profitability owner');
+    assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardHeadlineProfitability')&&!mainSource.includes('profitability.dashboardProfitability(reporting)'),'home dashboard profit must use the shared headline-only profitability owner without calculating unused weekly windows');
+    assert(mainSource.includes('profit.current?.revenue?.warnings')&&mainSource.includes('profit.ytd?.revenue?.warnings'),'home dashboard must propagate canonical ledger warnings after retiring the legacy dashboard-data path');
+    assert(mainSource.includes("showFinancialWarning:false"),'main analytics grid must suppress its internal warning copy because Home renders that alert above the collapsed analytics section');
+    assert(!mainSource.includes("require('./admin-dashboard-data')")&&!mainSource.includes('dashboardData(range,reporting)'),'home dashboard must not execute the legacy dashboard analytics stack in parallel with current growth/server analytics');
     assert(mainSource.includes("require('./admin-dashboard-growth-data')")&&mainSource.includes('growthData.growthServerAnalytics'),'home dashboard growth/server cards must use their canonical data owner');
     for(const key of expected)assert(mainSource.includes(`registry.register('main','${key}'`),`home dashboard must register ${key}`);
     assert(growthSource.includes('date_trunc')&&growthSource.includes('generate_series'),'time-adjusted analytics must bucket historical data in PostgreSQL rather than fabricate client-side points');
     assert(growthSource.includes('reactivations')&&growthSource.includes('opening_active')&&growthSource.includes('churn_rate'),'growth series must distinguish reactivation and preserve the opening churn denominator');
     assert(growthSource.includes('avg_concurrent')&&growthSource.includes('directplay_seconds')&&growthSource.includes('directstream_seconds')&&growthSource.includes('transcode_seconds'),'server analytics must derive concurrency and play-method watch time from playback history');
-    assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('managed customers / configured user capacity')&&dashboardSource.includes('Needs attention'),'dashboard hero must keep the original top signals');
+    assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('managed server users / configured user capacity')&&dashboardSource.includes('controlCenter.automationHeroCard')&&!dashboardSource.includes('Needs attention'),'dashboard hero must keep unique top signals without duplicating the persistent Alerts header');
     assert(dashboardSource.includes('renderLiveStreamsPanel(req)'),'existing live playback panel must remain intact above analytics');
     assert(!dashboardSource.includes('attentionOverview(stats)')&&!dashboardSource.includes("label: 'MRR'"),'home dashboard must not duplicate the old attention block or MRR tile');
     assert(publicAuthSource.includes('verificationRequired:true'),'public registration page must always disclose email verification');

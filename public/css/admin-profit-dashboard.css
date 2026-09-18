@@ -11,7 +11,7 @@
 .adminDashboardCompactBody .chartSvg{min-height:158px;max-height:178px}
 .adminDashboardCompactBody .chartEmpty{height:158px}
 
-.profitHeroGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
+.profitHeroGrid{display:grid;grid-template-columns:1.35fr repeat(2,minmax(0,1fr));gap:10px;margin:0}
 .profitHeroCard{display:grid;align-content:start;gap:6px;min-height:106px;padding:13px 14px;border:1px solid #2d3a48;border-radius:11px;background:#131b24;text-decoration:none;color:#eaf0f5}
 .profitHeroCard>span{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:#97a5b5}
 .profitHeroCard>strong{font-size:23px;line-height:1.05;color:#fff}
@@ -32,7 +32,6 @@
 .profitDelta.bad{color:var(--status-bad)}
 .profitGauge{height:6px;border-radius:999px;background:#25313d;overflow:hidden;margin-top:1px}
 .profitGauge>i{display:block;height:100%;border-radius:inherit;background:var(--status-info)}
-.profitBasisText{margin:0;font-size:11px;line-height:1.4;color:#6f7e8f}
 
 .profitBars{display:grid;gap:7px}
 .profitBarRow{display:grid;grid-template-columns:56px minmax(0,1fr);gap:8px;align-items:center}
@@ -85,3 +84,43 @@
 .dashboardAnalyticsDisclosure[open]>summary{border-bottom:1px solid var(--line)}
 .dashboardAnalyticsDisclosureBody{padding:12px}
 @media(max-width:700px){.dashboardAnalyticsDisclosure>summary{align-items:flex-start;flex-direction:column}.dashboardAnalyticsDisclosure>summary span{text-align:left}.dashboardAnalyticsDisclosureBody{padding:9px}}
+
+
+/* Operational control centre: compact summaries only; specialist controls stay on their owner pages. */
+.dashboardControlCenter{display:grid;gap:10px}
+.dashboardControlGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.dashboardControlCard,.dashboardAutomationFeed{border:1px solid #2d3a48;border-radius:11px;background:#131b24;color:#eaf0f5}
+.dashboardControlCard{display:grid;gap:10px;padding:13px 14px;text-decoration:none}
+.dashboardControlCard.good{border-color:rgba(57,217,138,.28);background:linear-gradient(145deg,rgba(57,217,138,.055),#131b24 70%)}
+.dashboardControlCard.warn{border-color:rgba(247,185,85,.34);background:linear-gradient(145deg,rgba(247,185,85,.065),#131b24 70%)}
+.dashboardControlCard.bad{border-color:rgba(255,97,116,.38);background:linear-gradient(145deg,rgba(255,97,116,.08),#131b24 70%)}
+.dashboardControlCard.neutral{border-color:rgba(126,147,167,.3)}
+.dashboardControlHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.dashboardControlHead>span{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:#97a5b5}
+.dashboardControlHead>strong{font-size:14px;color:#fff}
+.dashboardControlHead>a{font-size:11px;color:var(--accent);text-decoration:none}
+.dashboardControlMetrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dashboardControlMetric{display:grid;align-content:start;gap:3px;padding:8px 9px;border:1px solid rgba(255,255,255,.07);border-radius:8px;background:rgba(0,0,0,.08);min-width:0}
+.dashboardControlMetric>span{font-size:9px;font-weight:850;text-transform:uppercase;letter-spacing:.055em;color:#7f8e9f}
+.dashboardControlMetric>strong{font-size:18px;line-height:1.05;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dashboardControlMetric>small{font-size:10px;line-height:1.3;color:#8998a8}
+.dashboardControlCard>p{margin:0;font-size:10px;line-height:1.45;color:#9aa8b7}
+.dashboardControlCard>p strong{color:#d7e0e8}
+.dashboardAutomationFeed{padding:11px 13px}
+.dashboardAutomationFeed>.dashboardControlHead{margin-bottom:4px}
+.dashboardAutomationEvent{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:9px;align-items:center;padding:7px 0;border-top:1px solid rgba(255,255,255,.055);color:#eaf0f5;text-decoration:none}
+.dashboardAutomationEvent:first-of-type{border-top:0}
+.dashboardAutomationEvent>i{width:7px;height:7px;border-radius:50%;background:var(--status-good)}
+.dashboardAutomationEvent>i.warn{background:var(--status-warn)}
+.dashboardAutomationEvent>i.bad{background:var(--status-bad)}
+.dashboardAutomationEvent>span{display:grid;gap:2px;min-width:0}
+.dashboardAutomationEvent strong{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dashboardAutomationEvent small{font-size:10px;color:#8998a8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dashboardAutomationEvent time{font-size:10px;color:#718092;white-space:nowrap}
+.dashboardControlEmpty{margin:8px 0 2px;color:#8998a8;font-size:11px}
+@media(max-width:820px){.dashboardControlGrid{grid-template-columns:1fr}}
+@media(max-width:620px){
+  .dashboardControlMetrics{grid-template-columns:1fr}
+  .dashboardAutomationEvent{grid-template-columns:8px minmax(0,1fr)}
+  .dashboardAutomationEvent time{grid-column:2}
+}

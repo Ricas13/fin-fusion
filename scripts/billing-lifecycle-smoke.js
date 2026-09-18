@@ -48,6 +48,9 @@ async function activeDelinquencyHolds(customerId) {
     const oneTime = await subscription({ customerId: oneTimeCustomer.id, planId: plan.id, source: 'stripe', providerId: oneTimeProviderId, days: 30, billingMode: 'payment' });
     const failureSub = await subscription({ customerId: failureCustomer.id, planId: plan.id, source: 'stripe', providerId: failureProviderId, days: 12 });
 
+    const providerCounts = await billing.recurringProviderCounts();
+    assert(Number(providerCounts.stripe) >= 2, 'canonical provider counts must include live Stripe recurring subscriptions');
+    assert(Number(providerCounts.paypal) >= 1, 'canonical provider counts must include live PayPal recurring subscriptions');
     const futureStripe = new Date(Date.now() + 10 * 86400000);
     const futurePayPal = new Date(Date.now() + 25 * 86400000);
     let stripeCancel = false;
