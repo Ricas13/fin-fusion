@@ -68,17 +68,27 @@ function assessUsage(row, policy, now = Date.now()) {
     const firstPlaybackDeadline = allocationStartAt
         ? allocationStartAt.getTime() + policy.firstPlaybackGraceDays * 86400000
         : null;
-    const retentionReadyAt = effectiveFirstPlaybackAt
+    const firstPlaybackOnTime = Boolean(
+        effectiveFirstPlaybackAt
+        && (
+            firstPlaybackDeadline == null
+            || effectiveFirstPlaybackAt.getTime() <= firstPlaybackDeadline
+        )
+    );
+    const retentionReadyAt = firstPlaybackOnTime
         ? effectiveFirstPlaybackAt.getTime() + policy.playbackWindowDays * 86400000
         : null;
 
+    // Rule 1 is deadline-based, not worker-run-based. A first playback that
+    // happens after the grace deadline must not retroactively activate the
+    // allocation just because the inactivity worker had not run yet.
     const firstPlaybackEligible = Boolean(
-        !hasPlayback
-        && firstPlaybackDeadline != null
+        firstPlaybackDeadline != null
         && now >= firstPlaybackDeadline
+        && !firstPlaybackOnTime
     );
     const usageEligible = Boolean(
-        hasPlayback
+        firstPlaybackOnTime
         && retentionReadyAt != null
         && now >= retentionReadyAt
         && seconds < policy.minimumPlaybackMinutes * 60
@@ -90,6 +100,7 @@ function assessUsage(row, policy, now = Date.now()) {
         lastPlaybackAt,
         lastActivityAt: asDate(row.last_activity_at), // display only; never retention authority
         hasPlayback,
+        firstPlaybackOnTime,
         referenceAt: lastPlaybackAt || allocationStartAt,
         observationStartedAt: hasPlayback ? effectiveFirstPlaybackAt : allocationStartAt,
         seconds,
