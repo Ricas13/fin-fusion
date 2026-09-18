@@ -191,11 +191,12 @@ async function disableAccounts(accounts) {
 // subscription, where `entitlement` is non-null) still only disables, same
 // as before. Free Server keeps its own careful grace-period-then-delete
 // lifecycle (customer-inactivity-scoped.js) rather than this immediate path.
-async function retireAccounts(accounts, { deleteAccounts = false, reason = '' } = {}) {
+async function retireAccounts(accounts, { deleteAccounts = false, reason = '', requireNoActivePlayback = false } = {}) {
     for (const account of accounts) {
         if (!account.server_enabled) continue;
-        if (deleteAccounts) await base.deleteJellyfinAccount(account, { reason });
-        else if (!account.disabled) await base.disableJellyfinAccount(account);
+        const deletionOptions = { reason, requireNoActivePlayback: Boolean(requireNoActivePlayback) };
+        if (deleteAccounts) await base.deleteJellyfinAccount(account, deletionOptions);
+        else if (!account.disabled) await base.disableJellyfinAccount(account, deletionOptions);
     }
 }
 
@@ -322,13 +323,18 @@ async function recoverMissingLaneAccount(customerId, entitlement, lane, staleAcc
     return created;
 }
 
-async function reconcileLane(customerId, entitlement, lane, accounts, { makePrimary = false } = {}) {
+async function reconcileLane(customerId, entitlement, lane, accounts, { makePrimary = false, requireNoActivePlaybackOnDelete = false } = {}) {
     const laneAccounts = accounts.filter(account => account.access_lane === lane);
     if (!entitlement || entitlement.blocked) {
         const definitivelyGone = lane === 'primary' && (!entitlement || entitlement.admin_jellyfin_removed === true);
         await retireAccounts(laneAccounts, {
             deleteAccounts: definitivelyGone,
-            reason: entitlement?.admin_jellyfin_removed ? 'Jellyfin access removed by administrator' : 'No valid paid entitlement'
+            reason: entitlement?.admin_jellyfin_removed
+                ? 'Jellyfin access removed by administrator'
+                : lane === 'free' && entitlement?.blocked
+                    ? 'Free Server access blocked by inactivity or lifecycle policy'
+                    : 'No valid paid entitlement',
+            requireNoActivePlayback: lane === 'free' && requireNoActivePlaybackOnDelete
         });
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
@@ -458,6 +464,18 @@ async function reconcileCustomerUnlocked(customerId) {
     const freeLaneEntitlement = jellyfinRemovedByAdmin && freeEntitlement
         ? { ...freeEntitlement, blocked: true, admin_jellyfin_suppressed_by_primary: true }
         : freeEntitlement;
+    // Automatic inactivity owns one exact active hold. Derive destructive
+    // playback safety from that canonical state instead of caller context.
+    const freeInactivityDeletion = Boolean(
+        freeLaneEntitlement?.blocked
+        && !jellyfinRemovedByAdmin
+        && !freeLaneEntitlement?.admin_jellyfin_removed
+        && freeEntitlement?.plan_id
+        && holds.some(hold =>
+            hold.hold_type === 'inactivity_policy'
+            && String(hold.source_key || '') === `plan:${freeEntitlement.plan_id}`
+        )
+    );
 
     await control.markCustomerRunning(customerId, controlEntitlement);
     try {
@@ -468,7 +486,8 @@ async function reconcileCustomerUnlocked(customerId) {
                 makePrimary: Boolean(primaryEntitlement)
             });
             const free = await reconcileLane(customerId, freeLaneEntitlement, 'free', accounts, {
-                makePrimary: !primaryEntitlement && desired.freeJellyfin
+                makePrimary: !primaryEntitlement && desired.freeJellyfin,
+                requireNoActivePlaybackOnDelete: freeInactivityDeletion
             });
             if (!primaryEntitlement && !free.active) {
                 // primary/free lanes above already retired their own accounts
