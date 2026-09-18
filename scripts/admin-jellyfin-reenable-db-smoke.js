@@ -96,6 +96,18 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
         assert(retryHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed reprovisioning must restore the inactivity hold');
         assert.strictEqual((await query(`SELECT COUNT(*)::int count FROM jellyfin_accounts WHERE customer_id=$1`, [retry.customerId])).rows[0].count, 0, 'failed restore must not leave a disabled or partial account');
 
+        const postcondition = await fixture('postcondition');
+        await assert.rejects(
+            restore.restoreDisabledFreeAccess(postcondition.customerId, {
+                actorUserId: null,
+                reconcile: async () => ({ active:false })
+            }),
+            error => error?.code === 'FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED',
+            'a reconcile that returns without one Free account must fail the restore'
+        );
+        const postconditionHolds = await accessHolds.activeHolds(postcondition.customerId);
+        assert(postconditionHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed restore postcondition must restore the inactivity hold');
+
         console.log('admin jellyfin present-or-deleted db smoke: ok');
     } finally {
         for (const customerId of created.customers.reverse()) await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
