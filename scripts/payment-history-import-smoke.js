@@ -6,6 +6,7 @@ const path = require('path');
 const historyAccounting = require('../src/payments/history-accounting');
 const dashboardLedger = require('../src/payments/dashboard-ledger');
 const classifier = require('../src/payments/provider-transaction-classifier');
+const dashboardAnalytics = require('../src/platform/admin-dashboard-analytics');
 
 const coverage = dashboardLedger.coverageFromRuns([
     { provider_scope: 'stripe', range_start: '2025-01-01', range_end: '2025-01-31' },
@@ -41,6 +42,18 @@ assert.strictEqual(historyAccounting.historyKind({ provider: 'paypal', transacti
 assert.strictEqual(historyAccounting.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'P', gross_amount_minor: 1000 }), null, 'pending PayPal rows must not be booked as revenue');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'S', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'D', gross_amount_minor: 1000 }), null, 'dashboard must reject denied PayPal revenue too');
+
+const delayedStripeRevenue = dashboardAnalytics.revenueFromEvent({
+    provider: 'stripe',
+    event_type: 'checkout.session.async_payment_succeeded',
+    payload: { data: { object: { mode: 'payment', payment_status: 'paid', amount_total: 1234, currency: 'gbp', customer_details: { email: 'delayed@example.invalid' } } } }
+});
+assert.deepStrictEqual(delayedStripeRevenue, { minor: 1234, currency: 'GBP', email: 'delayed@example.invalid' }, 'a delayed Stripe Checkout success must become live revenue when payment actually succeeds');
+assert.strictEqual(dashboardAnalytics.revenueFromEvent({
+    provider: 'stripe',
+    event_type: 'checkout.session.completed',
+    payload: { data: { object: { mode: 'payment', payment_status: 'unpaid', amount_total: 1234, currency: 'gbp' } } }
+}), null, 'an earlier unpaid Checkout completion must not be booked as revenue before delayed settlement');
 
 // Stripe charge.refunded amount_refunded is cumulative. The second webhook
 // below means another 20.00 was refunded, not another 30.00.
@@ -110,6 +123,10 @@ assert.ok(dashboardSource.includes('EVENT_PAGE_SIZE') && dashboardSource.include
 assert.ok(!dashboardSource.includes('LIMIT 25000'), 'Commerce financial totals must never silently stop at 25,000 payment events');
 assert.ok(dashboardSource.includes("status='completed'"), 'dashboard accounting may only trust completed import coverage');
 assert.ok(dashboardSource.includes('completed_at'), 'dashboard accounting must cap same-day coverage at the actual import completion time');
+
+const stripeWebhookSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'stripe.js'), 'utf8');
+assert.ok(stripeWebhookSource.includes("case 'checkout.session.async_payment_succeeded': await activateCheckoutSession(object)"), 'Stripe delayed payment success must reuse the canonical verified fulfillment path');
+assert.ok(stripeWebhookSource.includes("case 'checkout.session.async_payment_failed': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'failed')"), 'Stripe delayed payment failure must release the local checkout/capacity hold');
 
 const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
 for (const eventType of [
