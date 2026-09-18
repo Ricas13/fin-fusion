@@ -35,6 +35,22 @@ const JOB_LABELS = Object.freeze({
   stremio_managed_accounts: 'Stremio access',
   stremio_external_tokens: 'Stremio tokens'
 });
+const RECENT_JOB_KEYS = new Set([
+  'free_capacity_backfill',
+  'customer_deletions',
+  'creation_intent_recovery',
+  'customer_service_recovery',
+  'billing',
+  'subscription_discovery',
+  'provider_checkout_recovery',
+  'provider_operation_recovery',
+  'payment_events',
+  'plan_changes',
+  'discord_roles',
+  'activation_cleanup',
+  'stremio_managed_accounts',
+  'stremio_external_tokens'
+]);
 
 function cleanError(error) {
   return String(error?.message || error || 'Unavailable').replace(/\s+/g, ' ').trim().slice(0, 240);
@@ -141,9 +157,10 @@ async function freeSnapshot(jobRows) {
     };
   }
 
-  const [capacity, waitingRows] = await Promise.all([
+  const [capacity, waitingRows, pendingClaims] = await Promise.all([
     planCapacity.usage(plan.id),
-    freeBackfill.waitingCandidates(500)
+    freeBackfill.waitingCandidates(500),
+    freeBackfill.pendingClaimCandidates(500)
   ]);
   const inactivityJob = (jobRows || []).find(row => row.job_key === 'customer_inactivity') || null;
   const actualRemaining = capacity.remaining == null ? null : Math.max(0, Number(capacity.remaining) || 0);
@@ -159,8 +176,8 @@ async function freeSnapshot(jobRows) {
     used: capacity.used == null ? null : Number(capacity.used),
     reserved: capacity.reserved == null ? null : Number(capacity.reserved),
     limit: capacity.limit == null ? null : Number(capacity.limit),
-    waiting: waitingRows.length,
-    waitingCapped: waitingRows.length >= 500,
+    waiting: waitingRows.length + pendingClaims.length,
+    waitingCapped: waitingRows.length >= 500 || pendingClaims.length >= 500,
     advertisedRemaining,
     bufferedPlaces,
     inactivityEnabled: Boolean(policy.enabled),
@@ -245,23 +262,25 @@ async function inactivityAuditActions(limit = 5) {
 
 function recentJobActions(rows, limit = 8) {
   return (rows || [])
-    .filter(row => row.last_completed_at || row.last_success_at)
+    .filter(row => RECENT_JOB_KEYS.has(String(row.job_key || '')) && (row.last_completed_at || row.last_success_at))
     .map(row => {
       const state = jobHealth.healthState(row);
       const failed = Math.max(0, Number(row.last_failed_count || 0));
-      const processed = row.last_processed_count == null ? null : Number(row.last_processed_count);
+      const processed = row.last_processed_count == null ? 0 : Math.max(0, Number(row.last_processed_count) || 0);
+      if (!processed && !failed && !['failed','degraded'].includes(state)) return null;
       const details = [];
-      if (processed != null) details.push(`${processed} processed`);
+      if (processed) details.push(`${processed} processed`);
       if (failed) details.push(`${failed} failed`);
       if (state === 'degraded' && row.last_warning) details.push('completed with warnings');
       return {
-        kind: ['failed','stale'].includes(state) ? 'bad' : state === 'degraded' ? 'warn' : 'good',
+        kind: state === 'failed' ? 'bad' : state === 'degraded' || failed ? 'warn' : 'good',
         label: jobLabel(row.job_key),
         detail: details.join(' · ') || state,
         at: row.last_completed_at || row.last_success_at,
         href: '/admin/automation'
       };
     })
+    .filter(Boolean)
     .sort((a, b) => dateMs(b.at) - dateMs(a.at))
     .slice(0, Math.max(1, Number(limit) || 8));
 }
@@ -374,6 +393,7 @@ function renderControlCenter(data = {}) {
 
 module.exports = {
   JOB_LABELS,
+  RECENT_JOB_KEYS,
   ageLabel,
   jobLabel,
   automationSnapshot,
