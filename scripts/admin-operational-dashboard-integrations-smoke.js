@@ -10,6 +10,8 @@ const dashboardSource=read('src/platform/admin-dashboard.js');
 const dashboardDataSource=read('src/platform/admin-dashboard-data.js');
 const dashboardMainSource=read('src/platform/admin-dashboard-main.js');
 const controlCenterSource=read('src/platform/admin-dashboard-control-center.js');
+const freeBackfillSource=read('src/automation/free-capacity-backfill.js');
+const dashboardPageSource=read('src/platform/admin-dashboard-page.js');
 const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const liveStreamSource=read('src/platform/admin-dashboard-live-streams.js');
 const liveStreamClient=read('public/js/admin-dashboard-live-streams.js');
@@ -33,6 +35,8 @@ assert(dashboardSource.includes('dashboardAnalyticsDisclosure')&&dashboardSource
 assert(!dashboardSource.includes('function attentionOverview')&&!dashboardSource.includes('setupCompact'),'Home must not reintroduce separate Needs Attention or setup tiles outside the target hero + live streams + three-widget layout');
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
 assert(!dashboardMainSource.includes("require('./admin-dashboard-data')")&&!dashboardMainSource.includes('dashboardData(range,reporting)'),'Live /admin must not execute the retired full legacy dashboard analytics stack beside the current growth/server analytics');
+assert(dashboardMainSource.includes("showFinancialWarning:false")&&dashboardSource.includes("${financialWarningBanner(ctx)}${dashboardHero(ctx)}"),'Financial integrity warnings must stay above the headline cards instead of being hidden inside collapsed analytics');
+assert(dashboardPageSource.includes('showFinancialWarning = true')&&dashboardPageSource.includes('financialWarningBanner'),'Shared widget dashboards must preserve financial warnings by default while allowing Home to place them outside its disclosure');
 assert(dashboardMainSource.includes("SELECT EXISTS(SELECT 1 FROM plans) AS has_plans"),'Home setup action must use a minimal prerequisite read instead of loading full setup-readiness diagnostics');
 assert(!dashboardSource.includes('Needs attention'),'Home must rely on the persistent Alerts header instead of duplicating Needs Attention as another hero card');
 assert(dashboardSource.includes("require('./admin-dashboard-control-center')")&&dashboardSource.includes('controlCenter.controlCenterData()'),'Dashboard must aggregate the control-centre snapshot through the dedicated read-only module');
@@ -42,6 +46,8 @@ assert(controlCenterSource.includes("require('../payments/subscription-discovery
 assert(!controlCenterSource.includes("require('../payments/billing-control')")&&!controlCenterSource.includes('billing.dashboardData()'),'Billing integrity must not derive global health from the Billing page\'s intentionally limited 500-subscription / 50-event display rows');
 assert(controlCenterSource.includes("actor_user_id IS NULL")&&controlCenterSource.includes("'customer.inactivity.remove_jellyfin'"),'Recent automation feed must prefer durable automated outcomes rather than admin click history');
 assert(controlCenterSource.includes('freeBackfill.pendingClaimCandidates(500, { planId: plan.id })')&&controlCenterSource.includes('freeBackfill.waitingCandidates(500, { planId: plan.id })'),'Free Server waiting count must include both backlog types while staying scoped to the same canonical Free plan as capacity');
+assert(freeBackfillSource.includes('pendingClaimCandidates(limit = 100, { planId = null } = {})')&&freeBackfillSource.includes('waitingCandidates(limit = 100, { planId = null } = {})'),'Backfill candidate readers must support optional plan scoping without changing the automation worker default');
+assert(freeBackfillSource.includes('($2::uuid IS NULL OR r.plan_id=$2::uuid)')&&freeBackfillSource.includes('($2::uuid IS NULL OR p.id=$2::uuid)'),'Free backlog plan scoping must be enforced in SQL rather than filtered after a capped read');
 assert(controlCenter.RECENT_JOB_KEYS.has('free_capacity_backfill')&&!controlCenter.RECENT_JOB_KEYS.has('health')&&!controlCenter.RECENT_JOB_KEYS.has('free_places_digest'),'Recent automation feed must keep meaningful customer-impacting work and exclude high-frequency heartbeat/digest noise');
 assert(!controlCenterSource.includes('UPDATE ')&&!controlCenterSource.includes('DELETE FROM')&&!controlCenterSource.includes('INSERT INTO'),'Dashboard control-centre module must remain read-only');
 assert(dashboardCss.includes('.dashboardControlCenter')&&dashboardCss.includes('.dashboardAutomationFeed'),'Dashboard control-centre presentation must use the compact shared dashboard stylesheet');
