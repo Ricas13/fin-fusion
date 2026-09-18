@@ -91,6 +91,10 @@ assert(recurringIdentityMigration.includes('guard_subscription_provider_identity
 assert(revenueIntegrity.includes('duplicate_provider_billing_identity')
     && revenueIntegrity.includes('HAVING COUNT(*)>1'),
     'Revenue integrity must surface historical duplicate provider billing ownership.');
+assert(revenueIntegrity.includes('renewal_service_credit_unsettled')
+    && revenueIntegrity.includes("r.state='provider_applied'")
+    && revenueIntegrity.includes("INTERVAL '48 hours'"),
+    'Revenue integrity must surface provider-applied renewal service credit that never reached its local debit.');
 for (const eventType of [
     'charge.refunded','charge.dispute.created','charge.dispute.closed',
     'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
