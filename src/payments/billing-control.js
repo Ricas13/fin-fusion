@@ -282,6 +282,22 @@ async function recoverProviderOperation(op) {
     await providerOps.reconciled(op.id, { result:{subscriptionId:row.id,recovered:true} });
     return { ok:true,id:op.id,type:op.operation_type };
 }
+async function recurringProviderCounts() {
+    const result = await query(`
+        SELECT source,COUNT(*)::int AS count
+        FROM subscriptions
+        WHERE source IN ('stripe','paypal')
+          AND billing_mode='subscription'
+          AND status IN ('active','trialing','past_due','paused')
+        GROUP BY source
+    `);
+    const counts = { stripe: 0, paypal: 0 };
+    for (const row of result.rows) {
+        if (Object.prototype.hasOwnProperty.call(counts, row.source)) counts[row.source] = Number(row.count || 0);
+    }
+    return counts;
+}
+
 async function dashboardData() {
     const [subscriptions, events] = await Promise.all([
         query(`SELECT s.id,s.customer_id,s.plan_id,s.status,s.source,s.billing_mode,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.currency,c.display_name,c.email,u.username AS portal_username,ps.remote_status,ps.remote_period_end,ps.remote_cancel_at_period_end,ps.last_attempt_at,ps.last_success_at,ps.last_error,ps.consecutive_failures,ps.next_attempt_at FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') ORDER BY CASE WHEN s.billing_mode='subscription' AND s.status IN ('active','trialing','past_due','paused') AND (NULLIF(BTRIM(ps.last_error),'') IS NOT NULL OR (s.status='past_due' AND COALESCE(s.cancel_at_period_end,FALSE)=FALSE)) THEN 0 ELSE 1 END,s.updated_at DESC LIMIT 500`),
@@ -291,4 +307,4 @@ async function dashboardData() {
     return { subscriptions:rows,events:events.rows,stats:{recurring:rows.filter(row=>row.recurring).length,active:rows.filter(row=>row.recurring&&['active','trialing'].includes(row.status)).length,pastDue:rows.filter(row=>row.recurring&&row.status==='past_due').length,cancelling:rows.filter(row=>row.recurring&&row.cancel_at_period_end).length,syncProblems:rows.filter(row=>row.recurring&&row.last_error).length} };
 }
 
-module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,recoverProviderOperation,dashboardData,subscriptionById,stripePeriod,stripePriceId,applyRemoteState,verifyExpectedRemote };
+module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,recoverProviderOperation,dashboardData,recurringProviderCounts,subscriptionById,stripePeriod,stripePriceId,applyRemoteState,verifyExpectedRemote };
