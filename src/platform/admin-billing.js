@@ -168,8 +168,10 @@ function discoverySection(req, coverage, result = null, error = null) {
 async function page(req, options = {}) {
     await runtimeSettings.ensureLoaded();
     const [data, stripeStatus, paypalStatus, coverage, premiumRows, providerCounts] = await Promise.all([billing.dashboardData(),providerSettings.status('stripe'),providerSettings.status('paypal'),discovery.coverageStats(),discovery.premiumEntitlements(),billing.recurringProviderCounts()]);
-    const recurring=data.subscriptions.filter(row=>row.recurring),problems=recurringProblems(data),failedEvents=data.events.filter(row=>row.processing_error&&!row.processed_at);
+    const recurring=data.subscriptions.filter(row=>row.recurring),failedEvents=data.events.filter(row=>row.processing_error&&!row.processed_at);
     const missingRows=premiumRows.filter(discovery.needsProviderLink).sort((a,b)=>new Date(a.current_period_end||'9999-12-31')-new Date(b.current_period_end||'9999-12-31'));
+    const missingProviderSubscriptionIds=new Set(missingRows.map(row=>String(row.subscription_id)));
+    const problems=recurringProblems(data).filter(row=>!missingProviderSubscriptionIds.has(String(row.id)));
     const endingRows=premiumRows.filter(discovery.endingWithoutRenewal).sort((a,b)=>new Date(a.current_period_end||'9999-12-31')-new Date(b.current_period_end||'9999-12-31'));
     const stripeRequired=Number(providerCounts.stripe||0)>0,paypalRequired=Number(providerCounts.paypal||0)>0;
     const providerState = `${stripeStatus.configured ? pill('Stripe ready', 'good') : pill('Stripe not ready', stripeStatus.enabled||stripeRequired ? 'warn' : '')} ${paypalStatus.configured ? pill('PayPal ready', 'good') : pill('PayPal not ready', paypalStatus.enabled||paypalRequired ? 'warn' : '')}`;
