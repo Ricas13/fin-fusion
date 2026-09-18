@@ -30,7 +30,7 @@ CREATE OR REPLACE FUNCTION public.guard_subscription_provider_identity()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public, pg_temp
-AS $
+AS $guard$
 DECLARE
     provider_key text;
 BEGIN
@@ -53,7 +53,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$;
+$guard$;
 
 DROP TRIGGER IF EXISTS subscriptions_provider_identity_guard ON public.subscriptions;
 CREATE TRIGGER subscriptions_provider_identity_guard
