@@ -11,6 +11,7 @@ const notificationSettings = require('../integrations/notification-settings');
 const operationsSettings = require('./operations-settings');
 const discovery = require('../payments/subscription-discovery');
 const providerSettings = require('../payments/provider-settings');
+const billingControl = require('../payments/billing-control');
 const { esc } = require('./admin-html');
 
 const JOB_LABELS = Object.freeze({
@@ -253,7 +254,7 @@ async function freeSnapshot(jobRows) {
 }
 
 async function billingSnapshot() {
-  const [coverage, integrity, stripeStatus, paypalStatus] = await Promise.all([
+  const [coverage, integrity, providerCounts, stripeStatus, paypalStatus] = await Promise.all([
     discovery.coverageStats(),
     query(`
       WITH recurring AS (
@@ -273,6 +274,7 @@ async function billingSnapshot() {
             AND NULLIF(BTRIM(processing_error),'') IS NOT NULL
             AND processed_at IS NULL) AS provider_event_errors
     `),
+    billingControl.recurringProviderCounts(),
     providerSettings.status('stripe'),
     providerSettings.status('paypal')
   ]);
@@ -281,13 +283,17 @@ async function billingSnapshot() {
   const syncProblems = Number(row.sync_problems || 0);
   const pastDue = Number(row.past_due || 0);
   const providerEventErrors = Number(row.provider_event_errors || 0);
-  const providerSetupProblems = [stripeStatus, paypalStatus].filter(status => status.enabled && !status.configured).length;
+  const providerSetupProblems = [stripeStatus, paypalStatus].filter(status => {
+    const liveRecurring = Number(providerCounts?.[status.provider] || 0);
+    return status.enabled ? !status.configured : liveRecurring > 0;
+  }).length;
   return {
     missing,
     syncProblems,
     pastDue,
     providerEventErrors,
     providerSetupProblems,
+    providerCounts,
     needsReview: missing > 0 || syncProblems > 0 || pastDue > 0 || providerEventErrors > 0 || providerSetupProblems > 0
   };
 }
