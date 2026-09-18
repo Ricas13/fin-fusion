@@ -94,7 +94,7 @@ async function queued(customerId) {
         const expiryResult = await expiry.expireAndReconcile({
             reconcileCustomer: async customerId => { reconciled.push(String(customerId)); return { active: false }; },
             autoDowngrade: async customerId => {
-                if (String(customerId) === String(expiryCustomer)) throw new Error('simulated automatic downgrade database outage');
+                if (String(customerId) === String(expiryCustomer)) throw new Error('Free Server is currently sold out.');
                 return null;
             },
             syncRecurring: async () => ({ ok: true }),
@@ -106,7 +106,7 @@ async function queued(customerId) {
         assert(expiryResult.failed >= 1, 'failed automatic downgrade must make the entitlement automation outcome degraded');
         const expiryRetry = await queued(expiryCustomer);
         assert(expiryRetry, 'automatic downgrade exception after paid expiry must be durably queued for a future cycle');
-        assert.match(expiryRetry.last_error, /simulated automatic downgrade database outage/);
+        assert.match(expiryRetry.last_error, /Free Server is currently sold out/,'temporary Free capacity exhaustion must be persisted for durable retry');
 
         console.log('automatic Free downgrade retry DB smoke: ok');
     } finally {

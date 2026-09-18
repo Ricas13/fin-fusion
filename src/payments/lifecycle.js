@@ -241,7 +241,11 @@ async function autoDowngradeEligibleCustomer(customerId) {
     if (live) return null;
     try { return await claimFreePlan(customerId, policy.downgradeFreePlanCode, { automatic: true }); }
     catch (error) {
-        if (/already been claimed|sold out|not available/i.test(error.message)) return null;
+        // A customer who already legitimately has/used this non-renewable Free
+        // claim needs no fallback work. Capacity or plan availability is
+        // different: that can change later, so propagate it to the durable
+        // automatic-Free retry owner instead of silently losing the fallback.
+        if (/already have free access|already been claimed/i.test(String(error?.message || error))) return null;
         throw error;
     }
 }

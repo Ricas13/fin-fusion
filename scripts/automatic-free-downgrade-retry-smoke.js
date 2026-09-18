@@ -13,6 +13,7 @@ const resilient = source('src/jellyfin/resilient-provisioning.js');
 const expiry = source('src/entitlements/subscription-expiry.js');
 const retry = source('src/entitlements/automatic-free-downgrade-retry.js');
 const jobs = source('src/automation/jobs.js');
+const lifecycle = source('src/payments/lifecycle.js');
 
 const wrapperStart = resilient.indexOf('async function maybeAutoDowngrade');
 const expiryStart = resilient.indexOf('async function expireSubscriptionsAndReconcile', wrapperStart);
@@ -30,6 +31,14 @@ assert(retry.includes('FOR UPDATE SKIP LOCKED'), 'automatic downgrade retries mu
 assert(retry.includes('next_attempt_at=NOW()+make_interval'), 'automatic downgrade retry failures must back off');
 assert(retry.includes("subscription.free.auto_downgrade.retry_resolved"), 'resolved automatic downgrade retries must be auditable');
 assert(jobs.includes('automaticFreeDowngradeRetry.processDue'), 'entitlement automation must process durable automatic downgrade retries');
+
+const autoDowngradeStart = lifecycle.indexOf('async function autoDowngradeEligibleCustomer');
+const autoDowngradeEnd = lifecycle.indexOf('async function activatePurchase', autoDowngradeStart);
+assert(autoDowngradeStart >= 0 && autoDowngradeEnd > autoDowngradeStart, 'automatic Free downgrade helper must remain present');
+const autoDowngrade = lifecycle.slice(autoDowngradeStart, autoDowngradeEnd);
+assert(/already have free access\|already been claimed/.test(autoDowngrade), 'already-satisfied/non-renewable Free claims may resolve the retry as no longer applicable');
+assert(!/sold out\|not available/.test(autoDowngrade), 'temporary Free capacity/availability failures must propagate into the durable retry queue');
+assert(/throw error;/.test(autoDowngrade), 'automatic Free fallback must propagate retryable claim failures');
 
 assert(expandedScript('check:db').includes('node scripts/automatic-free-downgrade-retry-db-smoke.js'), 'automatic downgrade retry DB regression must run in check:db');
 
