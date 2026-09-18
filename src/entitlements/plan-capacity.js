@@ -42,6 +42,42 @@ function checkoutReservationSql(alias='i'){
     AND COALESCE(${alias}.capacity_hold_until,${alias}.expires_at)>NOW()
   )))`;
 }
+function freePendingUnblockedSql(subscriptionAlias,holdAlias='free_pending_hold'){
+  return `(
+    public.subscription_admin_present(${subscriptionAlias}.customer_id,'jellyfin',${subscriptionAlias}.id)
+    OR NOT EXISTS(
+      SELECT 1
+      FROM customer_access_holds ${holdAlias}
+      WHERE ${holdAlias}.customer_id=${subscriptionAlias}.customer_id
+        AND ${holdAlias}.released_at IS NULL
+        AND (
+          (
+            ${holdAlias}.hold_type='inactivity_policy'
+            AND ${holdAlias}.source_key=('plan:'||${subscriptionAlias}.plan_id::text)
+            AND (
+              ${holdAlias}.metadata->>'subscriptionId'=${subscriptionAlias}.id::text
+              OR (
+                ${holdAlias}.metadata->>'subscriptionId' IS NULL
+                AND ${holdAlias}.created_at>=${subscriptionAlias}.created_at
+              )
+            )
+          )
+          OR (
+            ${holdAlias}.hold_type='jellyfin_cleanup'
+            AND EXISTS(
+              SELECT 1
+              FROM jellyfin_accounts free_hold_account
+              WHERE free_hold_account.customer_id=${subscriptionAlias}.customer_id
+                AND free_hold_account.account_purpose='jellyfin'
+                AND free_hold_account.access_lane='free'
+                AND ${holdAlias}.source_key=('server:'||free_hold_account.server_id::text)
+            )
+          )
+          OR ${holdAlias}.hold_type NOT IN('payment_delinquency','inactivity_policy','jellyfin_cleanup')
+        )
+    )
+  )`;
+}
 async function loadPlan(planId,db=query){
   const result=await db(`SELECT id,capacity_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
@@ -146,7 +182,21 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
       )
       AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
-      AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)
+      AND (
+        (
+          COALESCE(p.is_free_tier,FALSE)=TRUE
+          AND ${freePendingUnblockedSql('s','free_pending_hold')}
+        )
+        OR (
+          COALESCE(p.is_free_tier,FALSE)=FALSE
+          AND NOT EXISTS(
+            SELECT 1 FROM customer_access_holds h
+            WHERE h.customer_id=s.customer_id
+              AND h.hold_type=ANY($3::text[])
+              AND h.released_at IS NULL
+          )
+        )
+      )
       AND NOT EXISTS(
         SELECT 1 FROM jellyfin_accounts existing
         JOIN jellyfin_servers existing_server ON existing_server.id=existing.server_id
@@ -293,10 +343,21 @@ function fleetAvailableSql(alias='p'){
         OR (COALESCE(pending_subscription.service_extension_days,0)>0 AND pending_subscription.status IN('active','trialing','past_due','paused','cancelled','expired') AND (pending_subscription.current_period_end+((pending_subscription.service_extension_days||' days')::interval))>NOW())
       )
       AND NOT public.subscription_admin_removed(pending_subscription.customer_id,'jellyfin')
-      AND NOT EXISTS(SELECT 1 FROM customer_access_holds pending_hold
-        WHERE pending_hold.customer_id=pending_subscription.customer_id
-          AND pending_hold.hold_type IN('inactivity_policy','jellyfin_cleanup')
-          AND pending_hold.released_at IS NULL)
+      AND (
+        (
+          COALESCE(pending_plan.is_free_tier,FALSE)=TRUE
+          AND ${freePendingUnblockedSql('pending_subscription','free_pending_hold')}
+        )
+        OR (
+          COALESCE(pending_plan.is_free_tier,FALSE)=FALSE
+          AND NOT EXISTS(
+            SELECT 1 FROM customer_access_holds pending_hold
+            WHERE pending_hold.customer_id=pending_subscription.customer_id
+              AND pending_hold.hold_type IN('inactivity_policy','jellyfin_cleanup')
+              AND pending_hold.released_at IS NULL
+          )
+        )
+      )
       AND NOT EXISTS(
         SELECT 1 FROM jellyfin_accounts existing_account
         JOIN jellyfin_servers existing_server ON existing_server.id=existing_account.server_id
@@ -333,4 +394,4 @@ function acquisitionSql(alias='p'){
   return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
