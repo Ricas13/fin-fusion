@@ -4,6 +4,7 @@ const { query } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const legacyGrace = require('../entitlements/jellyfin-inactivity-grace');
+const inactivityHoldReconciliation = require('../entitlements/inactivity-hold-reconciliation');
 const subscriptionState = require('../entitlements/subscription-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
@@ -257,7 +258,7 @@ async function removeEligibleAccount(row, actorUserId) {
 
 async function runPlanRules({ actorUserId = null } = {}) {
     const globalCfg = await lifecyclePolicy.get();
-    const released = await base.releaseObsoletePlanHolds(actorUserId);
+    const released = await inactivityHoldReconciliation.releaseObsoleteAll(actorUserId);
 
     if (!globalCfg.enabled) {
         return {
