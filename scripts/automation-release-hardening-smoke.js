@@ -73,6 +73,17 @@ assert(revenueIntegrity.includes('payment_loss_event_without_incident')
     && revenueIntegrity.includes("NOT EXISTS(")
     && revenueIntegrity.includes("FROM payment_incidents pi"),
     'Revenue integrity must detect processed provider money-loss events that produced no durable incident.');
+assert(revenueIntegrity.includes('invalid_recurring_provider_reference')
+    && revenueIntegrity.includes("billing_mode='subscription'")
+    && revenueIntegrity.includes("!~* '^sub_'")
+    && revenueIntegrity.includes("!~* '^I-'"),
+    'Revenue integrity must page on malformed live Stripe/PayPal recurring identities.');
+const recurringIdentityMigration = read('db/migrations/20260918213000_recurring_provider_identity_guard.sql');
+assert(recurringIdentityMigration.includes('subscriptions_recurring_provider_identity_check')
+    && recurringIdentityMigration.includes('NOT VALID')
+    && recurringIdentityMigration.includes("~* '^sub_'")
+    && recurringIdentityMigration.includes("~* '^I-'"),
+    'PostgreSQL must reject new malformed recurring provider identities without blocking upgrade on historical repair rows.');
 for (const eventType of [
     'charge.refunded','charge.dispute.created','charge.dispute.closed',
     'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
