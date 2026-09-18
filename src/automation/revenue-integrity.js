@@ -122,6 +122,7 @@ async function scan() {
         staleCreationIntents,
         contaminatedPlans,
         strandedProvisioning,
+        processedLossEventsWithoutIncident,
         stalePaymentEvents,
         uncertainNotifications,
         jellyfinAdminAuthorityViolations,
@@ -176,6 +177,32 @@ async function scan() {
                 OR COALESCE(last_attempt_at,updated_at)<NOW()-INTERVAL '10 minutes'
               )
             ORDER BY COALESCE(last_attempt_at,updated_at)
+            LIMIT 100
+        `),
+        query(`
+            SELECT e.id,e.provider,e.provider_event_id,e.event_type,e.processed_at
+            FROM payment_events e
+            WHERE e.processed_at IS NOT NULL
+              AND e.processing_error IS NULL
+              AND e.created_at<NOW()-INTERVAL '2 minutes'
+              AND (
+                (e.provider='stripe' AND e.event_type IN(
+                  'charge.refunded','charge.dispute.created','charge.dispute.closed'
+                ))
+                OR
+                (e.provider='paypal' AND e.event_type IN(
+                  'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
+                  'PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED',
+                  'CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED'
+                ))
+              )
+              AND NOT EXISTS(
+                SELECT 1
+                FROM payment_incidents pi
+                WHERE pi.provider=e.provider
+                  AND pi.provider_event_id=e.provider_event_id
+              )
+            ORDER BY e.created_at
             LIMIT 100
         `),
         query(`
@@ -274,6 +301,7 @@ async function scan() {
     for (const row of staleCreationIntents.rows) findings.push(finding('jellyfin_creation_intent_stale', row, `Jellyfin creation intent ${row.id} remains ${row.status} on server ${row.server_id}${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of contaminatedPlans.rows) findings.push(finding('paid_plan_on_free_pool', row, `Plan ${row.code || row.name || row.id} is not a Free plan but uses server_class=free.`));
     for (const row of strandedProvisioning.rows) findings.push(finding('customer_access_not_converged', row, `Customer access is ${row.status} after ${row.consecutive_failures || 0} failure(s)${row.last_error ? `: ${row.last_error}` : ''}`));
+    for (const row of processedLossEventsWithoutIncident.rows) findings.push(finding('payment_loss_event_without_incident', row, `${row.provider} ${row.event_type} ${row.provider_event_id} was marked processed but has no durable payment incident.`));
     for (const row of stalePaymentEvents.rows) findings.push(finding('payment_event_stale', row, `${row.provider} ${row.event_type || 'payment event'} ${row.provider_event_id} has remained unprocessed${row.processing_error ? `: ${row.processing_error}` : ''}`));
     for (const row of uncertainNotifications.rows) findings.push(finding('notification_delivery_uncertain', row, `${row.channel} ${row.message_type || 'notification'} ${row.id} has an uncertain delivery outcome after ${row.attempts || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of jellyfinAdminAuthorityViolations.rows) findings.push(finding('jellyfin_admin_authority_violation', row, `${row.violation} for ${row.mode}${row.server_id ? ` on server ${row.server_id}` : ''}${row.reason ? `: ${row.reason}` : ''}`));
