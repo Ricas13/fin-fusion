@@ -63,6 +63,16 @@ const inactivityHoldReconciliation = require('../src/entitlements/inactivity-hol
             'a true desired-disabled policy target must never be accepted'
         );
 
+        const independentPaidHold = await fixture('paid-hold-independent');
+        await accessHolds.addHold({
+            customerId: independentPaidHold.customerId,
+            type: 'payment_delinquency',
+            sourceKey: 'stripe:sub_restore_independence',
+            reason: 'simulated paid subscription delinquency'
+        });
+        const independentRestoreState = await restore.restoreStatus(independentPaidHold.customerId);
+        assert.strictEqual(independentRestoreState.eligible, true, 'paid payment delinquency must not block restoration of the independent Free Jellyfin lane');
+
         const normal = await fixture('normal');
         let newAccountId = null;
         const normalResult = await restore.restoreDisabledFreeAccess(normal.customerId, {
