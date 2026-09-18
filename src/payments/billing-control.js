@@ -292,8 +292,8 @@ async function recurringProviderCounts() {
           COUNT(*) FILTER(WHERE source='stripe')::int AS stripe,
           COUNT(*) FILTER(WHERE source='paypal')::int AS paypal,
           COUNT(*) FILTER(
-            WHERE (source='stripe' AND COALESCE(provider_subscription_id,'') !~* '^sub_')
-               OR (source='paypal' AND COALESCE(provider_subscription_id,'') !~* '^I-')
+            WHERE (source='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^sub_')
+               OR (source='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-')
           )::int AS invalid
         FROM subscriptions
         WHERE source IN ('stripe','paypal')
@@ -310,7 +310,7 @@ async function recurringProviderCounts() {
 
 async function dashboardData() {
     const [subscriptions, events] = await Promise.all([
-        query(`SELECT s.id,s.customer_id,s.plan_id,s.status,s.source,s.billing_mode,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.currency,c.display_name,c.email,u.username AS portal_username,ps.remote_status,ps.remote_period_end,ps.remote_cancel_at_period_end,ps.last_attempt_at,ps.last_success_at,ps.last_error,ps.consecutive_failures,ps.next_attempt_at FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') ORDER BY CASE WHEN s.billing_mode='subscription' AND s.status IN ('active','trialing','past_due','paused') AND (NULLIF(BTRIM(ps.last_error),'') IS NOT NULL OR (s.status='past_due' AND COALESCE(s.cancel_at_period_end,FALSE)=FALSE) OR (s.source='stripe' AND COALESCE(s.provider_subscription_id,'') !~* '^sub_') OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') !~* '^I-')) THEN 0 ELSE 1 END,s.updated_at DESC LIMIT 500`),
+        query(`SELECT s.id,s.customer_id,s.plan_id,s.status,s.source,s.billing_mode,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.currency,c.display_name,c.email,u.username AS portal_username,ps.remote_status,ps.remote_period_end,ps.remote_cancel_at_period_end,ps.last_attempt_at,ps.last_success_at,ps.last_error,ps.consecutive_failures,ps.next_attempt_at FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') ORDER BY CASE WHEN s.billing_mode='subscription' AND s.status IN ('active','trialing','past_due','paused') AND (NULLIF(BTRIM(ps.last_error),'') IS NOT NULL OR (s.status='past_due' AND COALESCE(s.cancel_at_period_end,FALSE)=FALSE) OR (s.source='stripe' AND BTRIM(COALESCE(s.provider_subscription_id,'')) !~* '^sub_') OR (s.source='paypal' AND BTRIM(COALESCE(s.provider_subscription_id,'')) !~* '^I-')) THEN 0 ELSE 1 END,s.updated_at DESC LIMIT 500`),
         query(`SELECT provider,provider_event_id,event_type,processed_at,processing_error,created_at FROM payment_events WHERE provider IN ('stripe','paypal') ORDER BY CASE WHEN processed_at IS NULL AND NULLIF(BTRIM(processing_error),'') IS NOT NULL THEN 0 ELSE 1 END,created_at DESC LIMIT 50`)
     ]);
     const rows = subscriptions.rows.map(row => ({ ...row, recurring:isRecurring(row) }));
