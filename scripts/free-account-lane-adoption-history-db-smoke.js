@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const inactivity = require('../src/automation/customer-inactivity');
 const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace');
+const subscriptionState = require('../src/entitlements/subscription-state');
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
@@ -164,10 +165,121 @@ async function candidateWithGrace(customerId) {
     const remainingMs = new Date(legacyProtected.restoration_grace_until).getTime() - Date.now();
     assert(remainingMs > 6 * 86400000, `legacy safety must use the full retention window, not the 3-day first-play window; remaining=${remainingMs}`);
 
+    // Rolling-window overlap: a session that begins just before the window
+    // still contributes only the portion actually observed inside the window.
+    const overlapCustomerId = await makeCustomer('rolling-overlap');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3650 days')
+    `, [overlapCustomerId, planId]);
+    const overlapAccount = (await query(`
+        INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,created_at,access_lane_changed_at)
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE,NOW()-INTERVAL '30 days',NOW()-INTERVAL '30 days')
+        RETURNING id
+    `, [overlapCustomerId, serverId, `lane-overlap-${suffix}`, `lane-overlap-${suffix}`])).rows[0];
+    await query(`
+        INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
+        VALUES(
+            $1,$2,$3,$4,$5,'Boundary Movie','Movie','Living Room TV','Jellyfin Web','directplay',
+            NOW()-INTERVAL '7 days 20 minutes',
+            NOW()-INTERVAL '6 days 23 hours 20 minutes',
+            NOW()-INTERVAL '6 days 23 hours 20 minutes'
+        )
+    `, [overlapCustomerId, serverId, overlapAccount.id, `lane-overlap-play-${suffix}`, `lane-overlap-session-${suffix}`]);
+    const overlap = await candidateFor(overlapCustomerId);
+    assert(overlap, 'boundary-overlap Free customer must surface as a scan candidate');
+    const overlapMinutes = Number(overlap.playback_seconds || 0) / 60;
+    assert(overlapMinutes >= 39 && overlapMinutes <= 41, `rolling usage must count only the ~40 minutes inside the window; got ${overlapMinutes}`);
+    assert.strictEqual(overlap.eligible, false, 'a customer with at least 30 minutes inside the rolling window must not be removal-eligible');
+
+    // The overlap fix must not weaken allocation scoping. A stream that began
+    // before a paid->Free lane transition remains entirely pre-allocation data.
+    const crossingCustomerId = await makeCustomer('allocation-crossing');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3650 days')
+    `, [crossingCustomerId, planId]);
+    const crossingAccount = (await query(`
+        INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,created_at,access_lane_changed_at)
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE,NOW()-INTERVAL '30 days',NOW()-INTERVAL '10 minutes')
+        RETURNING id
+    `, [crossingCustomerId, serverId, `lane-crossing-${suffix}`, `lane-crossing-${suffix}`])).rows[0];
+    await query(`
+        INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
+        VALUES(
+            $1,$2,$3,$4,$5,'Paid-to-Free Crossing','Movie','Living Room TV','Jellyfin Web','directplay',
+            NOW()-INTERVAL '20 minutes',
+            NOW()-INTERVAL '1 minute',
+            NOW()-INTERVAL '1 minute'
+        )
+    `, [crossingCustomerId, serverId, crossingAccount.id, `lane-crossing-play-${suffix}`, `lane-crossing-session-${suffix}`]);
+    const crossing = await candidateFor(crossingCustomerId);
+    assert(crossing, 'allocation-crossing customer must surface as a scan candidate');
+    assert.strictEqual(crossing.has_playback, false, 'a session started before the Free lane transition must not activate the new Free allocation');
+    assert.strictEqual(Number(crossing.playback_seconds || 0), 0, 'the tail of a pre-allocation paid session must not count toward Free rolling usage');
+    assert.strictEqual(crossing.eligible, false, 'a newly transitioned Free allocation must remain in first-play grace');
+
+    // A server pin controls placement only. It must not defeat a Free
+    // inactivity hold or resurrect an expired Free entitlement. Explicit
+    // admin-present and permanent access remain true access grants.
+    const pinnedCustomerId = await makeCustomer('pinned-inactive');
+    const pinnedSubscription = (await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','migration',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3650 days')
+        RETURNING id
+    `, [pinnedCustomerId, planId])).rows[0];
+    await query(`
+        INSERT INTO customer_service_admin_control(customer_id,service,mode,server_id,reason)
+        VALUES($1,'jellyfin','admin_server_pin',$2,'Smoke pinned Free placement')
+    `, [pinnedCustomerId, serverId]);
+    await query(`
+        INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason,metadata)
+        VALUES($1,'inactivity_policy',$2,'Smoke Free inactivity','{}'::jsonb)
+    `, [pinnedCustomerId, `plan:${planId}`]);
+
+    let pinned = await subscriptionState.liveFreeJellyfinSubscription(pinnedCustomerId, { includeBlocked: true });
+    assert(pinned, 'pinned Free entitlement must remain discoverable for blocked-state reconciliation');
+    assert.strictEqual(pinned.admin_jellyfin_mode, 'forced_server');
+    assert.strictEqual(pinned.blocked, true, 'server pin must not override a Free inactivity hold');
+    assert.strictEqual(await subscriptionState.liveFreeJellyfinSubscription(pinnedCustomerId), null, 'blocked pinned Free access must disappear from normal entitlement lookup');
+
+    await query(`
+        INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason)
+        VALUES($1,$2,TRUE,'Smoke permanent Free access')
+    `, [pinnedCustomerId, pinnedSubscription.id]);
+    pinned = await subscriptionState.liveFreeJellyfinSubscription(pinnedCustomerId);
+    assert(pinned, 'permanent access must remain authoritative while the account is server-pinned');
+    assert.strictEqual(pinned.permanent_access, true);
+    assert.strictEqual(pinned.blocked, false);
+
+    await query('DELETE FROM customer_entitlement_overrides WHERE customer_id=$1', [pinnedCustomerId]);
+    await query(`
+        UPDATE subscriptions SET status='expired',current_period_end=NOW()-INTERVAL '1 day',updated_at=NOW()
+        WHERE id=$1
+    `, [pinnedSubscription.id]);
+    assert.strictEqual(
+        await subscriptionState.liveFreeJellyfinSubscription(pinnedCustomerId, { includeBlocked: true }),
+        null,
+        'server pin must not resurrect an otherwise expired Free entitlement'
+    );
+
+    await query(`
+        UPDATE customer_service_admin_control
+        SET mode='admin_present',server_id=NULL,reason='Smoke explicit present',updated_at=NOW()
+        WHERE customer_id=$1 AND service='jellyfin'
+    `, [pinnedCustomerId]);
+    pinned = await subscriptionState.liveFreeJellyfinSubscription(pinnedCustomerId);
+    assert(pinned, 'explicit admin-present must still extend and protect an otherwise expired Free entitlement');
+    assert.strictEqual(pinned.admin_jellyfin_mode, 'present');
+    assert.strictEqual(pinned.blocked, false);
+
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
     for (const customerId of created.customers.reverse()) {
         await query('DELETE FROM playback_history WHERE customer_id=$1', [customerId]).catch(() => {});
+        await query('DELETE FROM customer_access_holds WHERE customer_id=$1', [customerId]).catch(() => {});
+        await query('DELETE FROM customer_service_admin_control WHERE customer_id=$1', [customerId]).catch(() => {});
+        await query('DELETE FROM customer_entitlement_overrides WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM jellyfin_accounts WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM subscriptions WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
