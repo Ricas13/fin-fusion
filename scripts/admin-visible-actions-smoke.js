@@ -60,7 +60,7 @@ assert(customerDeletionFinalizer.includes("'admin.customer.hard_delete'"),'Perma
 const settings=navModel.groups.find(group=>group.key==='settings'),operations=navModel.groups.find(group=>group.key==='operations'),dashboard=navModel.groups.find(group=>group.key==='dashboard'),customers=navModel.groups.find(group=>group.key==='customers'),servers=navModel.groups.find(group=>group.key==='servers'),commerce=navModel.groups.find(group=>group.key==='commerce');
 assert(settings&&operations&&dashboard&&customers&&servers&&commerce,'All six fixed navigation groups must exist');
 assert.deepStrictEqual(navModel.groups.map(group=>group.key),['dashboard','customers','servers','commerce','operations','settings'],'Permanent navigation group order must remain fixed');
-assert.equal(navModel.groups.reduce((sum,group)=>sum+group.pages.length,0),19,'Permanent rail must expose exactly nineteen destinations');
+assert.equal(navModel.groups.reduce((sum,group)=>sum+group.pages.length,0),20,'Permanent rail must expose exactly twenty destinations');
 const commerceKeys=commerce.pages.map(page=>page[0]);
 assert(commerceKeys.includes('discounts')&&commerceKeys.includes('referrals'),'Discounts and Affiliates must remain permanent Commerce destinations');
 const settingsKeys=settings.pages.map(page=>page[0]),operationsKeys=operations.pages.map(page=>page[0]),dashboardKeys=dashboard.pages.map(page=>page[0]);
