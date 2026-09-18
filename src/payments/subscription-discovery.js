@@ -350,11 +350,70 @@ async function preview() {
     return summarizeMatches(matchPremiumRows(premium, remotes, context), remotes, [...stripe.warnings, ...paypal.warnings]);
 }
 async function coverageStats() {
-    const premium = await premiumEntitlements();
-    const linked = premium.filter(localRecurring).length;
-    const ending = premium.filter(endingWithoutRenewal).length;
-    const missing = premium.filter(needsProviderLink).length;
-    return { premium: premium.length, linked, ending, missing };
+    const result = await query(`
+        WITH premium AS (
+            SELECT e.source,e.provider_subscription_id,e.cancel_at_period_end,
+                   s.billing_mode,s.commercial_snapshot
+              FROM effective_customer_entitlements e
+              JOIN subscriptions s ON s.id=e.subscription_id
+             WHERE e.server_class='premium'
+               AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
+               AND COALESCE(e.price_minor_snapshot,e.price_minor,0)>0
+               AND COALESCE(e.is_free_tier,FALSE)=FALSE
+        ),
+        classified AS (
+            SELECT *,
+                   (
+                       LOWER(BTRIM(COALESCE(billing_mode,'')))='subscription'
+                       AND LOWER(BTRIM(COALESCE(source,''))) IN ('stripe','paypal')
+                   ) AS provider_recurring,
+                   (
+                       LOWER(BTRIM(COALESCE(billing_mode,'')))='subscription'
+                       AND (
+                           (LOWER(BTRIM(COALESCE(source,'')))='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^sub_')
+                           OR
+                           (LOWER(BTRIM(COALESCE(source,'')))='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^I-')
+                       )
+                   ) AS linked,
+                   (
+                       COALESCE(commercial_snapshot->>'kind','')='legacy_import'
+                       OR commercial_snapshot->'migrated'='true'::jsonb
+                   ) AS legacy_import,
+                   LOWER(BTRIM(COALESCE(commercial_snapshot->>'providerLinkDisposition','')))='ending' AS ending_disposition
+              FROM premium
+        ),
+        final AS (
+            SELECT *,
+                   (
+                       NOT linked
+                       AND NOT provider_recurring
+                       AND (
+                           LOWER(BTRIM(COALESCE(billing_mode,'')))='payment'
+                           OR (
+                               LOWER(BTRIM(COALESCE(billing_mode,'')))='manual'
+                               AND NOT legacy_import
+                           )
+                           OR (
+                               COALESCE(cancel_at_period_end,FALSE)=TRUE
+                               AND ending_disposition
+                           )
+                       )
+                   ) AS ending
+              FROM classified
+        )
+        SELECT COUNT(*)::int AS premium,
+               COUNT(*) FILTER(WHERE linked)::int AS linked,
+               COUNT(*) FILTER(WHERE ending)::int AS ending,
+               COUNT(*) FILTER(WHERE NOT linked AND NOT ending)::int AS missing
+          FROM final
+    `);
+    const row = result.rows[0] || {};
+    return {
+        premium: Number(row.premium || 0),
+        linked: Number(row.linked || 0),
+        ending: Number(row.ending || 0),
+        missing: Number(row.missing || 0)
+    };
 }
 
 async function linkOne(item, actorUserId) {
