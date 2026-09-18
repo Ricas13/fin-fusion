@@ -305,6 +305,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             inactive_reference_at: assessment.referenceAt,
             observation_started_at: assessment.observationStartedAt,
             has_playback: assessment.hasPlayback,
+            first_playback_on_time: assessment.firstPlaybackOnTime,
             admin_protected: adminProtected,
             eligible,
             repairExistingHold: Boolean(row.already_held && eligible),
