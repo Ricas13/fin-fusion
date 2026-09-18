@@ -49,6 +49,35 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
         };
     }
 
+    if (entitlement.admin_jellyfin_removed) {
+        return {
+            eligible: false,
+            reason: 'admin_removed',
+            entitlement,
+            sourceKey,
+            inactivityHold: hold.rows[0]
+        };
+    }
+
+    const otherBlocker = await db.query(`
+        SELECT hold_type,source_key
+        FROM customer_access_holds
+        WHERE customer_id=$1
+          AND released_at IS NULL
+          AND NOT (hold_type=$2 AND source_key=$3)
+        LIMIT 1
+    `, [customerId, HOLD_TYPE, sourceKey]);
+    if (otherBlocker.rowCount) {
+        return {
+            eligible: false,
+            reason: 'other_access_blocker',
+            entitlement,
+            sourceKey,
+            inactivityHold: hold.rows[0],
+            otherBlocker: otherBlocker.rows[0]
+        };
+    }
+
     return {
         eligible: true,
         reason: null,
@@ -84,7 +113,9 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
         if (!state.eligible) {
             const messages = {
                 no_live_free_jellyfin_entitlement: 'This customer does not have a live Free Server Jellyfin entitlement.',
-                no_active_inactivity_hold: 'This customer is not currently removed by the Free Server inactivity policy.'
+                no_active_inactivity_hold: 'This customer is not currently removed by the Free Server inactivity policy.',
+                admin_removed: 'Jellyfin access is explicitly removed by an administrator.',
+                other_access_blocker: 'Another active access restriction must be resolved before Free Server access can be restored.'
             };
             throw Object.assign(
                 new Error(messages[state.reason] || 'This Free Server access cannot be restored safely.'),
@@ -124,10 +155,42 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
     });
 
     let reconcileResult;
+    let account;
     try {
         reconcileResult = await reconcile(customerId);
+
+        const [hold, accountResult] = await Promise.all([
+            query(`
+                SELECT 1
+                FROM customer_access_holds
+                WHERE customer_id=$1
+                  AND hold_type=$2
+                  AND source_key=$3
+                  AND released_at IS NULL
+                LIMIT 1
+            `, [customerId, HOLD_TYPE, prepared.sourceKey]),
+            query(`
+                SELECT id,server_id,jellyfin_user_id,jellyfin_username,created_at,access_lane_changed_at
+                FROM jellyfin_accounts
+                WHERE customer_id=$1
+                  AND account_purpose='jellyfin'
+                  AND access_lane='free'
+                  AND disabled=FALSE
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [customerId])
+        ]);
+
+        if (hold.rowCount || accountResult.rowCount !== 1) {
+            const error = new Error('Free Server restore did not converge to one present enabled account.');
+            error.code = 'FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED';
+            throw error;
+        }
+        account = accountResult.rows[0];
     } catch (error) {
-        // Restoration is all-or-nothing from the customer's point of view.
+        // Any failed restore, including a failed postcondition after reconcile,
+        // returns to the same durable state: entitlement retained, inactivity
+        // hold active, no claim that access was restored.
         await accessHolds.addHold({
             customerId,
             type: HOLD_TYPE,
@@ -139,34 +202,17 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
                 error: String(error?.message || error).slice(0, 500)
             }
         }).catch(() => {});
-        throw error;
-    }
-
-    const [hold, account] = await Promise.all([
-        query(`
-            SELECT 1
-            FROM customer_access_holds
-            WHERE customer_id=$1
-              AND hold_type=$2
-              AND source_key=$3
-              AND released_at IS NULL
-            LIMIT 1
-        `, [customerId, HOLD_TYPE, prepared.sourceKey]),
-        query(`
-            SELECT id,server_id,jellyfin_user_id,jellyfin_username,created_at,access_lane_changed_at
-            FROM jellyfin_accounts
-            WHERE customer_id=$1
-              AND account_purpose='jellyfin'
-              AND access_lane='free'
-              AND disabled=FALSE
-            ORDER BY created_at DESC
-            LIMIT 1
-        `, [customerId])
-    ]);
-
-    if (hold.rowCount || account.rowCount !== 1) {
-        const error = new Error('Free Server restore did not converge to one present enabled account.');
-        error.code = 'FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED';
+        await query(`
+            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+            VALUES($1,'admin.customer.jellyfin.restore_free_access_failed','customer',$2,$3::jsonb)
+        `, [
+            actorUserId,
+            customerId,
+            JSON.stringify({
+                planId: prepared.planId,
+                error: String(error?.message || error).slice(0, 500)
+            })
+        ]).catch(() => {});
         throw error;
     }
 
@@ -174,7 +220,7 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
         restored: true,
         enabled: true,
         blocked: false,
-        account: account.rows[0],
+        account,
         planId: prepared.planId,
         sourceKey: prepared.sourceKey,
         restoredAt: prepared.restoredAt,
