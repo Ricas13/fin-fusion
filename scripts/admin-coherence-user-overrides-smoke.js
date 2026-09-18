@@ -17,7 +17,7 @@ assert(/marketing_features/.test(migration)&&/automation_protected/.test(migrati
 assert(/Where settings live/.test(settings)&&/settings-registry/.test(settings),'settings directory must use canonical registry');
 assert(/Find a setting/.test(settings)&&/settingsLookupPage/.test(settings),'settings lookup missing');
 assert(/Individual customer overrides/.test(settingsRegistry)&&/customer\.server/.test(settingsRegistry)&&/customer\.expiry/.test(settingsRegistry),'settings registry must own customer overrides');
-assert(/Where settings live/.test(settings)&&/Daily work belongs in Customers, Delivery, Plans & Payments, and Operations/.test(settings),'settings directory missing');
+assert(/Where settings live/.test(settings)&&/Daily work belongs in Customers, Servers, Plans, Commerce and Operations/.test(settings),'settings directory missing');
 assert(!/allowPrivateConnected/.test(settings),'settings identifier was corrupted');
 assert(/discoveryWarning/.test(stremioPool)&&/source was saved/.test(stremioAdmin),'Stremio source resilience missing');
 assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 override routes must import transaction');
