@@ -401,7 +401,26 @@ async function disableJellyfinAccount(account) {
 // customer's entitlement to this account ends and no admin authority
 // protects it, the account is removed rather than left disabled forever.
 // Tolerates a remote 404 (already gone) so this is safe to retry.
-async function deleteJellyfinAccount(account, { reason = '', actorUserId = null } = {}) {
+async function assertNoActivePlaybackBeforeDelete(account) {
+    const sessions = await registry.request(account.server_id, '/Sessions', { timeoutMs: 10000 });
+    if (!Array.isArray(sessions)) {
+        const error = new Error('Cannot safely delete Jellyfin account because the live sessions response was invalid.');
+        error.code = 'JELLYFIN_DELETE_PLAYBACK_SNAPSHOT_INVALID';
+        throw error;
+    }
+    const targetUserId = String(account.jellyfin_user_id || '').toLowerCase();
+    if (sessions.some(session =>
+        session?.NowPlayingItem
+        && String(session?.UserId || '').toLowerCase() === targetUserId
+    )) {
+        const error = new Error('Jellyfin account deletion blocked because playback started before the destructive action.');
+        error.code = 'JELLYFIN_ACTIVE_PLAYBACK_DELETE_BLOCKED';
+        throw error;
+    }
+}
+
+async function deleteJellyfinAccount(account, { reason = '', actorUserId = null, requireNoActivePlayback = false } = {}) {
+    if (requireNoActivePlayback) await assertNoActivePlaybackBeforeDelete(account);
     try {
         await registry.request(account.server_id, `/Users/${encodeURIComponent(account.jellyfin_user_id)}`, { method: 'DELETE' });
     } catch (error) {
@@ -508,6 +527,7 @@ module.exports = {
     createJellyfinAccount,
     applyPolicy,
     disableJellyfinAccount,
+    assertNoActivePlaybackBeforeDelete,
     deleteJellyfinAccount,
     markPrimaryAccount,
     setJellyfinPassword,

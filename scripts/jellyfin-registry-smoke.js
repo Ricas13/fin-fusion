@@ -119,17 +119,16 @@ try {
     assert(fleetSource.includes("registry.request(serverId, '/Users'") && fleetSource.includes('await persistUserActivity(serverId, users)'),'The regular fleet poll must refresh managed media-server user activity from /Users');
     assert(jobsSource.includes("require('./customer-inactivity-scoped')"),'Automation must use server-scoped inactivity safety checks');
 
-    const discoveryIndex=inactivitySource.indexOf('const discovered = await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg));');
-    const discoveryTrustIndex=inactivitySource.indexOf('let serverTelemetry = await refreshCandidateServers(discovered);',discoveryIndex);
-    const discoveryUsersIndex=inactivitySource.indexOf('serverTelemetry = await refreshCandidateUserActivity(discovered, serverTelemetry);',discoveryTrustIndex);
-    const recandidateIndex=inactivitySource.indexOf('const rows = discovered.length ? await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg)) : discovered;',discoveryUsersIndex);
-    assert(discoveryIndex>=0&&discoveryTrustIndex>discoveryIndex&&discoveryUsersIndex>discoveryTrustIndex&&recandidateIndex>discoveryUsersIndex,'Inactivity enforcement must refresh target media-server trust and /Users activity before rebuilding final candidates');
+    const discoveryIndex=inactivitySource.indexOf('const rows = await legacyGrace.applyLegacySafetyWindow(await base.candidates(globalCfg));');
+    const discoveryTrustIndex=inactivitySource.indexOf('const serverTelemetry = await refreshCandidateServers(rows);',discoveryIndex);
+    assert(discoveryIndex>=0&&discoveryTrustIndex>discoveryIndex,'Inactivity enforcement must discover current allocation/playback state and require fresh target-server playback-poll trust');
 
     const finalEligibilityIndex=inactivitySource.indexOf('async function finalEligibility');
-    const finalTrustIndex=inactivitySource.indexOf('let serverTelemetry = await refreshCandidateServers([row]);',finalEligibilityIndex);
-    const finalUsersIndex=inactivitySource.indexOf('serverTelemetry = await refreshCandidateUserActivity([row], serverTelemetry);',finalTrustIndex);
-    const finalCandidateIndex=inactivitySource.indexOf('await base.candidates(globalCfg, { customerId: row.customer_id })',finalUsersIndex);
-    assert(finalEligibilityIndex>=0&&finalTrustIndex>finalEligibilityIndex&&finalUsersIndex>finalTrustIndex&&finalCandidateIndex>finalUsersIndex,'Each final inactivity decision must refresh that account server trust and /Users activity immediately before re-evaluating eligibility');
+    const finalCandidateIndex=inactivitySource.indexOf('await base.candidates(globalCfg, { customerId: row.customer_id })',finalEligibilityIndex);
+    const finalTrustIndex=inactivitySource.indexOf('await activityTrust.serverTelemetry([fresh.server_id])',finalCandidateIndex);
+    assert(finalEligibilityIndex>=0&&finalCandidateIndex>finalEligibilityIndex&&finalTrustIndex>finalCandidateIndex,'Each final inactivity decision must re-read the exact customer candidate and target-server playback-poll trust immediately before deletion');
+    assert(inactivitySource.includes('withCustomerReconciliationLock'),'The final inactivity decision and exact account deletion must be serialized with customer reconciliation');
+    assert(!inactivitySource.includes('refreshCandidateUserActivity'),'Jellyfin /Users login/activity inventory must not become a hidden inactivity eligibility rule');
 
     const rows = [
         { server_id: 'free-server', eligible: true, customer_id: 'free-customer' },

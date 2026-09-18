@@ -43,7 +43,7 @@ assert(/CASE WHEN is_free_tier=TRUE THEN 1 ELSE streams END/.test(migration), 'F
 // Runtime enforcement is account/lane scoped, never customer-wide.
 assert(/require\('\.\.\/src\/jellyfin\/lane-stream-policy'\)/.test(activityWorker), 'activity worker must run the lane-aware policy');
 assert(/const key = String\(row\.jellyfin_account_id\)/.test(laneStream), 'stream enforcement must group by Jellyfin identity');
-assert(/String\(session\.UserId \|\| ''\)\.toLowerCase\(\) === userId/.test(laneStream), 'safety snapshot must revalidate the exact Jellyfin user');
+assert(/userId: String\(session\.UserId \|\| ''\)\.toLowerCase\(\)/.test(laneStream)&&/activeSessions\.filter\(session => session\.userId === userId\)/.test(laneStream), 'safety snapshot must revalidate the exact Jellyfin user while retaining cross-identity device safety');
 assert(/registry\.request\(row\.server_id/.test(laneStream), 'safety snapshot must stay on the account server');
 assert(/customer_lane_policy_overrides/.test(laneStream)&&/access_lane/.test(laneStream), 'stream limiter must read lane-specific overrides');
 assert(/commercial_snapshot->>'streams'/.test(laneStream), 'stream limiter must honor the subscription contract stream snapshot');

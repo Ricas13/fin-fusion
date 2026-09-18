@@ -31,7 +31,7 @@ const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace')
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
-const GLOBAL_CFG = { enabled: true, dryRun: false, freeFirstPlaybackGraceDays: 3, freeNoPlaybackDays: 7, freeMinimumPlaybackMinutes: 30, freePlaybackWindowDays: 7 };
+const GLOBAL_CFG = { enabled: true, dryRun: false };
 
 async function makeServer(label) {
     const row = await query(`
@@ -66,7 +66,7 @@ async function candidateFor(customerId) {
 }
 
 async function candidateWithGrace(customerId) {
-    const rows = await inactivityGrace.applyRestorationGrace(await inactivity.candidates(GLOBAL_CFG, { customerId }));
+    const rows = await inactivityGrace.applyLegacySafetyWindow(await inactivity.candidates(GLOBAL_CFG, { customerId }));
     return rows.find(row => String(row.customer_id) === String(customerId)) || null;
 }
 
@@ -103,11 +103,9 @@ async function candidateWithGrace(customerId) {
     const allocationAgeMs = Date.now() - new Date(reused.allocation_start_at).getTime();
     assert(allocationAgeMs >= 0 && allocationAgeMs < 5 * 60000, `allocation_start_at must track the lane-flip time (access_lane_changed_at), not the old paid playback timestamp; was ${reused.allocation_start_at}`);
 
-    // Case 2: an account that has ALWAYS been Free-lane, with real Free-lane
-    // playback history, must still recognize that established history as
-    // activation evidence -- proving the fix did not regress the legitimate
-    // same-lane-resubscribe scenario commit 14bcd021 was written for.
-    const alwaysCustomerId = await makeCustomer('always-free');
+    // Case 2: a new/re-added Free allocation never inherits playback from the
+    // previous allocation. Playback after the current allocation activates it.
+    const alwaysCustomerId = await makeCustomer('same-lane-readd');
     await query(`
         INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
         VALUES($1,$2,'active','manual',NOW()-INTERVAL '1 day',NOW()+INTERVAL '3650 days')
@@ -119,13 +117,33 @@ async function candidateWithGrace(customerId) {
     `, [alwaysCustomerId, serverId, `lane-always-${suffix}`, `lane-always-${suffix}`])).rows[0];
     await query(`
         INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
-        VALUES($1,$2,$3,$4,$5,'Smoke Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '2 days',NOW()-INTERVAL '2 days'+INTERVAL '20 minutes',NOW()-INTERVAL '2 days'+INTERVAL '20 minutes')
-    `, [alwaysCustomerId, serverId, alwaysAccount.id, `lane-always-play-${suffix}`, `lane-always-session-${suffix}`]);
+        VALUES($1,$2,$3,$4,$5,'Old Allocation Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '2 days',NOW()-INTERVAL '2 days'+INTERVAL '20 minutes',NOW()-INTERVAL '2 days'+INTERVAL '20 minutes')
+    `, [alwaysCustomerId, serverId, alwaysAccount.id, `lane-old-play-${suffix}`, `lane-old-session-${suffix}`]);
 
-    const always = await candidateFor(alwaysCustomerId);
-    assert(always, 'an always-Free customer with real playback history must still surface as a scan candidate');
-    assert.strictEqual(always.has_playback, true, 'established same-lane Free playback history must still count as activation evidence');
-    assert.strictEqual(always.eligible, false, 'a Free customer with recent same-lane playback must not be removal-eligible');
+    const beforeCurrentPlayback = await candidateFor(alwaysCustomerId);
+    assert(beforeCurrentPlayback, 're-added Free customer must surface as a scan candidate');
+    assert.strictEqual(beforeCurrentPlayback.has_playback, false, 'playback before the current subscription/allocation must not activate the new allocation');
+    assert.strictEqual(beforeCurrentPlayback.eligible, false, 'one-day-old re-add must still be inside the three-day first-play grace');
+
+    await query(`
+        INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
+        VALUES($1,$2,$3,$4,$5,'Boundary Crossing Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '1 day 5 minutes',NOW()-INTERVAL '23 hours 45 minutes',NOW()-INTERVAL '23 hours 45 minutes')
+    `, [alwaysCustomerId, serverId, alwaysAccount.id, `lane-current-play-${suffix}`, `lane-current-session-${suffix}`]);
+
+    const afterCrossingPlayback = await candidateFor(alwaysCustomerId);
+    assert.strictEqual(afterCrossingPlayback.has_playback, false, 'a stream that began before the current allocation must not activate the new Free allocation even if it crosses the boundary');
+    assert.strictEqual(Number(afterCrossingPlayback.playback_seconds||0),0,'pre-allocation playback must contribute zero Free usage');
+
+    await query(`
+        INSERT INTO playback_history(customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,device_name,client_name,playback_method,started_at,last_seen_at,ended_at)
+        VALUES($1,$2,$3,$4,$5,'Current Allocation Movie','Movie','Living Room TV','Jellyfin Web','directplay',NOW()-INTERVAL '23 hours',NOW()-INTERVAL '22 hours 40 minutes',NOW()-INTERVAL '22 hours 40 minutes')
+    `, [alwaysCustomerId, serverId, alwaysAccount.id, `lane-current-owned-play-${suffix}`, `lane-current-owned-session-${suffix}`]);
+
+    const afterCurrentPlayback = await candidateFor(alwaysCustomerId);
+    assert.strictEqual(afterCurrentPlayback.has_playback, true, 'playback that starts after the current allocation begins must activate it');
+    assert(Number(afterCurrentPlayback.playback_seconds||0)>=19*60&&Number(afterCurrentPlayback.playback_seconds||0)<=21*60,
+        `only playback owned by the current allocation should count; seconds=${afterCurrentPlayback.playback_seconds}`);
+    assert.strictEqual(afterCurrentPlayback.eligible, false, 'an activated allocation must receive one full rolling playback window before retention enforcement');
 
     // Case 3: pre-column Free rows can have an access_lane_changed_at backfill
     // newer than their genuine Free playback. The base scanner would therefore
@@ -160,8 +178,8 @@ async function candidateWithGrace(customerId) {
     const legacyProtected = await candidateWithGrace(legacyCustomerId);
     assert(legacyProtected, 'legacy backfilled Free account must remain visible after safety grace decoration');
     assert.strictEqual(legacyProtected.eligible, false, 'legacy safety window must suppress destructive inactivity enforcement');
-    assert.strictEqual(legacyProtected.restoration_grace_source, 'legacy_lane_backfill', 'legacy safety must be distinguishable from an administrator restore');
-    const remainingMs = new Date(legacyProtected.restoration_grace_until).getTime() - Date.now();
+    assert.strictEqual(legacyProtected.legacy_safety_source, 'legacy_lane_backfill', 'legacy safety must remain explicitly migration-only');
+    const remainingMs = new Date(legacyProtected.legacy_safety_until).getTime() - Date.now();
     assert(remainingMs > 6 * 86400000, `legacy safety must use the full retention window, not the 3-day first-play window; remaining=${remainingMs}`);
 
     console.log('free account lane-adoption history DB smoke: ok');

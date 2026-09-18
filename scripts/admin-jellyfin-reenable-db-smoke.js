@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const accessHolds = require('../src/entitlements/access-holds');
 const restore = require('../src/entitlements/jellyfin-inactivity-restore');
+const subscriptionState = require('../src/entitlements/subscription-state');
+const inactivityHoldReconciliation = require('../src/entitlements/inactivity-hold-reconciliation');
 
 (async () => {
     const suffix = crypto.randomBytes(5).toString('hex');
@@ -27,14 +29,14 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
         `, [`Restore ${label} ${suffix}`, `restore-${label}-${suffix}`]);
         const serverId = server.rows[0].id;
         created.servers.push(serverId);
-        await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days')`, [customerId, planId]);
+        const subscription = await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days') RETURNING id,created_at`, [customerId, planId]);
         const hold = await accessHolds.addHold({
             customerId,
             type: 'inactivity_policy',
             sourceKey: `plan:${planId}`,
             reason: 'Free-plan Jellyfin usage rule: DB smoke'
         });
-        return { customerId, planId, serverId, holdId: hold.id };
+        return { customerId, planId, serverId, holdId: hold.id, subscriptionId: subscription.rows[0].id };
     }
 
     try {
@@ -60,6 +62,16 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
             error => String(error?.code || '') === '23514',
             'a true desired-disabled policy target must never be accepted'
         );
+
+        const independentPaidHold = await fixture('paid-hold-independent');
+        await accessHolds.addHold({
+            customerId: independentPaidHold.customerId,
+            type: 'payment_delinquency',
+            sourceKey: 'stripe:sub_restore_independence',
+            reason: 'simulated paid subscription delinquency'
+        });
+        const independentRestoreState = await restore.restoreStatus(independentPaidHold.customerId);
+        assert.strictEqual(independentRestoreState.eligible, true, 'paid payment delinquency must not block restoration of the independent Free Jellyfin lane');
 
         const normal = await fixture('normal');
         let newAccountId = null;
@@ -93,8 +105,71 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
             'a reprovisioning failure must surface to the operator'
         );
         const retryHolds = await accessHolds.activeHolds(retry.customerId);
-        assert(retryHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed reprovisioning must restore the inactivity hold');
+        const retryHold = retryHolds.find(row => row.hold_type === 'inactivity_policy');
+        assert(retryHold, 'failed reprovisioning must restore the inactivity hold');
+        assert.strictEqual(String(retryHold.metadata?.subscriptionId || ''), String(retry.subscriptionId), 'restored hold must stay bound to the exact failed Free subscription episode');
         assert.strictEqual((await query(`SELECT COUNT(*)::int count FROM jellyfin_accounts WHERE customer_id=$1`, [retry.customerId])).rows[0].count, 0, 'failed restore must not leave a disabled or partial account');
+
+        const postcondition = await fixture('postcondition');
+        await assert.rejects(
+            restore.restoreDisabledFreeAccess(postcondition.customerId, {
+                actorUserId: null,
+                reconcile: async () => ({ active:false })
+            }),
+            error => error?.code === 'FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED',
+            'a reconcile that returns without one Free account must fail the restore'
+        );
+        const postconditionHolds = await accessHolds.activeHolds(postcondition.customerId);
+        assert(postconditionHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed restore postcondition must restore the inactivity hold');
+
+        // Reconciliation is multi-service. A later service can fail after the
+        // Free Jellyfin lane was already recreated. The restore owner must put
+        // the hold back and immediately compensate under that hold so the
+        // failed operation does not leave transient Free access active.
+        const partial = await fixture('partial-reconcile');
+        let partialCalls = 0;
+        await assert.rejects(
+            restore.restoreDisabledFreeAccess(partial.customerId, {
+                actorUserId: null,
+                reconcile: async customerId => {
+                    partialCalls += 1;
+                    const holds = await accessHolds.activeHolds(customerId);
+                    if (partialCalls === 1) {
+                        assert(!holds.some(row => row.hold_type === 'inactivity_policy'), 'first restore reconcile must run after releasing the inactivity hold');
+                        await query(`
+                            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary)
+                            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE)
+                        `, [customerId, partial.serverId, `remote-partial-${suffix}`, `Free_partial_${suffix}`]);
+                        throw new Error('simulated later-service failure');
+                    }
+                    assert(holds.some(row => row.hold_type === 'inactivity_policy'), 'compensation reconcile must run with the inactivity hold restored');
+                    await query(`DELETE FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane='free'`, [customerId]);
+                    return { active:false, status:'blocked' };
+                }
+            }),
+            /simulated later-service failure/,
+            'a later-service failure must still surface after compensation'
+        );
+        assert.strictEqual(partialCalls, 2, 'failed restore must immediately run one compensating reconcile');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int count FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane='free'`, [partial.customerId])).rows[0].count, 0, 'compensation must remove a Free account created by the failed restore');
+        const partialHolds = await accessHolds.activeHolds(partial.customerId);
+        assert(partialHolds.some(row => row.hold_type === 'inactivity_policy' && String(row.metadata?.subscriptionId || '') === String(partial.subscriptionId)), 'compensation must leave the exact inactivity hold active');
+
+        // A hold belongs to one removal episode, not forever to the canonical
+        // Free plan. A later Free subscription for the same plan must start clean.
+        const stale = await fixture('stale-hold');
+        await query(`UPDATE subscriptions SET status='expired',current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1`,[stale.subscriptionId]);
+        const replacementSubscription = await query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'active','free_claim',NOW(),NOW()+INTERVAL '3000 days')
+            RETURNING id
+        `,[stale.customerId,stale.planId]);
+        const replacementEntitlement = await subscriptionState.liveFreeJellyfinSubscription(stale.customerId,{includeBlocked:true});
+        assert.strictEqual(String(replacementEntitlement.subscription_id),String(replacementSubscription.rows[0].id),'new Free subscription must become canonical');
+        assert.strictEqual(Boolean(replacementEntitlement.blocked),false,'an inactivity hold created before the new Free subscription must not block the new allocation');
+        const releasedStale = await inactivityHoldReconciliation.releaseObsoleteForCustomer(stale.customerId);
+        assert.strictEqual(releasedStale,1,'customer reconciliation must retire the previous Free allocation hold');
+        assert((await query(`SELECT released_at FROM customer_access_holds WHERE id=$1`,[stale.holdId])).rows[0].released_at,'previous allocation hold must be released');
 
         console.log('admin jellyfin present-or-deleted db smoke: ok');
     } finally {

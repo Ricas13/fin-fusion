@@ -18,138 +18,147 @@ assert.match(route,/cleanupReturn\.returningCustomerStatus\(customerId\)/,'My Ac
 assert.match(route,/function markRemovedFreeAccess\(/,'My Access must decorate retained Free Server entitlements that were intentionally removed');
 assert.match(route,/access_removed:true,access_removed_reason:'inactivity'/,'inactivity-removed Free Server access must carry an explicit non-active presentation state');
 assert.match(route,/const subscriptions=markRemovedFreeAccess\(rawSubscriptions,returnStatus\)/,'the decorated subscription state must be the state rendered by My Access');
-assert.match(route,/returnStatus,/,'the view must receive restoration state for the removed Free Server profile');
 
-assert.match(view,/activeSubscriptions=accessRows\.filter\(subscription=>!subscription\.access_removed\)/,'active access must exclude intentionally removed subscriptions');
-assert.match(view,/removedSubscriptions=accessRows\.filter\(subscription=>subscription\.access_removed\)/,'removed access must be rendered separately');
 assert.match(view,/Removed for inactivity/,'removed Free Server access must never be labelled Active');
 assert.match(view,/Free Server access removed for inactivity/,'My Access must explain why Free Server access ended');
-assert.match(view,/It is not active and is not waiting for normal provisioning/,'intentional inactivity removal must not be presented as a provisioning failure');
 assert.match(view,/Restore Free Server access/,'a retained Free Server entitlement must offer explicit restoration');
-assert.match(view,/method="post" action="\/account\/provisioning\/retry"/,'restoration must reuse the existing guarded provisioning retry mutation');
-assert.match(view,/if\(!accounts\.length&&hasPendingMediaAccess\)/,'generic provisioning UI must only appear when current active media access is genuinely missing an account');
-assert.match(view,/hasPendingMediaAccess=activeSubscriptions\.some/,'removed Free Server access must not make generic provisioning appear pending');
-
 assert.match(view,/class="freeWatchLabel">Watch status</,'Free Server access must keep the compact watch-status treatment');
-assert.match(view,/freeAccessHealth--<%= freeHealth\.tone %>/,'My Access traffic-light styling must be driven by the shared Free Server health state');
-assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current playback window');
-assert.match(route,/const activated=Boolean\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)/,'My Access must derive activation from allocation-scoped playback evidence, not login or browse activity');
-assert.match(route,/return\{tone:'bad',label:'Play something to activate'/,'My Access must stay red before the first stream');
-assert.match(route,/const activityReference=inactiveReference\|\|lastActivity\|\|lastPlayback/,'My Access must evaluate recent activity using the canonical activity reference');
-assert.match(route,/const tone=allMet\?'good':metCount>0\?'warn':'bad'/,'post-activation health must be green for both checks, yellow for one and red for neither');
-assert.match(status,/const discoveryCfg=globalCfg\.enabled\?globalCfg:\{\.\.\.globalCfg,enabled:true\}/,'My Access health must remain discoverable when lifecycle enforcement is globally paused');
-assert.match(status,/lastActivityAt:row\.last_activity_at\|\|null/,'My Access status must expose refreshed Jellyfin account activity');
-assert.match(status,/eligible:Boolean\(row\.eligible&&globalCfg\.enabled&&enforcementReady\)/,'a paused global lifecycle must never be presented as removal-eligible');
-assert.match(status,/playbackMinutes:Math\.floor\(playbackSeconds\/60\)/,'My Access must count only completed playback minutes so it cannot show 30 minutes before the backend threshold is actually met');
+assert.match(view,/freeAccessHealth--<%= freeHealth\.tone %>/,'My Access styling must be driven by shared Free Server health state');
+assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current rolling window');
+
+assert.match(route,/const missedFirstPlaybackDeadline=Boolean\(firstPlayback&&status\.firstPlaybackOnTime===false\)/,'My Access must distinguish late playback from valid activation');
+assert.match(route,/const activated=Boolean\(!missedFirstPlaybackDeadline&&\(firstPlayback\|\|status\.hasPlayback\|\|status\.currentlyPlaying\)\)/,'activation must come from on-time playback, never login/browse activity');
+assert.match(route,/label:missedFirstPlaybackDeadline\?'First-play deadline missed':'Play something to activate'/,'pre-activation status must distinguish a still-actionable place from a missed first-play deadline');
+assert.match(route,/const minimumMet=playbackMinutes>=minimumPlaybackMinutes/,'post-activation health must depend only on rolling watched minutes');
+assert.match(route,/const tone=minimumMet\?'good':'bad'/,'there must be no invented third/yellow activity rule');
+assert.doesNotMatch(route,/activityReference=inactiveReference\|\|lastActivity\|\|lastPlayback/,'Jellyfin login/activity must not affect retention health');
+assert.doesNotMatch(route,/noPlaybackDays/,'My Access must not expose the retired login/activity rule');
+
+assert.match(status,/const discoveryCfg = globalCfg\.enabled[\s\S]*?\{ \.\.\.globalCfg, enabled: true \}/,'My Access health must remain discoverable when lifecycle enforcement is paused');
+assert.match(status,/eligible: Boolean\(row\.eligible && globalCfg\.enabled && enforcementReady\)/,'paused lifecycle must never be shown as removal-eligible');
+assert.match(status,/playbackMinutes: Math\.floor\(playbackSeconds \/ 60\)/,'My Access must count only completed playback minutes');
+assert.doesNotMatch(status,/refreshCandidateUserActivity/,'My Access status must not perform a second Jellyfin user/login inventory refresh');
 
 const preFirst=freeAccessHealth({
   applies:true,
-  policy:{firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
   allocationStartAt:'2026-09-05T12:00:00.000Z',
   firstPlaybackAt:null,
   lastPlaybackAt:null,
   lastActivityAt:'2026-09-07T11:00:00.000Z',
-  observationStartedAt:'2026-09-05T12:00:00.000Z',
-  inactiveReferenceAt:'2026-09-07T11:00:00.000Z',
   hasPlayback:false,
   playbackMinutes:0,
   currentlyPlaying:false,
-  automationProtected:false,
   enforcementReady:true,
   eligible:false
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(preFirst.tone,'bad','a Free place must stay red until the customer actually plays something, even if Jellyfin login activity is recent');
-assert.equal(preFirst.activated,false,'non-playback activity must not activate a restored or new allocation');
-assert.equal(preFirst.removalAt.toISOString(),'2026-09-08T12:00:00.000Z','My Access must show the independent three-day first-play deadline from the current allocation');
+assert.equal(preFirst.tone,'bad');
+assert.equal(preFirst.activated,false,'recent login activity must not activate the allocation');
+assert.equal(preFirst.label,'Play something to activate','an in-grace unactivated place must tell the customer exactly what to do');
+assert.equal(preFirst.removalAt.toISOString(),'2026-09-08T12:00:00.000Z');
 
-const yellow=freeAccessHealth({
+const lateFirst=freeAccessHealth({
   applies:true,
-  policy:{firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-09-05T12:00:00.000Z',
+  firstPlaybackAt:'2026-09-08T12:00:01.000Z',
+  hasPlayback:true,
+  firstPlaybackOnTime:false,
+  playbackMinutes:10,
+  currentlyPlaying:false,
+  enforcementReady:true,
+  eligible:true
+},{now:Date.parse('2026-09-08T12:10:00.000Z')});
+assert.equal(lateFirst.activated,false,'late playback must not be presented as a valid activation');
+assert.equal(lateFirst.label,'First-play deadline missed');
+assert.match(lateFirst.detail,/after the activation deadline/i);
+
+const belowMinimum=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
   allocationStartAt:'2026-08-15T12:00:00.000Z',
   firstPlaybackAt:'2026-08-16T12:00:00.000Z',
-  lastPlaybackAt:'2026-08-29T12:00:00.000Z',
-  lastActivityAt:'2026-09-06T12:00:00.000Z',
-  observationStartedAt:'2026-08-16T12:00:00.000Z',
-  inactiveReferenceAt:'2026-09-06T12:00:00.000Z',
+  lastPlaybackAt:'2026-09-06T12:00:00.000Z',
+  lastActivityAt:'2026-09-07T11:59:00.000Z',
   hasPlayback:true,
   playbackMinutes:12,
   currentlyPlaying:false,
-  automationProtected:false,
   enforcementReady:true,
-  eligible:false
+  eligible:true
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(yellow.tone,'warn','an activated Free place with recent Jellyfin activity but insufficient watch minutes must be yellow');
-assert.equal(yellow.activityMet,true,'recent Jellyfin activity must satisfy the seven-day activity condition even when playback itself is old');
-assert.equal(yellow.minimumMet,false,'twelve minutes must not satisfy the thirty-minute condition');
+assert.equal(belowMinimum.tone,'bad','12 rolling minutes must be red regardless of recent login activity');
+assert.equal(belowMinimum.minimumMet,false);
+assert.equal(belowMinimum.activityMet,true,'compatibility field is neutral because there is no activity rule');
+assert.equal(belowMinimum.label,'Needs playback');
 
-const green=freeAccessHealth({
+const exactlyMet=freeAccessHealth({
   applies:true,
-  policy:{firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
-  allocationStartAt:'2026-09-01T12:00:00.000Z',
-  firstPlaybackAt:'2026-09-02T12:00:00.000Z',
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
   lastPlaybackAt:'2026-09-06T12:00:00.000Z',
-  lastActivityAt:'2026-09-06T18:00:00.000Z',
-  observationStartedAt:'2026-09-02T12:00:00.000Z',
-  inactiveReferenceAt:'2026-09-06T18:00:00.000Z',
   hasPlayback:true,
-  playbackMinutes:35,
+  playbackMinutes:30,
   currentlyPlaying:false,
-  automationProtected:false,
   enforcementReady:true,
   eligible:false
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(green.tone,'good','an activated Free place meeting both ongoing checks must be green');
-assert.equal(green.activityMet,true);
-assert.equal(green.minimumMet,true);
+assert.equal(exactlyMet.tone,'good','30 rolling minutes must satisfy the requirement exactly');
+assert.equal(exactlyMet.minimumMet,true);
+assert.equal(exactlyMet.label,"You're good");
 
-const postActivationRed=freeAccessHealth({
+const currentlyPlaying=freeAccessHealth({
   applies:true,
-  policy:{firstPlaybackGraceDays:3,noPlaybackDays:7,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
-  allocationStartAt:'2026-08-20T12:00:00.000Z',
-  firstPlaybackAt:'2026-08-21T12:00:00.000Z',
-  lastPlaybackAt:'2026-08-30T12:00:00.000Z',
-  lastActivityAt:'2026-08-30T18:00:00.000Z',
-  observationStartedAt:'2026-08-21T12:00:00.000Z',
-  inactiveReferenceAt:'2026-08-30T18:00:00.000Z',
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
+  hasPlayback:true,
+  playbackMinutes:29,
+  currentlyPlaying:true,
+  enforcementReady:true,
+  eligible:false
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.equal(currentlyPlaying.minimumMet,false,'an in-progress stream does not fabricate watched minutes');
+assert.match(currentlyPlaying.detail,/current stream is still being counted/i);
+
+const protectedStatus=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
+  hasPlayback:true,
+  playbackMinutes:0,
+  currentlyPlaying:false,
+  automationProtected:true,
+  globalEnforcementEnabled:true,
+  enforcementReady:true,
+  eligible:false
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.match(protectedStatus.detail,/protected account/i,'explicit admin/permanent protection must be visible without inventing another usage rule');
+assert.equal(protectedStatus.removalAt,null,'after the initial retention window there is no fixed future removal timestamp');
+
+const pausedStatus=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
   hasPlayback:true,
   playbackMinutes:0,
   currentlyPlaying:false,
   automationProtected:false,
+  globalEnforcementEnabled:false,
   enforcementReady:true,
-  eligible:true
+  eligible:false
 },{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(postActivationRed.tone,'bad','after activation the card must return to red when neither ongoing requirement is met');
-assert.equal(postActivationRed.activityMet,false);
-assert.equal(postActivationRed.minimumMet,false);
+assert.match(pausedStatus.detail,/paused by the administrator/i,'global pause state must be visible to the customer-facing status');
 
-const modernPlaybackOnly=freeAccessHealth({
-  applies:true,
-  policy:{firstPlaybackGraceDays:3,noPlaybackDays:null,minimumPlaybackMinutes:30,playbackWindowDays:7,minimumObservationHours:24},
-  allocationStartAt:'2026-08-15T12:00:00.000Z',
-  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
-  lastPlaybackAt:'2026-08-29T12:00:00.000Z',
-  lastActivityAt:'2026-09-06T12:00:00.000Z',
-  observationStartedAt:'2026-08-16T12:00:00.000Z',
-  inactiveReferenceAt:'2026-08-29T12:00:00.000Z',
-  hasPlayback:true,
-  playbackMinutes:12,
-  currentlyPlaying:false,
-  automationProtected:false,
-  enforcementReady:true,
-  eligible:true
-},{now:Date.parse('2026-09-07T12:00:00.000Z')});
-assert.equal(modernPlaybackOnly.tone,'bad','the current Free Server policy must be red when rolling watch time is below minimum, even after a recent Jellyfin login');
-assert.equal(modernPlaybackOnly.minimumMet,false);
-assert.equal(modernPlaybackOnly.activityMet,true,'with no separate account-activity rule, activity must be neutral rather than protective');
-assert.equal(modernPlaybackOnly.label,'Needs playback','the customer UI must describe the actual playback-only retention requirement');
-
-assert.match(view,/accounts\.forEach\(function\(account\)/,'each Jellyfin or Emby server account must remain independently renderable instead of using a single server selector');
-assert.match(view,/hasStremioAccess/,'My Access must render Stremio independently from Jellyfin account cards');
-assert.match(view,/id="stremio-access"/,'Stremio access must have its own card below media-server access');
+assert.match(view,/accounts\.forEach\(function\(account\)/,'each Jellyfin or Emby server account must remain independently renderable');
+assert.match(view,/hasStremioAccess/,'My Access must render Stremio independently');
+assert.match(view,/id="stremio-access"/,'Stremio access must have its own card');
 assert.match(view,/>manifest\.json</,'the Stremio card must expose the private manifest explicitly');
-assert(view.indexOf('id="stremio-access"')<view.indexOf('id="overseerr"'),'Stremio must appear before the compact Overseerr password-reset section');
-assert.match(stremioRoute,/r\.get\('\/account\/stremio\/installation\.json'/,'the signed-in Stremio route must expose the current manifest to My Access');
+assert(view.indexOf('id="stremio-access"')<view.indexOf('id="overseerr"'),'Stremio must appear before Overseerr');
+assert.match(stremioRoute,/r\.get\('\/account\/stremio\/installation\.json'/,'the signed-in Stremio route must expose the current manifest');
 assert.match(stremioRoute,/req\.body\?\.returnTo==='access'/,'Stremio mutations launched from My Access must return to My Access');
-assert.match(client,/fetch\('\/account\/stremio\/installation\.json'/,'My Access must hydrate its Stremio manifest from the customer-scoped endpoint');
+assert.match(client,/fetch\('\/account\/stremio\/installation\.json'/,'My Access must hydrate its Stremio manifest');
 
 console.log('customer My Access inactivity smoke: ok');

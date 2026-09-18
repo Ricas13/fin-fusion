@@ -91,8 +91,11 @@ const effectiveCustomPolicy = inactivity.serverPolicy({
     free_minimum_playback_minutes: customPolicy.freeMinimumPlaybackMinutes,
     inactivity_policy: { firstPlaybackGraceDays: 99, noPlaybackDays: 99, minimumPlaybackMinutes: 999, playbackWindowDays: 99 }
 }, { enabled: true, dryRun: false });
-if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.noPlaybackDays !== null || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
-    throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 playback policy without adding a login/activity rule');
+if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
+    throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 playback policy');
+}
+if (Object.prototype.hasOwnProperty.call(effectiveCustomPolicy, 'noPlaybackDays')) {
+    throw new Error('Free inactivity policy must not expose a separate login/activity retention rule');
 }
 if (effectiveCustomPolicy.thresholdOwner !== 'free_server') throw new Error('Free inactivity threshold ownership must be the assigned server');
 const effectiveDefaults = inactivity.serverPolicy({}, { enabled: true, dryRun: true });
@@ -105,7 +108,7 @@ const inactivitySource = fs.readFileSync(path.join(root, 'src/automation/custome
 for (const column of ['js.free_first_playback_grace_days', 'js.free_playback_window_days', 'js.free_minimum_playback_minutes']) {
     if (!inactivitySource.includes(column)) throw new Error(`Inactivity candidate discovery must read ${column} from the assigned server`);
 }
-if (!inactivitySource.includes("COALESCE(js.free_playback_window_days,7)||' days'")) throw new Error('Rolling playback SQL must use the assigned server activity window');
+if (!inactivitySource.includes("NOW()-(js.free_playback_window_days||' days')::interval")) throw new Error('Rolling playback SQL must use the assigned server activity window');
 if (inactivitySource.includes("fa.inactivity_policy->>'playbackWindowDays'")) throw new Error('Rolling playback must not use the legacy per-plan threshold');
 const migrationSource = fs.readFileSync(path.join(root, 'db/migrations/20260917220000_free_server_inactivity_policy.sql'), 'utf8');
 for (const expected of ['DEFAULT 3', 'DEFAULT 7', 'DEFAULT 30']) {

@@ -5,7 +5,7 @@ const fs=require('fs');
 const path=require('path');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
-const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
+const lifecyclePolicyRuntime=require('../src/entitlements/jellyfin-lifecycle-policy');
 const inactivityRuntime=require('../src/automation/customer-inactivity');
 const globalLifecyclePage=require('../src/platform/admin-jellyfin-lifecycle');
 const accessEditorRuntime=require('../src/platform/admin-plan-access');
@@ -16,7 +16,8 @@ const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
 const composition=read('src/platform/admin-route-composition.js');
 const createPlan=read('src/platform/admin-plan-create-v2.js');
-const planPolicy=read('src/entitlements/plan-lifecycle-policy.js');
+const lifecyclePolicySource=read('src/entitlements/jellyfin-lifecycle-policy.js');
+const inactivityScoped=read('src/automation/customer-inactivity-scoped.js');
 const inactivity=read('src/automation/customer-inactivity.js');
 const subscriptionState=read('src/entitlements/subscription-state.js');
 const cleanupReturn=read('src/entitlements/jellyfin-cleanup-return.js');
@@ -51,72 +52,71 @@ assert(createPlan.includes('allowSubtitleEditing')&&createPlan.includes("'Edit s
 for(const retired of ['inactivityEnabled','minimumPlaybackMinutes','noPlaybackDays'])assert(!createPlan.includes(retired),`Plan creation must not expose retired lifecycle field ${retired}`);
 assert(!planLifecycleSource.includes('name="_lifecycleCheckboxes"'),'Unified plan editor must not render per-plan lifecycle controls');
 assert(!planLifecycleSource.includes("editor-lifecycle"),'Unified plan editor must not own a per-plan lifecycle save action');
-assert(planPolicy.includes("action:'remove_jellyfin'"),'Lifecycle policy compatibility code must use direct Jellyfin removal, never a disabled state');
+assert(!fs.existsSync(path.join(root,'src/entitlements/plan-lifecycle-policy.js')),'Retired plan-level inactivity policy module must stay removed');
 
-// Existing rows may still be interpreted by compatibility code, but an empty
-// plan policy inherits the one global Free Server inactivity policy.
-const inheritedPolicy=planPolicyRuntime.effectiveForFreePlan({},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
-assert.strictEqual(inheritedPolicy.enabled,true,'Free plan with no lifecycle override must inherit globally enabled automation');
-assert.strictEqual(inheritedPolicy.dryRun,false,'Free plan with no lifecycle override must inherit global enforcement mode');
-assert.strictEqual(inheritedPolicy.noPlaybackDays,7,'Free plan with no lifecycle override must inherit global no-playback threshold');
-assert.strictEqual(inheritedPolicy.action,'remove_jellyfin','Free inactivity must remove the Jellyfin identity directly');
-assert.strictEqual(planPolicyRuntime.hasUsageTrigger(inheritedPolicy),true,'Inherited Free rule must be an actionable usage policy');
-assert(inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')")&&inactivity.includes('planPolicy.effectiveForFreePlan'),'Free inactivity worker must resolve the effective global lifecycle policy');
+// Global lifecycle settings own execution mode only. Thresholds are server-owned.
+assert.deepStrictEqual(lifecyclePolicyRuntime.normalize({enabled:true,dryRun:false,freeNoPlaybackDays:99,minimumPlaybackMinutes:999}),{enabled:true,dryRun:false},'Global lifecycle policy must ignore retired threshold fields');
+assert(lifecyclePolicySource.includes("const DEFAULTS = Object.freeze({ enabled: true, dryRun: false })"),'Global lifecycle defaults must contain execution switches only');
+for(const field of ['free_first_playback_grace_days','free_playback_window_days','free_minimum_playback_minutes'])assert(inactivity.includes(field),`Free inactivity worker must read server-owned threshold ${field}`);
+assert(inactivity.includes("lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy')")||inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')"),'Free inactivity worker must use the global execution-mode owner');
+assert(!inactivity.includes('planPolicy.')&&!inactivity.includes("plan-lifecycle-policy"),'Free inactivity worker must not recreate a plan-level policy layer');
 assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE"),'Free candidates must not require a per-plan enabled flag');
 assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity must apply to the canonical Free entitlement regardless of acquisition source');
 assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor inactivity holds independently of subscription source');
 assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptionState.includes("ja.access_lane='free'"),'Dormant cleanup blocking must remain scoped to the Free Jellyfin lane');
-assert(inactivity.includes('observation_started_at')&&inactivity.includes('observationStartedAt'),'Inactivity audit evidence must record the effective observation start');
 
-// The global lifecycle page is the only operator-configurable Free inactivity surface.
+// The global lifecycle page is execution-only and points threshold editing to Free Servers.
 assert(globalLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&globalLifecycleSource.includes('lifecycleFormInput(req.body)'),'Global lifecycle form must explicitly mark browser checkbox submissions');
-const globalUnchecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',freeNoPlaybackDays:'7'});
+assert(globalLifecycleSource.includes('Thresholds belong to each Free-class media server')&&globalLifecycleSource.includes('Free Server settings'),'Global lifecycle UI must direct threshold ownership to Free Servers');
+assert(!globalLifecycleSource.includes('freeNoPlaybackDays')&&!globalLifecycleSource.includes('minimumPlaybackMinutes'),'Global lifecycle UI must not expose retired global thresholds');
+const globalUnchecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1'});
 assert.strictEqual(globalUnchecked.enabled,false,'Unticking global lifecycle automation must persist explicit false');
 assert.strictEqual(globalUnchecked.dryRun,false,'Unticking global dry run must persist explicit false');
-const globalChecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on',freeNoPlaybackDays:'7'});
+const globalChecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on'});
 assert.strictEqual(globalChecked.enabled,'on');
 assert.strictEqual(globalChecked.dryRun,'on');
 
-// Free inactivity is scoped to the current allocation. Historical Jellyfin activity
-// from before import/re-entry must never consume the new allocation's observation
-// window or make a newly allocated place immediately removable.
-const now=Date.UTC(2026,7,27,9,0,0),day=86400000;
-const usagePolicy={enabled:true,dryRun:true,noPlaybackDays:7,playbackWindowDays:7,minimumPlaybackMinutes:null,minimumObservationHours:24};
-const importedAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),allocation_start_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:new Date(now-10*day),playback_seconds:0},usagePolicy,now);
-assert.strictEqual(importedAssessment.noPlaybackEligible,false,'Historical pre-allocation Jellyfin activity must not make a recently allocated Free mapping eligible');
-assert.strictEqual(importedAssessment.lastPlaybackAt,null,'Historical playback before the current allocation must be ignored');
-assert.strictEqual(importedAssessment.observationStartedAt.getTime(),now-5*day,'The current allocation boundary must own the Free observation window');
-assert.strictEqual(importedAssessment.referenceAt.getTime(),now-5*day,'Without playback in this allocation, the no-playback clock must start at allocation time');
-const expiredAllocationAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),allocation_start_at:new Date(now-10*day),last_activity_at:new Date(now-1*day),last_playback_at:null,playback_seconds:0},usagePolicy,now);
-assert.strictEqual(expiredAllocationAssessment.noPlaybackEligible,true,'A current Free allocation beyond the threshold with no playback must become eligible');
-assert.strictEqual(expiredAllocationAssessment.referenceAt.getTime(),now-10*day,'Generic Jellyfin activity must not extend a playback requirement');
-const newAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),allocation_start_at:new Date(now-5*day),last_activity_at:null,last_playback_at:null,playback_seconds:0},usagePolicy,now);
-assert.strictEqual(newAssessment.noPlaybackEligible,false,'A genuinely new Free allocation must retain the full observation grace period');
-const recentPlaybackAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),allocation_start_at:new Date(now-10*day),last_activity_at:new Date(now-1*day),last_playback_at:new Date(now-2*day),playback_seconds:60},usagePolicy,now);
-assert.strictEqual(recentPlaybackAssessment.noPlaybackEligible,false,'Recent Free-server playback in the current allocation must prevent inactivity');
-const strandedHeldFreeAccount={inactivity_policy:{},account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),allocation_start_at:new Date(now-10*day),last_activity_at:new Date(now-1*day),last_playback_at:null,playback_seconds:0,already_held:true,automation_protected:false,currently_playing:false};
-const strandedPolicy=planPolicyRuntime.effectiveForFreePlan(strandedHeldFreeAccount.inactivity_policy,{enabled:true,dryRun:false,freeNoPlaybackDays:7});
-const strandedAssessment=inactivityRuntime.assessUsage(strandedHeldFreeAccount,strandedPolicy,now);
-const strandedEligible=strandedPolicy.enabled&&!strandedHeldFreeAccount.automation_protected&&!strandedHeldFreeAccount.currently_playing&&(strandedAssessment.noPlaybackEligible||strandedAssessment.usageEligible);
-assert.strictEqual(strandedEligible,true,'An existing inactivity hold on an enabled Free account must retry removal/reconcile instead of being skipped forever');
-assert(inactivity.includes('repairExistingHold:Boolean(row.already_held&&eligible)'),'Inactivity candidates must flag held-but-present Free accounts for repair visibility');
+// Free inactivity has exactly two rules and is scoped to the current allocation.
+const now=Date.UTC(2026,8,12,12,0,0),day=86400000;
+const usagePolicy={enabled:true,dryRun:false,firstPlaybackGraceDays:3,playbackWindowDays:7,minimumPlaybackMinutes:30};
+const recentAllocation=inactivityRuntime.assessUsage({allocation_start_at:new Date(now-2*day),last_playback_at:null,first_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(recentAllocation.firstPlaybackEligible,false,'A new Free allocation must retain its full first-play grace period');
+assert.strictEqual(recentAllocation.usageEligible,false,'The rolling-minutes rule cannot run before first playback');
+const missedFirstPlay=inactivityRuntime.assessUsage({allocation_start_at:new Date(now-4*day),last_playback_at:null,first_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(missedFirstPlay.firstPlaybackEligible,true,'Rule 1 must make an allocation eligible after its first-play grace expires');
+const oldPlayback=inactivityRuntime.assessUsage({allocation_start_at:new Date(now-4*day),first_playback_at:new Date(now-10*day),last_playback_at:new Date(now-10*day),playback_seconds:60*60},usagePolicy,now);
+assert.strictEqual(oldPlayback.hasPlayback,false,'Playback before the current allocation must not activate a newly allocated Free place');
+assert.strictEqual(oldPlayback.firstPlaybackEligible,true,'Pre-allocation playback must not prevent the first-play rule');
+const lowUsage=inactivityRuntime.assessUsage({allocation_start_at:new Date(now-10*day),first_playback_at:new Date(now-9*day),last_playback_at:new Date(now-2*day),playback_seconds:29*60},usagePolicy,now);
+assert.strictEqual(lowUsage.firstPlaybackOnTime,true,'An on-time first playback must activate the allocation');
+assert.strictEqual(lowUsage.usageEligible,true,'Rule 2 must apply after one full rolling window when watched minutes are below the server minimum');
+const enoughUsage=inactivityRuntime.assessUsage({allocation_start_at:new Date(now-10*day),first_playback_at:new Date(now-9*day),last_playback_at:new Date(now-2*day),playback_seconds:31*60},usagePolicy,now);
+assert.strictEqual(enoughUsage.usageEligible,false,'Meeting the rolling watched-minutes threshold must preserve Free access');
+const latePlayback=inactivityRuntime.assessUsage({allocation_start_at:new Date(now-10*day),first_playback_at:new Date(now-6*day),last_playback_at:new Date(now-1*day),playback_seconds:60*60},usagePolicy,now);
+assert.strictEqual(latePlayback.firstPlaybackOnTime,false,'A first playback after the activation deadline must remain late');
+assert.strictEqual(latePlayback.firstPlaybackEligible,true,'Late playback must not retroactively rescue a missed first-play deadline');
+assert.strictEqual(latePlayback.usageEligible,false,'The rolling-minutes rule must not replace the missed first-play rule');
+assert(inactivity.includes('repairExistingHold: Boolean(row.already_held && eligible)')||inactivity.includes('repairExistingHold:Boolean(row.already_held&&eligible)'),'Held-but-present Free accounts must remain retryable after a failed exact-account deletion');
+assert(inactivity.includes('!row.currently_playing'),'A currently playing Free account must never be selected for inactivity removal');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 // The dormant-account cleanup pipeline that used to live in this module (getCleanup/
 // saveCleanup/cleanupCandidates/deleteDormantAccount/runCleanup) was dead code - never
-// wired to any cron job or route - and was unsafe by construction (no access_lane='free'
-// or plan-tier filter, so it could have deleted a paying customer's Jellyfin account, and
-// it bypassed the reconciliation lock entirely). It has been removed rather than fixed in
-// place, since nothing depended on it. The one live delete path (present-or-deleted,
-// lock-guarded, idempotent) lives in provisioning-engine.js/resilient-provisioning.js.
-assert(inactivity.includes("HOLD_TYPE='inactivity_policy'"),'Lifecycle actions must use an explicit Jellyfin hold');
+// wired to any cron job or route - and was unsafe by construction. It has been removed.
+// The live inactivity path now locks the customer, rechecks the exact Free account and
+// entitlement, revalidates server playback trust, then calls the exact-account delete
+// primitive directly. It never invokes broad customer reconciliation for removal.
+assert(inactivity.includes("HOLD_TYPE = 'inactivity_policy'")||inactivity.includes("HOLD_TYPE='inactivity_policy'"),'Lifecycle actions must use an explicit Jellyfin hold');
 assert(!inactivity.includes('CLEANUP_HOLD_TYPE')&&!inactivity.includes('cleanupCandidates')&&!inactivity.includes('deleteDormantAccount')&&!inactivity.includes('runCleanup'),'The unsafe, unguarded dormant-account cleanup pipeline must not return to this module');
 const engineCore=read('src/jellyfin/provisioning-engine.js');
+assert(inactivityScoped.includes('provisioning.deleteJellyfinAccount')&&!inactivityScoped.includes('provisioning.reconcileCustomer(row.customer_id)'),'Free inactivity removal must target only the exact account, not run broad reconciliation');
+assert(inactivityScoped.includes('requireNoActivePlayback: true'),'Automatic inactivity deletion must request a live playback precondition');
+assert(engineCore.includes('assertNoActivePlaybackBeforeDelete')&&engineCore.includes("registry.request(account.server_id, '/Sessions'"),'The destructive boundary must recheck live Jellyfin sessions');
 assert(engineCore.includes('/Users/${encodeURIComponent(account.jellyfin_user_id)}')&&engineCore.includes("method: 'DELETE'"),'The canonical delete path must delete the Jellyfin user remotely');
 assert(engineCore.includes('DELETE FROM jellyfin_accounts WHERE id=$1'),'The canonical delete path must remove only the local Jellyfin account mapping');
 assert(!engineCore.includes('disabledInstead'),'The canonical delete path must never fall back to a disabled state');
-assert(!/DELETE\s+FROM\s+customers/i.test(inactivity),'Inactivity automation must never delete CAPTAiNFiN customers');
-assert(!/UPDATE\s+app_users\s+SET\s+active\s*=\s*FALSE/i.test(inactivity),'Inactivity automation must never deactivate portal logins');
+assert(!/DELETE\s+FROM\s+customers/i.test(inactivity+inactivityScoped),'Inactivity automation must never delete CAPTAiNFiN customers');
+assert(!/UPDATE\s+app_users\s+SET\s+active\s*=\s*FALSE/i.test(inactivity+inactivityScoped),'Inactivity automation must never deactivate portal logins');
 assert(cleanupReturn.includes('includeBlocked:true'),'Portal return must be able to see through the cleanup hold');
 assert(cleanupReturn.includes('hold_type=$2')&&cleanupReturn.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Portal return must release only cleanup holds');
 assert(resilientProvisioning.includes('releaseObsoleteForCustomer(customerId)'),'Every canonical Jellyfin reconcile must discard obsolete free-plan inactivity holds');

@@ -7,6 +7,9 @@ const registry = require('../src/jellyfin/registry');
 const lifecycle = require('../src/automation/customer-inactivity-scoped');
 const lifecyclePolicy = require('../src/entitlements/jellyfin-lifecycle-policy');
 const inactivityRestore = require('../src/entitlements/jellyfin-inactivity-restore');
+const serviceAdminControl = require('../src/entitlements/service-admin-control');
+const subscriptionState = require('../src/entitlements/subscription-state');
+const provisioning = require('../src/jellyfin/resilient-provisioning');
 
 const originalRequest = registry.request;
 
@@ -16,10 +19,12 @@ const originalRequest = registry.request;
     let customerId = null, userId = null, planId = null, serverId = null, accountId = null;
     let deleteCalls = 0;
     let deleteShouldFail = false;
+    let livePlayback = false;
     const staleActivity = new Date(Date.now() - 10 * 86400000).toISOString();
 
     registry.request = async (_serverId, endpoint, options = {}) => {
         if (endpoint === '/Users') return [{ Id: remoteUserId, Name: `Free_${suffix}`, LastActivityDate: staleActivity }];
+        if (endpoint === '/Sessions') return livePlayback ? [{ Id:`session-${suffix}`, UserId:remoteUserId, NowPlayingItem:{ Id:'item-1' } }] : [];
         if (endpoint.endsWith('/Policy') && String(options.method || 'GET').toUpperCase() === 'POST') return {};
         if (endpoint === `/Users/${encodeURIComponent(remoteUserId)}` && String(options.method || '').toUpperCase() === 'DELETE') {
             deleteCalls += 1;
@@ -70,7 +75,12 @@ const originalRequest = registry.request;
         `, [customerId, serverId, remoteUserId, `Free_${suffix}`, staleActivity]);
         accountId = account.rows[0].id;
 
-        await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`, [lifecyclePolicy.KEY, JSON.stringify({ enabled:true, dryRun:false, freeNoPlaybackDays:7 })]);
+        // Placement authority must never be a retention exemption.
+        await serviceAdminControl.pinServer(customerId, serverId, {
+            reason: 'integration test: Free account pinned to its current server'
+        });
+
+        await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`, [lifecyclePolicy.KEY, JSON.stringify({ enabled:true, dryRun:false })]);
         await query(`SELECT public.record_activity_worker_heartbeat($1,$2,$3,FALSE,$4::jsonb)`, [`free-lifecycle-test-${suffix}`, 'test', 'test', '{}']);
         await query(`
             INSERT INTO jellyfin_activity_poll_state(server_id,last_attempt_at,last_success_at,last_failure_at,last_error,updated_at)
@@ -83,9 +93,21 @@ const originalRequest = registry.request;
                 updated_at=NOW()
         `, [serverId]);
 
-        // A failed remote deletion must not strand the customer behind an
-        // inactivity hold. They remain present + enabled until deletion can be
-        // retried successfully.
+        // If playback starts after DB eligibility but before the destructive
+        // action, the live-session guard must skip removal without creating a
+        // new inactivity hold.
+        livePlayback = true;
+        const liveSkip = await lifecycle.runPlanRules();
+        assert.strictEqual(liveSkip.enforced, 0, 'active playback at the destructive boundary must not be removed');
+        assert.strictEqual(liveSkip.failed, 0, 'active playback is a safety skip, not a deletion failure');
+        assert.strictEqual(liveSkip.safetySkipped, 1, 'the live-session race must be counted as a safety skip');
+        assert.strictEqual(deleteCalls, 0, 'live playback must block the remote DELETE');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND released_at IS NULL`, [customerId])).rows[0].n, 0,
+            'live playback detected before the hold must leave entitlement state unchanged');
+        livePlayback = false;
+
+        // A failed remote deletion keeps one durable inactivity hold. The exact
+        // account remains present and the next inactivity run retries it.
         deleteShouldFail = true;
         const failedRemoval = await lifecycle.runPlanRules();
         assert.strictEqual(failedRemoval.enforced, 0, 'failed remote removal must not count as enforced');
@@ -94,9 +116,9 @@ const originalRequest = registry.request;
         const stillPresent = await query('SELECT disabled FROM jellyfin_accounts WHERE id=$1', [accountId]);
         assert.strictEqual(stillPresent.rowCount, 1, 'local mapping must survive failed remote deletion');
         assert.strictEqual(stillPresent.rows[0].disabled, false, 'failed deletion must leave the existing account enabled');
-        const rolledBackHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
-        assert.strictEqual(rolledBackHold.rowCount, 1, 'failed enforcement should have created an inactivity hold before reconciliation');
-        assert(rolledBackHold.rows[0].released_at, 'failed deletion must roll the inactivity hold back');
+        const pendingHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
+        assert.strictEqual(pendingHold.rowCount, 1, 'failed enforcement must leave exactly one inactivity hold for retry');
+        assert.strictEqual(pendingHold.rows[0].released_at, null, 'failed deletion must keep the inactivity hold active until retry succeeds or access is explicitly restored');
 
         // Once the activity policy is breached there is no separate disabled
         // grace state. The successful retry removes the Jellyfin identity now.
@@ -104,16 +126,24 @@ const originalRequest = registry.request;
         const removed = await lifecycle.runPlanRules();
         assert.strictEqual(removed.enforced, 1, 'stale Free account should be removed directly');
         assert.strictEqual(removed.failed, 0, 'successful direct removal must complete without errors');
-        assert.strictEqual(deleteCalls, 2, 'retry must issue the second Jellyfin DELETE');
+        assert.strictEqual(deleteCalls, 2, 'retry must issue the second Jellyfin DELETE even while the Free account is server-pinned');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE id=$1', [accountId])).rows[0].n, 0, 'Free Jellyfin mapping must be absent after successful remote deletion');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM customers WHERE id=$1', [customerId])).rows[0].n, 1, 'portal customer must survive Jellyfin deletion');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [customerId])).rows[0].n, 1, 'Free subscription history must survive Jellyfin deletion');
+        const recovery = await query(`SELECT removal_reason FROM customer_media_access_recovery WHERE customer_id=$1 AND service_type='jellyfin' AND access_lane='free'`, [customerId]);
+        assert.strictEqual(recovery.rowCount, 1, 'direct inactivity deletion must preserve Free media recovery state');
+        assert.match(String(recovery.rows[0].removal_reason || ''), /^Free Server inactivity:/, 'recovery state must retain the actual inactivity removal reason');
         const activeHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
         assert.strictEqual(activeHold.rowCount, 1, 'successful inactivity removal must leave the Free-lane hold active');
         assert.strictEqual(activeHold.rows[0].released_at, null, 'inactivity hold must remain active until explicit restoration');
 
-        const pending = await lifecycle.processPendingDeletions(await lifecyclePolicy.get());
-        assert.deepStrictEqual(pending, { processed:0, deleted:0, restored:0, failed:0, deferred:0, serverFailures:0 }, 'binary lifecycle must have no post-disable deletion queue');
+        const pinnedBlocked = await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true });
+        assert.strictEqual(pinnedBlocked.admin_jellyfin_mode, 'forced_server', 'fixture must still be server-pinned after inactivity removal');
+        assert.strictEqual(pinnedBlocked.blocked, true, 'server pin must not erase the active inactivity hold');
+
+        await provisioning.reconcileCustomer(customerId);
+        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane=\'free\'', [customerId])).rows[0].n, 0,
+            'canonical reconciliation must not recreate a server-pinned Free account while its inactivity hold is active');
 
         // Explicit restoration means absent -> freshly provisioned + enabled,
         // never toggling a disabled account back on.

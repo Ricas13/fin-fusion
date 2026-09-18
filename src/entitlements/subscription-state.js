@@ -26,6 +26,7 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
+        s.created_at AS subscription_created_at,
         CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
                   OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
              THEN 'infinity'::timestamptz
@@ -106,6 +107,7 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
+        s.created_at AS subscription_created_at,
         CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
                   OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
              THEN 'infinity'::timestamptz ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval) END AS access_expires_at,
@@ -131,26 +133,45 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
  LIMIT 1
  `,[customerId]);
  let row=result.rows[0]||null;if(!row)return null;
- // Free Server is managed by its own inactivity/capacity automation, but an
- // active admin directive still wins: admin_removed forces the lane absent
- // regardless of inactivity state, and admin_present protects it from the
- // inactivity-hold lane check below (customer-inactivity-scoped.js separately
- // consults the same authority before ever deleting the account).
- if(row.admin_removed){row.blocked=true;return applyOperatorSemantics(db,row,{includeBlocked});}
- if(row.admin_present){row.blocked=false;return applyOperatorSemantics(db,row,{includeBlocked});}
+ // Decorate the service-scoped administrator mode before applying Free-lane
+ // holds. Permanent Access and explicit admin-present may override automatic
+ // inactivity; a server pin is placement-only and never clears a hold.
+ row=await applyOperatorSemantics(db,row,{includeBlocked:true});
+ if(row.admin_jellyfin_removed){row.blocked=true;return includeBlocked?row:null;}
+ if(row.permanent_access||row.admin_jellyfin_mode==='present'){row.blocked=false;return row;}
  const laneHold=await db.query(`SELECT EXISTS(
-   SELECT 1 FROM customer_access_holds h
-   WHERE h.customer_id=$1 AND h.released_at IS NULL AND (
-     (h.hold_type='inactivity_policy' AND h.source_key=('plan:'||$2::text))
-     OR (h.hold_type='jellyfin_cleanup' AND EXISTS(
-       SELECT 1 FROM jellyfin_accounts ja
-       WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free'
-         AND h.source_key=('server:'||ja.server_id::text)
-     ))
-   )
- ) AS blocked`,[customerId,row.plan_id]);
- row.blocked=Boolean(row.blocked||laneHold.rows[0]?.blocked);
- return applyOperatorSemantics(db,row,{includeBlocked});
+   SELECT 1
+   FROM customer_access_holds h
+   WHERE h.customer_id=$1
+     AND h.released_at IS NULL
+     AND (
+       (
+         h.hold_type='inactivity_policy'
+         AND h.source_key=('plan:'||$2::text)
+         AND (
+           h.metadata->>'subscriptionId'=$3::text
+           OR (
+             h.metadata->>'subscriptionId' IS NULL
+             AND h.created_at>=$4::timestamptz
+           )
+         )
+       )
+       OR (
+         h.hold_type='jellyfin_cleanup'
+         AND EXISTS(
+           SELECT 1 FROM jellyfin_accounts ja
+           WHERE ja.customer_id=$1
+             AND ja.account_purpose='jellyfin'
+             AND ja.access_lane='free'
+             AND h.source_key=('server:'||ja.server_id::text)
+         )
+       )
+       OR h.hold_type NOT IN ('payment_delinquency','inactivity_policy','jellyfin_cleanup')
+     )
+ ) AS blocked`,[customerId,row.plan_id,row.subscription_id,row.subscription_created_at]);
+ row.blocked=Boolean(laneHold.rows[0]?.blocked);
+ if(row.blocked&&!includeBlocked)return null;
+ return row;
 }
 async function effectiveAddons(customerId,{client=null,includeBlocked=false}={}){const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,

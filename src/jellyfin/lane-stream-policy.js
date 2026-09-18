@@ -185,16 +185,17 @@ async function freshAccountSnapshot(row, cfg) {
         return { reliable: false, error: error.message, sessions: [] };
     }
     if (!Array.isArray(sessions)) return { reliable: false, error: 'Unexpected sessions response', sessions: [] };
+    const activeSessions = sessions.filter(session => session?.Id && session?.NowPlayingItem).map(session => ({
+        sessionId: String(session.Id),
+        userId: String(session.UserId || '').toLowerCase(),
+        isPaused: Boolean(session?.PlayState?.IsPaused),
+        deviceId: session.DeviceId || null
+    }));
     const userId = String(row.jellyfin_user_id || '').toLowerCase();
     return {
         reliable: true,
-        sessions: sessions.filter(session =>
-            session?.Id && session?.NowPlayingItem && String(session.UserId || '').toLowerCase() === userId
-        ).map(session => ({
-            sessionId: String(session.Id),
-            isPaused: Boolean(session?.PlayState?.IsPaused),
-            deviceId: session.DeviceId || null
-        }))
+        sessions: activeSessions.filter(session => session.userId === userId),
+        allSessions: activeSessions
     };
 }
 
@@ -211,12 +212,12 @@ async function verifyCandidateStopped(row, streamLimit, cfg) {
         const countable = latest.sessions.filter(session => cfg.countPaused || !session.isPaused);
         const candidate = latest.sessions.find(session => session.sessionId === String(row.jellyfin_session_id)) || null;
         if (!candidate || countable.length <= streamLimit) {
-            return { reliable: true, candidate, countable, sessions: latest.sessions };
+            return { reliable: true, candidate, countable, sessions: latest.sessions, allSessions: latest.allSessions };
         }
     }
     const countable = latest.sessions.filter(session => cfg.countPaused || !session.isPaused);
     const candidate = latest.sessions.find(session => session.sessionId === String(row.jellyfin_session_id)) || null;
-    return { reliable: true, candidate, countable, sessions: latest.sessions };
+    return { reliable: true, candidate, countable, sessions: latest.sessions, allSessions: latest.allSessions };
 }
 
 async function finalizeLaneStop(row, streamCount, streamLimit, cfg, detail = {}) {
@@ -299,7 +300,7 @@ async function stopOverflowSession(row, streamCount, streamLimit, cfg) {
         return false;
     }
 
-    const sameDeviceSessions = verified.countable.filter(session =>
+    const sameDeviceSessions = (verified.allSessions || verified.sessions).filter(session =>
         session.sessionId !== String(row.jellyfin_session_id) && session.deviceId === deviceId
     );
     if (sameDeviceSessions.length) {

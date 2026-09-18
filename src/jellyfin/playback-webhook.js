@@ -100,11 +100,14 @@ async function matchingActive(serverId, account, payload, explicitSessionId = nu
     return result.rows[0] || null;
 }
 
-function startedAt(payload, at) {
-    const ticks = positionTicks(payload);
-    if (ticks == null) return at;
-    const elapsedMs = Math.max(0, Math.floor(ticks / 10000));
-    return new Date(Math.max(0, at.getTime() - elapsedMs));
+function startedAt(_payload, at) {
+    // Jellyfin PositionTicks is the position inside the media item, not the
+    // elapsed duration of this playback session. Backdating by PositionTicks
+    // lets resumed content fabricate historical watch time and can move a late
+    // first play to before its inactivity deadline. The webhook event timestamp
+    // is the trustworthy observation boundary; the poller will converge on the
+    // same playback key without inventing pre-observation minutes.
+    return at;
 }
 
 async function touchAccount(account, at, client = null) {

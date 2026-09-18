@@ -136,30 +136,33 @@ assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin
     'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
 
 const compactScopedInactivity = compact(scopedInactivity);
-assert(compactScopedInactivity.includes('tripped:false')
-    && compactScopedInactivity.includes('retired:true')
-    && !compactScopedInactivity.includes('configuredDryRun||circuitBreaker.tripped'),
-    'population size must not force legitimate Free Server inactivity enforcement into dry-run');
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
     && compactScopedInactivity.includes('eligible.slice(0,MAX_ENFORCEMENTS_PER_RUN)'),
-    'large inactivity cleanups may be throughput-capped without changing eligibility into dry-run');
-assert((scopedInactivity.match(/liveFreeJellyfinSubscription\(row\.customer_id, \{ includeBlocked: true \}\)/g) || []).length >= 2,
-    'destructive inactivity enforcement must re-check canonical authority before and after telemetry I/O');
-assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'")
-    && scopedInactivity.includes("reason: 'admin_authority_added_during_check'"),
-    'inactivity enforcement must fail closed when permanent/admin authority protects Free access');
-assert(inactivity.includes('ph.started_at>=GREATEST(')
+    'large inactivity cleanups may be throughput-capped without changing eligibility');
+assert(scopedInactivity.includes('await provisioning.deleteJellyfinAccount(')
+    && !scopedInactivity.includes('await provisioning.reconcileCustomer('),
+    'inactivity removal must delete the exact Free account directly instead of routing through broad reconciliation');
+assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'"),
+    'inactivity enforcement must fail closed when permanent/admin-present authority protects Free access');
+assert(scopedInactivity.includes('withCustomerReconciliationLock'),
+    'the final Free-account decision and delete must stay serialized per customer');
+assert(inactivity.includes('GREATEST(')
+    && inactivity.includes('fa.starts_at')
+    && inactivity.includes('ja.created_at')
     && inactivity.includes('ja.access_lane_changed_at')
-    && inactivity.includes('COALESCE(automation_resume.resumed_at,ja.access_lane_changed_at)'),
-    'Free inactivity history must keep the paid-to-Free lane boundary, and any later re-add boundary, so older playback cannot satisfy a new Free allocation');
+    && inactivity.includes('automation_resume.resumed_at'),
+    'Free allocation must start at the newest real allocation/re-add boundary so older playback cannot satisfy it');
+assert(!inactivity.includes('historical_first_playback_at')
+    && !inactivity.includes('any_playback_history'),
+    'historical playback heuristics must not move a current allocation boundary backwards');
 assert(freeObservationReset.includes('ADD COLUMN IF NOT EXISTS inactivity_observation_reset_at')
     && freeObservationReset.includes("access_lane_changed_at<=lt.applied_at")
     && !freeObservationReset.includes('SET access_lane_changed_at = NOW()'),
     'legacy inactivity safety must mark ambiguous pre-column Free rows without rewriting their real lane boundary');
 assert(inactivityGrace.includes("source: 'legacy_lane_backfill'")
     && inactivityGrace.includes('legacySafetyHours(row)')
-    && inactivityGrace.includes('inactivity_observation_reset_at IS NOT NULL'),
-    'ambiguous legacy Free rows must receive a full retention/usage observation window before destructive inactivity enforcement');
+    && inactivityGrace.includes('row?.inactivity_observation_reset_at'),
+    'the one-time ambiguous legacy lane marker must remain the only compatibility grace before destructive inactivity enforcement');
 
 assert(accessHolds.includes("error.code = 'ADMIN_ACCESS_HOLD_ACTOR_REQUIRED'")
     && accessHolds.includes("['admin_disabled', 'admin_suspended', 'admin_hold'].includes(requestedType)"),

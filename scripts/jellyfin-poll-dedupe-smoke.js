@@ -24,6 +24,7 @@ assert(worker.includes('FLEET_USER_ACTIVITY_POLL_SECONDS || 300'), 'user activit
 assert(worker.includes('fleetMetrics.refreshAll({ refreshUsers })'), 'the activity worker must keep live fleet metrics on the faster cadence while gating /Users refreshes separately');
 assert(worker.includes('FLEET_METRICS_POLL_SECONDS || 60'), 'dashboard fleet metrics must retain the existing one-minute refresh cadence');
 
-assert(inactivity.includes('refreshCandidateUserActivity(discovered') && inactivity.includes('finalEligibility(original'), 'Free Server inactivity must retain fresh Jellyfin user-activity verification and final pre-removal revalidation');
+assert(inactivity.includes('finalEligibility(original') && inactivity.includes('activityTrust.serverTelemetry([fresh.server_id])'), 'Free Server inactivity must retain final candidate revalidation and fresh playback-poll trust');
+assert(!inactivity.includes('refreshCandidateUserActivity'), 'Free Server inactivity must not reintroduce /Users login/activity as a hidden retention rule');
 
 console.log('jellyfin poll dedupe smoke: ok');

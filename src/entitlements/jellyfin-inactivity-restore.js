@@ -10,31 +10,101 @@ function runner(client) {
     return client || { query };
 }
 
-function isPendingAdminReconcile(row) {
-    return row?.metadata?.restoredReason === 'admin_reenable'
-        && row?.metadata?.explicitRestore === true
-        && row?.metadata?.reenableReconcilePending === true;
-}
-
 async function restoreStatus(customerId, { client = null, lock = false } = {}) {
     const db = runner(client);
-    const entitlement = await subscriptionState.liveFreeJellyfinSubscription(customerId, { client, includeBlocked: true });
+    const entitlement = await subscriptionState.liveFreeJellyfinSubscription(
+        customerId,
+        { client, includeBlocked: true }
+    );
     if (!entitlement) {
-        return { eligible: false, reason: 'no_live_free_jellyfin_entitlement', entitlement: null, sourceKey: null, inactivityHold: null };
+        return {
+            eligible: false,
+            reason: 'no_live_free_jellyfin_entitlement',
+            entitlement: null,
+            sourceKey: null,
+            inactivityHold: null
+        };
     }
 
     const sourceKey = `plan:${entitlement.plan_id}`;
-    const holdSql = `
+    const hold = await db.query(`
         SELECT id,source_key,reason,created_at
         FROM customer_access_holds
-        WHERE customer_id=$1 AND hold_type=$2 AND source_key=$3 AND released_at IS NULL
+        WHERE customer_id=$1
+          AND hold_type=$2
+          AND source_key=$3
+          AND released_at IS NULL
+          AND (
+            metadata->>'subscriptionId'=$4::text
+            OR (
+              metadata->>'subscriptionId' IS NULL
+              AND created_at>=$5::timestamptz
+            )
+          )
         ORDER BY created_at,id
         LIMIT 1
         ${lock ? 'FOR UPDATE' : ''}
-    `;
-    const hold = await db.query(holdSql, [customerId, HOLD_TYPE, sourceKey]);
+    `, [
+        customerId,
+        HOLD_TYPE,
+        sourceKey,
+        entitlement.subscription_id,
+        entitlement.subscription_created_at
+    ]);
+
     if (!hold.rowCount) {
-        return { eligible: false, reason: 'no_active_inactivity_hold', entitlement, sourceKey, inactivityHold: null };
+        return {
+            eligible: false,
+            reason: 'no_active_inactivity_hold',
+            entitlement,
+            sourceKey,
+            inactivityHold: null
+        };
+    }
+
+    if (entitlement.admin_jellyfin_removed) {
+        return {
+            eligible: false,
+            reason: 'admin_removed',
+            entitlement,
+            sourceKey,
+            inactivityHold: hold.rows[0]
+        };
+    }
+
+    const otherBlocker = await db.query(`
+        SELECT h.hold_type,h.source_key
+        FROM customer_access_holds h
+        WHERE h.customer_id=$1
+          AND h.released_at IS NULL
+          AND (
+            -- Payment delinquency belongs to the affected paid provider
+            -- subscription and must never block the independent Free lane.
+            -- Other inactivity holds belong to other Free allocation episodes.
+            h.hold_type NOT IN ('payment_delinquency','inactivity_policy','jellyfin_cleanup')
+            OR (
+              h.hold_type='jellyfin_cleanup'
+              AND EXISTS(
+                SELECT 1
+                FROM jellyfin_accounts ja
+                WHERE ja.customer_id=$1
+                  AND ja.account_purpose='jellyfin'
+                  AND ja.access_lane='free'
+                  AND h.source_key=('server:'||ja.server_id::text)
+              )
+            )
+          )
+        LIMIT 1
+    `, [customerId]);
+    if (otherBlocker.rowCount) {
+        return {
+            eligible: false,
+            reason: 'other_access_blocker',
+            entitlement,
+            sourceKey,
+            inactivityHold: hold.rows[0],
+            otherBlocker: otherBlocker.rows[0]
+        };
     }
 
     return {
@@ -46,130 +116,178 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
     };
 }
 
-async function markReconcileComplete(lifecycleIds = [], actorUserId = null) {
-    if (!lifecycleIds.length) return;
-    await query(`
-        UPDATE jellyfin_account_lifecycle
-        SET metadata=metadata||$2::jsonb,updated_at=NOW()
-        WHERE id=ANY($1::bigint[])
-    `, [lifecycleIds, JSON.stringify({
-        reenableReconcilePending: false,
-        reenableReconciledAt: new Date().toISOString(),
-        reenableReconciledBy: actorUserId
-    })]);
+// Compatibility helpers retained for older callers. The current present/deleted
+// lifecycle no longer needs a separate restore-pending ledger.
+function isPendingAdminReconcile() {
+    return false;
 }
 
-// Historical API name retained for route compatibility. There is no disabled
-// account to toggle anymore: admin restoration releases only the inactivity
-// hold, then canonical reconciliation provisions a new enabled Free account.
+async function markReconcileComplete() {
+    return undefined;
+}
+
 async function restoreDisabledFreeAccess(customerId, { actorUserId = null, reconcile } = {}) {
-    if (typeof reconcile !== 'function') throw new Error('A Jellyfin reconciliation owner is required.');
+    if (typeof reconcile !== 'function') {
+        throw new Error('A Jellyfin reconciliation owner is required.');
+    }
 
     const prepared = await transaction(async client => {
-        const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
+        const customer = await client.query(
+            'SELECT id FROM customers WHERE id=$1 FOR UPDATE',
+            [customerId]
+        );
         if (!customer.rowCount) throw new Error('Customer not found.');
 
         const state = await restoreStatus(customerId, { client, lock: true });
         if (!state.eligible) {
             const messages = {
                 no_live_free_jellyfin_entitlement: 'This customer does not have a live Free Server Jellyfin entitlement.',
-                no_active_inactivity_hold: 'This customer is not currently removed by the Free Server inactivity policy.'
+                no_active_inactivity_hold: 'This customer is not currently removed by the Free Server inactivity policy.',
+                admin_removed: 'Jellyfin access is explicitly removed by an administrator.',
+                other_access_blocker: 'Another active access restriction must be resolved before Free Server access can be restored.'
             };
-            throw Object.assign(new Error(messages[state.reason] || 'This Free Server access cannot be restored safely.'), { code: state.reason });
+            throw Object.assign(
+                new Error(messages[state.reason] || 'This Free Server access cannot be restored safely.'),
+                { code: state.reason }
+            );
         }
 
         const released = await accessHolds.releaseHold({
             customerId,
             type: HOLD_TYPE,
             sourceKey: state.sourceKey,
-            actorUserId
-        }, client);
-        if (released !== 1) throw new Error('The inactivity hold changed while the restore was being prepared. Refresh the customer and try again.');
-
-        // Close any pre-binary-lifecycle ledger entries without depending on a
-        // jellyfin_accounts row. They are historical records only.
-        const legacy = await client.query(`
-            UPDATE jellyfin_account_lifecycle
-            SET restored_at=COALESCE(restored_at,NOW()),
-                metadata=metadata||$3::jsonb,
-                updated_at=NOW()
-            WHERE customer_id=$1 AND category='free' AND deleted_at IS NULL
-              AND (metadata->>'planId'=$2::text OR metadata->>'planId' IS NULL)
-            RETURNING id
-        `, [customerId, state.entitlement.plan_id, JSON.stringify({
-            restoredReason: 'admin_reenable',
-            explicitRestore: true,
             actorUserId,
-            binaryLifecycleReprovision: true
-        })]);
+            resolutionReason: 'Free Server access explicitly restored'
+        }, client);
+        if (released !== 1) {
+            throw new Error('The inactivity hold changed while the restore was being prepared.');
+        }
 
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'admin.customer.jellyfin.restore_free_access','customer',$2,$3::jsonb)
-        `, [actorUserId, customerId, JSON.stringify({
-            planId: state.entitlement.plan_id,
-            sourceKey: state.sourceKey,
-            lifecycle: 'present_or_deleted',
-            action: 'release_inactivity_hold_and_reprovision'
-        })]);
+        `, [
+            actorUserId,
+            customerId,
+            JSON.stringify({
+                planId: state.entitlement.plan_id,
+                sourceKey: state.sourceKey,
+                action: 'release_inactivity_hold_and_reprovision'
+            })
+        ]);
 
         return {
             planId: state.entitlement.plan_id,
+            subscriptionId: state.entitlement.subscription_id,
             sourceKey: state.sourceKey,
-            lifecycleIds: legacy.rows.map(row => row.id),
             restoredAt: new Date()
         };
     });
 
     let reconcileResult;
+    let account;
     try {
         reconcileResult = await reconcile(customerId);
-        await markReconcileComplete(prepared.lifecycleIds, actorUserId);
+
+        const [hold, accountResult] = await Promise.all([
+            query(`
+                SELECT 1
+                FROM customer_access_holds
+                WHERE customer_id=$1
+                  AND hold_type=$2
+                  AND source_key=$3
+                  AND released_at IS NULL
+                LIMIT 1
+            `, [customerId, HOLD_TYPE, prepared.sourceKey]),
+            query(`
+                SELECT id,server_id,jellyfin_user_id,jellyfin_username,created_at,access_lane_changed_at
+                FROM jellyfin_accounts
+                WHERE customer_id=$1
+                  AND account_purpose='jellyfin'
+                  AND access_lane='free'
+                  AND disabled=FALSE
+                ORDER BY created_at DESC
+            `, [customerId])
+        ]);
+
+        if (hold.rowCount || accountResult.rowCount !== 1) {
+            const error = new Error('Free Server restore did not converge to one present enabled account.');
+            error.code = 'FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED';
+            throw error;
+        }
+        account = accountResult.rows[0];
     } catch (error) {
-        // Recreate the hold if reprovisioning failed so a broken remote server
-        // cannot accidentally make the customer count as restored.
-        await accessHolds.addHold({
-            customerId,
-            type: HOLD_TYPE,
-            sourceKey: prepared.sourceKey,
-            reason: 'Free Server inactivity restore pending successful reprovisioning',
-            actorUserId,
-            metadata: { restoreReconcileFailed: true, error: String(error?.message || error).slice(0, 500) }
-        }).catch(() => {});
+        // Any failed restore, including a failure in a later service after the
+        // Free Jellyfin account was already created, must fail closed. Restoring
+        // the inactivity hold is mandatory; silently losing this rollback would
+        // turn a reported restore failure into unintended active Free access.
+        let rollbackHoldError = null;
+        try {
+            await accessHolds.addHold({
+                customerId,
+                type: HOLD_TYPE,
+                sourceKey: prepared.sourceKey,
+                reason: 'Free Server inactivity restore pending successful reprovisioning',
+                actorUserId,
+                metadata: {
+                    subscriptionId: prepared.subscriptionId,
+                    restoreReconcileFailed: true,
+                    error: String(error?.message || error).slice(0, 500)
+                }
+            });
+        } catch (holdError) {
+            rollbackHoldError = holdError;
+        }
+
+        // If the hold was restored, immediately run the canonical reconciler
+        // again with that hold active. The first reconcile may have created the
+        // Free account before a later Stremio/Emby/Discord step failed; this
+        // compensation removes that transient access instead of waiting for a
+        // future worker retry. A later explicit admin/permanent authority is
+        // still respected because the canonical reconciler owns that decision.
+        let rollbackReconcileError = null;
+        if (!rollbackHoldError) {
+            try {
+                await reconcile(customerId);
+            } catch (reconcileError) {
+                rollbackReconcileError = reconcileError;
+            }
+        }
+
         await query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'admin.customer.jellyfin.restore_free_access_failed','customer',$2,$3::jsonb)
-        `, [actorUserId, customerId, JSON.stringify({
-            planId: prepared.planId,
-            error: String(error?.message || error).slice(0, 500)
-        })]).catch(() => {});
-        throw error;
-    }
+        `, [
+            actorUserId,
+            customerId,
+            JSON.stringify({
+                planId: prepared.planId,
+                error: String(error?.message || error).slice(0, 500),
+                rollbackHoldError: rollbackHoldError
+                    ? String(rollbackHoldError?.message || rollbackHoldError).slice(0, 500)
+                    : null,
+                rollbackReconcileError: rollbackReconcileError
+                    ? String(rollbackReconcileError?.message || rollbackReconcileError).slice(0, 500)
+                    : null
+            })
+        ]).catch(() => {});
 
-    const [remainingHolds, account] = await Promise.all([
-        accessHolds.activeHolds(customerId),
-        query(`
-            SELECT id,server_id,jellyfin_user_id,jellyfin_username
-            FROM jellyfin_accounts
-            WHERE customer_id=$1 AND account_purpose='jellyfin' AND access_lane='free'
-            ORDER BY created_at DESC LIMIT 1
-        `, [customerId])
-    ]);
-    const enabled = remainingHolds.length === 0 && account.rowCount === 1;
-    if (!enabled) {
-        const error = new Error('Free Server restore did not converge to one present enabled account.');
-        error.code = 'FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED';
+        if (rollbackHoldError) {
+            const rollbackFailure = new Error(
+                `Free Server restore failed and its inactivity hold could not be restored: ${String(rollbackHoldError?.message || rollbackHoldError).slice(0, 300)}`
+            );
+            rollbackFailure.code = 'FREE_JELLYFIN_RESTORE_ROLLBACK_FAILED';
+            rollbackFailure.cause = error;
+            throw rollbackFailure;
+        }
         throw error;
     }
 
     return {
         restored: true,
-        resumed: false,
         enabled: true,
         blocked: false,
-        remainingHolds: [],
-        stillDisabled: [],
-        account: account.rows[0],
+        account,
         planId: prepared.planId,
         sourceKey: prepared.sourceKey,
         restoredAt: prepared.restoredAt,
@@ -177,4 +295,10 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
     };
 }
 
-module.exports = { HOLD_TYPE, restoreStatus, restoreDisabledFreeAccess, isPendingAdminReconcile, markReconcileComplete };
+module.exports = {
+    HOLD_TYPE,
+    restoreStatus,
+    restoreDisabledFreeAccess,
+    isPendingAdminReconcile,
+    markReconcileComplete
+};
