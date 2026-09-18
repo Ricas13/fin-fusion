@@ -39,13 +39,6 @@
       group:seed.dataset.group||'Administration',
       keywords:seed.dataset.keywords||''
     }));
-    [
-      {label:'Add customer',href:'/admin/users/new',group:'Customers',keywords:'new create invite'},
-      {label:'Import Jellyfin users',href:'/admin/jellyfin-import',group:'Customers',keywords:'import existing accounts'},
-      {label:'Add Jellyfin server',href:'/admin/servers/new',group:'Jellyfin',keywords:'new create server'},
-      {label:'Needs Attention',href:'/admin/attention',group:'Dashboard',keywords:'alerts problems issues review'}
-    ].forEach(command=>addCommand(list,command));
-
     document.querySelectorAll('a.adminTab[href],a.adminSubTab[href]').forEach(link=>{
       addCommand(list,{
         label:(link.textContent||'').trim(),
