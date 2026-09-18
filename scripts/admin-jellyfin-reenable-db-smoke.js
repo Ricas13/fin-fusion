@@ -112,6 +112,39 @@ const inactivityHoldReconciliation = require('../src/entitlements/inactivity-hol
         const postconditionHolds = await accessHolds.activeHolds(postcondition.customerId);
         assert(postconditionHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed restore postcondition must restore the inactivity hold');
 
+        // Reconciliation is multi-service. A later service can fail after the
+        // Free Jellyfin lane was already recreated. The restore owner must put
+        // the hold back and immediately compensate under that hold so the
+        // failed operation does not leave transient Free access active.
+        const partial = await fixture('partial-reconcile');
+        let partialCalls = 0;
+        await assert.rejects(
+            restore.restoreDisabledFreeAccess(partial.customerId, {
+                actorUserId: null,
+                reconcile: async customerId => {
+                    partialCalls += 1;
+                    const holds = await accessHolds.activeHolds(customerId);
+                    if (partialCalls === 1) {
+                        assert(!holds.some(row => row.hold_type === 'inactivity_policy'), 'first restore reconcile must run after releasing the inactivity hold');
+                        await query(`
+                            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary)
+                            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE)
+                        `, [customerId, partial.serverId, `remote-partial-${suffix}`, `Free_partial_${suffix}`]);
+                        throw new Error('simulated later-service failure');
+                    }
+                    assert(holds.some(row => row.hold_type === 'inactivity_policy'), 'compensation reconcile must run with the inactivity hold restored');
+                    await query(`DELETE FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane='free'`, [customerId]);
+                    return { active:false, status:'blocked' };
+                }
+            }),
+            /simulated later-service failure/,
+            'a later-service failure must still surface after compensation'
+        );
+        assert.strictEqual(partialCalls, 2, 'failed restore must immediately run one compensating reconcile');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int count FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane='free'`, [partial.customerId])).rows[0].count, 0, 'compensation must remove a Free account created by the failed restore');
+        const partialHolds = await accessHolds.activeHolds(partial.customerId);
+        assert(partialHolds.some(row => row.hold_type === 'inactivity_policy' && String(row.metadata?.subscriptionId || '') === String(partial.subscriptionId)), 'compensation must leave the exact inactivity hold active');
+
         // A hold belongs to one removal episode, not forever to the canonical
         // Free plan. A later Free subscription for the same plan must start clean.
         const stale = await fixture('stale-hold');
