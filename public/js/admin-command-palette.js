@@ -95,7 +95,8 @@
   function render(){
     const raw=input.value||'';
     const q=normalize(raw);
-    const ranked=commands
+    const candidates=q?commands:commands.filter(command=>!String(command.group||'').includes(' · '));
+    const ranked=candidates
       .map(command=>({command,score:score(command,q)}))
       .filter(item=>item.score>0)
       .sort((a,b)=>b.score-a.score||a.command.label.localeCompare(b.command.label))
