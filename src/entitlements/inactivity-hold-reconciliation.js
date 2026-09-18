@@ -2,37 +2,38 @@
 
 const { query } = require('../db');
 const accessHolds = require('./access-holds');
+const subscriptionState = require('./subscription-state');
 
 const HOLD_TYPE = 'inactivity_policy';
 
-async function releaseObsolete({ customerId = null, actorUserId = null } = {}) {
+async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
     const holds = await query(`
-        SELECT h.customer_id,h.source_key
-        FROM customer_access_holds h
-        WHERE h.hold_type=$1
-          AND h.released_at IS NULL
-          AND ($2::uuid IS NULL OR h.customer_id=$2::uuid)
-          AND NOT EXISTS(
-            SELECT 1
-            FROM subscriptions s
-            JOIN plans p ON p.id=s.plan_id
-            WHERE s.customer_id=h.customer_id
-              AND ('plan:'||s.plan_id::text)=h.source_key
-              AND s.superseded_by IS NULL
-              AND s.status IN ('active','trialing','past_due','paused')
-              AND s.starts_at<=NOW()
-              AND s.current_period_end>NOW()
-              AND p.is_free_tier=TRUE
-              AND p.price_minor=0
-              AND COALESCE(p.is_addon,FALSE)=FALSE
-              AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
-          )
-    `, [HOLD_TYPE, customerId]);
+        SELECT source_key
+        FROM customer_access_holds
+        WHERE customer_id=$1
+          AND hold_type=$2
+          AND released_at IS NULL
+        ORDER BY created_at,id
+    `, [customerId, HOLD_TYPE]);
+    if (!holds.rowCount) return 0;
+
+    // Do not duplicate Free-entitlement rules here. The canonical entitlement
+    // reader already owns extensions, Permanent Access, admin authority and the
+    // current plan identity. An inactivity hold stays valid only for that exact
+    // live Free plan.
+    const entitlement = await subscriptionState.liveFreeJellyfinSubscription(
+        customerId,
+        { includeBlocked: true }
+    );
+    const liveSourceKey = entitlement?.plan_id
+        ? `plan:${entitlement.plan_id}`
+        : null;
 
     let released = 0;
     for (const hold of holds.rows) {
+        if (liveSourceKey && String(hold.source_key) === liveSourceKey) continue;
         released += await accessHolds.releaseHold({
-            customerId: hold.customer_id,
+            customerId,
             type: HOLD_TYPE,
             sourceKey: hold.source_key,
             actorUserId,
@@ -42,17 +43,24 @@ async function releaseObsolete({ customerId = null, actorUserId = null } = {}) {
     return released;
 }
 
-async function releaseObsoleteForCustomer(customerId, actorUserId = null) {
-    return releaseObsolete({ customerId, actorUserId });
-}
-
 async function releaseObsoleteAll(actorUserId = null) {
-    return releaseObsolete({ actorUserId });
+    const customers = await query(`
+        SELECT DISTINCT customer_id
+        FROM customer_access_holds
+        WHERE hold_type=$1
+          AND released_at IS NULL
+        ORDER BY customer_id
+    `, [HOLD_TYPE]);
+
+    let released = 0;
+    for (const row of customers.rows) {
+        released += await releaseObsoleteForCustomer(row.customer_id, actorUserId);
+    }
+    return released;
 }
 
 module.exports = {
     HOLD_TYPE,
-    releaseObsolete,
     releaseObsoleteForCustomer,
     releaseObsoleteAll
 };
