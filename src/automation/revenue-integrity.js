@@ -118,6 +118,7 @@ async function scan() {
     const [
         permanentRefunds,
         invalidRecurringProviderRefs,
+        duplicateProviderIdentities,
         manualProviderOps,
         deletionFailures,
         staleCreationIntents,
@@ -152,6 +153,18 @@ async function scan() {
                 (source='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-')
               )
             ORDER BY updated_at
+            LIMIT 100
+        `),
+        query(`
+            SELECT MIN(id::text) AS id,source,provider_subscription_id,
+                   COUNT(*)::int AS subscription_count,
+                   array_agg(DISTINCT customer_id::text ORDER BY customer_id::text) AS customer_ids
+            FROM subscriptions
+            WHERE source IN('stripe','paypal','plisio')
+              AND NULLIF(BTRIM(COALESCE(provider_subscription_id,'')),'') IS NOT NULL
+            GROUP BY source,provider_subscription_id
+            HAVING COUNT(*)>1
+            ORDER BY COUNT(*) DESC,source,provider_subscription_id
             LIMIT 100
         `),
         query(`
@@ -312,6 +325,7 @@ async function scan() {
 
     for (const row of permanentRefunds.rows) findings.push(finding('refunded_permanent_access', row, `Refund-terminated subscription ${row.subscription_id} still has Permanent Access.`));
     for (const row of invalidRecurringProviderRefs.rows) findings.push(finding('invalid_recurring_provider_reference', row, `${row.source} recurring subscription ${row.subscription_id} has unusable provider reference ${row.provider_subscription_id || '(missing)'}.`));
+    for (const row of duplicateProviderIdentities.rows) findings.push(finding('duplicate_provider_billing_identity', row, `${row.source} provider identity ${row.provider_subscription_id} is attached to ${row.subscription_count} local subscriptions across customer(s) ${(row.customer_ids || []).join(', ')}.`));
     for (const row of manualProviderOps.rows) findings.push(finding('provider_manual_review', row, `${row.provider} ${row.operation_type} requires manual review${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of deletionFailures.rows) findings.push(finding('customer_deletion_stuck', row, `Customer deletion ${row.id} is ${row.status} after ${row.attempt_count || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of staleCreationIntents.rows) findings.push(finding('jellyfin_creation_intent_stale', row, `Jellyfin creation intent ${row.id} remains ${row.status} on server ${row.server_id}${row.last_error ? `: ${row.last_error}` : ''}`));
