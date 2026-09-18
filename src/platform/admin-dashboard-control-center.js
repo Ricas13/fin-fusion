@@ -8,7 +8,6 @@ const freeDigest = require('../automation/free-places-digest');
 const planCapacity = require('../entitlements/plan-capacity');
 const inactivityPolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const notificationSettings = require('../integrations/notification-settings');
-const billing = require('../payments/billing-control');
 const discovery = require('../payments/subscription-discovery');
 const { esc } = require('./admin-html');
 
@@ -183,15 +182,31 @@ async function freeSnapshot(jobRows) {
 }
 
 async function billingSnapshot() {
-  const [data, coverage] = await Promise.all([
-    billing.dashboardData(),
-    discovery.coverageStats()
+  const [coverage, integrity] = await Promise.all([
+    discovery.coverageStats(),
+    query(`
+      WITH recurring AS (
+        SELECT s.id,s.status,s.cancel_at_period_end,ps.last_error
+          FROM subscriptions s
+          LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id
+         WHERE s.billing_mode='subscription'
+           AND s.source IN('stripe','paypal')
+      )
+      SELECT
+        (SELECT COUNT(*)::int FROM recurring WHERE last_error IS NOT NULL) AS sync_problems,
+        (SELECT COUNT(*)::int FROM recurring WHERE status='past_due' AND COALESCE(cancel_at_period_end,FALSE)=FALSE) AS past_due,
+        (SELECT COUNT(*)::int
+           FROM payment_events
+          WHERE provider IN('stripe','paypal')
+            AND processing_error IS NOT NULL
+            AND processed_at IS NULL) AS provider_event_errors
+    `)
   ]);
-  const recurring = data.subscriptions.filter(row => row.recurring);
-  const syncProblems = recurring.filter(row => Boolean(row.last_error)).length;
-  const pastDue = recurring.filter(row => row.status === 'past_due' && !row.cancel_at_period_end).length;
-  const providerEventErrors = data.events.filter(row => row.processing_error && !row.processed_at).length;
+  const row = integrity.rows[0] || {};
   const missing = Number(coverage.missing || 0);
+  const syncProblems = Number(row.sync_problems || 0);
+  const pastDue = Number(row.past_due || 0);
+  const providerEventErrors = Number(row.provider_event_errors || 0);
   return {
     missing,
     syncProblems,
@@ -243,7 +258,9 @@ function recentJobActions(rows, limit = 5) {
     .map(row => {
       const state = jobHealth.healthState(row);
       const failed = Math.max(0, Number(row.last_failed_count || 0));
-      const processed = row.last_processed_count == null ? 0 : Math.max(0, Number(row.last_processed_count) || 0);
+      const processed = state === 'failed'
+        ? 0
+        : row.last_processed_count == null ? 0 : Math.max(0, Number(row.last_processed_count) || 0);
       if (!processed && !failed && !['failed','degraded'].includes(state)) return null;
       const details = [];
       if (processed) details.push(`${processed} processed`);
@@ -343,9 +360,10 @@ function freeCard(data = {}) {
   const capacity = data.limit == null
     ? `${data.available ?? '—'} available`
     : `${data.used == null ? Math.max(0, Number(data.limit || 0) - Number(data.available || 0) - Number(data.reserved || 0)) : Number(data.used)} / ${data.limit}`;
-  const inactivityBad = !data.inactivityEnabled || ['failed','degraded','stale','missing','unavailable'].includes(data.inactivityState);
-  const tone = inactivityBad ? 'warn' : 'good';
-  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / configured · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', `${data.waitingCapped ? '500+' : data.waiting}`, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
+  const inactivityBad = data.inactivityEnabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(data.inactivityState);
+  const tone = inactivityBad ? 'warn' : (!data.inactivityEnabled || data.inactivityDryRun ? 'neutral' : 'good');
+  const waitingLabel = data.waitingCapped ? `${Number(data.waiting || 0)}+` : String(data.waiting || 0);
+  return `<a class="dashboardControlCard ${tone}" href="/admin/servers"><div class="dashboardControlHead"><span>Free Server</span><strong>${esc(data.available == null ? 'Capacity unavailable' : `${data.available} open`)}</strong></div><div class="dashboardControlMetrics">${metric('Capacity', capacity, data.limit == null ? '' : `used / eligible capacity · ${Number(data.reserved || 0)} reserved`)}${metric('Waiting', waitingLabel, 'awaiting a Free account')}${metric('Buffered advert', String(data.bufferedPlaces || 0), data.nextAdvert || '')}</div><p><strong>Inactivity:</strong> ${esc(data.inactivityEnabled ? (data.inactivityDryRun ? 'Dry run' : data.inactivityState) : 'Paused')} · last cycle ${esc(ageLabel(data.inactivityLastCompletedAt))}</p></a>`;
 }
 
 function billingCard(data = {}) {
