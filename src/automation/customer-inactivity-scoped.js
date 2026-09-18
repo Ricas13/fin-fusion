@@ -78,7 +78,7 @@ async function finalEligibility(row, globalCfg) {
     if (!fresh?.eligible) {
         return {
             ready: false,
-            reason: fresh?.restoration_grace
+            reason: fresh?.legacy_safety_window
                 ? 'legacy_lane_observation_window'
                 : 'usage_no_longer_eligible',
             worker,
