@@ -65,7 +65,6 @@ async function main(){
     assert(Array.isArray(ctx.data.growthAnalytics.mrr.rows),'MRR analytics must expose a range-adjusted series');
     assert(Array.isArray(ctx.data.growthAnalytics.playback.rows),'server analytics must expose playback/concurrency buckets even when playback history is empty');
     assert(Array.isArray(ctx.data.growthAnalytics.players.rows),'player analytics must expose a normalized player ranking');
-    assert(ctx.data.serviceMix&&['jellyfin','stremio','free'].every(key=>Number.isFinite(Number(ctx.data.serviceMix[key]))),'compatibility service mix must remain available to other callers');
 
     const now=new Date(),ytdStart=profitability.yearStart(now),ytdEnd=profitability.utcDayAfter(now),header=await profitability.headerProfitability(ctx.reporting,{now});
     const analyticsYtd=await dashboardLedger.commerceRevenue({start:ytdStart,end:ytdEnd,previousStart:ytdStart,previousEnd:ytdStart,bucket:'month'},ctx.reporting,reportingCurrency);
@@ -79,12 +78,13 @@ async function main(){
     const dashboardSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard.js'),'utf8');
     const publicAuthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/customer-public-auth.js'),'utf8');
     assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardProfitability'),'home dashboard profit must use the shared profitability owner');
+    assert(!mainSource.includes("require('./admin-dashboard-data')")&&!mainSource.includes('dashboardData(range,reporting)'),'home dashboard must not execute the legacy dashboard analytics stack in parallel with current growth/server analytics');
     assert(mainSource.includes("require('./admin-dashboard-growth-data')")&&mainSource.includes('growthData.growthServerAnalytics'),'home dashboard growth/server cards must use their canonical data owner');
     for(const key of expected)assert(mainSource.includes(`registry.register('main','${key}'`),`home dashboard must register ${key}`);
     assert(growthSource.includes('date_trunc')&&growthSource.includes('generate_series'),'time-adjusted analytics must bucket historical data in PostgreSQL rather than fabricate client-side points');
     assert(growthSource.includes('reactivations')&&growthSource.includes('opening_active')&&growthSource.includes('churn_rate'),'growth series must distinguish reactivation and preserve the opening churn denominator');
     assert(growthSource.includes('avg_concurrent')&&growthSource.includes('directplay_seconds')&&growthSource.includes('directstream_seconds')&&growthSource.includes('transcode_seconds'),'server analytics must derive concurrency and play-method watch time from playback history');
-    assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('managed customers / configured user capacity')&&dashboardSource.includes('Needs attention'),'dashboard hero must keep the original top signals');
+    assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('managed customers / configured user capacity')&&dashboardSource.includes('Automation')&&!dashboardSource.includes('Needs attention'),'dashboard hero must keep unique top signals without duplicating the persistent Alerts header');
     assert(dashboardSource.includes('renderLiveStreamsPanel(req)'),'existing live playback panel must remain intact above analytics');
     assert(!dashboardSource.includes('attentionOverview(stats)')&&!dashboardSource.includes("label: 'MRR'"),'home dashboard must not duplicate the old attention block or MRR tile');
     assert(publicAuthSource.includes('verificationRequired:true'),'public registration page must always disclose email verification');
