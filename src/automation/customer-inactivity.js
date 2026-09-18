@@ -1,7 +1,6 @@
 'use strict';
 
 const { query } = require('../db');
-const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 
 const HOLD_TYPE = 'inactivity_policy';
@@ -296,48 +295,10 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
     });
 }
 
-async function releaseObsoletePlanHolds(actorUserId = null) {
-    const rows = await query(`
-        SELECT h.customer_id,h.source_key
-        FROM customer_access_holds h
-        LEFT JOIN plans p ON h.source_key=('plan:'||p.id::text)
-        WHERE h.hold_type=$1
-          AND h.released_at IS NULL
-          AND NOT EXISTS(
-            SELECT 1
-            FROM subscriptions s
-            JOIN plans live_plan ON live_plan.id=s.plan_id
-            WHERE s.customer_id=h.customer_id
-              AND ('plan:'||s.plan_id::text)=h.source_key
-              AND s.superseded_by IS NULL
-              AND s.status IN ('active','trialing','past_due','paused')
-              AND s.starts_at<=NOW()
-              AND s.current_period_end>NOW()
-              AND live_plan.is_free_tier=TRUE
-              AND live_plan.price_minor=0
-              AND COALESCE(live_plan.is_addon,FALSE)=FALSE
-              AND COALESCE(NULLIF(s.service_type_snapshot,''),live_plan.service_type,'jellyfin') IN ('jellyfin','bundle')
-          )
-    `, [HOLD_TYPE]);
-
-    let released = 0;
-    for (const row of rows.rows) {
-        released += await accessHolds.releaseHold({
-            customerId: row.customer_id,
-            type: HOLD_TYPE,
-            sourceKey: row.source_key,
-            actorUserId,
-            resolutionReason: 'Free entitlement no longer exists'
-        });
-    }
-    return released;
-}
-
 module.exports = {
     HOLD_TYPE,
     FREE_POLICY_DEFAULTS,
     serverPolicy,
     assessUsage,
-    candidates,
-    releaseObsoletePlanHolds
+    candidates
 };
