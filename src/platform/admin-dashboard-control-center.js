@@ -277,20 +277,20 @@ function recentJobActions(rows, limit = 5) {
   return (rows || [])
     .filter(row => RECENT_JOB_KEYS.has(String(row.job_key || '')) && (row.last_completed_at || row.last_success_at))
     .map(row => {
-      const state = jobHealth.healthState(row);
+      const outcome = String(row.last_outcome || '').toLowerCase();
       const failed = Math.max(0, Number(row.last_failed_count || 0));
-      const processed = state === 'failed'
+      const processed = outcome === 'failed'
         ? 0
         : row.last_processed_count == null ? 0 : Math.max(0, Number(row.last_processed_count) || 0);
-      if (!processed && !failed && !['failed','degraded'].includes(state)) return null;
+      if (!processed && !failed && !['failed','warning'].includes(outcome)) return null;
       const details = [];
       if (processed) details.push(`${processed} processed`);
       if (failed) details.push(`${failed} failed`);
-      if (state === 'degraded' && row.last_warning) details.push('completed with warnings');
+      if (outcome === 'warning' && row.last_warning) details.push('completed with warnings');
       return {
-        kind: state === 'failed' ? 'bad' : state === 'degraded' || failed ? 'warn' : 'good',
+        kind: outcome === 'failed' ? 'bad' : outcome === 'warning' || failed ? 'warn' : 'good',
         label: jobLabel(row.job_key),
-        detail: details.join(' · ') || state,
+        detail: details.join(' · ') || outcome || 'completed',
         at: row.last_completed_at || row.last_success_at,
         href: '/admin/automation'
       };
