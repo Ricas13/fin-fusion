@@ -113,7 +113,7 @@ assert(!orders.includes('<th>Provider ID</th>') && !orders.includes('data-label=
 assert(billing.includes('Billing operations') && billing.includes('Fix these subscriptions first'), 'Billing must expose customer-impacting recurring problems before routine reconciliation');
 assert(billing.includes('Boolean(row.last_error)') && billing.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'Billing problems must derive from canonical subscription/provider-sync state while excluding intentional end-of-period cancellations');
 assert(billing.includes('Missing provider links') && billing.includes('Resolve missing links'), 'Billing must permanently expose unlinked paid subscriptions as operator work');
-assert(billing.includes("ui.detailDisclosure({title:`Linked recurring subscriptions"), 'Linked recurring-subscription state must remain progressively disclosed behind the missing-link queue, including subscriptions intentionally ending after the current period');
+assert(billing.includes("ui.detailDisclosure({title:`Recurring subscriptions"), 'Linked recurring-subscription state must remain progressively disclosed behind the missing-link queue, including subscriptions intentionally ending after the current period');
 assert(!billing.includes('<th>Provider ID</th>'), 'Billing default tables must not make raw provider identifiers an operator-facing column');
 
 assert(support.includes('Support desk') && support.includes('Reply these first'), 'Support must lead with customer conversations waiting on staff');
