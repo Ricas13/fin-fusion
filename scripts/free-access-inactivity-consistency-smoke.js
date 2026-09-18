@@ -127,6 +127,9 @@ assert.equal(retiredBreaker.retired,true,'the historical population-size circuit
 assert.equal(scopedInactivity.adminProtectedFreeEntitlement({admin_jellyfin_mode:'forced_server'}),false,'a server pin is placement only and must not exempt Free inactivity');
 assert.equal(scopedInactivity.adminProtectedFreeEntitlement({admin_jellyfin_mode:'present'}),true,'explicit admin-present authority must continue to protect Free access');
 assert.equal(scopedInactivity.adminProtectedFreeEntitlement({permanent_access:true}),true,'permanent access must continue to protect Free access');
+const adminControl=read('src/jellyfin/admin-control.js');
+const serverPinBranch=adminControl.slice(adminControl.indexOf("control.mode==='admin_server_pin'"),adminControl.indexOf("return decorated",adminControl.indexOf("control.mode==='admin_server_pin'")));
+assert(!serverPinBranch.includes('decorated.blocked=false'),'a Jellyfin server pin is placement only and must never erase inactivity/billing/access blockers');
 assert.equal(restorationGrace.legacyResetNeedsGrace({any_playback_history:false}),false,'a true never-played legacy account must not receive the ambiguity reset grace');
 assert.equal(restorationGrace.legacyResetNeedsGrace({any_playback_history:true}),true,'legacy accounts with historical playback must retain ambiguity protection');
 assert.equal(restorationGrace.legacyResetNeedsGrace({}),true,'unknown legacy playback state must fail closed and retain ambiguity protection');
