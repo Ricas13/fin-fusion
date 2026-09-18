@@ -174,7 +174,7 @@ assert.ok(adminSource.includes('manualAttempt'), 'manual verification errors mus
 assert.ok(adminSource.includes('${verification}${table}'), 'manual verification feedback must render before the missing-subscription table, not after the full page');
 assert.ok(adminSource.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'intentional end-of-period cancellations must not remain in the urgent past-due queue');
 assert.ok(adminSource.includes("filter(item=>item.state!=='linked'&&item.state!=='ending')"), 'automatic discovery results must omit both healthy linked rows and fixed-term reference rows');
-assert.ok(adminSource.includes('Linked recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
+assert.ok(adminSource.includes('Recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
 
 console.log('Subscription discovery smoke passed.');
