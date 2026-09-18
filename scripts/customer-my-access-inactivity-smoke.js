@@ -103,6 +103,37 @@ const currentlyPlaying=freeAccessHealth({
 assert.equal(currentlyPlaying.minimumMet,false,'an in-progress stream does not fabricate watched minutes');
 assert.match(currentlyPlaying.detail,/current stream is still being counted/i);
 
+const protectedStatus=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
+  hasPlayback:true,
+  playbackMinutes:0,
+  currentlyPlaying:false,
+  automationProtected:true,
+  globalEnforcementEnabled:true,
+  enforcementReady:true,
+  eligible:false
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.match(protectedStatus.detail,/protected account/i,'explicit admin/permanent protection must be visible without inventing another usage rule');
+assert.equal(protectedStatus.removalAt,null,'after the initial retention window there is no fixed future removal timestamp');
+
+const pausedStatus=freeAccessHealth({
+  applies:true,
+  policy:{firstPlaybackGraceDays:3,minimumPlaybackMinutes:30,playbackWindowDays:7},
+  allocationStartAt:'2026-08-15T12:00:00.000Z',
+  firstPlaybackAt:'2026-08-16T12:00:00.000Z',
+  hasPlayback:true,
+  playbackMinutes:0,
+  currentlyPlaying:false,
+  automationProtected:false,
+  globalEnforcementEnabled:false,
+  enforcementReady:true,
+  eligible:false
+},{now:Date.parse('2026-09-07T12:00:00.000Z')});
+assert.match(pausedStatus.detail,/paused by the administrator/i,'global pause state must be visible to the customer-facing status');
+
 assert.match(view,/accounts\.forEach\(function\(account\)/,'each Jellyfin or Emby server account must remain independently renderable');
 assert.match(view,/hasStremioAccess/,'My Access must render Stremio independently');
 assert.match(view,/id="stremio-access"/,'Stremio access must have its own card');
