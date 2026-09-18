@@ -84,9 +84,13 @@ function freeAccessHealth(status,{now=Date.now()}={}){
   const activated=Boolean(firstPlayback||status.hasPlayback||status.currentlyPlaying);
   const playbackMinutes=Math.max(0,Number(status.playbackMinutes)||0);
   const rulesText=`Free Server rules: play your first stream within ${firstPlaybackGraceDays} day${firstPlaybackGraceDays===1?'':'s'} of receiving a place, then watch at least ${minimumPlaybackMinutes} minutes in each rolling ${playbackWindowDays}-day window.`;
-  const enforcementNote=status.enforcementReady
-    ?null
-    :'Automatic removal is temporarily paused while playback telemetry is unavailable.';
+  const enforcementNote=status.automationProtected
+    ?'Automatic inactivity removal is disabled for this protected account.'
+    :status.globalEnforcementEnabled===false
+      ?'Automatic inactivity removal is paused by the administrator.'
+      :status.enforcementReady
+        ?null
+        :'Automatic removal is temporarily paused while playback telemetry is unavailable.';
 
   if(!activated){
     const removalAt=Number.isFinite(firstPlaybackGraceDays)&&firstPlaybackGraceDays>0
@@ -128,10 +132,12 @@ function freeAccessHealth(status,{now=Date.now()}={}){
   if(status.eligible)detail+=' Access can be removed on the next eligible automation run.';
   if(enforcementNote)detail+=` ${enforcementNote}`;
 
-  const removalAt=firstPlayback&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0
+  const firstRetentionCheckAt=firstPlayback&&Number.isFinite(playbackWindowDays)&&playbackWindowDays>0
     ?addHours(firstPlayback,playbackWindowDays*24)
     :null;
-  const remainingHours=removalAt?hoursUntil(removalAt,now):null;
+  const retentionCheckHours=firstRetentionCheckAt?hoursUntil(firstRetentionCheckAt,now):null;
+  const removalAt=retentionCheckHours!=null&&retentionCheckHours>0?firstRetentionCheckAt:null;
+  const remainingHours=removalAt?retentionCheckHours:null;
   return{
     tone,
     label,
