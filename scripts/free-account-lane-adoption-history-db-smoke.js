@@ -31,7 +31,7 @@ const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace')
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
-const GLOBAL_CFG = { enabled: true, dryRun: false, freeFirstPlaybackGraceDays: 3, freeNoPlaybackDays: 7, freeMinimumPlaybackMinutes: 30, freePlaybackWindowDays: 7 };
+const GLOBAL_CFG = { enabled: true, dryRun: false };
 
 async function makeServer(label) {
     const row = await query(`
@@ -66,7 +66,7 @@ async function candidateFor(customerId) {
 }
 
 async function candidateWithGrace(customerId) {
-    const rows = await inactivityGrace.applyRestorationGrace(await inactivity.candidates(GLOBAL_CFG, { customerId }));
+    const rows = await inactivityGrace.applyLegacySafetyWindow(await inactivity.candidates(GLOBAL_CFG, { customerId }));
     return rows.find(row => String(row.customer_id) === String(customerId)) || null;
 }
 
@@ -160,8 +160,8 @@ async function candidateWithGrace(customerId) {
     const legacyProtected = await candidateWithGrace(legacyCustomerId);
     assert(legacyProtected, 'legacy backfilled Free account must remain visible after safety grace decoration');
     assert.strictEqual(legacyProtected.eligible, false, 'legacy safety window must suppress destructive inactivity enforcement');
-    assert.strictEqual(legacyProtected.restoration_grace_source, 'legacy_lane_backfill', 'legacy safety must be distinguishable from an administrator restore');
-    const remainingMs = new Date(legacyProtected.restoration_grace_until).getTime() - Date.now();
+    assert.strictEqual(legacyProtected.legacy_safety_source, 'legacy_lane_backfill', 'legacy safety must remain explicitly migration-only');
+    const remainingMs = new Date(legacyProtected.legacy_safety_until).getTime() - Date.now();
     assert(remainingMs > 6 * 86400000, `legacy safety must use the full retention window, not the 3-day first-play window; remaining=${remainingMs}`);
 
     console.log('free account lane-adoption history DB smoke: ok');
