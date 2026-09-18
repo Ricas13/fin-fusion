@@ -205,17 +205,9 @@ async function removeEligibleAccount(row, actorUserId) {
         );
         await verifyRemoved(row.account_id);
     } catch (error) {
-        // A failed DELETE leaves the current account usable and retryable. Do
-        // not run the general entitlement reconciler here; that is precisely
-        // the unrelated path that previously fought inactivity enforcement.
-        await accessHolds.releaseHold({
-            customerId: row.customer_id,
-            type: base.HOLD_TYPE,
-            sourceKey: `plan:${row.plan_id}`,
-            actorUserId,
-            resolutionReason: 'Inactivity deletion failed; retry on next run'
-        }).catch(() => {});
-
+        // The hold is the durable "removal pending/removed" authority. Keep it
+        // active on DELETE failure so the next run retries the exact account and
+        // no unrelated reconciliation can recreate access in between attempts.
         await query(
             `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
              VALUES($1,'customer.inactivity.remove_failed','customer',$2,$3::jsonb)`,
