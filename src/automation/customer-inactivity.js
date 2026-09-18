@@ -254,7 +254,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
           FROM playback_history ph
           WHERE ph.customer_id=fa.customer_id
             AND ph.server_id=ja.server_id
-            AND ph.jellyfin_account_id=ja.id
+            AND (ph.jellyfin_account_id=ja.id OR ph.jellyfin_account_id IS NULL)
         ) us ON TRUE
         WHERE NOT EXISTS(
           SELECT 1 FROM customer_bans b
