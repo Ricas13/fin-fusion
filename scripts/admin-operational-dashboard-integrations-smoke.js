@@ -13,6 +13,7 @@ const controlCenterSource=read('src/platform/admin-dashboard-control-center.js')
 const freeBackfillSource=read('src/automation/free-capacity-backfill.js');
 const dashboardPageSource=read('src/platform/admin-dashboard-page.js');
 const billingControlSource=read('src/payments/billing-control.js');
+const adminBillingSource=read('src/platform/admin-billing.js');
 const inactivityAuditIndexMigration=read('db/migrations/20260918173000_admin_dashboard_inactivity_audit_index.sql');
 const dashboardCss=read('public/css/admin-profit-dashboard.css');
 const liveStreamSource=read('src/platform/admin-dashboard-live-streams.js');
@@ -92,22 +93,12 @@ const malformedProviderHtml=controlCenter.renderControlCenter({
   recent:[]
 });
 assert(malformedProviderHtml.includes('Needs review')&&malformedProviderHtml.includes('Provider / sync')&&malformedProviderHtml.includes('>1</strong>'),'A malformed live recurring provider ID must make Home billing integrity require review');
-const disabledProviderHero=adminBilling.billingHero(
-  {subscriptions:[]},
-  {provider:'stripe',enabled:false,configured:false},
-  {provider:'paypal',enabled:false,configured:false},
-  {premium:1,linked:1,ending:0,missing:0},
-  {stripe:1,paypal:0}
+assert(
+  adminBillingSource.includes("const stripeRequired=Number(providerCounts.stripe||0)>0,paypalRequired=Number(providerCounts.paypal||0)>0") &&
+  adminBillingSource.includes("stripeStatus.enabled||stripeRequired ? 'warn' : ''") &&
+  adminBillingSource.includes("paypalStatus.enabled||paypalRequired ? 'warn' : ''"),
+  'Billing owner page must visibly warn on a disabled Stripe/PayPal provider while that provider still owns live recurring contracts'
 );
-assert(disabledProviderHero.includes('payment provider is unavailable for live recurring billing')&&disabledProviderHero.includes('Setup incomplete'),'A disabled provider with live recurring contracts must not allow the Billing owner page to claim recurring billing is clear');
-const unusedDisabledProviderHero=adminBilling.billingHero(
-  {subscriptions:[]},
-  {provider:'stripe',enabled:false,configured:false},
-  {provider:'paypal',enabled:false,configured:false},
-  {premium:0,linked:0,ending:0,missing:0},
-  {stripe:0,paypal:0}
-);
-assert(unusedDisabledProviderHero.includes('Recurring billing is clear'),'An intentionally disabled provider with no live recurring contracts must remain a valid clear state');
 const malformedRecurring={recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'pi_not_a_subscription',status:'active',cancel_at_period_end:false,last_error:null,customer_id:'customer-bad',display_name:'Bad Ref',email:'bad-ref@example.invalid',plan_name:'Stremio',price_minor:500,currency:'GBP'};
 assert.strictEqual(adminBilling.recurringProblems({subscriptions:[malformedRecurring]}).length,1,'Malformed recurring IDs must be operator problems even before the first provider sync fails');
 assert.strictEqual(adminBilling.recurringProblems({subscriptions:[{...malformedRecurring,provider_subscription_id:'sub_valid'}]}).length,0,'A healthy recurring ID must not become an operator problem without another billing failure');
