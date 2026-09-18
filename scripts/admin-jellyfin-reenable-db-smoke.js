@@ -95,7 +95,9 @@ const inactivityHoldReconciliation = require('../src/entitlements/inactivity-hol
             'a reprovisioning failure must surface to the operator'
         );
         const retryHolds = await accessHolds.activeHolds(retry.customerId);
-        assert(retryHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed reprovisioning must restore the inactivity hold');
+        const retryHold = retryHolds.find(row => row.hold_type === 'inactivity_policy');
+        assert(retryHold, 'failed reprovisioning must restore the inactivity hold');
+        assert.strictEqual(String(retryHold.metadata?.subscriptionId || ''), String(retry.subscriptionId), 'restored hold must stay bound to the exact failed Free subscription episode');
         assert.strictEqual((await query(`SELECT COUNT(*)::int count FROM jellyfin_accounts WHERE customer_id=$1`, [retry.customerId])).rows[0].count, 0, 'failed restore must not leave a disabled or partial account');
 
         const postcondition = await fixture('postcondition');
