@@ -527,6 +527,7 @@ module.exports = {
     createJellyfinAccount,
     applyPolicy,
     disableJellyfinAccount,
+    assertNoActivePlaybackBeforeDelete,
     deleteJellyfinAccount,
     markPrimaryAccount,
     setJellyfinPassword,
