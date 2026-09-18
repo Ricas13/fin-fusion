@@ -78,8 +78,14 @@ async function buildContext(req){
         query('SELECT EXISTS(SELECT 1 FROM plans) AS has_plans')
     ]);
     const hasPlans=Boolean(planState.rows[0]?.has_plans);
+    const financialWarnings=Array.from(new Set([
+        ...(profit.current?.revenue?.warnings||[]),
+        ...(profit.previous?.revenue?.warnings||[]),
+        ...(profit.ytd?.revenue?.warnings||[])
+    ].map(value=>String(value||'').trim()).filter(Boolean)));
     return{range,reporting,data:{
         profitability:profit,
+        financialWarnings,
         growthAnalytics:analytics,
         userGauge:fleetCapacity(fleet),
         setup:{counts:{plans:hasPlans?1:0,servers:fleet.length}}
