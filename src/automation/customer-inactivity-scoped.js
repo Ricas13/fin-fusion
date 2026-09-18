@@ -144,12 +144,16 @@ async function usageSatisfiedEarlierToday(row) {
     const windowDays = Number(row?.policy?.playbackWindowDays);
     if (!Number.isFinite(minimumMinutes) || minimumMinutes <= 0 || !Number.isFinite(windowDays) || windowDays <= 0) return false;
     const result = await query(`
-        SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)))),0)::bigint playback_seconds
+        SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (
+            LEAST(COALESCE(ended_at,last_seen_at),NOW())
+            - GREATEST(started_at,NOW() - ($3::int * INTERVAL '1 day'))
+        )))),0)::bigint playback_seconds
         FROM playback_history
         WHERE customer_id=$1 AND server_id=$2
-          AND started_at >= NOW() - ($3::int * INTERVAL '1 day')
-          AND (jellyfin_account_id=$4::uuid OR jellyfin_account_id IS NULL)
+          AND COALESCE(ended_at,last_seen_at) > NOW() - ($3::int * INTERVAL '1 day')
           AND ($5::timestamptz IS NULL OR started_at >= $5::timestamptz)
+          AND started_at < NOW()
+          AND (jellyfin_account_id=$4::uuid OR jellyfin_account_id IS NULL)
     `, [row.customer_id,row.server_id,windowDays,row.account_id,row.allocation_start_at || null]);
     return Number(result.rows[0]?.playback_seconds || 0) >= minimumMinutes * 60;
 }
@@ -163,7 +167,6 @@ function adminProtectedFreeEntitlement(entitlement) {
     // directive suppresses automated inactivity removal.
     return Boolean(
         entitlement.permanent_access
-        || entitlement.admin_present
         || mode === 'present'
     );
 }
