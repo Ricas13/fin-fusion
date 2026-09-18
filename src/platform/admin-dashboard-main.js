@@ -71,11 +71,12 @@ function fleetCapacity(rows){
 
 async function buildContext(req){
     const range=dashboardRange(req.query||{}),reporting=await reportingCurrency.getForUser(req.session.authUserId);
-    const [profit,analytics,fleet,planState]=await Promise.all([
+    const [profit,analytics,fleet,planState,mix]=await Promise.all([
         profitability.dashboardProfitability(reporting),
         growthData.growthServerAnalytics(range,reporting),
         fleetDashboard.dashboardRows(),
-        query('SELECT EXISTS(SELECT 1 FROM plans) AS has_plans')
+        query('SELECT EXISTS(SELECT 1 FROM plans) AS has_plans'),
+        serviceMix()
     ]);
     const hasPlans=Boolean(planState.rows[0]?.has_plans);
     const financialWarnings=Array.from(new Set([
@@ -87,6 +88,7 @@ async function buildContext(req){
         profitability:profit,
         financialWarnings,
         growthAnalytics:analytics,
+        serviceMix:mix,
         userGauge:fleetCapacity(fleet),
         setup:{counts:{plans:hasPlans?1:0,servers:fleet.length}}
     }};
