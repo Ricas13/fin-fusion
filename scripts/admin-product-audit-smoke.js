@@ -43,10 +43,10 @@ assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard m
 assert.deepStrictEqual(pageKeys.customers,['users','tickets'],'Customers must expose All customers and Support');
 assert.deepStrictEqual(pageKeys.servers,['servers','stremio-sources','activity'],'Servers must expose Jellyfin, Stremio and Playback');
 assert.strictEqual(pageKeys[`${retiredProduct}s`],undefined,'Retired product routes must not appear as a shipped primary sidebar module');
-assert.deepStrictEqual(pageKeys.commerce,['plans','orders','discounts','referrals','payments'],'Commerce must expose Plans, Orders, Discounts, Affiliates and Payments');
+assert.deepStrictEqual(pageKeys.commerce,['plans','orders','billing','payments','discounts','referrals'],'Commerce must expose Plans, Orders, Billing, Providers, Discounts and Affiliates in the canonical ownership order');
 assert.deepStrictEqual(pageKeys.operations,['provisioning','automation-jobs','backups'],'Operations must expose Provisioning, Automation and Backups');
 assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security','settings-integrations','system'],'Settings must expose General, Security, Connections and System');
-assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),19,'Permanent rail must expose nineteen destinations');
+assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),20,'Permanent rail must expose twenty destinations');
 for(const group of nav.groups)for(const page of group.pages)assert.deepStrictEqual(nav.childPages(page[0]),[],`${page[1]} must not manufacture a third rail level`);
 
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a rail slot');
@@ -121,7 +121,7 @@ const expectedMainWidgets=['activeSubscribers','newVsChurn','netGrowth','subscri
 assert.deepStrictEqual(mainWidgets.map(w=>w.key),expectedMainWidgets,'Main dashboard must expose the nine agreed growth and server analytics cards');
 assert.deepStrictEqual(mainWidgets.map(w=>w.defaultSpan),Array(9).fill(4),'Main dashboard widgets must preserve the 3x3 equal-thirds visual hierarchy');
 assert(mainWidgets.every(w=>w.title&&w.render),'every Main dashboard analytics card must retain a named renderer rather than becoming a stub');
-assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Payments, and Operations'),'Existing Settings directory guidance must remain available until its copy is refreshed separately');
+assert(settings.includes('Daily work belongs in Customers, Servers, Plans, Commerce and Operations'),'Settings directory guidance must reflect the canonical operator ownership model');
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
 for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
 assert(exists('public/js/admin-plan-create-v2.js'),'canonical Jellyfin/general plan creation browser controller must remain available');

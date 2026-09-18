@@ -151,6 +151,7 @@ async function serverList() {
     const result = await query(`
         SELECT js.id,js.name,js.slug,js.server_class,js.media_server_type,js.public_url,js.location,js.enabled,
                js.allow_new_users,js.trial_enabled,js.paid_enabled,js.priority,js.max_users,
+               js.free_first_playback_grace_days,js.free_playback_window_days,js.free_minimum_playback_minutes,
                js.health_status,js.last_health_check,js.created_at,js.updated_at,
                COUNT(DISTINCT ja.id)::int assigned_users,COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams
         FROM jellyfin_servers js LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id

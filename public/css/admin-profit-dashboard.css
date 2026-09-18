@@ -76,3 +76,12 @@
   .profitBarRow{grid-template-columns:1fr}
   .profitBarTracks>div{grid-template-columns:48px minmax(0,1fr) 70px}
 }
+
+.dashboardAnalyticsDisclosure{margin-top:12px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--enclosure) 94%,transparent);overflow:hidden}
+.dashboardAnalyticsDisclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;cursor:pointer;list-style:none}
+.dashboardAnalyticsDisclosure>summary::-webkit-details-marker{display:none}
+.dashboardAnalyticsDisclosure>summary strong{font-size:12px;letter-spacing:.025em}
+.dashboardAnalyticsDisclosure>summary span{color:var(--dim);font-size:11px;text-align:right}
+.dashboardAnalyticsDisclosure[open]>summary{border-bottom:1px solid var(--line)}
+.dashboardAnalyticsDisclosureBody{padding:12px}
+@media(max-width:700px){.dashboardAnalyticsDisclosure>summary{align-items:flex-start;flex-direction:column}.dashboardAnalyticsDisclosure>summary span{text-align:left}.dashboardAnalyticsDisclosureBody{padding:9px}}

@@ -28,11 +28,9 @@ const baseline=read('db/migrations/000_database_baseline.sql');
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
 assert(!/credit wallet|buy credits/i.test(plans),'Unified Plans must not revive retired-product credit semantics');
 for(const title of ['Payments','Provider mappings','Billing','Transactions','Export data','Payment Risk Policy','Payment History','Migrate paid users'])assert.strictEqual(adminShell.paymentTabsFor({title}),'',`Shared admin shell must not render a payment workflow tab row for ${title}`);
-assert.deepStrictEqual(
-  nav.relatedPages('payments').map(page=>page[1]),
-  ['Billing','Expenses & Profitability'],
-  'Billing and profitability must remain discoverable from Payments without creating a third rail level'
-);
+assert.deepStrictEqual(nav.relatedPages('payments').map(page=>page[1]),[],'Providers must stay infrastructure-focused and must not own Billing/finance pages');
+assert.deepStrictEqual(nav.relatedPages('billing').map(page=>page[1]),['Expenses & Profitability'],'Billing must own the profitability workspace without creating a third rail level');
+assert(nav.settingsFor('billing').some(page=>page[0]==='refunds'),'Prepaid refund policy must stay discoverable from Billing');
 assert.deepStrictEqual(nav.childPages('payments'),[],'Payments must not render third-level sidebar rows');
 for(const [key,url] of [
   ['transactions','/admin/payments/transactions'],

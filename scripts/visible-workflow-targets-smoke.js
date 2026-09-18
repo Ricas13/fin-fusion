@@ -10,6 +10,8 @@ process.env.NODE_ENV=process.env.NODE_ENV||'test';
 const root=path.join(__dirname,'..');
 const {createApplication}=require('../src/application');
 const {getPool}=require('../src/db');
+const commandIndex=require('../src/platform/admin-command-index');
+const settingsRegistry=require('../src/platform/settings-registry');
 
 function files(dir){
   return fs.readdirSync(dir,{withFileTypes:true}).flatMap(entry=>{
@@ -89,6 +91,15 @@ async function main(){
       const target=dynamicLocalTarget(match[2]);
       if(target)checks.push({method:'GET',path:target,rel,kind:'redirect'});
     }
+  }
+  for(const item of commandIndex.all()){
+    const target=staticLocalTarget(item.href);
+    if(target)checks.push({method:'GET',path:target,rel:'src/platform/admin-command-index.js',kind:'command-index'});
+  }
+  for(const item of settingsRegistry.SETTINGS){
+    const owner=settingsRegistry.ownerForSetting(item.key);
+    const target=staticLocalTarget(item.href||owner?.href);
+    if(target)checks.push({method:'GET',path:target,rel:'src/platform/settings-registry.js',kind:'settings-registry'});
   }
   const missing=checks.filter(check=>!routes.some(route=>(route.method===check.method||route.method==='ALL')&&sameShape(check.path,route.path)));
   if(missing.length){
