@@ -4,7 +4,6 @@ const { query } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const legacyGrace = require('../entitlements/jellyfin-inactivity-grace');
-const inactivityHoldReconciliation = require('../entitlements/inactivity-hold-reconciliation');
 const subscriptionState = require('../entitlements/subscription-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
@@ -258,8 +257,6 @@ async function removeEligibleAccount(row, actorUserId) {
 
 async function runPlanRules({ actorUserId = null } = {}) {
     const globalCfg = await lifecyclePolicy.get();
-    const released = await inactivityHoldReconciliation.releaseObsoleteAll(actorUserId);
-
     if (!globalCfg.enabled) {
         return {
             processed: 0,
@@ -267,7 +264,6 @@ async function runPlanRules({ actorUserId = null } = {}) {
             enforced: 0,
             wouldRemove: 0,
             failed: 0,
-            released,
             dryRun: true,
             skipped: globalCfg.configurationMissing
                 ? 'lifecycle_configuration_missing'
@@ -283,7 +279,6 @@ async function runPlanRules({ actorUserId = null } = {}) {
             enforced: 0,
             wouldRemove: 0,
             failed: 1,
-            released,
             dryRun: true,
             skipped: 'activity_worker_stale',
             warning: 'Free Server inactivity is paused because playback collection is stale.',
@@ -361,7 +356,6 @@ async function runPlanRules({ actorUserId = null } = {}) {
         failed,
         deferred,
         safetySkipped,
-        released,
         warning,
         dryRun: Boolean(globalCfg.dryRun),
         telemetry,
