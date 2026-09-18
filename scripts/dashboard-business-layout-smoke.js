@@ -31,7 +31,7 @@ assert(!main.includes("registry.register('main','cashFlow'")&&!main.includes("re
 assert(main.includes('Growth & server analytics')&&main.includes('/css/admin-dashboard-growth.css'),'Dashboard must identify and style the new analytics section');
 
 assert(dashboard.includes('Profit this month')&&dashboard.includes('Profit YTD'),'Dashboard hero must lead with profit');
-assert(dashboard.includes('managed customers / configured user capacity')&&dashboard.includes('Needs attention'),'Dashboard hero must keep user capacity and attention intact');
+assert(dashboard.includes('managed customers / configured user capacity')&&dashboard.includes('Automation')&&!dashboard.includes('Needs attention'),'Dashboard hero must keep unique capacity and automation signals while leaving Needs Attention to the persistent Alerts header');
 assert(dashboard.includes("renderLiveStreamsPanel(req)"),'Live Playback panel must remain directly owned by the existing live-stream renderer');
 assert(dashboard.includes('adminDashboardCompactBody')&&dashboard.includes('profitMetricPair'),'Dashboard must keep the compact top-body contract and paired month/YTD profit');
 
@@ -60,7 +60,7 @@ assert(analyticsCss.includes('.chartDonutSlice{fill:none}')&&analyticsCss.includ
 assert(analyticsCss.includes('.barTrack{')&&analyticsCss.includes('.barFill{'),'Orders plan-performance bars must retain their shared track and fill styling');
 assert(ordersPolishCss.includes('.page-commerce-orders .ordersChartCard')&&ordersPolishCss.includes('.page-commerce-orders .ordersAnalyticsGrid'),'Orders-specific chart cards and analytics layout must retain their scoped visual-polish layer');
 
-assert(dashboardCss.includes('.profitHeroGrid{display:grid;grid-template-columns:1.35fr repeat(3,minmax(0,1fr))'),'Dashboard summary must keep the compact four-card top rhythm with a wider Profit card');
+assert(dashboardCss.includes('.profitHeroGrid{display:grid;grid-template-columns:1.35fr repeat(2,minmax(0,1fr))'),'Dashboard summary must keep the compact three-card top rhythm with a wider Profit card');
 assert(profit.includes('revenue.netMinor-booked.totalMinor'),'Profit must remain net provider receipts minus booked expenses');
 assert(profit.includes("provider IN('stripe','paypal')"),'Profit must stay aligned with the current Expenses provider scope');
 assert(reporting.includes('async function getForUser(_userId)')&&reporting.includes('masterCurrency:true'),'Dashboard reporting currency must resolve to the platform master currency');
