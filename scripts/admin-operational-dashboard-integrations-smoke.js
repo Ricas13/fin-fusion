@@ -121,8 +121,8 @@ const degradedAction=controlCenter.recentJobActions([{job_key:'billing',enabled:
 assert(degradedAction&&degradedAction.kind==='warn'&&degradedAction.detail.includes('7 processed')&&degradedAction.detail.includes('2 failed')&&degradedAction.detail.includes('completed with warnings'),'A degraded job outcome must stay visible as a warning with its completed-run counts');
 
 const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10}}});
-assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Customers / capacity')&&clear.includes('Automation'),'Dashboard hero must expose profit, customer capacity and automation health');
-assert(clear.includes('2 / 10')&&clear.includes('managed customers / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
+assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Server users / capacity')&&clear.includes('Automation'),'Dashboard hero must expose profit, customer capacity and automation health');
+assert(clear.includes('2 / 10')&&clear.includes('managed server users / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
 assert(!clear.includes('Needs attention')&&!clear.includes('/admin/attention'),'Dashboard hero must not duplicate the persistent Alerts/Needs Attention signal');
 const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8}}});
 assert(problems.includes('profitHeroCard--profit bad'),'Negative profit must retain meaningful danger styling in the hero');
