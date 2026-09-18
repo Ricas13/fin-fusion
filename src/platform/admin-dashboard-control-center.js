@@ -257,7 +257,7 @@ async function billingSnapshot() {
     discovery.coverageStats(),
     query(`
       WITH recurring AS (
-        SELECT s.id,s.source,s.status,s.cancel_at_period_end,ps.last_error
+        SELECT s.id,s.source,s.provider_subscription_id,s.status,s.cancel_at_period_end,ps.last_error
           FROM subscriptions s
           LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id
          WHERE s.billing_mode='subscription'
@@ -269,6 +269,9 @@ async function billingSnapshot() {
         (SELECT COUNT(*)::int FROM recurring WHERE status='past_due' AND COALESCE(cancel_at_period_end,FALSE)=FALSE) AS past_due,
         (SELECT COUNT(*)::int FROM recurring WHERE source='stripe') AS stripe_recurring,
         (SELECT COUNT(*)::int FROM recurring WHERE source='paypal') AS paypal_recurring,
+        (SELECT COUNT(*)::int FROM recurring
+          WHERE (source='stripe' AND COALESCE(provider_subscription_id,'') !~* '^sub_')
+             OR (source='paypal' AND COALESCE(provider_subscription_id,'') !~* '^I-')) AS invalid_recurring_refs,
         (SELECT COUNT(*)::int
            FROM payment_events
           WHERE provider IN('stripe','paypal')
@@ -283,6 +286,7 @@ async function billingSnapshot() {
   const syncProblems = Number(row.sync_problems || 0);
   const pastDue = Number(row.past_due || 0);
   const providerEventErrors = Number(row.provider_event_errors || 0);
+  const invalidRecurringRefs = Number(row.invalid_recurring_refs || 0);
   const providerCounts = {
     stripe: Number(row.stripe_recurring || 0),
     paypal: Number(row.paypal_recurring || 0)
@@ -296,9 +300,10 @@ async function billingSnapshot() {
     syncProblems,
     pastDue,
     providerEventErrors,
+    invalidRecurringRefs,
     providerSetupProblems,
     providerCounts,
-    needsReview: missing > 0 || syncProblems > 0 || pastDue > 0 || providerEventErrors > 0 || providerSetupProblems > 0
+    needsReview: missing > 0 || syncProblems > 0 || pastDue > 0 || providerEventErrors > 0 || invalidRecurringRefs > 0 || providerSetupProblems > 0
   };
 }
 
@@ -467,7 +472,7 @@ function billingCard(data = {}) {
     return `<a class="dashboardControlCard bad" href="/admin/billing"><div class="dashboardControlHead"><span>Billing integrity</span><strong>Unavailable</strong></div><p>${esc(data.error || 'Billing status could not be read.')}</p></a>`;
   }
   const needsReview = Boolean(data.needsReview);
-  return `<a class="dashboardControlCard ${needsReview ? 'warn' : 'good'}" href="/admin/billing"><div class="dashboardControlHead"><span>Billing integrity</span><strong>${needsReview ? 'Needs review' : 'Clear'}</strong></div><div class="dashboardControlMetrics">${metric('Missing link', String(data.missing || 0))}${metric('Provider / sync', String((data.providerSetupProblems || 0) + (data.syncProblems || 0) + (data.providerEventErrors || 0)))}${metric('Past due', String(data.pastDue || 0))}</div></a>`;
+  return `<a class="dashboardControlCard ${needsReview ? 'warn' : 'good'}" href="/admin/billing"><div class="dashboardControlHead"><span>Billing integrity</span><strong>${needsReview ? 'Needs review' : 'Clear'}</strong></div><div class="dashboardControlMetrics">${metric('Missing link', String(data.missing || 0))}${metric('Provider / sync', String((data.providerSetupProblems || 0) + (data.syncProblems || 0) + (data.providerEventErrors || 0) + (data.invalidRecurringRefs || 0)))}${metric('Past due', String(data.pastDue || 0))}</div></a>`;
 }
 
 function recentFeed(items = [], unavailable = false) {
