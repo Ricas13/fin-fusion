@@ -70,6 +70,10 @@ function discordMissing(error){return /(?:HTTP|Discord)\s*404|unknown message/i.
 function becameAvailable(previousRemaining,remaining){
   return previousRemaining===0&&Number(remaining)>0;
 }
+function advertSlotKey(cfg,now=new Date()){
+  const due=dueSlot(cfg,now);
+  return due?\`${due.date}T${due.slot}\`:null;
+}
 async function sendDiscordMessage({channelId,text,message=null,allowEveryone=false}){
   const channel=notificationSettings.snowflake(channelId);
   if(!channel)throw new Error('Discord channel ID is required.');
@@ -78,7 +82,15 @@ async function sendDiscordMessage({channelId,text,message=null,allowEveryone=fal
 async function loadState(db=query){
   const result=await db('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[STATE_KEY]);
   const value=result.rows[0]?.setting_value||{};
-  return{channelId:String(value.channelId||''),messageId:String(value.messageId||''),text:String(value.text||''),remaining:value.remaining==null?null:Number(value.remaining),updatedAt:value.updatedAt||null};
+  return{
+    channelId:String(value.channelId||''),
+    messageId:String(value.messageId||''),
+    text:String(value.text||''),
+    remaining:value.remaining==null?null:Number(value.remaining),
+    observedRemaining:value.observedRemaining==null?null:Number(value.observedRemaining),
+    lastAdvertSlot:value.lastAdvertSlot?String(value.lastAdvertSlot):null,
+    updatedAt:value.updatedAt||null
+  };
 }
 async function saveState(db,state){
   await db(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[STATE_KEY,JSON.stringify({...state,updatedAt:new Date().toISOString()})]);
@@ -93,7 +105,7 @@ async function deleteDiscordMessage({channelId,messageId}){
   if(!channel||!messageIdSafe)throw new Error('Discord channel/message ID is invalid.');
   return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(messageIdSafe)}`,{method:'DELETE'});
 }
-async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,remove=deleteDiscordMessage,transactionFn=transaction}={}){
+async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,remove=deleteDiscordMessage,transactionFn=transaction,now=new Date()}={}){
   const cfg=settings||await notificationSettings.status();
   if(!cfg.discordFreePlacesDigestEnabled)return{processed:0,updated:0,skipped:'disabled'};
   if(!cfg.discordConfigured)return{processed:0,updated:0,skipped:'discord_not_configured'};
@@ -104,47 +116,123 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 
   return transactionFn(async client=>{
     const db=(sql,params)=>client.query(sql,params);
-    // Keep the decision + Discord mutation serialized. In particular, only one
-    // worker may observe the durable 0 -> positive transition and create the
-    // fresh message that should surface as a new Discord notification.
-    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:discord-free-places-status',$1::bigint))`,[LOCK_SEED]);
+    await client.query(\`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:discord-free-places-status',$1::bigint))\`,[LOCK_SEED]);
     const plan=await freePlan(db);
     if(!plan)return{processed:1,updated:0,skipped:'free_plan_not_found'};
-    const state=await usage(plan.id,db);
-    if(state.remaining==null||!Number.isFinite(Number(state.remaining)))return{processed:1,updated:0,skipped:'remaining_unavailable'};
-    const remaining=Math.max(0,Math.floor(Number(state.remaining))),text=persistentText(remaining,publicBaseUrl),message=persistentMessage(remaining,publicBaseUrl),signature=JSON.stringify(message),channelId=String(cfg.discordFreePlacesChannelId);
-    let stored=await loadState(db);
-    if(stored.channelId!==channelId)stored={channelId,messageId:'',text:'',remaining:null,updatedAt:null};
-    const availabilityRestored=becameAvailable(stored.remaining,remaining);
-    if(stored.messageId&&stored.text===signature&&!availabilityRestored)return{processed:1,updated:0,remaining,messageId:stored.messageId,unchanged:true};
+    const capacityState=await usage(plan.id,db);
+    if(capacityState.remaining==null||!Number.isFinite(Number(capacityState.remaining)))return{processed:1,updated:0,skipped:'remaining_unavailable'};
 
-    let sentMessage=null,created=false;
-    // Routine changes are PATCHed in place, which avoids creating a new channel
-    // message. The one intentional exception is a known 0 -> positive change:
-    // delete the stale canonical "full" message, then POST a fresh message so
-    // Discord treats availability reopening as new activity. The fresh message
-    // id then becomes the canonical one we edit on subsequent routine changes.
-    if(stored.messageId&&availabilityRestored){
+    const actualRemaining=Math.max(0,Math.floor(Number(capacityState.remaining)));
+    const channelId=String(cfg.discordFreePlacesChannelId);
+    const currentSlot=advertSlotKey(cfg,now);
+    const minRemaining=Math.max(1,Number(cfg.discordFreePlacesMinRemaining)||1);
+    let stored=await loadState(db);
+
+    if(stored.channelId!==channelId){
+      stored={channelId,messageId:'',text:'',remaining:null,observedRemaining:null,lastAdvertSlot:null,updatedAt:null};
+    }
+
+    // First install (or lost state) creates one canonical status message using
+    // current capacity. This is setup/recovery, not a reopening notification.
+    if(!stored.messageId){
+      const initialMessage=persistentMessage(actualRemaining,publicBaseUrl);
+      const sent=await send({channelId,text:persistentText(actualRemaining,publicBaseUrl),message:initialMessage,allowEveryone:false});
+      const messageId=String(sent?.id||'');
+      if(!messageId)throw new Error('Discord did not return an availability message ID.');
+      await saveState(db,{
+        channelId,
+        messageId,
+        text:JSON.stringify(initialMessage),
+        remaining:actualRemaining,
+        observedRemaining:actualRemaining,
+        lastAdvertSlot:currentSlot
+      });
+      return{processed:1,updated:1,created:1,availabilityRestored:0,remaining:actualRemaining,observedRemaining:actualRemaining,messageId};
+    }
+
+    // Existing installations predate scheduled batching. Establish the current
+    // slot as a baseline without generating a surprise fresh notification at
+    // deploy time.
+    if(!stored.lastAdvertSlot){
+      stored.lastAdvertSlot=currentSlot;
+    }
+
+    const displayedRemaining=stored.remaining==null?actualRemaining:Math.max(0,Math.floor(Number(stored.remaining)||0));
+    const slotAdvanced=Boolean(currentSlot&&stored.lastAdvertSlot!==currentSlot);
+    const increaseBuffered=actualRemaining>displayedRemaining;
+    const publishIncrease=Boolean(slotAdvanced&&increaseBuffered&&actualRemaining>=minRemaining);
+
+    if(publishIncrease){
       try{await remove({channelId,messageId:stored.messageId});}
       catch(error){
-        // A manually removed/stale Discord message must never stop the important
-        // availability reopening notification from being posted.
-        if(!discordMissing(error))console.warn('[free-places-digest] Failed to delete stale full Discord message:',error?.message||error);
+        if(!discordMissing(error))console.warn('[free-places-digest] Failed to delete previous Discord availability message:',error?.message||error);
       }
-    }else if(stored.messageId){
-      try{sentMessage=await edit({channelId,messageId:stored.messageId,text,message});}
+      const message=persistentMessage(actualRemaining,publicBaseUrl);
+      const sent=await send({channelId,text:persistentText(actualRemaining,publicBaseUrl),message,allowEveryone:false});
+      const messageId=String(sent?.id||'');
+      if(!messageId)throw new Error('Discord did not return an availability message ID.');
+      await saveState(db,{
+        channelId,
+        messageId,
+        text:JSON.stringify(message),
+        remaining:actualRemaining,
+        observedRemaining:actualRemaining,
+        lastAdvertSlot:currentSlot
+      });
+      return{
+        processed:1,updated:1,created:1,availabilityRestored:becameAvailable(displayedRemaining,actualRemaining)?1:0,
+        advertised:1,remaining:actualRemaining,observedRemaining:actualRemaining,messageId
+      };
+    }
+
+    // Availability may only move downward between advert slots. Any increase is
+    // buffered in observedRemaining and released as one fresh POST at the next
+    // configured slot. This avoids a notification storm when inactivity frees
+    // several accounts over a short period.
+    if(actualRemaining<displayedRemaining){
+      const message=persistentMessage(actualRemaining,publicBaseUrl);
+      let sent=null,created=false;
+      try{sent=await edit({channelId,messageId:stored.messageId,text:persistentText(actualRemaining,publicBaseUrl),message});}
       catch(error){if(!discordMissing(error))throw error;}
+      if(!sent){
+        sent=await send({channelId,text:persistentText(actualRemaining,publicBaseUrl),message,allowEveryone:false});
+        created=true;
+      }
+      const messageId=String(sent?.id||stored.messageId||'');
+      if(!messageId)throw new Error('Discord did not return an availability message ID.');
+      await saveState(db,{
+        channelId,
+        messageId,
+        text:JSON.stringify(message),
+        remaining:actualRemaining,
+        observedRemaining:actualRemaining,
+        lastAdvertSlot:slotAdvanced?currentSlot:stored.lastAdvertSlot
+      });
+      return{processed:1,updated:1,created:created?1:0,availabilityRestored:0,remaining:actualRemaining,observedRemaining:actualRemaining,messageId};
     }
-    if(!sentMessage){
-      sentMessage=await send({channelId,text,message,allowEveryone:false});
-      created=true;
+
+    const stateChanged=stored.observedRemaining!==actualRemaining||slotAdvanced;
+    if(stateChanged){
+      await saveState(db,{
+        channelId,
+        messageId:stored.messageId,
+        text:stored.text,
+        remaining:displayedRemaining,
+        observedRemaining:actualRemaining,
+        lastAdvertSlot:slotAdvanced?currentSlot:stored.lastAdvertSlot
+      });
     }
-    const messageId=String(sentMessage?.id||stored.messageId||'');
-    if(!messageId)throw new Error('Discord did not return an availability message ID.');
-    await saveState(db,{channelId,messageId,text:signature,remaining});
-    return{processed:1,updated:1,created:created?1:0,availabilityRestored:availabilityRestored?1:0,remaining,messageId};
+    return{
+      processed:1,
+      updated:0,
+      remaining:displayedRemaining,
+      observedRemaining:actualRemaining,
+      messageId:stored.messageId,
+      buffered:increaseBuffered,
+      unchanged:!stateChanged
+    };
   });
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
