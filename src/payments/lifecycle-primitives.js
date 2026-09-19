@@ -29,6 +29,7 @@ function mapProviderStatus(provider, status) {
     }
     if (provider === 'paypal') {
         if (value === 'active') return 'active';
+        if (value === 'past_due') return 'past_due';
         if (['approval_pending', 'approved'].includes(value)) return 'trialing';
         if (value === 'suspended') return 'paused';
         if (['cancelled', 'canceled'].includes(value)) return 'cancelled';
