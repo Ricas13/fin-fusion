@@ -162,6 +162,37 @@ async function scenarioK2(){
   }
 }
 
+async function scenarioK3(){
+  const dbPath=require.resolve('../src/db'),settingsPath=require.resolve('../src/integrations/notification-settings'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const saved=new Map([dbPath,settingsPath,externalPath].map(key=>[key,require.cache[key]]));
+  const calls=[];
+  const job={id:'job-repaired',customer_id:'customer-repaired',customer_email:'repaired@example.invalid'};
+  const current={id:'local-sub-repaired',source:'stripe',provider_subscription_id:'sub_repaired',status:'active',current_period_end:new Date().toISOString(),cancel_at_period_end:false};
+  try{
+    const client={query:async(sql,params=[])=>{
+      calls.push({sql:String(sql),params});
+      if(String(sql).includes('FROM customer_deletion_jobs WHERE id='))return{rowCount:1,rows:[job]};
+      if(String(sql).includes('FROM subscriptions')&&String(sql).includes('billing_mode'))return{rowCount:1,rows:[current]};
+      if(String(sql).includes("RETURNING id")&&String(sql).includes("superseded_by_verified_billing_identity"))return{rowCount:1,rows:[{id:'obsolete-invalid-target'}]};
+      return{rowCount:0,rows:[]};
+    }};
+    require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{query:client.query,transaction:async callback=>callback(client)}};
+    require.cache[settingsPath]={id:settingsPath,filename:settingsPath,loaded:true,exports:{status:async()=>({discordConfigured:false,discordGuildId:null})}};
+    delete require.cache[externalPath];
+    const fresh=require('../src/platform/customer-external-deletion');
+    await fresh.persistTargets(job);
+    const created=calls.findIndex(c=>c.sql.includes('INSERT INTO customer_external_deletion_targets')&&c.params.includes('sub_repaired'));
+    const retired=calls.findIndex(c=>c.sql.includes("superseded_by_verified_billing_identity"));
+    const audited=calls.findIndex(c=>c.sql.includes('customer.deletion.billing_identity_repaired'));
+    assert(created>=0&&retired>created,'K3: valid provider cancellation target must be inserted before the invalid target is retired');
+    assert(audited>retired,'K3: retiring an invalid target after billing repair must be audited');
+    assert(calls[retired].sql.includes("metadata->>'subscriptionId'=$3::text")&&calls[retired].sql.includes("metadata->>'invalidProviderIdentity'='true'")&&calls[retired].sql.includes("state<>'succeeded'"),'K3: repair must retire only obsolete invalid snapshots for the exact subscription, not the verified cancellation target');
+    assert.deepStrictEqual(calls[retired].params,[job.id,'stripe',current.id,'sub_repaired'],'K3: retirement must be scoped to the exact job, provider, local contract and new provider ID');
+  }finally{
+    for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
+  }
+}
+
 async function scenarioL(){
   const externalPath=require.resolve('../src/platform/customer-external-deletion'),deletionPath=require.resolve('../src/platform/customer-deletion');
   const saved=new Map([externalPath,deletionPath].map(key=>[key,require.cache[key]]));
@@ -188,7 +219,7 @@ async function scenarioL(){
 }
 
 (async()=>{
-  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();await scenarioK2();await scenarioL();
+  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();await scenarioK2();await scenarioK3();await scenarioL();
   assert.strictEqual(externalDeletion.retryMinutes(1),1);
   assert.strictEqual(externalDeletion.retryMinutes(99),360,'retry backoff must be bounded');
   console.log('customer deletion durable target runtime smoke passed (A-L)');
