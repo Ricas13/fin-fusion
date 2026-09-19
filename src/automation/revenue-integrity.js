@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { query } = require('../db');
 const notifications = require('../integrations/notification-dispatch');
+const moneyFormat = require('../platform/money-format');
 
 const ALERT_BUCKET_MS = 6 * 60 * 60 * 1000;
 const ADMIN_ACTOR_ENFORCED_AT = '2026-09-12T08:32:17.000Z';
@@ -117,11 +118,15 @@ async function scan() {
     // watchdog the same wrong answer.
     const [
         permanentRefunds,
+        invalidRecurringProviderRefs,
+        duplicateProviderIdentities,
+        staleAppliedRenewalCredits,
         manualProviderOps,
         deletionFailures,
         staleCreationIntents,
         contaminatedPlans,
         strandedProvisioning,
+        processedLossEventsWithoutIncident,
         stalePaymentEvents,
         uncertainNotifications,
         jellyfinAdminAuthorityViolations,
@@ -136,6 +141,42 @@ async function scan() {
             WHERE o.permanent_access=TRUE AND o.revoked_at IS NULL
               AND s.refund_terminated_at IS NOT NULL
             ORDER BY o.updated_at
+            LIMIT 100
+        `),
+        query(`
+            SELECT id AS subscription_id,customer_id,source,provider_subscription_id,status
+            FROM subscriptions
+            WHERE billing_mode='subscription'
+              AND source IN('stripe','paypal')
+              AND status IN('active','trialing','past_due','paused')
+              AND (
+                (source='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^sub_')
+                OR
+                (source='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-')
+              )
+            ORDER BY updated_at
+            LIMIT 100
+        `),
+        query(`
+            SELECT MIN(id::text) AS id,source,provider_subscription_id,
+                   COUNT(*)::int AS subscription_count,
+                   array_agg(DISTINCT customer_id::text ORDER BY customer_id::text) AS customer_ids
+            FROM subscriptions
+            WHERE source IN('stripe','paypal','plisio')
+              AND NULLIF(BTRIM(COALESCE(provider_subscription_id,'')),'') IS NOT NULL
+            GROUP BY source,provider_subscription_id
+            HAVING COUNT(*)>1
+            ORDER BY COUNT(*) DESC,source,provider_subscription_id
+            LIMIT 100
+        `),
+        query(`
+            SELECT r.id,r.customer_id,r.subscription_id,r.provider_invoice_id,
+                   r.provider_adjustment_id,r.currency,r.amount_minor,r.applied_at
+            FROM affiliate_credit_renewal_reservations r
+            WHERE r.state='provider_applied'
+              AND r.applied_at IS NOT NULL
+              AND r.applied_at<NOW()-INTERVAL '48 hours'
+            ORDER BY r.applied_at
             LIMIT 100
         `),
         query(`
@@ -176,6 +217,32 @@ async function scan() {
                 OR COALESCE(last_attempt_at,updated_at)<NOW()-INTERVAL '10 minutes'
               )
             ORDER BY COALESCE(last_attempt_at,updated_at)
+            LIMIT 100
+        `),
+        query(`
+            SELECT e.id,e.provider,e.provider_event_id,e.event_type,e.processed_at
+            FROM payment_events e
+            WHERE e.processed_at IS NOT NULL
+              AND e.processing_error IS NULL
+              AND e.created_at<NOW()-INTERVAL '2 minutes'
+              AND (
+                (e.provider='stripe' AND e.event_type IN(
+                  'charge.refunded','charge.dispute.created','charge.dispute.closed'
+                ))
+                OR
+                (e.provider='paypal' AND e.event_type IN(
+                  'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
+                  'PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED',
+                  'CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED'
+                ))
+              )
+              AND NOT EXISTS(
+                SELECT 1
+                FROM payment_incidents pi
+                WHERE pi.provider=e.provider
+                  AND pi.provider_event_id=e.provider_event_id
+              )
+            ORDER BY e.created_at
             LIMIT 100
         `),
         query(`
@@ -269,11 +336,15 @@ async function scan() {
     ]);
 
     for (const row of permanentRefunds.rows) findings.push(finding('refunded_permanent_access', row, `Refund-terminated subscription ${row.subscription_id} still has Permanent Access.`));
+    for (const row of invalidRecurringProviderRefs.rows) findings.push(finding('invalid_recurring_provider_reference', row, `${row.source} recurring subscription ${row.subscription_id} has unusable provider reference ${row.provider_subscription_id || '(missing)'}.`));
+    for (const row of duplicateProviderIdentities.rows) findings.push(finding('duplicate_provider_billing_identity', row, `${row.source} provider identity ${row.provider_subscription_id} is attached to ${row.subscription_count} local subscriptions across customer(s) ${(row.customer_ids || []).join(', ')}.`));
+    for (const row of staleAppliedRenewalCredits.rows) findings.push(finding('renewal_service_credit_unsettled', row, `Stripe invoice ${row.provider_invoice_id} has had ${moneyFormat.formatMinor(row.amount_minor,row.currency)} of service credit applied at the provider since ${row.applied_at} but the local credit debit is still unsettled.`));
     for (const row of manualProviderOps.rows) findings.push(finding('provider_manual_review', row, `${row.provider} ${row.operation_type} requires manual review${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of deletionFailures.rows) findings.push(finding('customer_deletion_stuck', row, `Customer deletion ${row.id} is ${row.status} after ${row.attempt_count || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of staleCreationIntents.rows) findings.push(finding('jellyfin_creation_intent_stale', row, `Jellyfin creation intent ${row.id} remains ${row.status} on server ${row.server_id}${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of contaminatedPlans.rows) findings.push(finding('paid_plan_on_free_pool', row, `Plan ${row.code || row.name || row.id} is not a Free plan but uses server_class=free.`));
     for (const row of strandedProvisioning.rows) findings.push(finding('customer_access_not_converged', row, `Customer access is ${row.status} after ${row.consecutive_failures || 0} failure(s)${row.last_error ? `: ${row.last_error}` : ''}`));
+    for (const row of processedLossEventsWithoutIncident.rows) findings.push(finding('payment_loss_event_without_incident', row, `${row.provider} ${row.event_type} ${row.provider_event_id} was marked processed but has no durable payment incident.`));
     for (const row of stalePaymentEvents.rows) findings.push(finding('payment_event_stale', row, `${row.provider} ${row.event_type || 'payment event'} ${row.provider_event_id} has remained unprocessed${row.processing_error ? `: ${row.processing_error}` : ''}`));
     for (const row of uncertainNotifications.rows) findings.push(finding('notification_delivery_uncertain', row, `${row.channel} ${row.message_type || 'notification'} ${row.id} has an uncertain delivery outcome after ${row.attempts || 0} attempt(s)${row.last_error ? `: ${row.last_error}` : ''}`));
     for (const row of jellyfinAdminAuthorityViolations.rows) findings.push(finding('jellyfin_admin_authority_violation', row, `${row.violation} for ${row.mode}${row.server_id ? ` on server ${row.server_id}` : ''}${row.reason ? `: ${row.reason}` : ''}`));

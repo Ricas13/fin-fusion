@@ -129,7 +129,14 @@ async function main() {
     const historyRefund = reportingCurrency.convertMinor(500, 'USD', historyCtx.data.revenue.primaryCurrency, historyCtx.reporting);
     assert.strictEqual(historyCtx.data.revenue.grossMinor, historyGross, 'Commerce gross revenue must prefer imported ledger coverage without double-counting webhook events');
     assert.strictEqual(historyCtx.data.revenue.refundMinor, historyRefund, 'Commerce refunds must prefer imported ledger coverage without double-counting webhook events');
-    assert.strictEqual(historyCtx.data.revenue.netMinor, historyGross - historyRefund, 'Commerce net revenue must use imported payment and refund once each');
+    const historyFee = reportingCurrency.convertMinor(59, 'USD', historyCtx.data.revenue.primaryCurrency, historyCtx.reporting);
+    assert.strictEqual(historyCtx.data.revenue.feeMinor, historyFee, 'Commerce must retain the authoritative imported provider fee once');
+    const commerceSource = require('fs').readFileSync(require.resolve('../src/platform/admin-commerce-dashboard'),'utf8');
+    assert(commerceSource.includes('minus refunds and available processing fees'), 'Commerce net receipts card must disclose processing-fee basis');
+    for (const providerEvent of ['PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED','PAYMENT.SALE.REVERSED']) {
+        assert(commerceSource.includes(providerEvent), `Commerce refund trend must include ${providerEvent}`);
+    }
+    assert.strictEqual(historyCtx.data.revenue.netMinor, historyGross - historyRefund - historyFee, 'Commerce net proceeds must subtract imported payment fee and refund exactly once');
     assert.strictEqual(historyCtx.data.revenue.payingCustomers, 1, 'imported payer identity must contribute to paying-customer/ARPU calculations');
 
     const normalized = await normalizedDashboardMoney(historyCtx.range, fillSeries(historyCtx.range, [], []), historyCtx.reporting);

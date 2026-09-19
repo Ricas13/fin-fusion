@@ -79,7 +79,15 @@ async function syncCurrentSubscription(subscriptionId,{activateMissing=true}={})
   const subscription=await getSubscription(subscriptionId),providerStatus=paypalStatus(subscription.status);
   const local=await query(`SELECT status,billing_mode,current_period_end,refund_terminated_at FROM subscriptions WHERE source='paypal' AND provider_subscription_id=$1 LIMIT 1`,[subscription.id]);
   const update=paidThroughCancellationUpdate(local.rows[0]||null,subscription);
-  const row=await lifecycle.updateProviderSubscription({provider:'paypal',providerSubscriptionId:subscription.id,providerStatus:update.providerStatus,periodEnd:update.periodEnd,cancelAtPeriodEnd:update.cancelAtPeriodEnd});
+  // PayPal can remain ACTIVE while a failed renewal is being retried. Never
+  // release the existing payment-delinquency hold just because the agreement
+  // itself is active while provider billing_info still reports money owed.
+  const existingDelinquent=local.rows[0]?.status==='past_due';
+  const effectiveStatus=paypalHealthy(providerStatus)
+    && (paypalOutstandingRenewal(subscription)
+      || (existingDelinquent&&!paypalBillingCleared(subscription)))
+    ? 'PAST_DUE' : update.providerStatus;
+  const row=await lifecycle.updateProviderSubscription({provider:'paypal',providerSubscriptionId:subscription.id,providerStatus:effectiveStatus,periodEnd:update.periodEnd,cancelAtPeriodEnd:update.cancelAtPeriodEnd});
   if(row)return{row,subscription,providerStatus,preservedPaidThrough:update.preserved};
   const intent=await checkoutIntents.findProviderIntent('paypal',subscription.id);
   if(intent&&activateMissing){const activated=await activateSubscription(subscription.id);return{row:activated,subscription,providerStatus,preservedPaidThrough:false};}
@@ -130,10 +138,139 @@ async function recordCaptureLoss(event,resource,{reversed=false}={}){
   await reverseReferralForDirectIdentity(ctx.identity,recorded,`paypal:${reversed?'reversal':'refund'}:${event.id}`,{amountMinor:ctx.amount.minor,fullLoss:ctx.fullRefund});
   return recorded;
 }
+async function recordSaleReversal(event,resource){
+  const providerId=resource?.billing_agreement_id||resource?.supplementary_data?.related_ids?.subscription_id||resource?.id||null;
+  if(!providerId)throw new Error('PayPal sale reversal is missing its subscription or sale identity.');
+  const identity=await incidents.identityFromProviderSubscription('paypal',providerId);
+  const amount=paypalAmount(resource);
+  const recorded=await incidents.record({
+    provider:'paypal',
+    eventId:event.id,
+    caseId:resource?.id||providerId,
+    kind:'refund',
+    status:'recorded',
+    identity,
+    providerSubscriptionId:providerId,
+    amountMinor:amount.minor,
+    currency:amount.currency,
+    metadata:{
+      fullRefund:true,
+      reversed:true,
+      saleId:resource?.id||null,
+      transactionOccurredAt:resource?.create_time||null
+    }
+  });
+  await reverseReferralForDirectIdentity(identity,recorded,`paypal:sale-reversal:${event.id}`,{amountMinor:amount.minor,fullLoss:true});
+  return recorded;
+}
+function billingFailureSubscriptionId(resource){
+  const candidates=[
+    resource?.id,
+    resource?.billing_agreement_id,
+    resource?.supplementary_data?.related_ids?.subscription_id
+  ].map(value=>String(value||'').trim()).filter(Boolean);
+  return candidates.find(value=>/^I-/i.test(value))||null;
+}
+function paypalOutstandingRenewal(subscription){
+  const billing=subscription?.billing_info||{};
+  const count=Number(billing.failed_payments_count||0);
+  const amount=paypalMinor(billing.outstanding_balance);
+  return (Number.isFinite(count)&&count>0)||(Number.isFinite(amount)&&amount>0);
+}
+function paypalBillingCleared(subscription){
+  const billing=subscription?.billing_info;
+  if(!billing||typeof billing!=='object')return false;
+  const count=Number(billing.failed_payments_count);
+  const balance=paypalMinor(billing.outstanding_balance);
+  return Number.isFinite(count)&&count===0&&balance===0;
+}
+function paypalPaymentFailureCurrent(event,subscription){
+  const billing=subscription?.billing_info||{};
+  const eventAt=new Date(event?.create_time||0).getTime();
+  const lastPaidAt=new Date(billing?.last_payment?.time||0).getTime();
+  const lastFailedAt=new Date(billing?.last_failed_payment?.time||0).getTime();
+  const failedCount=Math.max(0,Number(billing?.failed_payments_count||0));
+  const outstandingMinor=paypalMinor(billing?.outstanding_balance)||0;
+  const laterSuccessfulPayment=Number.isFinite(eventAt)&&eventAt>0
+    && Number.isFinite(lastPaidAt)&&lastPaidAt>eventAt
+    && (!Number.isFinite(lastFailedAt)||lastFailedAt<=lastPaidAt)
+    && failedCount===0
+    && outstandingMinor===0
+    && paypalBillingCleared(subscription);
+  return !laterSuccessfulPayment;
+}
+async function recordSubscriptionPaymentSuccess(event,resource){
+  const subscriptionId=billingFailureSubscriptionId(resource);
+  if(!subscriptionId)throw new Error('PayPal subscription payment success is missing the billing subscription ID.');
+  const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
+  if(synced.row&&paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)){
+    await failedRenewals.resolveOpen({
+      provider:'paypal',
+      providerSubscriptionId:subscriptionId,
+      note:'PayPal confirms the subscription is active with no failed payments or outstanding balance.'
+    });
+  }else if(paypalTerminal(synced.providerStatus)){
+    await failedRenewals.resolveOpen({
+      provider:'paypal',
+      providerSubscriptionId:subscriptionId,
+      note:'PayPal subscription is already terminal; delayed payment-success event cannot restore it.'
+    });
+  }
+  return synced;
+}
+async function recordSubscriptionPaymentFailure(event,resource){
+  const subscriptionId=billingFailureSubscriptionId(resource);
+  if(!subscriptionId)throw new Error('PayPal subscription payment failure is missing the billing subscription ID.');
+  const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
+  if(paypalTerminal(synced.providerStatus)){
+    await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal subscription is terminal; delayed failed-renewal event is no longer actionable.'});
+    return synced;
+  }
+  if(!paypalPaymentFailureCurrent(event,synced.subscription)){
+    await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal has a successful payment newer than this delayed failure event; the renewal failure is historical.'});
+    return synced;
+  }
+  const billing=synced.subscription?.billing_info||resource?.billing_info||{};
+  const outstanding=billing.outstanding_balance||billing.last_failed_payment?.amount||resource?.amount||null,amount=paypalAmount({amount:outstanding});
+  await failedRenewals.record({
+    provider:'paypal',
+    eventId:event.id,
+    caseId:event.id,
+    providerSubscriptionId:subscriptionId,
+    amountMinor:amount.minor,
+    currency:amount.currency,
+    metadata:{
+      currentProviderStatus:synced.providerStatus||null,
+      eventType:event.event_type,
+      failedPaymentsCount:Number(billing.failed_payments_count||0),
+      outstandingBalanceMinor:paypalMinor(billing.outstanding_balance)
+    }
+  });
+  if(synced.row){
+    await lifecycle.syncProviderAccessState({
+      customerId:synced.row.customer_id,
+      provider:'paypal',
+      providerSubscriptionId:subscriptionId,
+      status:'past_due',
+      billingMode:synced.row.billing_mode
+    });
+  }
+  return synced;
+}
+async function settleTerminalCapture(resource,state='failed'){
+  const orderId=captureOrderId(resource);
+  if(!orderId)return null;
+  return checkoutIntents.completeVerifiedProvider('paypal',orderId,state);
+}
+async function settleReversedApproval(resource){
+  const orderId=resource?.id||resource?.order_id||resource?.supplementary_data?.related_ids?.order_id||null;
+  if(!orderId)return null;
+  return checkoutIntents.completeVerifiedProvider('paypal',orderId,'cancelled');
+}
 async function disputeIdentity(resource){const disputed=resource?.disputed_transactions?.[0]||{},tx=disputed.transaction_info||disputed,recurringId=resource?.billing_agreement_id||resource?.supplementary_data?.related_ids?.subscription_id||tx?.billing_agreement_id||null,transactionId=tx?.seller_transaction_id||null,providerId=recurringId||transactionId;let identity=await incidents.identityFromProviderSubscription('paypal',providerId);if(identity.scope==='unresolved'){const mapping=parseCustomId(tx?.custom);if(mapping?.customerId)identity={scope:'direct',customerId:mapping.customerId};}return{identity,providerId,transactionId};}
 async function reverseReferralForDirectIdentity(identity,incidentResult,reason,options={}){if(identity?.scope!=='direct'||!identity.customerId)return null;return referrals.revisitRewardAfterAdversePayment({referredCustomerId:identity.customerId,incidentId:incidentResult?.incident?.id||null,reason,...options});}
-async function handleWebhookEvent(event){const eventId=event.id,eventType=event.event_type,resource=event.resource||{};switch(eventType){case 'CHECKOUT.ORDER.APPROVED':if(resource.id)await captureOrder(resource.id);break;case 'PAYMENT.CAPTURE.COMPLETED':{const orderId=captureOrderId(resource);if(orderId)await captureOrder(orderId);break;}case 'PAYMENT.CAPTURE.REFUNDED':await recordCaptureLoss(event,resource);break;case 'PAYMENT.CAPTURE.REVERSED':await recordCaptureLoss(event,resource,{reversed:true});break;case 'BILLING.SUBSCRIPTION.ACTIVATED':await activateSubscription(resource.id);break;case 'BILLING.SUBSCRIPTION.UPDATED':await syncSubscription(resource.id);break;case 'BILLING.SUBSCRIPTION.CANCELLED':case 'BILLING.SUBSCRIPTION.SUSPENDED':case 'BILLING.SUBSCRIPTION.EXPIRED':if(resource.id)await syncCurrentSubscription(resource.id,{activateMissing:false});break;case 'PAYMENT.SALE.COMPLETED':{const subscriptionId=resource.billing_agreement_id;if(subscriptionId){const synced=await syncCurrentSubscription(subscriptionId);if(paypalHealthy(synced.providerStatus))await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal subscription recovered and is active again.'});}break;}case 'PAYMENT.SALE.DENIED':{const subscriptionId=resource.billing_agreement_id;if(subscriptionId){const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});if(paypalHealthy(synced.providerStatus)){await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal subscription is active; delayed historical payment failure was ignored.'});break;}if(paypalTerminal(synced.providerStatus)){await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal subscription is terminal; delayed failed-renewal event is no longer actionable.'});break;}const amount=paypalAmount(resource);await failedRenewals.record({provider:'paypal',eventId,caseId:resource.id||subscriptionId,providerSubscriptionId:subscriptionId,amountMinor:amount.minor,currency:amount.currency,metadata:{saleId:resource.id||null,currentProviderStatus:synced.providerStatus||null}});}break;}case 'PAYMENT.SALE.REFUNDED':{const ctx=await paypalRefundContext(resource),identity=await incidents.identityFromProviderSubscription('paypal',ctx.providerId),recorded=await incidents.record({provider:'paypal',eventId,caseId:ctx.saleId||resource.id,kind:'refund',status:'recorded',identity,providerSubscriptionId:ctx.providerId,amountMinor:ctx.amount.minor,currency:ctx.amount.currency,metadata:{saleId:ctx.saleId||resource.id,fullRefund:ctx.fullRefund,cumulativeRefundMinor:ctx.cumulativeMinor,originalAmountMinor:ctx.originalMinor,transactionOccurredAt:ctx.transactionOccurredAt}});await reverseReferralForDirectIdentity(identity,recorded,`paypal:refund:${eventId}`,{amountMinor:ctx.amount.minor,fullLoss:ctx.fullRefund});break;}case 'CUSTOMER.DISPUTE.CREATED':{const ctx=await disputeIdentity(resource),amount=paypalAmount(resource);await incidents.record({provider:'paypal',eventId,caseId:resource.dispute_id||resource.id,kind:'dispute',status:'open',identity:ctx.identity,providerSubscriptionId:ctx.providerId,amountMinor:amount.minor,currency:amount.currency,metadata:{reason:resource.reason||null,transactionId:ctx.transactionId}});break;}case 'CUSTOMER.DISPUTE.RESOLVED':{const ctx=await disputeIdentity(resource),amount=paypalAmount(resource),outcome=String(resource?.dispute_outcome?.outcome_code||'').toUpperCase(),won=reconciliation.paypalMerchantWon(outcome),recorded=await incidents.record({provider:'paypal',eventId,caseId:resource.dispute_id||resource.id,kind:won?'dispute':'chargeback',status:won?'won':'lost',identity:ctx.identity,providerSubscriptionId:ctx.providerId,amountMinor:amount.minor,currency:amount.currency,metadata:{outcome,transactionId:ctx.transactionId}});if(!won)await reverseReferralForDirectIdentity(ctx.identity,recorded,`paypal:chargeback:${eventId}`,{amountMinor:amount.minor,fullLoss:true});break;}default:break;}}
+async function handleWebhookEvent(event){const eventId=event.id,eventType=event.event_type,resource=event.resource||{};switch(eventType){case 'CHECKOUT.ORDER.APPROVED':if(resource.id)await captureOrder(resource.id);break;case 'CHECKOUT.ORDER.DECLINED':if(resource.id)await checkoutIntents.completeVerifiedProvider('paypal',resource.id,'failed');break;case 'PAYMENT.CAPTURE.PENDING':break;case 'PAYMENT.CAPTURE.COMPLETED':{const orderId=captureOrderId(resource);if(orderId)await captureOrder(orderId);break;}case 'PAYMENT.CAPTURE.REFUNDED':await recordCaptureLoss(event,resource);break;case 'PAYMENT.CAPTURE.REVERSED':await recordCaptureLoss(event,resource,{reversed:true});break;case 'PAYMENT.CAPTURE.DENIED':await settleTerminalCapture(resource,'failed');break;case 'CHECKOUT.PAYMENT-APPROVAL.REVERSED':await settleReversedApproval(resource);break;case 'BILLING.SUBSCRIPTION.ACTIVATED':await activateSubscription(resource.id);break;case 'BILLING.SUBSCRIPTION.UPDATED':await syncSubscription(resource.id);break;case 'BILLING.SUBSCRIPTION.CANCELLED':case 'BILLING.SUBSCRIPTION.SUSPENDED':case 'BILLING.SUBSCRIPTION.EXPIRED':if(resource.id)await syncCurrentSubscription(resource.id,{activateMissing:false});break;case 'PAYMENT.SALE.COMPLETED':{const subscriptionId=resource.billing_agreement_id;if(subscriptionId){const synced=await syncCurrentSubscription(subscriptionId);if(paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription))await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal subscription recovered and its outstanding renewal balance is cleared.'});}break;}case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':await recordSubscriptionPaymentFailure(event,resource);break;case 'BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED':await recordSubscriptionPaymentSuccess(event,resource);break;case 'PAYMENT.SALE.REVERSED':await recordSaleReversal(event,resource);break;case 'PAYMENT.SALE.DENIED':if(resource.billing_agreement_id)await recordSubscriptionPaymentFailure(event,resource);break;case 'PAYMENT.SALE.REFUNDED':{const ctx=await paypalRefundContext(resource),identity=await incidents.identityFromProviderSubscription('paypal',ctx.providerId),recorded=await incidents.record({provider:'paypal',eventId,caseId:ctx.saleId||resource.id,kind:'refund',status:'recorded',identity,providerSubscriptionId:ctx.providerId,amountMinor:ctx.amount.minor,currency:ctx.amount.currency,metadata:{saleId:ctx.saleId||resource.id,fullRefund:ctx.fullRefund,cumulativeRefundMinor:ctx.cumulativeMinor,originalAmountMinor:ctx.originalMinor,transactionOccurredAt:ctx.transactionOccurredAt}});await reverseReferralForDirectIdentity(identity,recorded,`paypal:refund:${eventId}`,{amountMinor:ctx.amount.minor,fullLoss:ctx.fullRefund});break;}case 'CUSTOMER.DISPUTE.CREATED':{const ctx=await disputeIdentity(resource),amount=paypalAmount(resource);await incidents.record({provider:'paypal',eventId,caseId:resource.dispute_id||resource.id,kind:'dispute',status:'open',identity:ctx.identity,providerSubscriptionId:ctx.providerId,amountMinor:amount.minor,currency:amount.currency,metadata:{reason:resource.reason||null,transactionId:ctx.transactionId}});break;}case 'CUSTOMER.DISPUTE.RESOLVED':{const ctx=await disputeIdentity(resource),amount=paypalAmount(resource),outcome=String(resource?.dispute_outcome?.outcome_code||'').toUpperCase(),won=reconciliation.paypalMerchantWon(outcome),recorded=await incidents.record({provider:'paypal',eventId,caseId:resource.dispute_id||resource.id,kind:won?'dispute':'chargeback',status:won?'won':'lost',identity:ctx.identity,providerSubscriptionId:ctx.providerId,amountMinor:amount.minor,currency:amount.currency,metadata:{outcome,transactionId:ctx.transactionId}});if(!won)await reverseReferralForDirectIdentity(ctx.identity,recorded,`paypal:chargeback:${eventId}`,{amountMinor:amount.minor,fullLoss:true});break;}default:break;}}
 async function processClaimedEvent(eventRow,event){try{await handleWebhookEvent(event);await lifecycle.finishPaymentEvent(eventRow);return{processed:true};}catch(error){await lifecycle.finishPaymentEvent(eventRow,error);console.error('PayPal webhook processing deferred to internal retry:',error.message);return{processed:false,error};}}
 async function processWebhook(rawBody,headers){let event;try{event=JSON.parse(Buffer.isBuffer(rawBody)?rawBody.toString('utf8'):String(rawBody));}catch{throw new Error('Invalid PayPal webhook JSON.');}if(!(await verifyWebhook(headers,event)))throw new Error('Invalid PayPal webhook signature');const eventId=event.id,eventType=event.event_type,eventRow=await lifecycle.beginPaymentEvent({provider:'paypal',eventId,eventType,payload:event});if(!eventRow)return{duplicate:true};const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:eventType,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};}
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='paypal')throw new Error('PayPal retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored PayPal payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,resumeCheckout,captureOrder,activateCompletedOrder,captureOrderId,activateSubscription,syncSubscription,syncCurrentSubscription,paypalStatus,paypalHealthy,paypalTerminal,paidThroughCancellationUpdate,immutableSubscriptionContract,storedSubscriptionSnapshot,processWebhook,retryPaymentEvent,handleWebhookEvent,parseCustomId,paypalAmount,paypalRefundContext,paypalMinor,disputeIdentity,reverseReferralForDirectIdentity,captureRefundAmounts,paypalCaptureRefundContext,recordCaptureLoss,getCapture,recordCompletedCapture};
+module.exports={enabled,createCheckout,resumeCheckout,captureOrder,activateCompletedOrder,captureOrderId,activateSubscription,syncSubscription,syncCurrentSubscription,paypalStatus,paypalHealthy,paypalTerminal,paidThroughCancellationUpdate,immutableSubscriptionContract,storedSubscriptionSnapshot,processWebhook,retryPaymentEvent,handleWebhookEvent,parseCustomId,paypalAmount,paypalRefundContext,paypalMinor,disputeIdentity,reverseReferralForDirectIdentity,captureRefundAmounts,paypalCaptureRefundContext,recordCaptureLoss,recordSaleReversal,billingFailureSubscriptionId,paypalOutstandingRenewal,paypalBillingCleared,paypalPaymentFailureCurrent,recordSubscriptionPaymentFailure,recordSubscriptionPaymentSuccess,settleTerminalCapture,settleReversedApproval,getCapture,recordCompletedCapture};

@@ -459,11 +459,19 @@ async function verifiedProviderContract({
     }
     const expectedMinor = asMoney(snapshot.discountedMinor ?? snapshot.priceMinor);
     const actualMinor = amountMinor == null ? null : asMoney(amountMinor);
+    const expectedCurrency = normalizeCurrency(snapshot.currency);
+    const actualCurrency = currency == null ? '' : normalizeCurrency(currency);
+    if (row.checkout_mode === 'payment') {
+        if (expectedMinor == null || !expectedCurrency) {
+            throw new Error('One-time checkout contract is missing its immutable amount or currency.');
+        }
+        if (actualMinor == null || !actualCurrency) {
+            throw new Error('Provider one-time payment is missing verifiable amount or currency.');
+        }
+    }
     if (actualMinor != null && expectedMinor != null && actualMinor !== expectedMinor) {
         throw new Error(`Provider amount ${actualMinor} does not match checkout contract amount ${expectedMinor}.`);
     }
-    const expectedCurrency = normalizeCurrency(snapshot.currency);
-    const actualCurrency = currency == null ? '' : normalizeCurrency(currency);
     if (actualCurrency && expectedCurrency && actualCurrency !== expectedCurrency) {
         throw new Error(`Provider currency ${actualCurrency} does not match checkout contract currency ${expectedCurrency}.`);
     }

@@ -56,6 +56,8 @@ async function main(){
     expect(verified.snapshot.streams===3,'Checkout stream policy was not snapshotted.');
     expect(verified.snapshot.allowDownloads===true,'Checkout download policy was not snapshotted.');
     await expectReject(()=>intents.verifiedProviderContract({provider:'stripe',providerCheckoutId,scope:'customer',ownerId:customer.id,planId:plan.id,checkoutMode:'payment',providerMappingId:mapping,amountMinor:601,currency:'USD'}),/amount/i);
+    await expectReject(()=>intents.verifiedProviderContract({provider:'stripe',providerCheckoutId,scope:'customer',ownerId:customer.id,planId:plan.id,checkoutMode:'payment',providerMappingId:mapping,amountMinor:null,currency:'USD'}),/missing verifiable amount or currency/i);
+    await expectReject(()=>intents.verifiedProviderContract({provider:'stripe',providerCheckoutId,scope:'customer',ownerId:customer.id,planId:plan.id,checkoutMode:'payment',providerMappingId:mapping,amountMinor:600,currency:null}),/missing verifiable amount or currency/i);
 
     // Change and archive the catalogue after the customer has entered provider
     // checkout. Fulfilment must still use exactly what was sold above.

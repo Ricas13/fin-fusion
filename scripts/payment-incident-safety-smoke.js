@@ -1,10 +1,12 @@
 'use strict';
 
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const reconciliation = require('../src/payments/incident-reconciliation');
 const incidents = require('../src/payments/incidents');
 const stripe = require('../src/payments/stripe');
+const paypal = require('../src/payments/paypal');
 
 function expectThrows(fn, pattern) {
     let thrown = null;
@@ -110,6 +112,60 @@ function main() {
     }
     if (stripe.effectiveSyncStatus('past_due', 'past_due') !== 'past_due') {
         throw new Error('A currently-delinquent Stripe subscription must still remain past_due.');
+    }
+
+    // PayPal can keep a subscription ACTIVE while retrying a failed renewal.
+    // ACTIVE alone is therefore not recovery evidence. Only a later successful
+    // payment with cleared failure/outstanding state makes an older failure stale.
+    const failedEvent = { create_time: '2026-09-18T10:00:00Z' };
+    if (!paypal.paypalPaymentFailureCurrent(failedEvent, {
+        status: 'ACTIVE',
+        billing_info: {
+            failed_payments_count: 1,
+            outstanding_balance: { value: '10.00', currency_code: 'GBP' },
+            last_failed_payment: { time: '2026-09-18T10:00:00Z' },
+            last_payment: { time: '2026-08-18T10:00:00Z' }
+        }
+    })) {
+        throw new Error('An ACTIVE PayPal subscription with current failed-payment debt was incorrectly treated as recovered.');
+    }
+    if (paypal.paypalPaymentFailureCurrent(failedEvent, {
+        status: 'ACTIVE',
+        billing_info: {
+            failed_payments_count: 0,
+            outstanding_balance: { value: '0.00', currency_code: 'GBP' },
+            last_failed_payment: { time: '2026-09-18T10:00:00Z' },
+            last_payment: { time: '2026-09-18T11:00:00Z' }
+        }
+    })) {
+        throw new Error('A PayPal failure older than a later successful payment was not recognized as historical.');
+    }
+    assert.strictEqual(paypal.paypalOutstandingRenewal({
+        status: 'ACTIVE',
+        billing_info: { failed_payments_count: 1, outstanding_balance: { value: '10.00', currency_code: 'GBP' } }
+    }), true, 'PayPal ACTIVE with failed renewal debt is not financially healthy');
+    assert.strictEqual(paypal.paypalOutstandingRenewal({
+        status: 'ACTIVE',
+        billing_info: { failed_payments_count: 0, outstanding_balance: { value: '0.00', currency_code: 'GBP' } }
+    }), false, 'PayPal healthy billing has no unpaid renewal');
+    assert.strictEqual(paypal.paypalOutstandingRenewal({
+        status: 'ACTIVE',
+        billing_info: { failed_payments_count: 0, outstanding_balance: { value: '3.00', currency_code: 'GBP' } }
+    }), true, 'PayPal positive outstanding balance still needs delinquency protection');
+    assert.strictEqual(require('../src/payments/lifecycle-primitives').mapProviderStatus('paypal', 'PAST_DUE'), 'past_due', 'PayPal verified outstanding debt must map to a persistent local delinquency state');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE',billing_info:{failed_payments_count:0,outstanding_balance:{value:'0.00',currency_code:'GBP'}}}),true,'Provider-confirmed zero unpaid balance can release past-due access');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE',billing_info:{failed_payments_count:0}}),false,'Missing outstanding balance is not proof that overdue service was paid');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE',billing_info:{outstanding_balance:{value:'0.00'}}}),false,'Missing failed-payment count is not proof that overdue service was paid');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE'}),false,'An ACTIVE agreement alone cannot clear overdue access');
+    const paypalSource = fs.readFileSync(require.resolve('../src/payments/paypal'), 'utf8');
+    if (!paypalSource.includes("case 'PAYMENT.SALE.DENIED':if(resource.billing_agreement_id)await recordSubscriptionPaymentFailure(event,resource)")) {
+        throw new Error('Legacy PayPal denied-sale event must use the same verified failed-renewal handler.');
+    }
+    if (!paypalSource.includes("(existingDelinquent&&!paypalBillingCleared(subscription))") || !paypalSource.includes("paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)")) {
+        throw new Error('PayPal ACTIVE with outstanding debt must not clear delinquency or failed-renewal incidents.');
+    }
+    if (!paypalSource.includes("status:'past_due'") || !paypalSource.includes('lifecycle.syncProviderAccessState')) {
+        throw new Error('Current PayPal failed renewals do not create the canonical payment-delinquency access hold.');
     }
 
     // One Stripe invoice can emit several invoice.payment_failed events while

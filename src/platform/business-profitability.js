@@ -31,14 +31,39 @@ function hasHistoryCoverage(coverage,start,end){
   const from=new Date(start),to=new Date(end);
   return Object.values(coverage||{}).some(intervals=>(intervals||[]).some(interval=>new Date(interval.start)<to&&new Date(interval.end)>from));
 }
+function fullyCoveredByHistory(coverage,start,end){
+  const from=new Date(start).getTime(),to=new Date(end).getTime();
+  if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from)return false;
+  return ['stripe','paypal'].every(provider=>{
+    let cursor=from;
+    const intervals=(coverage?.[provider]||[])
+      .map(row=>({start:new Date(row.start).getTime(),end:new Date(row.end).getTime()}))
+      .filter(row=>Number.isFinite(row.start)&&Number.isFinite(row.end))
+      .sort((a,b)=>a.start-b.start);
+    for(const interval of intervals){
+      if(interval.end<=cursor)continue;
+      if(interval.start>cursor)return false;
+      cursor=Math.max(cursor,interval.end);
+      if(cursor>=to)return true;
+    }
+    return false;
+  });
+}
 function basisFor(coverage,start,end){
   const webhookOnly=!hasHistoryCoverage(coverage,start,end);
-  return{webhookOnly,basisText:`${PROFIT_BASIS}${webhookOnly?' webhook-only for this range.':''}`};
+  const feeCoverageIncomplete=!fullyCoveredByHistory(coverage,start,end);
+  const caution=webhookOnly
+    ? ' webhook-only for this range: exact provider fees are unavailable until Payment History is imported.'
+    : feeCoverageIncomplete
+      ? ' Partial provider-history coverage: processing fees may be missing for unimported dates or providers.'
+      : '';
+  return{webhookOnly,feeCoverageIncomplete,basisText:`${PROFIT_BASIS}${caution}`};
 }
 function revenueFromLedger(ledger,start,end,{includePrevious=false}={}){
   const grossMinor=Number(ledger?.grossMinor||0)+(includePrevious?Number(ledger?.previousGrossMinor||0):0);
   const refundMinor=Number(ledger?.refundMinor||0)+(includePrevious?Number(ledger?.previousRefundMinor||0):0);
-  return{grossMinor,refundMinor,netMinor:grossMinor-refundMinor,coverage:ledger?.coverage||{},warnings:ledger?.warnings||[],...basisFor(ledger?.coverage,start,end)};
+  const feeMinor=Number(ledger?.feeMinor||0)+(includePrevious?Number(ledger?.previousFeeMinor||0):0);
+  return{grossMinor,refundMinor,feeMinor,netMinor:grossMinor-refundMinor-feeMinor,coverage:ledger?.coverage||{},warnings:ledger?.warnings||[],...basisFor(ledger?.coverage,start,end)};
 }
 async function revenueSummary(start,end,reporting){
   const ledger=await dashboardLedger.commerceRevenue(ledgerRange(start,end),reporting,reportingCurrency);
@@ -111,4 +136,4 @@ async function dashboardProfitability(reporting,{now=new Date(),weeks=8}={}){
   };
 }
 
-module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};
+module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,fullyCoveredByHistory,revenueFromLedger,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};

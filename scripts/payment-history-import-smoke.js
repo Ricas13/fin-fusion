@@ -5,7 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const historyAccounting = require('../src/payments/history-accounting');
 const dashboardLedger = require('../src/payments/dashboard-ledger');
+const profitability = require('../src/platform/business-profitability');
 const classifier = require('../src/payments/provider-transaction-classifier');
+const dashboardAnalytics = require('../src/platform/admin-dashboard-analytics');
 
 const coverage = dashboardLedger.coverageFromRuns([
     { provider_scope: 'stripe', range_start: '2025-01-01', range_end: '2025-01-31' },
@@ -42,6 +44,18 @@ assert.strictEqual(historyAccounting.historyKind({ provider: 'paypal', transacti
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'S', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'D', gross_amount_minor: 1000 }), null, 'dashboard must reject denied PayPal revenue too');
 
+const delayedStripeRevenue = dashboardAnalytics.revenueFromEvent({
+    provider: 'stripe',
+    event_type: 'checkout.session.async_payment_succeeded',
+    payload: { data: { object: { mode: 'payment', payment_status: 'paid', amount_total: 1234, currency: 'gbp', customer_details: { email: 'delayed@example.invalid' } } } }
+});
+assert.deepStrictEqual(delayedStripeRevenue, { minor: 1234, currency: 'GBP', email: 'delayed@example.invalid' }, 'a delayed Stripe Checkout success must become live revenue when payment actually succeeds');
+assert.strictEqual(dashboardAnalytics.revenueFromEvent({
+    provider: 'stripe',
+    event_type: 'checkout.session.completed',
+    payload: { data: { object: { mode: 'payment', payment_status: 'unpaid', amount_total: 1234, currency: 'gbp' } } }
+}), null, 'an earlier unpaid Checkout completion must not be booked as revenue before delayed settlement');
+
 // Stripe charge.refunded amount_refunded is cumulative. The second webhook
 // below means another 20.00 was refunded, not another 30.00.
 const refundState = new Map(), refundWarnings = [];
@@ -51,6 +65,27 @@ assert.strictEqual(refund1.minor, 1000);
 assert.strictEqual(refund2.minor, 2000);
 assert.strictEqual(refund1.minor + refund2.minor, 3000, 'partial-refund webhooks must never sum cumulative totals');
 assert.deepStrictEqual(refundWarnings, []);
+
+const paypalCaptureRefund = dashboardLedger.refundFromEvent({
+    provider: 'paypal',
+    event_type: 'PAYMENT.CAPTURE.REFUNDED',
+    payload: { resource: { id: 'refund-modern', amount: { value: '12.34', currency_code: 'gbp' } } }
+});
+assert.deepStrictEqual(paypalCaptureRefund, { minor: 1234, currency: 'GBP' }, 'modern PayPal capture refunds must reduce live dashboard revenue immediately');
+
+const paypalCaptureReversal = dashboardLedger.refundFromEvent({
+    provider: 'paypal',
+    event_type: 'PAYMENT.CAPTURE.REVERSED',
+    payload: { resource: { id: 'capture-reversed', amount: { value: '30.00', currency_code: 'usd' } } }
+});
+assert.deepStrictEqual(paypalCaptureReversal, { minor: 3000, currency: 'USD' }, 'PayPal capture reversals must be treated as provider money loss in live accounting');
+
+const paypalSaleReversal = dashboardLedger.refundFromEvent({
+    provider: 'paypal',
+    event_type: 'PAYMENT.SALE.REVERSED',
+    payload: { resource: { id: 'sale-reversed', amount: { total: '9.99', currency: 'eur' } } }
+});
+assert.deepStrictEqual(paypalSaleReversal, { minor: 999, currency: 'EUR' }, 'legacy PayPal recurring sale reversals must reduce live revenue');
 const fallbackRefund = dashboardLedger.refundFromEvent({ provider: 'stripe', event_type: 'charge.refunded', payload: { data: { object: { id: 'ch_fallback', amount_refunded: 3000, currency: 'usd', refunds: { data: [{ id: 're_2', amount: 2000, created: 2 }, { id: 're_1', amount: 1000, created: 1 }] } } } } }, new Map(), []);
 assert.strictEqual(fallbackRefund.minor, 2000, 'when previous cumulative state is absent, use the refund object amount rather than charge.amount_refunded');
 const unsafeWarnings = [];
@@ -71,6 +106,25 @@ assert.strictEqual(revenueRows[0].gross_sales_minor, 1000);
 assert.strictEqual(revenueRows[0].refund_amount_minor, 200);
 assert.strictEqual(revenueRows[0].payment_fees_minor, 59);
 assert.strictEqual(revenueRows[0].net_proceeds_minor, 741, 'payout movement must not collapse real sales/net proceeds');
+const importedPayment=dashboardLedger.historyRecord({provider:'stripe',transaction_type:'charge',transaction_status:'available',currency:'GBP',gross_amount_minor:1000,fee_amount_minor:59,occurred_at:'2026-08-01T12:00:00Z'},'payment');
+assert.strictEqual(importedPayment.minor,1000,'gross revenue must retain the whole sale');
+assert.strictEqual(importedPayment.feeMinor,59,'canonical ledger must carry imported provider fees');
+const profit=profitability.revenueFromLedger({grossMinor:1000,refundMinor:200,feeMinor:59,previousGrossMinor:400,previousRefundMinor:0,previousFeeMinor:20,coverage:{stripe:[{start:new Date('2026-08-01'),end:new Date('2026-09-01')}]},warnings:[]},new Date('2026-08-01'),new Date('2026-09-01'),{includePrevious:true});
+assert.strictEqual(profit.grossMinor,1400,'sales remain gross before provider fees');
+assert.strictEqual(profit.feeMinor,79,'current and previous provider fees count exactly once');
+assert.strictEqual(profit.netMinor,1121,'net provider receipts must deduct refunds and fees exactly once');
+const from=new Date('2026-08-01T00:00:00Z'),to=new Date('2026-09-01T00:00:00Z');
+const stripeOnly={stripe:[{start:from,end:to}],paypal:[]};
+assert.strictEqual(profitability.fullyCoveredByHistory(stripeOnly,from,to),false,'Importing only Stripe cannot certify the combined Stripe/PayPal fee basis');
+const partialBasis=profitability.basisFor(stripeOnly,from,to);
+assert.strictEqual(partialBasis.webhookOnly,false,'An imported Stripe range is not wholly webhook-only');
+assert.strictEqual(partialBasis.feeCoverageIncomplete,true,'An uncovered PayPal provider must be flagged as potentially missing fees');
+assert(partialBasis.basisText.includes('Partial provider-history coverage'),'Profit must disclose missing fees when just one provider was imported');
+const splitCoverage={stripe:[{start:from,end:new Date('2026-08-10T00:00:00Z')},{start:new Date('2026-08-10T00:00:00Z'),end:to}],paypal:[{start:from,end:to}]};
+assert.strictEqual(profitability.fullyCoveredByHistory(splitCoverage,from,to),true,'Adjacent complete import windows for both providers cover the full period');
+assert.strictEqual(profitability.fullyCoveredByHistory({stripe:splitCoverage.stripe,paypal:[{start:new Date('2026-08-02T00:00:00Z'),end:to}]},from,to),false,'A one-day gap must not be mistaken for complete provider fee coverage');
+assert.strictEqual(profitability.basisFor(splitCoverage,from,to).feeCoverageIncomplete,false,'Fully imported ranges should not carry the partial-fee caveat');
+
 
 const classifierSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-transaction-classifier.js'), 'utf8');
 const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'dashboard-ledger.js'), 'utf8');
@@ -90,6 +144,24 @@ assert.ok(!dashboardSource.includes('LIMIT 25000'), 'Commerce financial totals m
 assert.ok(dashboardSource.includes("status='completed'"), 'dashboard accounting may only trust completed import coverage');
 assert.ok(dashboardSource.includes('completed_at'), 'dashboard accounting must cap same-day coverage at the actual import completion time');
 
+const stripeWebhookSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'stripe.js'), 'utf8');
+assert.ok(stripeWebhookSource.includes("case 'checkout.session.async_payment_succeeded': await activateCheckoutSession(object)"), 'Stripe delayed payment success must reuse the canonical verified fulfillment path');
+assert.ok(stripeWebhookSource.includes("case 'checkout.session.async_payment_failed': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'failed')"), 'Stripe delayed payment failure must release the local checkout/capacity hold');
+
+const paypalSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'paypal.js'), 'utf8');
+for (const eventType of [
+    'PAYMENT.SALE.REVERSED',
+    'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
+    'BILLING.SUBSCRIPTION.PAYMENT.SUCCEEDED',
+    'PAYMENT.CAPTURE.PENDING',
+    'PAYMENT.CAPTURE.DENIED',
+    'CHECKOUT.ORDER.DECLINED',
+    'CHECKOUT.PAYMENT-APPROVAL.REVERSED'
+]) {
+    assert.ok(paypalSource.includes(`case '${eventType}'`), `PayPal webhook coverage must explicitly handle ${eventType}`);
+}
+assert.ok(paypalSource.includes('recordSaleReversal') && paypalSource.includes('recordSubscriptionPaymentFailure') && paypalSource.includes('recordSubscriptionPaymentSuccess'), 'PayPal money-loss and renewal recovery events must use dedicated auditable handlers');
+
 const flexibleCheckoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'flexible-checkout.js'), 'utf8');
 const discountsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'discounts.js'), 'utf8');
 assert.ok(flexibleCheckoutSource.includes('checkoutTtlMinutes=intents.providerMaxTtl(provider)'), 'checkout must derive one provider TTL for intent and reservation');
@@ -103,6 +175,7 @@ const reportingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platf
 assert.ok(dashboardPageSource.includes('financialWarningBanner(ctx)'), 'financial completeness warnings must be rendered above dashboard widgets');
 assert.ok(dashboardPageSource.includes('Do not treat affected revenue/refund totals as complete'), 'admin warning must explicitly say affected totals are not complete');
 assert.ok(dashboardMoneySource.includes('warnings:accounting.warnings||[]'), 'Main dashboard normalization must propagate ledger warnings');
+assert.ok(dashboardSource.includes('charge.dispute.created') && dashboardSource.includes('CUSTOMER.DISPUTE.CREATED') && dashboardSource.includes('run Payment History import before treating affected profit/refund totals as complete'), 'Uncovered Stripe/PayPal dispute cash movements must make dashboard financial completeness visibly degraded');
 assert.ok(reportingSource.includes('lastFinancialWarning'), 'FX fallback failures must be retained as an admin-visible financial warning');
 assert.ok(reportingSource.includes('Dashboard currency conversions are using the last stored rates'), 'FX fallback must explain the degraded financial state');
 assert.ok(/catch\s*\(error\)[\s\S]*return \{ provider, configured: true, error: error\.message \|\| String\(error\), rows: \[\] \}/.test(reconciliationSource), 'reconciliation error fallback must remain explicitly UI-visible');

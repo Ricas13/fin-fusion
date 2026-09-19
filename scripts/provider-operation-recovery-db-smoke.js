@@ -191,6 +191,81 @@ async function testJOldOperationCannotOverwriteNewerDecision() {
     assert.strictEqual(providerMutationCount, before, 'J: stale operation must not mutate provider state');
 }
 
+async function testKProviderBillingIdentitySingleOwner() {
+    const tag = suffix(), firstCustomer = await customer(`k-first-${tag}`), secondCustomer = await customer(`k-second-${tag}`);
+    const firstPlan = await plan(`recovery-k-first-${tag}`, 'Provider identity first', 1200);
+    const secondPlan = await plan(`recovery-k-second-${tag}`, 'Provider identity second', 1200);
+    const providerId = `sub_provider_owner_${tag}`;
+    const pool = getPool(), one = await pool.connect(), two = await pool.connect();
+    let secondError = null;
+    try {
+        await one.query('BEGIN');
+        await two.query('BEGIN');
+        await one.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [firstCustomer.id, firstPlan.id, providerId]);
+        const competing = two.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [secondCustomer.id, secondPlan.id, providerId]).catch(error => { secondError = error; return null; });
+        await new Promise(resolve => setTimeout(resolve, 80));
+        await one.query('COMMIT');
+        await competing;
+        if (secondError) await two.query('ROLLBACK'); else await two.query('COMMIT');
+    } finally {
+        try { await one.query('ROLLBACK'); } catch (_) {}
+        try { await two.query('ROLLBACK'); } catch (_) {}
+        one.release(); two.release();
+    }
+    assert(secondError, 'K: concurrent customers must not claim the same external provider billing identity');
+    assert.match(String(secondError.message || secondError), /already attached to another subscription/i, 'K: provider identity guard must reject the duplicate at the database boundary');
+    const owners = await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1`, [providerId]);
+    assert.strictEqual(Number(owners.rows[0].n), 1, 'K: exactly one local subscription may own the provider identity after the race');
+}
+
+async function testLRecurringIdentityStatusBoundary() {
+    const tag=suffix(), c=await customer(`l-${tag}`), p=await plan(`recovery-l-${tag}`,'Identity Boundary');
+    await assert.rejects(
+        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot,commercial_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin',$4::jsonb)`,[c.id,p.id,`bad_recurring_${tag}`,JSON.stringify({checkoutMode:'subscription'})]),
+        /Invalid recurring provider billing identity/i,
+        'L: a live recurring Stripe row must not be created with a malformed provider identity'
+    );
+    const historical=await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'cancelled','stripe','subscription',NOW()-INTERVAL '60 days',NOW()-INTERVAL '30 days',NULL,'jellyfin') RETURNING id`,[c.id,p.id]);
+    assert.strictEqual(historical.rowCount,1,'L: terminal historical recurring rows may remain without an operable provider identity for audit/import compatibility');
+    await query(`UPDATE subscriptions SET cancel_at_period_end=TRUE WHERE id=$1`,[historical.rows[0].id]);
+    await assert.rejects(
+        query(`UPDATE subscriptions SET status='active' WHERE id=$1`,[historical.rows[0].id]),
+        /Invalid recurring provider billing identity/i,
+        'L: terminal malformed historical rows cannot be revived into paid access without a valid provider identity'
+    );
+    // Reproduce a pre-migration ACTIVE bad reference. Temporarily disable
+    // only this new guard inside one transaction; a rollback restores the
+    // trigger if the fixture insert itself fails.
+    const oldLive=await customer(`old-live-${tag}`);
+    const conn=await getPool().connect();
+    let oldLiveId;
+    try{
+        await conn.query('BEGIN');
+        await conn.query('ALTER TABLE subscriptions DISABLE TRIGGER subscriptions_provider_identity_guard');
+        const inserted=await conn.query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot)
+            VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING id
+        `,[oldLive.id,p.id,`bad_old_live_${tag}`]);
+        oldLiveId=inserted.rows[0].id;
+        await conn.query('ALTER TABLE subscriptions ENABLE TRIGGER subscriptions_provider_identity_guard');
+        await conn.query('COMMIT');
+    }catch(error){
+        await conn.query('ROLLBACK');
+        throw error;
+    }finally{conn.release();}
+    await query(`UPDATE subscriptions SET status='past_due' WHERE id=$1`,[oldLiveId]);
+    await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '25 days' WHERE id=$1`,[oldLiveId]);
+    await assert.rejects(
+        query(`UPDATE subscriptions SET status='active' WHERE id=$1`,[oldLiveId]),
+        /Invalid recurring provider billing identity/i,
+        'L: historical malformed paid subscriptions must not regain active service until repaired'
+    );
+    await query(`UPDATE subscriptions SET provider_subscription_id=$2 WHERE id=$1`,[oldLiveId,`sub_repaired_${tag}`]);
+    await query(`UPDATE subscriptions SET status='active' WHERE id=$1`,[oldLiveId]);
+    const repaired=await query(`SELECT status,provider_subscription_id FROM subscriptions WHERE id=$1`,[oldLiveId]);
+    assert.strictEqual(repaired.rows[0].status,'active','L: repairing historical billing identity restores normal status synchronization');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -201,7 +276,9 @@ async function main() {
     await testFDefinitiveProviderFailure();
     await testGAmbiguousProviderResult();
     await testJOldOperationCannotOverwriteNewerDecision();
-    console.log('provider operation recovery DB smoke: A-J ok');
+    await testKProviderBillingIdentitySingleOwner();
+    await testLRecurringIdentityStatusBoundary();
+    console.log('provider operation recovery DB smoke: A-L ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });

@@ -76,25 +76,52 @@ async function persistTargets(job){
       SELECT id,source,provider_subscription_id,status,current_period_end,cancel_at_period_end
       FROM subscriptions
       WHERE customer_id=$1
-        AND (
-          (source='stripe' AND provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\')
-          OR (source='paypal' AND provider_subscription_id LIKE 'I-%')
-        )
+        AND billing_mode='subscription'
+        AND source IN ('stripe','paypal')
       ORDER BY created_at,id
     `,[job.customer_id]);
     for(const subscription of recurring.rows){
+      const providerSubscriptionId=String(subscription.provider_subscription_id||'').trim()||null;
+      const providerIdValid=Boolean(providerSubscriptionId)
+        && ((subscription.source==='stripe'&&/^sub_/i.test(providerSubscriptionId))
+          ||(subscription.source==='paypal'&&/^I-/i.test(providerSubscriptionId)));
       await insertTarget(client,{
         jobId:job.id,customerId:job.customer_id,provider:subscription.source,resourceType:'recurring_subscription',
-        externalIdentifier:subscription.provider_subscription_id,desiredState:'cancelled',
+        externalIdentifier:providerSubscriptionId||`invalid-local-subscription:${subscription.id}`,desiredState:'cancelled',
         metadata:{
           subscriptionId:subscription.id,
-          providerSubscriptionId:subscription.provider_subscription_id,
+          providerSubscriptionId,
+          invalidProviderIdentity:!providerIdValid,
           localStatus:subscription.status,
           currentPeriodEnd:subscription.current_period_end,
           cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),
-          inventoryVersion:2
+          inventoryVersion:3
         }
       });
+      if(providerIdValid){
+        // The valid replacement target exists in this same transaction.
+        // Retire only obsolete invalid snapshots of this exact local contract;
+        // never retire the new provider cancellation target itself.
+        const replaced=await client.query(`
+          UPDATE customer_external_deletion_targets
+          SET state='succeeded',
+              result=jsonb_build_object('status','superseded_by_verified_billing_identity','replacementProviderId',$4::text),
+              completed_at=COALESCE(completed_at,NOW()),last_error=NULL,updated_at=NOW()
+          WHERE deletion_job_id=$1 AND provider=$2
+            AND resource_type='recurring_subscription'
+            AND metadata->>'subscriptionId'=$3::text
+            AND metadata->>'invalidProviderIdentity'='true'
+            AND external_identifier<>$4
+            AND state<>'succeeded'
+          RETURNING id
+        `,[job.id,subscription.source,String(subscription.id),providerSubscriptionId]);
+        for(const retired of replaced.rows){
+          await client.query(`
+            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES('customer.deletion.billing_identity_repaired','customer',$1,$2::jsonb)
+          `,[job.customer_id,json({targetId:retired.id,subscriptionId:subscription.id,provider:subscription.source,replacementProviderId:providerSubscriptionId})]);
+        }
+      }
     }
 
     const preference=await client.query(`
@@ -177,8 +204,12 @@ async function revokeRequestTarget(target){
 
 async function cancelRecurringTarget(target){
   const meta=target.metadata||{};
-  const providerSubscriptionId=String(meta.providerSubscriptionId||target.external_identifier||'').trim();
-  if(!providerSubscriptionId)throw new Error(`${target.provider} recurring deletion target is missing its durable provider subscription identity.`);
+  const providerSubscriptionId=String(meta.providerSubscriptionId||'').trim();
+  const validProviderIdentity=(target.provider==='stripe'&&/^sub_/i.test(providerSubscriptionId))
+    ||(target.provider==='paypal'&&/^I-/i.test(providerSubscriptionId));
+  if(meta.invalidProviderIdentity===true||!validProviderIdentity){
+    throw new Error(`${target.provider} recurring deletion target has an invalid provider subscription identity; repair the billing reference before customer deletion can finalize.`);
+  }
   return billingControl.terminateRecurringForDeletion({
     id:meta.subscriptionId||null,
     customer_id:target.customer_id,
