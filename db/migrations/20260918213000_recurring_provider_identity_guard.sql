@@ -31,6 +31,7 @@ BEGIN
            OR NEW.source IS DISTINCT FROM OLD.source
            OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id
            OR NEW.billing_mode IS DISTINCT FROM OLD.billing_mode
+           OR OLD.status NOT IN ('active','trialing','past_due','paused')
            OR (
                NEW.status IN ('active','trialing')
                AND NEW.status IS DISTINCT FROM OLD.status
