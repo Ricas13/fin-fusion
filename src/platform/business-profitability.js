@@ -112,4 +112,4 @@ async function dashboardProfitability(reporting,{now=new Date(),weeks=8}={}){
   };
 }
 
-module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};
+module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,revenueFromLedger,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};
