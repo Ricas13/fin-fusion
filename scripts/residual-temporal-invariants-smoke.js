@@ -82,10 +82,13 @@ function main() {
     const webhook = section(paypalSource, 'async function handleWebhookEvent', 'async function processClaimedEvent');
     assert(webhook.includes("case 'BILLING.SUBSCRIPTION.CANCELLED':case 'BILLING.SUBSCRIPTION.SUSPENDED':case 'BILLING.SUBSCRIPTION.EXPIRED':if(resource.id)await syncCurrentSubscription(resource.id,{activateMissing:false})"), 'Negative PayPal subscription webhooks are not reconciled from current provider state without creating missing access.');
     const denied = section(webhook, "case 'PAYMENT.SALE.DENIED'", "case 'PAYMENT.SALE.REFUNDED'");
-    assert(denied.includes('await syncCurrentSubscription(subscriptionId,{activateMissing:false})'), 'PayPal denied sale does not fetch current subscription state first without activating missing access.');
-    assert(denied.includes('paypalHealthy(synced.providerStatus)'), 'PayPal delayed denial cannot detect a recovered active subscription.');
-    assert(denied.includes('failedRenewals.resolveOpen'), 'Recovered/terminal PayPal renewal incidents are not settled.');
-    assert(denied.includes('failedRenewals.record'), 'Current PayPal delinquency is not durably recorded through the canonical failed-renewal owner.');
+    assert(denied.includes('await recordSubscriptionPaymentFailure(event,resource)'), 'Legacy PayPal denied-sale events must share the verified failure path instead of trusting ACTIVE as recovery evidence.');
+    const sharedFailure = section(paypalSource, 'async function recordSubscriptionPaymentFailure', 'async function settleTerminalCapture');
+    assert(sharedFailure.includes('await syncCurrentSubscription(subscriptionId,{activateMissing:false})'), 'PayPal failed renewal must fetch current provider state without activating missing access.');
+    assert(sharedFailure.includes('paypalPaymentFailureCurrent(event,synced.subscription)'), 'Delayed PayPal failure must distinguish confirmed newer payment recovery from agreement ACTIVE status alone.');
+    assert(sharedFailure.includes('failedRenewals.resolveOpen'), 'Recovered/terminal PayPal renewal incidents are not settled.');
+    assert(sharedFailure.includes('failedRenewals.record'), 'Current PayPal delinquency is not durably recorded through the canonical failed-renewal owner.');
+    assert(sharedFailure.includes("status:'past_due'"), 'Current PayPal renewal failure must impose the canonical payment-delinquency hold.');
     assert(!denied.includes("providerStatus:'suspended'"), 'Delayed PayPal sale denial can still force local suspension from event order alone.');
 
     assert.strictEqual(billingControl.providerMissing({ statusCode: 404 }), true, 'Structured provider 404 must still count as confirmed missing.');
