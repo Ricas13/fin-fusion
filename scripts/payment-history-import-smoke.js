@@ -113,6 +113,17 @@ const profit=profitability.revenueFromLedger({grossMinor:1000,refundMinor:200,fe
 assert.strictEqual(profit.grossMinor,1400,'sales remain gross before provider fees');
 assert.strictEqual(profit.feeMinor,79,'current and previous provider fees count exactly once');
 assert.strictEqual(profit.netMinor,1121,'net provider receipts must deduct refunds and fees exactly once');
+const from=new Date('2026-08-01T00:00:00Z'),to=new Date('2026-09-01T00:00:00Z');
+const stripeOnly={stripe:[{start:from,end:to}],paypal:[]};
+assert.strictEqual(profitability.fullyCoveredByHistory(stripeOnly,from,to),false,'Importing only Stripe cannot certify the combined Stripe/PayPal fee basis');
+const partialBasis=profitability.basisFor(stripeOnly,from,to);
+assert.strictEqual(partialBasis.webhookOnly,false,'An imported Stripe range is not wholly webhook-only');
+assert.strictEqual(partialBasis.feeCoverageIncomplete,true,'An uncovered PayPal provider must be flagged as potentially missing fees');
+assert(partialBasis.basisText.includes('Partial provider-history coverage'),'Profit must disclose missing fees when just one provider was imported');
+const splitCoverage={stripe:[{start:from,end:new Date('2026-08-10T00:00:00Z')},{start:new Date('2026-08-10T00:00:00Z'),end:to}],paypal:[{start:from,end:to}]};
+assert.strictEqual(profitability.fullyCoveredByHistory(splitCoverage,from,to),true,'Adjacent complete import windows for both providers cover the full period');
+assert.strictEqual(profitability.fullyCoveredByHistory({stripe:splitCoverage.stripe,paypal:[{start:new Date('2026-08-02T00:00:00Z'),end:to}]},from,to),false,'A one-day gap must not be mistaken for complete provider fee coverage');
+assert.strictEqual(profitability.basisFor(splitCoverage,from,to).feeCoverageIncomplete,false,'Fully imported ranges should not carry the partial-fee caveat');
 
 
 const classifierSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-transaction-classifier.js'), 'utf8');
