@@ -386,6 +386,7 @@ module.exports = {
     authoritativeLivePaypal,
     paypalCaptureIdFromEvent,
     historyKind: classifier.historyKind,
+    historyRecord,
     coverageRunsInRange,
     scanPaymentEventsInRange,
     scanHistoryInRange,
