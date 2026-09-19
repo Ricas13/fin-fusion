@@ -224,7 +224,7 @@ async function testLRecurringIdentityStatusBoundary() {
     assert(constraint?.definition,'L: recurring provider identity constraint must be installed');
     let inserted=null,rejected=null;
     try {
-        inserted=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot,commercial_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin',$4::jsonb) RETURNING id,status,source,billing_mode,provider_subscription_id,commercial_snapshot`,[c.id,p.id,`pi_invalid_live_${tag}`,JSON.stringify({checkoutMode:'subscription'})])).rows[0];
+        inserted=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot,commercial_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin',$4::jsonb) RETURNING id,status,source,billing_mode,provider_subscription_id,commercial_snapshot`,[c.id,p.id,`bad_recurring_${tag}`,JSON.stringify({checkoutMode:'subscription'})])).rows[0];
     } catch(error) { rejected=error; }
     if(inserted) throw new Error(`L: malformed live recurring row was accepted; stored=${JSON.stringify(inserted)}; constraint=${constraint.definition}`);
     assert(rejected&&/subscriptions_recurring_provider_identity_check|violates check constraint/i.test(String(rejected.message||rejected)),`L: unexpected recurring ID rejection: ${rejected?.message||'none'}`);
