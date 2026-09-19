@@ -33,7 +33,7 @@ function hasHistoryCoverage(coverage,start,end){
 }
 function basisFor(coverage,start,end){
   const webhookOnly=!hasHistoryCoverage(coverage,start,end);
-  return{webhookOnly,basisText:`${PROFIT_BASIS}${webhookOnly?' Webhook-only for this range: exact provider fees are unavailable until Payment History is imported.':''}`};
+  return{webhookOnly,basisText:`${PROFIT_BASIS}${webhookOnly?' webhook-only for this range: exact provider fees are unavailable until Payment History is imported.':''}`};
 }
 function revenueFromLedger(ledger,start,end,{includePrevious=false}={}){
   const grossMinor=Number(ledger?.grossMinor||0)+(includePrevious?Number(ledger?.previousGrossMinor||0):0);
