@@ -139,7 +139,26 @@ function main() {
     })) {
         throw new Error('A PayPal failure older than a later successful payment was not recognized as historical.');
     }
+    assert.strictEqual(paypal.paypalOutstandingRenewal({
+        status: 'ACTIVE',
+        billing_info: { failed_payments_count: 1, outstanding_balance: { value: '10.00', currency_code: 'GBP' } }
+    }), true, 'PayPal ACTIVE with failed renewal debt is not financially healthy');
+    assert.strictEqual(paypal.paypalOutstandingRenewal({
+        status: 'ACTIVE',
+        billing_info: { failed_payments_count: 0, outstanding_balance: { value: '0.00', currency_code: 'GBP' } }
+    }), false, 'PayPal healthy billing has no unpaid renewal');
+    assert.strictEqual(paypal.paypalOutstandingRenewal({
+        status: 'ACTIVE',
+        billing_info: { failed_payments_count: 0, outstanding_balance: { value: '3.00', currency_code: 'GBP' } }
+    }), true, 'PayPal positive outstanding balance still needs delinquency protection');
+    assert.strictEqual(require('../src/payments/lifecycle-primitives').mapProviderStatus('paypal', 'PAST_DUE'), 'past_due', 'PayPal verified outstanding debt must map to a persistent local delinquency state');
     const paypalSource = fs.readFileSync(require.resolve('../src/payments/paypal'), 'utf8');
+    if (!paypalSource.includes("case 'PAYMENT.SALE.DENIED':if(resource.billing_agreement_id)await recordSubscriptionPaymentFailure(event,resource)")) {
+        throw new Error('Legacy PayPal denied-sale event must use the same verified failed-renewal handler.');
+    }
+    if (!paypalSource.includes("paypalHealthy(providerStatus)&&paypalOutstandingRenewal(subscription)") || !paypalSource.includes("paypalHealthy(synced.providerStatus)&&!paypalOutstandingRenewal(synced.subscription)")) {
+        throw new Error('PayPal ACTIVE with outstanding debt must not clear delinquency or failed-renewal incidents.');
+    }
     if (!paypalSource.includes("status:'past_due'") || !paypalSource.includes('lifecycle.syncProviderAccessState')) {
         throw new Error('Current PayPal failed renewals do not create the canonical payment-delinquency access hold.');
     }
