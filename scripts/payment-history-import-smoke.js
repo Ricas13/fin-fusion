@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const historyAccounting = require('../src/payments/history-accounting');
 const dashboardLedger = require('../src/payments/dashboard-ledger');
+const profitability = require('../src/platform/business-profitability');
 const classifier = require('../src/payments/provider-transaction-classifier');
 const dashboardAnalytics = require('../src/platform/admin-dashboard-analytics');
 
@@ -105,6 +106,14 @@ assert.strictEqual(revenueRows[0].gross_sales_minor, 1000);
 assert.strictEqual(revenueRows[0].refund_amount_minor, 200);
 assert.strictEqual(revenueRows[0].payment_fees_minor, 59);
 assert.strictEqual(revenueRows[0].net_proceeds_minor, 741, 'payout movement must not collapse real sales/net proceeds');
+const importedPayment=dashboardLedger.historyRecord({provider:'stripe',transaction_type:'charge',transaction_status:'available',currency:'GBP',gross_amount_minor:1000,fee_amount_minor:59,occurred_at:'2026-08-01T12:00:00Z'},'payment');
+assert.strictEqual(importedPayment.minor,1000,'gross revenue must retain the whole sale');
+assert.strictEqual(importedPayment.feeMinor,59,'canonical ledger must carry imported provider fees');
+const profit=profitability.revenueFromLedger({grossMinor:1000,refundMinor:200,feeMinor:59,previousGrossMinor:400,previousRefundMinor:0,previousFeeMinor:20,coverage:{stripe:[{start:new Date('2026-08-01'),end:new Date('2026-09-01')}]},warnings:[]},new Date('2026-08-01'),new Date('2026-09-01'),{includePrevious:true});
+assert.strictEqual(profit.grossMinor,1400,'sales remain gross before provider fees');
+assert.strictEqual(profit.feeMinor,79,'current and previous provider fees count exactly once');
+assert.strictEqual(profit.netMinor,1121,'net provider receipts must deduct refunds and fees exactly once');
+
 
 const classifierSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-transaction-classifier.js'), 'utf8');
 const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'dashboard-ledger.js'), 'utf8');
