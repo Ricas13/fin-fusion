@@ -39,7 +39,7 @@ function main() {
         'await assertSettlementCheckout',
         'await capacity.lockAndAssert',
         'excludeCheckoutIntentId',
-        "error?.code === 'PLAN_CAPACITY_EXHAUSTED'",
+        "['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code)",
         'recordCapacitySettlementIncident',
         "incident_type='checkout_completion'",
         'paidButUnfulfilled',
