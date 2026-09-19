@@ -153,11 +153,15 @@ function main() {
         billing_info: { failed_payments_count: 0, outstanding_balance: { value: '3.00', currency_code: 'GBP' } }
     }), true, 'PayPal positive outstanding balance still needs delinquency protection');
     assert.strictEqual(require('../src/payments/lifecycle-primitives').mapProviderStatus('paypal', 'PAST_DUE'), 'past_due', 'PayPal verified outstanding debt must map to a persistent local delinquency state');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE',billing_info:{failed_payments_count:0,outstanding_balance:{value:'0.00',currency_code:'GBP'}}}),true,'Provider-confirmed zero unpaid balance can release past-due access');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE',billing_info:{failed_payments_count:0}}),false,'Missing outstanding balance is not proof that overdue service was paid');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE',billing_info:{outstanding_balance:{value:'0.00'}}}),false,'Missing failed-payment count is not proof that overdue service was paid');
+    assert.strictEqual(paypal.paypalBillingCleared({status:'ACTIVE'}),false,'An ACTIVE agreement alone cannot clear overdue access');
     const paypalSource = fs.readFileSync(require.resolve('../src/payments/paypal'), 'utf8');
     if (!paypalSource.includes("case 'PAYMENT.SALE.DENIED':if(resource.billing_agreement_id)await recordSubscriptionPaymentFailure(event,resource)")) {
         throw new Error('Legacy PayPal denied-sale event must use the same verified failed-renewal handler.');
     }
-    if (!paypalSource.includes("paypalHealthy(providerStatus)&&paypalOutstandingRenewal(subscription)") || !paypalSource.includes("paypalHealthy(synced.providerStatus)&&!paypalOutstandingRenewal(synced.subscription)")) {
+    if (!paypalSource.includes("(existingDelinquent&&!paypalBillingCleared(subscription))") || !paypalSource.includes("paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)")) {
         throw new Error('PayPal ACTIVE with outstanding debt must not clear delinquency or failed-renewal incidents.');
     }
     if (!paypalSource.includes("status:'past_due'") || !paypalSource.includes('lifecycle.syncProviderAccessState')) {
