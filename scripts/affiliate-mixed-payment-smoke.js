@@ -84,6 +84,15 @@ async function main(){
  );
  const leaked=await query(`SELECT id FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1`,[`pi_late_mixed_${suffix}`]);
  assert.equal(leaked.rowCount,0,'mixed-payment settlement failure must roll back entitlement activation atomically');
+ const unpaidAccessIncident=(await query(`
+   SELECT incident_status,metadata,provider_subscription_id
+   FROM payment_incidents
+   WHERE provider='stripe' AND provider_case_id=$1 AND incident_type='checkout_completion'
+ `,[lateIntent.id])).rows[0];
+ assert(unpaidAccessIncident,'late provider payment with unavailable service credit must have a durable paid-but-unfulfilled incident');
+ assert.equal(unpaidAccessIncident.incident_status,'open','unfulfilled paid checkout remains open for operator recovery');
+ assert.equal(unpaidAccessIncident.metadata.reason,'service_credit_unavailable_after_provider_settlement','operator must see the actual credit-shortfall reason');
+ assert.equal(unpaidAccessIncident.metadata.paidButUnfulfilled,true,'checkout incident must identify real money taken without entitlement');
 
  console.log('affiliate mixed-payment smoke: ok');
 }
