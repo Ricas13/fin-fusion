@@ -200,7 +200,9 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
             metadata=payment_incidents.metadata || EXCLUDED.metadata
         RETURNING *
     `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
-        reason: 'capacity_exhausted_after_provider_settlement',
+        reason: error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
+            ? 'service_credit_unavailable_after_provider_settlement'
+            : 'capacity_exhausted_after_provider_settlement',
         planId,
         checkoutIntentId,
         providerSubscriptionId,
@@ -217,7 +219,7 @@ async function resolveCapacitySettlementIncident({ provider, checkoutIntentId },
     const result = await db.query(`
         UPDATE payment_incidents
         SET incident_status='resolved',resolved_at=COALESCE(resolved_at,NOW()),
-            resolution_note=COALESCE(resolution_note,'Provider payment was applied after capacity became available.'),
+            resolution_note=COALESCE(resolution_note,'Provider payment and its local checkout settlement were applied.'),
             updated_at=NOW()
         WHERE provider=$1 AND provider_case_id=$2
           AND incident_type='checkout_completion' AND incident_status='open'
@@ -345,12 +347,12 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             return row;
         });
     } catch (error) {
-        if (error?.code === 'PLAN_CAPACITY_EXHAUSTED' && settlementCheckoutIntentId) {
+        if (['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code) && settlementCheckoutIntentId) {
             try {
                 await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error });
                 error.paidButUnfulfilled = true;
             } catch (incidentError) {
-                console.error('Paid-but-unfulfilled capacity incident could not be recorded:', incidentError.message);
+                console.error('Paid-but-unfulfilled checkout incident could not be recorded:', incidentError.message);
             }
         }
         throw error;
