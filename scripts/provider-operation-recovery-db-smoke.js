@@ -221,7 +221,7 @@ async function testKProviderBillingIdentitySingleOwner() {
 async function testLRecurringIdentityStatusBoundary() {
     const tag=suffix(), c=await customer(`l-${tag}`), p=await plan(`recovery-l-${tag}`,'Identity Boundary');
     await assert.rejects(
-        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[c.id,p.id,`pi_invalid_live_${tag}`]),
+        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot,commercial_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin',$4::jsonb)`,[c.id,p.id,`pi_invalid_live_${tag}`,JSON.stringify({checkoutMode:'subscription'})]),
         /subscriptions_recurring_provider_identity_check|violates check constraint/i,
         'L: a live recurring Stripe row must not be created with a non-sub_ provider identity'
     );
