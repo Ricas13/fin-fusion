@@ -79,11 +79,14 @@ assert(revenueIntegrity.includes('invalid_recurring_provider_reference')
     && revenueIntegrity.includes("!~* '^I-'"),
     'Revenue integrity must page on malformed live Stripe/PayPal recurring identities.');
 const recurringIdentityMigration = read('db/migrations/20260918213000_recurring_provider_identity_guard.sql');
-assert(recurringIdentityMigration.includes('subscriptions_recurring_provider_identity_check')
-    && recurringIdentityMigration.includes('NOT VALID')
-    && recurringIdentityMigration.includes("~* '^sub_'")
-    && recurringIdentityMigration.includes("~* '^I-'"),
-    'PostgreSQL must reject new malformed recurring provider identities without blocking upgrade on historical repair rows.');
+assert(recurringIdentityMigration.includes('DROP CONSTRAINT IF EXISTS subscriptions_recurring_provider_identity_check')
+    && recurringIdentityMigration.includes("NEW.billing_mode='subscription'")
+    && recurringIdentityMigration.includes("NEW.status IN ('active','trialing','past_due','paused')")
+    && recurringIdentityMigration.includes("!~* '^sub_'")
+    && recurringIdentityMigration.includes("!~* '^I-'")
+    && recurringIdentityMigration.includes("TG_OP='INSERT'")
+    && recurringIdentityMigration.includes("BEFORE INSERT OR UPDATE OF source,provider_subscription_id,billing_mode,status"),
+    'PostgreSQL must reject new malformed recurring provider identities without making legacy invalid rows unwritable by ordinary billing updates.');
 assert(recurringIdentityMigration.includes('guard_subscription_provider_identity')
     && recurringIdentityMigration.includes("pg_advisory_xact_lock")
     && recurringIdentityMigration.includes("s.provider_subscription_id=NEW.provider_subscription_id"),
