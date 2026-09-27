@@ -112,7 +112,7 @@ function createCustomerDashboardRouter(){
         if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
         return res.redirect('/account?message='+encodeURIComponent('You already have a Free Access place. Your Jellyfin setup is still being prepared; you do not need to sign up again.'));
       }
-      const message=returnStatus.error?'You are signed in. We could not verify a previous Free Access restore state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose Get free access below.';
+      const message=returnStatus.error?'You are signed in. We could not verify a previous Free Access restore state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
       return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
     }catch(error){return next(error);}
   });
