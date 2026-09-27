@@ -130,8 +130,15 @@ async function identityContext(premiumRows) {
     }
     const providerSubscriptionOwners = new Map();
     for (const row of existing.rows) {
-        if (!localRecurring(row)) continue;
-        providerSubscriptionOwners.set(`${row.source}:${row.provider_subscription_id}`, { subscriptionId: String(row.id), customerId: String(row.customer_id) });
+        if (!billingMode.isRecurring(row)) continue;
+        const provider=String(row.source||'').trim().toLowerCase();
+        const providerSubscriptionId=String(row.provider_subscription_id||'').trim();
+        if (!billingMode.validRecurringProviderId(provider,providerSubscriptionId)) continue;
+        // A whitespace-corrupted local ID is not a healthy link, but it still
+        // represents an ownership claim on the normalized remote resource. Keep
+        // that claim visible so discovery can repair this row without offering
+        // the same provider subscription to a different customer first.
+        providerSubscriptionOwners.set(`${provider}:${providerSubscriptionId}`, { subscriptionId: String(row.id), customerId: String(row.customer_id) });
     }
     return { providerIdentityToCustomers, emailToCustomers, externalToPlans, providerSubscriptionOwners };
 }
