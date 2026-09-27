@@ -282,7 +282,7 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
         secondId=(await conn.query(`
             INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot)
             VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING id
-        `,[secondCustomer.id,p.id,providerId])).rows[0].id;
+        `,[secondCustomer.id,p.id,`  ${providerId}  `])).rows[0].id;
         await conn.query('ALTER TABLE subscriptions ENABLE TRIGGER subscriptions_provider_identity_guard');
         await conn.query('COMMIT');
     }catch(error){
@@ -296,7 +296,7 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
     assert.deepStrictEqual(new Set(reconciled.rows.map(row=>row.status)),new Set(['past_due','cancelled']),'M: historical duplicate rows must remain writable for delinquency/cancellation reconciliation');
 
     await assert.rejects(
-        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[thirdCustomer.id,p.id,`  ${providerId}  `]),
+        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[thirdCustomer.id,p.id,` ${providerId} `]),
         /already attached to another subscription/i,
         'M: a new ownership claim must still reject a whitespace-padded duplicate provider identity'
     );
