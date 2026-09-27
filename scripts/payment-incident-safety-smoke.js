@@ -176,6 +176,9 @@ function main() {
     if (!paypalSource.includes("providerStatus:'PAST_DUE'") || !paypalSource.includes('lifecycle.updateProviderSubscription')) {
         throw new Error('Current PayPal failed renewals must persist past_due on the subscription so later ACTIVE updates with incomplete billing evidence cannot clear delinquency.');
     }
+    if (!paypalSource.includes('caseId:resource?.id||subscriptionId')) {
+        throw new Error('PayPal failed renewals must deduplicate on a stable provider case/subscription identity rather than generating one open incident per webhook delivery.');
+    }
     const failureHandler = paypalSource.slice(paypalSource.indexOf('async function recordSubscriptionPaymentFailure'), paypalSource.indexOf('async function settleTerminalCapture'));
     if (!failureHandler.includes('const subscription=await getSubscription(subscriptionId)') || failureHandler.indexOf("providerStatus:'PAST_DUE'") > failureHandler.indexOf('failedRenewals.record') || failureHandler.indexOf('syncCurrentSubscription(subscriptionId,{activateMissing:false})') < failureHandler.indexOf('if(paypalTerminal(providerStatus))')) {
         throw new Error('PayPal failed-renewal handling must inspect provider truth without first applying a generic ACTIVE sync that could transiently release delinquency access.');
