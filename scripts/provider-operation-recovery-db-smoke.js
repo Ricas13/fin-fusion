@@ -303,6 +303,13 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
 
     await query(`UPDATE subscriptions SET status='past_due' WHERE id=$1`,[firstId]);
     await query(`UPDATE subscriptions SET status='cancelled',cancel_at_period_end=TRUE,current_period_end=LEAST(current_period_end,NOW()) WHERE id=$1`,[secondId]);
+    await query(`UPDATE subscriptions SET status='cancelled',cancel_at_period_end=TRUE,current_period_end=LEAST(current_period_end,NOW()) WHERE id=$1`,[firstId]);
+    await assert.rejects(
+        query(`UPDATE subscriptions SET status='active',current_period_end=NOW()+INTERVAL '30 days' WHERE id=$1`,[firstId]),
+        /already attached to another subscription/i,
+        'M: reactivating a valid historical identity must fail while a normalized duplicate row still exists'
+    );
+    await query(`UPDATE subscriptions SET status='past_due',current_period_end=NOW()+INTERVAL '30 days' WHERE id=$1`,[firstId]).catch(()=>{});
     const reconciled=await query(`SELECT id,status FROM subscriptions WHERE id=ANY($1::uuid[]) ORDER BY id`,[[firstId,secondId]]);
     assert.deepStrictEqual(new Set(reconciled.rows.map(row=>row.status)),new Set(['past_due','cancelled']),'M: historical duplicate rows must remain writable for delinquency/cancellation reconciliation');
     await assert.rejects(
