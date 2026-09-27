@@ -11,6 +11,8 @@ assert(discovery.recurringId('stripe', 'sub_123'));
 assert(discovery.recurringId('paypal', 'I-ABC123'));
 assert(!discovery.recurringId('stripe', 'pi_123'));
 assert(!discovery.recurringId('paypal', 'PAY-123'));
+assert(!discovery.recurringId('stripe', ' sub_123 '), 'padded local Stripe IDs must remain visible to provider-link repair');
+assert(!discovery.recurringId('paypal', ' I-ABC123 '), 'padded local PayPal IDs must remain visible to provider-link repair');
 assert(discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), 'a real Stripe subscription ID must remain linked');
 assert(!discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_123' }), 'a PaymentIntent must never count as a linked recurring Stripe subscription');
 const legacyEnding = { source: 'migration', billing_mode: 'manual', provider_subscription_id: null, cancel_at_period_end: true, commercial_snapshot: { kind:'legacy_import', migrated:true, providerLinkDisposition:'ending' } };
@@ -106,6 +108,9 @@ matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode
 assert.strictEqual(matches[0].state, 'safe', 'a legacy PaymentIntent stored as the recurring ID must be offered for verified provider-link repair');
 assert.strictEqual(matches[0].match.id, 'sub_live');
 
+matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: ' sub_existing ' }], [stripe], baseContext());
+assert.notStrictEqual(matches[0].state, 'linked', 'a whitespace-corrupted stored provider ID must not be hidden as a healthy recurring link');
+
 matches = discovery.matchPremiumRows([{ ...local, commercial_snapshot:{ providerLinkDisposition:'ending' }, cancel_at_period_end:true }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'ending', 'an explicitly marked paid term intentionally ending after the current period must be removed from provider-link work');
 assert.strictEqual(matches[0].match, null, 'an intentionally ending paid term must never be auto-linked even when a provider candidate exists');
@@ -128,6 +133,7 @@ assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T
 assert.ok(discoverySource.includes("paypal_reference_id_type || '').toUpperCase() === 'SUB'"), 'PayPal discovery must only treat SUB references as subscription IDs');
 assert.ok(discoverySource.includes("state: 'ending'"), 'subscription discovery must classify explicitly fixed paid terms as reference-only');
 assert.ok(discoverySource.includes("COUNT(*) FILTER(WHERE NOT linked AND NOT ending)::int AS missing"), 'coverage stats must aggregate provider-link integrity in SQL instead of materializing every premium customer row');
+assert.ok(discoverySource.includes('provider_subscription_id IS NOT DISTINCT FROM BTRIM(provider_subscription_id)'), 'coverage stats must classify whitespace-corrupted provider IDs as missing/repairable rather than linked');
 assert.ok(discoverySource.includes("COALESCE(commercial_snapshot->'migrated'='true'::jsonb,FALSE)"), 'coverage SQL must treat a missing commercial snapshot as non-legacy, matching JavaScript fixed-term classification');
 assert.ok(!/async function coverageStats\(\)[\s\S]{0,200}premiumEntitlements\(\)/.test(discoverySource), 'coverage stats must not load the full premium entitlement identity rowset merely to count billing states');
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
