@@ -54,8 +54,9 @@ BEGIN
     -- Historical duplicate provider identities are surfaced by the integrity
     -- watchdog, but routine status/billing updates on those legacy rows must
     -- remain possible so failed-payment and cancellation reconciliation cannot
-    -- be blocked by the guard itself. Enforce single ownership only when an
-    -- identity is first attached or its provider/identifier actually changes.
+    -- be blocked by the guard itself. Re-check single ownership when an identity
+    -- is first attached/changed or a terminal/non-recurring row re-enters live
+    -- recurring ownership.
     IF TG_OP='INSERT'
        OR NEW.source IS DISTINCT FROM OLD.source
        OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id
