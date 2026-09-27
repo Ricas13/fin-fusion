@@ -136,6 +136,7 @@ async function main() {
     for (const providerEvent of ['PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED','PAYMENT.SALE.REVERSED']) {
         assert(commerceSource.includes(providerEvent), `Commerce refund trend must include ${providerEvent}`);
     }
+    assert(commerceSource.includes('processed_at IS NOT NULL AND processing_error IS NULL'), 'Commerce refund trend must not count webhook rows that failed processing as completed refunds.');
     assert.strictEqual(historyCtx.data.revenue.netMinor, historyGross - historyRefund - historyFee, 'Commerce net proceeds must subtract imported payment fee and refund exactly once');
     assert.strictEqual(historyCtx.data.revenue.payingCustomers, 1, 'imported payer identity must contribute to paying-customer/ARPU calculations');
 
