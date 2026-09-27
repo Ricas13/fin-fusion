@@ -36,7 +36,14 @@ async function identityFromProviderSubscription(provider,providerSubscriptionId)
 async function existingCustomerIdentity(identity={}){
   const customerId=String(identity?.customerId||'').trim();
   if(identity?.scope!=='direct'||!customerId)return{...identity,scope:'unresolved',customerId:null};
-  const existing=await query(`SELECT id FROM customers WHERE id::text=$1 LIMIT 1`,[customerId]);
+  // Provider metadata is untrusted historical input. Validate UUID syntax
+  // before casting so malformed legacy metadata fails closed without turning a
+  // refund/dispute replay into a database error, while retaining the indexed PK
+  // lookup for normal customer identities.
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customerId)){
+    return{...identity,scope:'unresolved',customerId:null,orphanedCustomerId:customerId};
+  }
+  const existing=await query(`SELECT id FROM customers WHERE id=$1::uuid LIMIT 1`,[customerId]);
   if(existing.rowCount)return{...identity,scope:'direct',customerId:existing.rows[0].id};
   return{...identity,scope:'unresolved',customerId:null,orphanedCustomerId:customerId};
 }
