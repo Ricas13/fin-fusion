@@ -139,6 +139,7 @@ assert.ok(!/async function coverageStats\(\)[\s\S]{0,200}premiumEntitlements\(\)
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
+assert.ok(discoverySource.includes('providerSubscriptionOwners.set') && discoverySource.includes("String(row.provider_subscription_id||'').trim()"), 'discovery must reserve normalized ownership for repairable padded provider IDs so the same remote subscription is not offered elsewhere');
 assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lifecycle must own discovered provider-subscription attachment');
 assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
 assert.ok(lifecycleSource.includes('oldDelinquencyKey') && lifecycleSource.includes('oldDelinquencyKey !== newDelinquencyKey') && lifecycleSource.includes('otherDelinquent') && lifecycleSource.includes("s.status IN('past_due','paused')") && lifecycleSource.includes("status: 'active'"), 'provider-link repair must move stale delinquency authority without releasing a shared old hold while another delinquent recurring row still depends on it');
@@ -149,7 +150,7 @@ assert.ok(manualSource.includes("require('./subscription-discovery')"), 'manual 
 assert.ok(manualSource.includes("require('./lifecycle')"), 'manual recovery must delegate the write to lifecycle');
 assert.ok(manualSource.includes('attachDiscoveredProviderSubscription'), 'manual recovery must use the same canonical attachment owner as automatic discovery');
 assert.ok(manualSource.includes("checkout_mode='subscription' AND plan_id=$2"), 'manual recovery must verify exact local plan mapping');
-assert.ok(manualSource.includes('provider_subscription_id=$2'), 'manual recovery must reject already-owned provider subscriptions');
+assert.ok(manualSource.includes("LOWER(BTRIM(COALESCE(source,'')))=$1") && manualSource.includes("BTRIM(COALESCE(provider_subscription_id,''))=$2"), 'manual recovery preview must reject normalized provider-ID ownership conflicts before mutation');
 assert.ok(manualSource.includes('operatorConfirmed'), 'manual recovery must require explicit operator ownership confirmation');
 assert.ok(manualSource.includes("discovery.currentRemote(remote)"), 'manual recovery must refuse non-current provider subscriptions');
 assert.ok(manualSource.includes('/v1/billing/subscriptions/'), 'manual PayPal recovery must try the current Subscriptions API first');
