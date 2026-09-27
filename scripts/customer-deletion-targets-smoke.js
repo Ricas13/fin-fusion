@@ -141,6 +141,7 @@ async function scenarioK(){
 
   const source=fs.readFileSync(path.join(__dirname,'../src/platform/customer-external-deletion.js'),'utf8');
   assert(source.includes("billing_mode='subscription'")&&source.includes("source IN ('stripe','paypal')"),'K: deletion inventory must snapshot every locally recurring Stripe/PayPal contract, including malformed historical provider references');
+  assert(source.includes('rawProviderSubscriptionId===providerSubscriptionId')&&source.includes('providerIdValid?providerSubscriptionId'), 'K: deletion must not silently trim a malformed provider identity and send the guessed ID to a destructive provider API');
   assert(source.includes('invalid-local-subscription:')&&source.includes('invalidProviderIdentity'),'K: malformed recurring billing rows must become durable blocking deletion targets instead of being silently skipped');
   assert(source.includes('repair the billing reference before customer deletion can finalize'),'K: invalid recurring provider identities must fail closed before any provider mutation');
   assert.doesNotMatch(source,/if\(current\.targets_persisted_at\)/,'K: old deletion snapshots must be refreshed so newly-recognized billing resources cannot be skipped');
