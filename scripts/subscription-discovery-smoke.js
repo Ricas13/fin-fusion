@@ -92,7 +92,7 @@ assert.strictEqual(matches[0].state, 'ambiguous', 'two live exact matches must n
 assert.strictEqual(matches[0].match, null);
 
 const conflictContext = baseContext();
-conflictContext.providerSubscriptionOwners.set('stripe:sub_live', { subscriptionId: 'some-other-local-sub', customerId: 'someone-else' });
+conflictContext.providerSubscriptionOwners.set('stripe:sub_live', { subscriptionIds: new Set(['some-other-local-sub']), customerIds: new Set(['someone-else']) });
 matches = discovery.matchPremiumRows([local], [stripe], conflictContext);
 assert.strictEqual(matches[0].state, 'conflict', 'a remote subscription already owned locally must never be stolen');
 
