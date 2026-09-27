@@ -58,7 +58,12 @@ BEGIN
     -- identity is first attached or its provider/identifier actually changes.
     IF TG_OP='INSERT'
        OR NEW.source IS DISTINCT FROM OLD.source
-       OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id THEN
+       OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id
+       OR (NEW.billing_mode='subscription' AND OLD.billing_mode IS DISTINCT FROM 'subscription')
+       OR (
+           NEW.status IN ('active','trialing','past_due','paused')
+           AND OLD.status NOT IN ('active','trialing','past_due','paused')
+       ) THEN
         provider_key := LOWER(BTRIM(NEW.source)) || ':' || BTRIM(NEW.provider_subscription_id);
         PERFORM pg_advisory_xact_lock(hashtextextended('captainfin:subscription-provider:' || provider_key, 0));
 
