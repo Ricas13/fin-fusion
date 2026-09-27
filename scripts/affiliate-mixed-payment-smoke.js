@@ -94,6 +94,30 @@ async function main(){
  assert.equal(unpaidAccessIncident.metadata.reason,'service_credit_unavailable_after_provider_settlement','operator must see the actual credit-shortfall reason');
  assert.equal(unpaidAccessIncident.metadata.paidButUnfulfilled,true,'checkout incident must identify real money taken without entitlement');
 
+
+ // If the immutable provider contract says service credit funded part of the
+ // purchase, a missing reservation must never be interpreted as zero credit.
+ // That would grant a full entitlement after collecting only providerDue.
+ const missingUser=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,'x','customer',TRUE) RETURNING id`,[`mixed-missing-${suffix}`,`mixed-missing-${suffix}@example.invalid`])).rows[0];
+ const missingCustomer=(await query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING id`,[missingUser.id,`Mixed Missing ${suffix}`,`mixed-missing-${suffix}@example.invalid`])).rows[0];
+ const missingIntent=await checkoutIntents.createIntent({
+   scope:'customer',customerId:missingCustomer.id,planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',
+   commercialSnapshot:{kind:'direct_plan',planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',priceMinor:600,discountedMinor:200,currency:'GBP',durationDays:30,planName:'Mixed plan',planCode:`mixed-plan-${suffix}`,serviceCreditMinor:400,serviceCreditCurrency:'GBP'}
+ });
+ await assert.rejects(
+   lifecycle.activatePurchase({
+     customerId:missingCustomer.id,
+     planId:plan.id,
+     provider:'stripe',
+     providerSubscriptionId:`pi_missing_credit_${suffix}`,
+     providerStatus:'active',
+     commercialSnapshot:{kind:'direct_plan',planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',priceMinor:600,discountedMinor:200,currency:'GBP',durationDays:30,planName:'Mixed plan',planCode:`mixed-plan-${suffix}`,serviceCreditMinor:400,serviceCreditCurrency:'GBP',checkoutIntentId:missingIntent.id}
+   }),
+   /service-credit reservation is missing/i,
+   'provider cash alone must not activate access when the frozen contract also promised service credit'
+ );
+ assert.equal((await query(`SELECT id FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1`,[`pi_missing_credit_${suffix}`])).rowCount,0,'missing service-credit reservation must roll back entitlement activation');
+
  console.log('affiliate mixed-payment smoke: ok');
 }
 main().then(()=>getPool().end()).catch(async e=>{console.error(e.stack||e);try{await getPool().end()}catch{}process.exit(1)});
