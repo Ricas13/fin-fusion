@@ -365,6 +365,21 @@ async function testNOrphanedIncidentMetadataCustomer() {
     assert.strictEqual(Number(recorded.incident.amount_minor),600,'N: historical refund amount must still be preserved');
     assert.strictEqual(recorded.incident.metadata.internal_customer_id,String(staleId),'N: original provider metadata must preserve the deleted customer reference for audit');
 
+    const callerSupplied=await incidents.record({
+        provider:'stripe',
+        eventId:`evt_orphan_direct_${tag}`,
+        caseId:`ch_orphan_direct_${tag}`,
+        kind:'refund',
+        status:'recorded',
+        identity:{scope:'direct',customerId:staleId},
+        providerSubscriptionId:`pi_orphan_direct_${tag}`,
+        amountMinor:600,
+        currency:'USD',
+        metadata:{internal_customer_id:staleId,fullRefund:true,originalAmountMinor:600}
+    });
+    assert.strictEqual(callerSupplied.incident.scope,'unresolved','N: record() must revalidate caller-supplied direct identities after customer deletion');
+    assert.strictEqual(callerSupplied.incident.customer_id,null,'N: record() must not persist a stale caller-supplied customer FK');
+
     const malformed=await incidents.identityFromMetadata({internal_customer_id:'not-a-uuid'});
     assert.strictEqual(malformed.scope,'unresolved','N: malformed historical metadata customer IDs must fail closed instead of throwing a UUID cast error');
     assert.strictEqual(malformed.customerId,null,'N: malformed historical metadata customer IDs must never become direct identity');
