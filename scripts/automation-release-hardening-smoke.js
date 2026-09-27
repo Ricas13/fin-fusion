@@ -97,8 +97,9 @@ assert(recurringIdentityMigration.includes("IF TG_OP='INSERT'")
     && recurringIdentityMigration.includes("OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id THEN"),
     'Legacy duplicate provider identities must not block ordinary status reconciliation; duplicate ownership checks run only when the identity is attached or changed.');
 assert(revenueIntegrity.includes('duplicate_provider_billing_identity')
-    && revenueIntegrity.includes('HAVING COUNT(*)>1'),
-    'Revenue integrity must surface historical duplicate provider billing ownership.');
+    && revenueIntegrity.includes('HAVING COUNT(*)>1')
+    && revenueIntegrity.includes('GROUP BY LOWER(BTRIM(source)),BTRIM(provider_subscription_id)'),
+    'Revenue integrity must surface historical duplicate provider billing ownership, including whitespace-normalized identities.');
 assert(revenueIntegrity.includes('renewal_service_credit_unsettled')
     && revenueIntegrity.includes("r.state='provider_applied'")
     && revenueIntegrity.includes("INTERVAL '48 hours'"),
