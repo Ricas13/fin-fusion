@@ -221,30 +221,32 @@ async function recordSubscriptionPaymentSuccess(event,resource){
 async function recordSubscriptionPaymentFailure(event,resource){
   const subscriptionId=billingFailureSubscriptionId(resource);
   if(!subscriptionId)throw new Error('PayPal subscription payment failure is missing the billing subscription ID.');
-  const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
-  if(paypalTerminal(synced.providerStatus)){
+
+  // Read provider truth first without applying an ACTIVE state locally. A
+  // PAYMENT.FAILED event can arrive while PayPal still reports the agreement
+  // ACTIVE, and running the generic sync first could briefly release an
+  // existing delinquency hold/provision access before this handler re-applies
+  // past_due.
+  const subscription=await getSubscription(subscriptionId),providerStatus=paypalStatus(subscription.status);
+
+  if(paypalTerminal(providerStatus)){
+    const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
     await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal subscription is terminal; delayed failed-renewal event is no longer actionable.'});
     return synced;
   }
-  if(!paypalPaymentFailureCurrent(event,synced.subscription)){
+  if(!paypalPaymentFailureCurrent(event,subscription)){
+    const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
     await failedRenewals.resolveOpen({provider:'paypal',providerSubscriptionId:subscriptionId,note:'PayPal has a successful payment newer than this delayed failure event; the renewal failure is historical.'});
     return synced;
   }
-  const billing=synced.subscription?.billing_info||resource?.billing_info||{};
+
+  const billing=subscription?.billing_info||resource?.billing_info||{};
   const outstanding=billing.outstanding_balance||billing.last_failed_payment?.amount||resource?.amount||null,amount=paypalAmount({amount:outstanding});
-  let delinquentRow=synced.row||null;
-  if(delinquentRow){
-    // Persist delinquency in the subscription itself, not only as an access
-    // hold. PayPal can continue reporting ACTIVE while retrying a failed
-    // renewal; if billing_info is temporarily incomplete, a later generic
-    // subscription update must not release the hold merely because the local
-    // row still looked active.
-    delinquentRow=await lifecycle.updateProviderSubscription({
-      provider:'paypal',
-      providerSubscriptionId:subscriptionId,
-      providerStatus:'PAST_DUE'
-    })||delinquentRow;
-  }
+  const delinquentRow=await lifecycle.updateProviderSubscription({
+    provider:'paypal',
+    providerSubscriptionId:subscriptionId,
+    providerStatus:'PAST_DUE'
+  });
   await failedRenewals.record({
     provider:'paypal',
     eventId:event.id,
@@ -253,13 +255,13 @@ async function recordSubscriptionPaymentFailure(event,resource){
     amountMinor:amount.minor,
     currency:amount.currency,
     metadata:{
-      currentProviderStatus:synced.providerStatus||null,
+      currentProviderStatus:providerStatus||null,
       eventType:event.event_type,
       failedPaymentsCount:Number(billing.failed_payments_count||0),
       outstandingBalanceMinor:paypalMinor(billing.outstanding_balance)
     }
   });
-  return delinquentRow===synced.row?synced:{...synced,row:delinquentRow};
+  return{row:delinquentRow,subscription,providerStatus,preservedPaidThrough:false};
 }
 async function settleTerminalCapture(resource,state='failed'){
   const orderId=captureOrderId(resource);
