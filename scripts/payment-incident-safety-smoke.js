@@ -167,6 +167,10 @@ function main() {
     if (!paypalSource.includes("providerStatus:'PAST_DUE'") || !paypalSource.includes('lifecycle.updateProviderSubscription')) {
         throw new Error('Current PayPal failed renewals must persist past_due on the subscription so later ACTIVE updates with incomplete billing evidence cannot clear delinquency.');
     }
+    const failureHandler = paypalSource.slice(paypalSource.indexOf('async function recordSubscriptionPaymentFailure'), paypalSource.indexOf('async function settleTerminalCapture'));
+    if (!failureHandler.includes('const subscription=await getSubscription(subscriptionId)') || failureHandler.indexOf("providerStatus:'PAST_DUE'") > failureHandler.indexOf('failedRenewals.record') || failureHandler.indexOf('syncCurrentSubscription(subscriptionId,{activateMissing:false})') < failureHandler.indexOf('if(paypalTerminal(providerStatus))')) {
+        throw new Error('PayPal failed-renewal handling must inspect provider truth without first applying a generic ACTIVE sync that could transiently release delinquency access.');
+    }
 
     // One Stripe invoice can emit several invoice.payment_failed events while
     // Smart Retries run. Those retries must remain one operational incident and
