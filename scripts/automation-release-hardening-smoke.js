@@ -95,8 +95,10 @@ assert(recurringIdentityMigration.includes('guard_subscription_provider_identity
     'Provider billing identities must be normalized, serialized and single-owner at the database write boundary.');
 assert(recurringIdentityMigration.includes("IF TG_OP='INSERT'")
     && recurringIdentityMigration.includes("OR NEW.source IS DISTINCT FROM OLD.source")
-    && recurringIdentityMigration.includes("OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id THEN"),
-    'Legacy duplicate provider identities must not block ordinary status reconciliation; duplicate ownership checks run only when the identity is attached or changed.');
+    && recurringIdentityMigration.includes("OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id")
+    && recurringIdentityMigration.includes("OR (NEW.billing_mode='subscription' AND OLD.billing_mode IS DISTINCT FROM 'subscription')")
+    && recurringIdentityMigration.includes("AND OLD.status NOT IN ('active','trialing','past_due','paused')"),
+    'Legacy duplicate provider identities must remain writable for ordinary reconciliation while identity attachment, recurring-mode entry and reactivation re-check normalized single ownership.');
 assert(revenueIntegrity.includes('duplicate_provider_billing_identity')
     && revenueIntegrity.includes('HAVING COUNT(*)>1')
     && revenueIntegrity.includes('GROUP BY LOWER(BTRIM(source)),BTRIM(provider_subscription_id)'),
