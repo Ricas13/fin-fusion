@@ -65,7 +65,7 @@ assert(/freeIntent\(req\.query\?\.intent\).*customerId.*customerUserId.*\/accoun
 assert(/\/account\/login\?next=%2Faccount%2Ffree-access/.test(register)&&/Sign in to continue Free Access/.test(register),'existing-account sign-in from Free Access registration must preserve the Free Access continuation path');
 assert(/next==='\/account\/free-access'\?'\/account\/register\?intent=free'/.test(login),'Free Access login must preserve the registration path for genuinely new customers');
 assert(/r\.get\('\/account\/free-access'/.test(dash)&&/cleanupReturn\.returningCustomerStatus/.test(dash)&&/liveFreeJellyfinSubscription/.test(dash),'existing-account Free Access continuation must distinguish restore, existing entitlement and fresh-claim states');
-assert(/You already have a Free Access place/.test(dash)&&/choose Get free access below/.test(dash),'existing-account Free Access continuation must give a clear result instead of returning users to a signup loop');
+assert(/You already have a Free Access place/.test(dash)&&/choose the Free Server option below/.test(dash),'existing-account Free Access continuation must give a clear result instead of returning users to a signup loop');
 assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/turnstileScript=turnstileEnabled/.test(storefront),'storefront may preload Turnstile assets while registration owns the challenge widget');
 assert(!/cf-turnstile/.test(storefront),'storefront itself must not render the registration Turnstile widget after the Free CTA became a GET link');
 assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrogate-Control','no-store/.test(storefront),'storefront capacity must be no-store at browser and surrogate caches');
