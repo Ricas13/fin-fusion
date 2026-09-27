@@ -102,7 +102,7 @@ function main() {
     if (!incidentSource.includes('SELECT DISTINCT customer_id') || !incidentSource.includes('ambiguous:direct.rowCount>1') || !incidentSource.includes('for(const matchedRow of matched.rows)')) {
         throw new Error('Historical duplicate provider identities must never choose an arbitrary customer, and confirmed loss must terminate every unsuperseded local row owned by the resolved customer.');
     }
-    if (!incidentSource.includes('async function existingCustomerIdentity') || !incidentSource.includes('SELECT id FROM customers WHERE id::text=$1 LIMIT 1') || !incidentSource.includes('orphanedCustomerId')) {
+    if (!incidentSource.includes('async function existingCustomerIdentity') || !incidentSource.includes('SELECT id FROM customers WHERE id=$1::uuid LIMIT 1') || !incidentSource.includes('orphanedCustomerId')) {
         throw new Error('Payment incident identity must downgrade deleted or malformed metadata customer references to unresolved instead of violating the customer foreign key.');
     }
 
