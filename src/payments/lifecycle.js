@@ -340,17 +340,33 @@ async function attachDiscoveredProviderSubscription({
         const oldDelinquencyKey = primitives.paymentDelinquencySourceKey(local.source, local.provider_subscription_id, local.billing_mode);
         const newDelinquencyKey = primitives.paymentDelinquencySourceKey(provider, providerSubscriptionId, row.billing_mode);
         if (oldDelinquencyKey && oldDelinquencyKey !== newDelinquencyKey) {
-            // Provider-link repair can replace a malformed or whitespace-padded
-            // billing identity. Move the payment-delinquency authority with the
-            // repaired identity so a stale hold keyed by the corrupt old value
-            // cannot keep otherwise-recovered access blocked forever.
-            await primitives.syncProviderAccessState({
-                customerId: row.customer_id,
-                provider: local.source,
-                providerSubscriptionId: local.provider_subscription_id,
-                status: 'active',
-                billingMode: local.billing_mode
-            }, client);
+            // Provider-link repair can replace a malformed billing identity.
+            // Release the old payment-delinquency key only when no other live
+            // recurring row for this customer still depends on that canonical
+            // provider identity; historical whitespace variants can otherwise
+            // share the same hold key.
+            const oldProvider=String(local.source||'').trim().toLowerCase();
+            const oldProviderId=String(local.provider_subscription_id||'').trim();
+            const otherDelinquent=await client.query(`
+                SELECT 1
+                FROM subscriptions s
+                WHERE s.customer_id=$1 AND s.id<>$2
+                  AND LOWER(BTRIM(COALESCE(s.source,'')))=$3
+                  AND BTRIM(COALESCE(s.provider_subscription_id,''))=$4
+                  AND s.billing_mode='subscription'
+                  AND s.status IN('past_due','paused')
+                  AND s.superseded_by IS NULL
+                LIMIT 1
+            `,[row.customer_id,local.id,oldProvider,oldProviderId]);
+            if(!otherDelinquent.rowCount){
+                await primitives.syncProviderAccessState({
+                    customerId: row.customer_id,
+                    provider: local.source,
+                    providerSubscriptionId: local.provider_subscription_id,
+                    status: 'active',
+                    billingMode: local.billing_mode
+                }, client);
+            }
         }
         await primitives.syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status, billingMode: row.billing_mode }, client);
 
