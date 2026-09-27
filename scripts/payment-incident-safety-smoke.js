@@ -164,6 +164,9 @@ function main() {
     if (!paypalSource.includes("(existingDelinquent&&!paypalBillingCleared(subscription))") || !paypalSource.includes("paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)")) {
         throw new Error('PayPal ACTIVE with outstanding debt must not clear delinquency or failed-renewal incidents.');
     }
+    if (!paypalSource.includes('paypalActivationProviderStatus(subscription)') || !paypalSource.includes("openFailure&&!paypalBillingCleared(subscription)") || !paypalSource.includes('providerStatus:effectiveProviderStatus')) {
+        throw new Error('PayPal activation/recovery must not grant ACTIVE access while provider debt or an uncleared failed-renewal incident still exists.');
+    }
     if (!paypalSource.includes("providerStatus:'PAST_DUE'") || !paypalSource.includes('lifecycle.updateProviderSubscription')) {
         throw new Error('Current PayPal failed renewals must persist past_due on the subscription so later ACTIVE updates with incomplete billing evidence cannot clear delinquency.');
     }
