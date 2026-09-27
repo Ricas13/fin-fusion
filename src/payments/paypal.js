@@ -268,7 +268,7 @@ async function recordSubscriptionPaymentFailure(event,resource){
   await failedRenewals.record({
     provider:'paypal',
     eventId:event.id,
-    caseId:event.id,
+    caseId:resource?.id||subscriptionId,
     providerSubscriptionId:subscriptionId,
     amountMinor:amount.minor,
     currency:amount.currency,
