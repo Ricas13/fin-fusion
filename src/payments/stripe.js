@@ -284,6 +284,8 @@ async function handleWebhookEvent(event) {
     const stripe=await getStripe(),object=event.data?.object;
     switch(event.type){
         case 'checkout.session.completed': await activateCheckoutSession(object); break;
+        case 'checkout.session.async_payment_succeeded': await activateCheckoutSession(object); break;
+        case 'checkout.session.async_payment_failed': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'failed'); break;
         case 'checkout.session.expired': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'cancelled'); break;
         case 'customer.subscription.updated': {
             const synced=await syncSubscription(object.id);

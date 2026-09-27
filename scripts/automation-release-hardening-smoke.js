@@ -66,7 +66,55 @@ assert(!worker.includes('if (due.length) await runBatch(due);'),
     'A long-running job must not block later scheduler polls for unrelated jobs');
 
 const automationJobs = read('src/automation/jobs.js');
+const revenueIntegrity = read('src/automation/revenue-integrity.js');
 const freeBackfill = read('src/automation/free-capacity-backfill.js');
+assert(revenueIntegrity.includes('payment_loss_event_without_incident')
+    && revenueIntegrity.includes("e.processed_at IS NOT NULL")
+    && revenueIntegrity.includes("NOT EXISTS(")
+    && revenueIntegrity.includes("FROM payment_incidents pi"),
+    'Revenue integrity must detect processed provider money-loss events that produced no durable incident.');
+assert(revenueIntegrity.includes('invalid_recurring_provider_reference')
+    && revenueIntegrity.includes("billing_mode='subscription'")
+    && revenueIntegrity.includes("!~* '^sub_'")
+    && revenueIntegrity.includes("!~* '^I-'")
+    && revenueIntegrity.includes('provider_subscription_id IS DISTINCT FROM BTRIM(provider_subscription_id)'),
+    'Revenue integrity must page on malformed or whitespace-padded live Stripe/PayPal recurring identities.');
+const recurringIdentityMigration = read('db/migrations/20260918213000_recurring_provider_identity_guard.sql');
+assert(recurringIdentityMigration.includes('DROP CONSTRAINT IF EXISTS subscriptions_recurring_provider_identity_check')
+    && recurringIdentityMigration.includes("NEW.billing_mode='subscription'")
+    && recurringIdentityMigration.includes("NEW.status IN ('active','trialing','past_due','paused')")
+    && recurringIdentityMigration.includes("!~* '^sub_'")
+    && recurringIdentityMigration.includes("!~* '^I-'")
+    && recurringIdentityMigration.includes("TG_OP='INSERT'")
+    && recurringIdentityMigration.includes("BEFORE INSERT OR UPDATE OF source,provider_subscription_id,billing_mode,status"),
+    'PostgreSQL must reject new malformed recurring provider identities without making legacy invalid rows unwritable by ordinary billing updates.');
+assert(recurringIdentityMigration.includes('guard_subscription_provider_identity')
+    && recurringIdentityMigration.includes("pg_advisory_xact_lock")
+    && recurringIdentityMigration.includes("LOWER(BTRIM(s.source))=LOWER(BTRIM(NEW.source))")
+    && recurringIdentityMigration.includes("BTRIM(COALESCE(s.provider_subscription_id,''))=BTRIM(NEW.provider_subscription_id)"),
+    'Provider billing identities must be normalized, serialized and single-owner at the database write boundary.');
+assert(recurringIdentityMigration.includes("IF TG_OP='INSERT'")
+    && recurringIdentityMigration.includes("OR NEW.source IS DISTINCT FROM OLD.source")
+    && recurringIdentityMigration.includes("OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id")
+    && recurringIdentityMigration.includes("OR (NEW.billing_mode='subscription' AND OLD.billing_mode IS DISTINCT FROM 'subscription')")
+    && recurringIdentityMigration.includes("AND OLD.status NOT IN ('active','trialing','past_due','paused')"),
+    'Legacy duplicate provider identities must remain writable for ordinary reconciliation while identity attachment, recurring-mode entry and reactivation re-check normalized single ownership.');
+assert(revenueIntegrity.includes('duplicate_provider_billing_identity')
+    && revenueIntegrity.includes('HAVING COUNT(*)>1')
+    && revenueIntegrity.includes('GROUP BY LOWER(BTRIM(source)),BTRIM(provider_subscription_id)'),
+    'Revenue integrity must surface historical duplicate provider billing ownership, including whitespace-normalized identities.');
+assert(revenueIntegrity.includes('renewal_service_credit_unsettled')
+    && revenueIntegrity.includes("r.state='provider_applied'")
+    && revenueIntegrity.includes("INTERVAL '48 hours'"),
+    'Revenue integrity must surface provider-applied renewal service credit that never reached its local debit.');
+for (const eventType of [
+    'charge.refunded','charge.dispute.created','charge.dispute.closed',
+    'PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED',
+    'PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED',
+    'CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED'
+]) {
+    assert(revenueIntegrity.includes(eventType), `Revenue integrity must watch ${eventType} for processed-without-incident drift.`);
+}
 const compactFreeBackfill = compact(freeBackfill);
 assert(automationJobs.includes("freeCapacityBackfill=require('./free-capacity-backfill')")
     && automationJobs.includes('async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})}'),

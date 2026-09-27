@@ -176,6 +176,8 @@ for(const provider of ['stripe','paypal','plisio'])assert(paymentSource.includes
 assert(paymentSource.includes("providerEvents=(events||[]).filter(event=>event.provider===provider)"),'Payment working state must be derived from existing provider events');
 assert(paymentSource.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"),'Payment last verification must use a successfully processed provider event');
 assert(paymentSource.includes('Test connection')&&paymentSource.includes('Configure ${esc(label)}'),'Payment cards must provide test and inline configure actions');
+assert(paymentSource.includes('checkout.session.async_payment_succeeded')&&paymentSource.includes('checkout.session.async_payment_failed'),'Stripe setup guidance must include delayed-payment success/failure webhooks required for safe fulfillment');
+assert(paymentSource.includes('Subscribe to all PayPal events for this REST app')&&paymentSource.includes('failed/succeeded subscription payments')&&paymentSource.includes('denied/reversed captures'),'PayPal setup guidance must cover the money-loss and renewal event families handled by the gateway');
 assert(paymentSource.includes('payment-provider-config'),'Payment provider configuration details must share an exclusive native details group so only one provider is expanded at a time');
 assert(paymentSource.includes('detailsHtml:providerConfigDetails(req,provider,status,url)'),'Provider credentials and callback/webhook setup must render inside the matching health card');
 assert(!paymentSource.includes("title:'Stripe, PayPal & Plisio credentials'"),'The duplicate lower combined credentials disclosure must not remain');

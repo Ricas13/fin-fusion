@@ -35,7 +35,7 @@ async function plan(label) {
     return row;
 }
 
-function snapshotFor(p, provider, providerMappingId) {
+function snapshotFor(p, provider, providerMappingId, checkoutMode = 'subscription') {
     return {
         kind: 'direct_plan',
         planId: p.id,
@@ -50,13 +50,13 @@ function snapshotFor(p, provider, providerMappingId) {
         streams: 1,
         stremioHouseholdNetworkLimit: 1,
         provider,
-        checkoutMode: 'subscription',
+        checkoutMode,
         providerMappingId,
         providerMappingRecordId: null
     };
 }
 
-async function attachedIntent(label, provider, providerCheckoutId, providerMappingId) {
+async function attachedIntent(label, provider, providerCheckoutId, providerMappingId, checkoutMode = 'subscription') {
     const owner = await customer(`${label} customer`);
     const p = await plan(`${label} plan`);
     const created = await intents.createIntent({
@@ -64,8 +64,8 @@ async function attachedIntent(label, provider, providerCheckoutId, providerMappi
         customerId: owner.id,
         planId: p.id,
         provider,
-        checkoutMode: 'subscription',
-        commercialSnapshot: snapshotFor(p, provider, providerMappingId)
+        checkoutMode,
+        commercialSnapshot: snapshotFor(p, provider, providerMappingId, checkoutMode)
     });
     await intents.attachProviderCheckout(created.id, providerCheckoutId);
     createdIntents.push(created.id);
@@ -94,6 +94,7 @@ function missingPayPalError(status = 404, message = 'The specified resource does
 async function main() {
     const stripeOk = await attachedIntent('recovery stripe ok', 'stripe', `cs_test_${unique('ok')}`, `price_${unique('ok')}`);
     const stripeFail = await attachedIntent('recovery stripe fail', 'stripe', `cs_test_${unique('fail')}`, `price_${unique('fail')}`);
+    const stripePayment = await attachedIntent('recovery stripe payment', 'stripe', `cs_test_${unique('payment')}`, null, 'payment');
     const paypalActive = await attachedIntent('recovery paypal active', 'paypal', `I-${unique('active')}`, `P-${unique('active')}`);
     const paypalPending = await attachedIntent('recovery paypal pending', 'paypal', `I-${unique('pending')}`, `P-${unique('pending')}`);
 
@@ -123,12 +124,13 @@ async function main() {
         }
     });
 
-    assert.strictEqual(first.total, 4, 'first recovery pass must see every unfinished provider-attached recurring checkout');
-    assert.strictEqual(first.processed, 4, 'one provider failure must not abort the rest of the batch');
-    assert.strictEqual(first.recovered, 2, 'Stripe paid and PayPal ACTIVE checkouts must recover');
+    assert.strictEqual(first.total, 5, 'first recovery pass must see unfinished recurring checkouts plus Stripe one-time checkouts');
+    assert.strictEqual(first.processed, 5, 'one provider failure must not abort the rest of the batch');
+    assert.strictEqual(first.recovered, 3, 'Stripe subscription/payment and PayPal ACTIVE checkouts must recover');
     assert.strictEqual(first.waiting, 1, 'PayPal approval-pending checkout must remain waiting');
     assert.strictEqual(first.failed, 1, 'provider failure must remain retryable and operator-visible');
     assert.strictEqual((await stateOf(stripeOk.id)).state, 'completed');
+    assert.strictEqual((await stateOf(stripePayment.id)).state, 'completed', 'paid Stripe one-time Checkout must enter the same verified recovery path');
     assert.strictEqual((await stateOf(paypalActive.id)).state, 'completed');
     assert.strictEqual((await stateOf(stripeFail.id)).state, 'open');
     assert.strictEqual((await stateOf(paypalPending.id)).state, 'open', 'approval-pending PayPal must never be converted into access');

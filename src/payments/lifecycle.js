@@ -18,12 +18,12 @@ function permanentEnd() { return planExpiry.freeTierEnd(); }
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
 function checkoutBillingMode(input){return billingMode.normalize(input?.commercialSnapshot?.checkoutMode);}
 function validRemoteRecurringId(provider,value){
-    const source=String(provider||'').trim().toLowerCase(),id=String(value||'').trim();
-    // This validates the remote API object family only. Persisted local
-    // recurring truth is billing_mode and must never be inferred from this ID.
-    if(source==='stripe')return /^sub_/i.test(id);
-    if(source==='paypal')return /^I-/i.test(id);
-    return false;
+    const source=String(provider||'').trim().toLowerCase();
+    // Remote IDs are normalized by the caller before attachment. Keeping the
+    // value untrimmed here is intentional: when this helper inspects an existing
+    // local row, whitespace corruption must leave that row repairable rather
+    // than falsely classifying it as a healthy provider link.
+    return billingMode.validRecurringProviderId(source,String(value||''));
 }
 
 async function getProviderOptions(planCode, provider) {
@@ -278,7 +278,7 @@ async function attachDiscoveredProviderSubscription({
     actorUserId = null,
     matchReason = null
 }) {
-    provider = String(provider || '').toLowerCase();
+    provider = String(provider || '').trim().toLowerCase();
     providerSubscriptionId = String(providerSubscriptionId || '').trim();
     if (!validRemoteRecurringId(provider,providerSubscriptionId)) throw new Error('A valid Stripe or PayPal recurring subscription is required.');
     const remotePlanIds = Array.from(new Set((externalPlanIds || []).map(value => String(value || '').trim()).filter(Boolean)));
@@ -337,6 +337,39 @@ async function attachDiscoveredProviderSubscription({
              RETURNING *
         `, [local.id, provider, providerCustomerId || null, providerSubscriptionId, providerMap.external_id || null, providerMap.plan_price_id || null, providerMap.id || null, status, periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd)]);
         const row = updated.rows[0];
+        const oldDelinquencyKey = primitives.paymentDelinquencySourceKey(local.source, local.provider_subscription_id, local.billing_mode);
+        const newDelinquencyKey = primitives.paymentDelinquencySourceKey(provider, providerSubscriptionId, row.billing_mode);
+        if (oldDelinquencyKey && oldDelinquencyKey !== newDelinquencyKey) {
+            // Provider-link repair can replace a malformed billing identity.
+            // Release the old payment-delinquency key only when no other live
+            // recurring row for this customer still owns that canonical
+            // provider identity; historical whitespace variants can otherwise
+            // share the same hold key. Preserve the hold fail-closed while any
+            // duplicate live owner remains, even if that duplicate's local
+            // status is itself stale.
+            const oldProvider=String(local.source||'').trim().toLowerCase();
+            const oldProviderId=String(local.provider_subscription_id||'').trim();
+            const otherLiveOwner=await client.query(`
+                SELECT 1
+                FROM subscriptions s
+                WHERE s.customer_id=$1 AND s.id<>$2
+                  AND LOWER(BTRIM(COALESCE(s.source,'')))=$3
+                  AND BTRIM(COALESCE(s.provider_subscription_id,''))=$4
+                  AND s.billing_mode='subscription'
+                  AND s.status IN('active','trialing','past_due','paused')
+                  AND s.superseded_by IS NULL
+                LIMIT 1
+            `,[row.customer_id,local.id,oldProvider,oldProviderId]);
+            if(!otherLiveOwner.rowCount){
+                await primitives.syncProviderAccessState({
+                    customerId: row.customer_id,
+                    provider: local.source,
+                    providerSubscriptionId: local.provider_subscription_id,
+                    status: 'active',
+                    billingMode: local.billing_mode
+                }, client);
+            }
+        }
         await primitives.syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status, billingMode: row.billing_mode }, client);
 
         const now = new Date(), next = new Date(now.getTime() + 6 * 60 * 60 * 1000);

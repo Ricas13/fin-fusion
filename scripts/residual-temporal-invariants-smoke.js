@@ -39,7 +39,7 @@ function main() {
         'await assertSettlementCheckout',
         'await capacity.lockAndAssert',
         'excludeCheckoutIntentId',
-        "error?.code === 'PLAN_CAPACITY_EXHAUSTED'",
+        "['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code)",
         'recordCapacitySettlementIncident',
         "incident_type='checkout_completion'",
         'paidButUnfulfilled',
@@ -76,17 +76,25 @@ function main() {
     assert.strictEqual(paypal.paypalHealthy('ACTIVE'), true);
     assert.strictEqual(paypal.paypalHealthy('SUSPENDED'), false);
     assert.strictEqual(paypal.paypalTerminal('CANCELLED'), true);
+    assert.strictEqual(billingControl.paypalTerminalStatus('CANCELED'), true, 'PayPal deletion/reconciliation must accept the alternate terminal cancellation spelling.');
     assert.strictEqual(paypal.paypalTerminal('EXPIRED'), true);
     assert.strictEqual(paypal.paypalTerminal('ACTIVE'), false);
     const paypalSource = source('src/payments/paypal.js');
     const webhook = section(paypalSource, 'async function handleWebhookEvent', 'async function processClaimedEvent');
     assert(webhook.includes("case 'BILLING.SUBSCRIPTION.CANCELLED':case 'BILLING.SUBSCRIPTION.SUSPENDED':case 'BILLING.SUBSCRIPTION.EXPIRED':if(resource.id)await syncCurrentSubscription(resource.id,{activateMissing:false})"), 'Negative PayPal subscription webhooks are not reconciled from current provider state without creating missing access.');
     const denied = section(webhook, "case 'PAYMENT.SALE.DENIED'", "case 'PAYMENT.SALE.REFUNDED'");
-    assert(denied.includes('await syncCurrentSubscription(subscriptionId,{activateMissing:false})'), 'PayPal denied sale does not fetch current subscription state first without activating missing access.');
-    assert(denied.includes('paypalHealthy(synced.providerStatus)'), 'PayPal delayed denial cannot detect a recovered active subscription.');
-    assert(denied.includes('failedRenewals.resolveOpen'), 'Recovered/terminal PayPal renewal incidents are not settled.');
-    assert(denied.includes('failedRenewals.record'), 'Current PayPal delinquency is not durably recorded through the canonical failed-renewal owner.');
+    assert(denied.includes('await recordSubscriptionPaymentFailure(event,resource)'), 'Legacy PayPal denied-sale events must share the verified failure path instead of trusting ACTIVE as recovery evidence.');
+    const sharedFailure = section(paypalSource, 'async function recordSubscriptionPaymentFailure', 'async function settleTerminalCapture');
+    assert(sharedFailure.includes('const subscription=await getSubscription(subscriptionId)') && sharedFailure.includes('providerStatus=paypalStatus(subscription.status)'), 'PayPal failed renewal must read current provider truth before applying any local ACTIVE state.');
+    assert(sharedFailure.includes('paypalPaymentFailureCurrent(event,subscription)'), 'Delayed PayPal failure must distinguish confirmed newer payment recovery from agreement ACTIVE status alone.');
+    assert(sharedFailure.includes('failedRenewals.resolveOpen'), 'Recovered/terminal PayPal renewal incidents are not settled.');
+    assert(sharedFailure.includes('failedRenewals.record'), 'Current PayPal delinquency is not durably recorded through the canonical failed-renewal owner.');
+    assert(sharedFailure.includes("providerStatus:'PAST_DUE'") && sharedFailure.includes('lifecycle.updateProviderSubscription'), 'Current PayPal renewal failure must persist past_due through the canonical subscription/access-state authority.');
     assert(!denied.includes("providerStatus:'suspended'"), 'Delayed PayPal sale denial can still force local suspension from event order alone.');
+
+    assert.strictEqual(billingControl.validRecurringProviderReference({source:'stripe',billing_mode:'subscription',provider_subscription_id:'sub_exact'}), true, 'Canonical Stripe recurring IDs remain valid.');
+    assert.strictEqual(billingControl.validRecurringProviderReference({source:'stripe',billing_mode:'subscription',provider_subscription_id:' sub_exact '}), false, 'Whitespace-padded Stripe recurring IDs must be treated as malformed before provider calls.');
+    assert.strictEqual(billingControl.validRecurringProviderReference({source:'paypal',billing_mode:'subscription',provider_subscription_id:' I-EXACT '}), false, 'Whitespace-padded PayPal recurring IDs must be treated as malformed before provider calls.');
 
     assert.strictEqual(billingControl.providerMissing({ statusCode: 404 }), true, 'Structured provider 404 must still count as confirmed missing.');
     assert.strictEqual(billingControl.providerMissing({ code: 'resource_missing' }), true, 'Stripe resource_missing must still count as confirmed missing.');

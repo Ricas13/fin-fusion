@@ -16,7 +16,23 @@ const subscriptionTermination = require('./subscription-termination');
 // second automatic hold-based lifecycle running alongside plan removal.
 const DEFAULTS = Object.freeze({ refundAction:'preserve',disputeAction:'preserve',chargebackAction:'preserve',failedRenewalAction:'provider_state' });
 async function policy(){return{...DEFAULTS}}
-async function identityFromProviderSubscription(provider,providerSubscriptionId){if(!providerSubscriptionId)return{scope:'unresolved',customerId:null};const direct=await query(`SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 ORDER BY created_at DESC LIMIT 1`,[provider,providerSubscriptionId]);if(direct.rowCount)return{scope:'direct',customerId:direct.rows[0].customer_id};return{scope:'unresolved',customerId:null}}
+async function identityFromProviderSubscription(provider,providerSubscriptionId){
+  const source=String(provider||'').trim().toLowerCase(),reference=String(providerSubscriptionId||'').trim();
+  if(!reference)return{scope:'unresolved',customerId:null};
+  const direct=await query(`
+    SELECT DISTINCT customer_id
+    FROM subscriptions
+    WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+      AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+    ORDER BY customer_id
+    LIMIT 2
+  `,[source,reference]);
+  if(direct.rowCount===1)return{scope:'direct',customerId:direct.rows[0].customer_id};
+  // Historical normalized duplicates across customers are deliberately
+  // unresolved: choosing the newest row would let one provider refund or
+  // chargeback terminate an arbitrary customer's access.
+  return{scope:'unresolved',customerId:null,ambiguous:direct.rowCount>1};
+}
 async function identityFromMetadata(metadata={}){if(metadata.internal_customer_id)return{scope:'direct',customerId:metadata.internal_customer_id};return{scope:'unresolved',customerId:null}}
 async function reconcileMany(ids){for(const id of ids){try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Payment incident reconcile failed for customer ${id}:`,error.message)}}}
 function holdSource(provider,caseId){return `${provider}:${String(caseId||'').slice(0,170)}`}
@@ -119,16 +135,31 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   if(moneyConfirmedLost&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
-      const matched=await query(`SELECT id,billing_mode,current_period_end,duration_days_snapshot FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND customer_id=$3 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`,[provider,subscriptionRef,effectIdentity.customerId]);
+      const normalizedProvider=String(provider||'').trim().toLowerCase(),normalizedReference=String(subscriptionRef||'').trim();
+      const matched=await query(`
+        SELECT id,billing_mode,current_period_end,duration_days_snapshot
+        FROM subscriptions
+        WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+          AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+          AND customer_id=$3
+          AND superseded_by IS NULL
+        ORDER BY created_at DESC,id DESC
+      `,[normalizedProvider,normalizedReference,effectIdentity.customerId]);
       if(matched.rowCount){
-        let terminationDecision={terminate:true,reason:'confirmed_lost_chargeback'};
-        if(confirmedFullRefund)terminationDecision=await refundTerminatesMatchedSubscription(matched.rows[0],{provider,eventId,metadata:{...(incident.metadata||{}),...(metadata||{})}});
-        if(terminationDecision.terminate){
-          const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
-          const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
-          if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
-        }else{
-          const updated=await query(`UPDATE payment_incidents SET metadata=COALESCE(metadata,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING *`,[incident.id,JSON.stringify({automaticTerminationSkipped:true,terminationDecision:terminationDecision.reason,transactionOccurredAt:terminationDecision.transactionAt||null,currentTermStartApprox:terminationDecision.currentTermStartApprox||null,currentTermEnd:terminationDecision.currentTermEnd||null})]);
+        const skipped=[];let terminatedAny=false;
+        for(const matchedRow of matched.rows){
+          let terminationDecision={terminate:true,reason:'confirmed_lost_chargeback'};
+          if(confirmedFullRefund)terminationDecision=await refundTerminatesMatchedSubscription(matchedRow,{provider,eventId,metadata:{...(incident.metadata||{}),...(metadata||{})}});
+          if(terminationDecision.terminate){
+            const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
+            const terminated=await subscriptionTermination.terminateForRefund(matchedRow.id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
+            terminatedAny=terminatedAny||Boolean(terminated.changed);
+          }else skipped.push({subscriptionId:matchedRow.id,reason:terminationDecision.reason,transactionAt:terminationDecision.transactionAt||null,currentTermStartApprox:terminationDecision.currentTermStartApprox||null,currentTermEnd:terminationDecision.currentTermEnd||null});
+        }
+        if(terminatedAny)await reconcileMany([effectIdentity.customerId]);
+        if(skipped.length){
+          const primary=skipped[0];
+          const updated=await query(`UPDATE payment_incidents SET metadata=COALESCE(metadata,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING *`,[incident.id,JSON.stringify({automaticTerminationSkipped:!terminatedAny,terminationDecision:primary.reason,transactionOccurredAt:primary.transactionAt,currentTermStartApprox:primary.currentTermStartApprox,currentTermEnd:primary.currentTermEnd,terminationSkippedSubscriptions:skipped})]);
           if(updated.rowCount)incident={...updated.rows[0],duplicate:incident.duplicate};
         }
       }

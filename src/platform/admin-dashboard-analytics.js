@@ -155,7 +155,7 @@ function revenueFromEvent(row) {
                 email: object.customer_email || object.account_name || null
             };
         }
-        if (row.event_type === 'checkout.session.completed' && object.mode === 'payment' && ['paid', 'no_payment_required'].includes(object.payment_status)) {
+        if (['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(row.event_type) && object.mode === 'payment' && ['paid', 'no_payment_required'].includes(object.payment_status)) {
             const amount = Number(object.amount_total);
             if (!Number.isFinite(amount) || amount < 0) return null;
             return {

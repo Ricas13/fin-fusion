@@ -82,10 +82,10 @@ async function readView(customerId) {
     const liveSubResult = await query(`
         INSERT INTO subscriptions(
             customer_id,plan_id,status,source,billing_mode,
-            starts_at,current_period_end,service_type_snapshot
-        ) VALUES($1,$2,'active','stripe','subscription',NOW()-INTERVAL '5 days',NOW()+INTERVAL '25 days','jellyfin')
+            starts_at,current_period_end,service_type_snapshot,provider_subscription_id
+        ) VALUES($1,$2,'active','stripe','subscription',NOW()-INTERVAL '5 days',NOW()+INTERVAL '25 days','jellyfin',$3)
         RETURNING id
-    `, [removedCustomer, planId]);
+    `, [removedCustomer, planId, `sub_entitlement_admin_${suffix}`]);
     assert(liveSubResult.rows[0].id, 'setup: live subscription must be created');
     await query(`
         INSERT INTO customer_service_admin_control(customer_id,service,mode,reason)

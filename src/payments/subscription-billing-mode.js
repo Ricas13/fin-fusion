@@ -21,7 +21,12 @@ function isRecurring(row){return Boolean(recurringProvider(row));}
 
 function validRecurringProviderId(provider,id){
   const source=String(provider||'').trim().toLowerCase();
-  const value=String(id||'').trim();
+  const raw=String(id||'');
+  const value=raw.trim();
+  // Provider resource IDs are durable external identities. Accepting hidden
+  // leading/trailing whitespace makes the local row look valid while later API
+  // calls use a different literal ID and fail provider reconciliation.
+  if(!value||raw!==value)return false;
   if(source==='stripe')return /^sub_/i.test(value);
   if(source==='paypal')return /^I-/i.test(value);
   return false;

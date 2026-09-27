@@ -22,7 +22,10 @@ function objectId(value) { return typeof value === 'string' ? clean(value, 255) 
 // additionally requires a real provider recurring object before calling a row
 // "linked", so legacy/corrupt pi_/PAY-* references stay repairable.
 function recurringId(provider, id) {
-    return billingMode.validRecurringProviderId(provider, clean(id, 255));
+    // Keep the stored representation intact for validation. Trimming here would
+    // hide a whitespace-corrupted provider ID from the repair queue even though
+    // provider API calls use the literal durable identifier.
+    return billingMode.validRecurringProviderId(provider, String(id == null ? '' : id).slice(0, 255));
 }
 function localRecurring(row) {
     return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
@@ -127,8 +130,18 @@ async function identityContext(premiumRows) {
     }
     const providerSubscriptionOwners = new Map();
     for (const row of existing.rows) {
-        if (!localRecurring(row)) continue;
-        providerSubscriptionOwners.set(`${row.source}:${row.provider_subscription_id}`, { subscriptionId: String(row.id), customerId: String(row.customer_id) });
+        const provider=String(row.source||'').trim().toLowerCase();
+        const providerSubscriptionId=String(row.provider_subscription_id||'').trim();
+        if (!billingMode.validRecurringProviderId(provider,providerSubscriptionId)) continue;
+        // A malformed local contract (including a whitespace-corrupted ID or
+        // wrong billing_mode) is not a healthy link, but a recognizable remote
+        // subscription ID still represents an ownership claim. Preserve every
+        // historical owner instead of letting Map overwrite order choose one.
+        const key=`${provider}:${providerSubscriptionId}`;
+        if(!providerSubscriptionOwners.has(key))providerSubscriptionOwners.set(key,{subscriptionIds:new Set(),customerIds:new Set()});
+        const owners=providerSubscriptionOwners.get(key);
+        owners.subscriptionIds.add(String(row.id));
+        owners.customerIds.add(String(row.customer_id));
     }
     return { providerIdentityToCustomers, emailToCustomers, externalToPlans, providerSubscriptionOwners };
 }
@@ -178,7 +191,7 @@ function matchPremiumRows(premiumRows, remotes, context) {
             const planMatch = mappedPlans(remote, context).has(String(local.plan_id));
             const customerReasons = customerEvidence(remote, local, context);
             const owner = context.providerSubscriptionOwners.get(`${remote.provider}:${remote.id}`);
-            const conflict = Boolean(owner && owner.subscriptionId !== String(local.subscription_id));
+            const conflict = Boolean(owner && [...owner.subscriptionIds].some(id=>id!==String(local.subscription_id)));
             if (planMatch && customerReasons.length) candidateDetails.push({ remote, customerReasons, conflict, owner });
         }
         const nonConflicting = candidateDetails.filter(item => !item.conflict);
@@ -369,9 +382,13 @@ async function coverageStats() {
                    (
                        LOWER(BTRIM(COALESCE(billing_mode,'')))='subscription'
                        AND (
-                           (LOWER(BTRIM(COALESCE(source,'')))='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^sub_')
+                           (LOWER(BTRIM(COALESCE(source,'')))='stripe'
+                            AND provider_subscription_id IS NOT DISTINCT FROM BTRIM(provider_subscription_id)
+                            AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^sub_')
                            OR
-                           (LOWER(BTRIM(COALESCE(source,'')))='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^I-')
+                           (LOWER(BTRIM(COALESCE(source,'')))='paypal'
+                            AND provider_subscription_id IS NOT DISTINCT FROM BTRIM(provider_subscription_id)
+                            AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^I-')
                        )
                    ) AS linked,
                    (

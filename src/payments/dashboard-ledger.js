@@ -50,14 +50,15 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
         }
         return { minor: incremental, currency: String(object.currency || 'USD').toUpperCase() };
     }
-    if (row?.provider === 'paypal' && row.event_type === 'PAYMENT.SALE.REFUNDED') {
+    if (row?.provider === 'paypal' && ['PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED','PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED'].includes(row.event_type)) {
         const resource = payload.resource || {};
-        const text = String(resource.amount?.total ?? '').trim();
+        const amount = resource.amount || {};
+        const text = String(amount.total ?? amount.value ?? '').trim();
         if (!/^\d+(?:\.\d+)?$/.test(text)) return null;
         const [whole, fraction = ''] = text.split('.');
         const minor = Number(whole) * 100 + Number((fraction + '00').slice(0, 2));
         if (minor <= 0) return null;
-        return { minor, currency: String(resource.amount?.currency || 'USD').toUpperCase() };
+        return { minor, currency: String(amount.currency ?? amount.currency_code ?? 'USD').toUpperCase() };
     }
     return null;
 }
@@ -132,6 +133,7 @@ function historyRecord(row, kind) {
         createdAt: new Date(row.occurred_at),
         providerEventId: String(row.provider_transaction_id || ''),
         payerKey: customerId ? `customer:${customerId}` : providerCustomerId ? `${provider}:${providerCustomerId}` : null,
+        feeMinor: kind === 'payment' ? Math.max(0, Number(row.fee_amount_minor || 0)) : 0,
         source: 'history'
     };
 }
@@ -144,7 +146,7 @@ function eventRecords(row, refundState = new Map(), warnings = []) {
             kind: 'payment', minor: Number(payment.minor || 0), currency: String(payment.currency || 'USD').toUpperCase(),
             provider: row.provider, eventType: row.event_type, createdAt: new Date(row.created_at), providerEventId: row.provider_event_id,
             payerKey: payment.email ? `email:${String(payment.email).trim().toLowerCase()}` : null,
-            email: payment.email || null, source: 'event'
+            email: payment.email || null, feeMinor: 0, source: 'event'
         });
     }
     const refund = refundFromEvent(row, refundState, warnings);
@@ -200,7 +202,7 @@ async function scanHistoryInRange(range, visit, queryFn = query) {
     let scanned = 0;
     for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
         const result = await queryFn(`
-            SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,customer_id,provider_customer_id,metadata
+            SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,customer_id,provider_customer_id,metadata
             FROM payment_history_transactions
             WHERE occurred_at >= $1 AND occurred_at < $2
               AND ($3::timestamptz IS NULL OR (occurred_at,provider,provider_transaction_id) > ($3::timestamptz,$4::text,$5::text))
@@ -244,6 +246,12 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     const eventRowsScanned = await scanPaymentEventsInRange(range, async row => {
         const extracted = eventRecords(row, refundState, warnings);
         if (isCovered(coverage, row.provider, row.created_at)) return;
+        if (
+            (row.provider === 'stripe' && ['charge.dispute.created','charge.dispute.closed'].includes(row.event_type))
+            || (row.provider === 'paypal' && ['CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED'].includes(row.event_type))
+        ) {
+            addWarning(warnings, 'A payment dispute or chargeback falls outside imported provider-history coverage. Live webhook data cannot safely reconstruct every cash withdrawal and recovery; run Payment History import before treating affected profit/refund totals as complete.');
+        }
         const captureId = paypalCaptureIdFromEvent(row);
         if (captureId && authoritativePaypalCaptures.has(captureId)) return;
         for (const record of extracted) await visit(record);
@@ -328,7 +336,7 @@ async function revenueSummary(range, fallbackCurrency = 'USD') {
 async function commerceRevenue(range, reporting, reportingCurrency) {
     const target = reportingCurrency.cleanCurrency(reporting?.currency || 'GBP');
     const convert = record => reportingCurrency.convertMinor(Number(record.minor || 0), record.currency || target, target, reporting);
-    let grossMinor = 0, previousGrossMinor = 0, refundMinor = 0, previousRefundMinor = 0, refundCount = 0;
+    let grossMinor = 0, previousGrossMinor = 0, refundMinor = 0, previousRefundMinor = 0, feeMinor = 0, previousFeeMinor = 0, refundCount = 0;
     const payerKeys = new Set(), byBucketCurrency = new Map();
 
     const meta = await scanAccountingRecords(range, record => {
@@ -336,15 +344,22 @@ async function commerceRevenue(range, reporting, reportingCurrency) {
         const previous = inWindow(record.createdAt, range.previousStart, range.previousEnd);
         if (!current && !previous) return;
         const amount = convert(record);
+        const fee = record.kind === 'payment' && Number(record.feeMinor || 0) > 0
+            ? reportingCurrency.convertMinor(Number(record.feeMinor), record.currency || target, target, reporting)
+            : 0;
         if (record.kind === 'payment') {
             if (current) {
                 grossMinor += amount;
+                feeMinor += fee;
                 if (record.payerKey) payerKeys.add(record.payerKey);
                 const key = bucketKey(record.createdAt, range.bucket);
                 if (!byBucketCurrency.has(key)) byBucketCurrency.set(key, new Map());
                 const bucket = byBucketCurrency.get(key);
                 bucket.set(target, (bucket.get(target) || 0) + amount);
-            } else previousGrossMinor += amount;
+            } else {
+                previousGrossMinor += amount;
+                previousFeeMinor += fee;
+            }
         } else if (record.kind === 'refund') {
             if (current) { refundMinor += amount; refundCount += 1; }
             else previousRefundMinor += amount;
@@ -353,8 +368,8 @@ async function commerceRevenue(range, reporting, reportingCurrency) {
 
     return {
         primaryCurrency: target, grossMinor, previousGrossMinor,
-        netMinor: grossMinor - refundMinor, previousNetMinor: previousGrossMinor - previousRefundMinor,
-        refundMinor, refundCount, previousRefundMinor,
+        netMinor: grossMinor - refundMinor - feeMinor, previousNetMinor: previousGrossMinor - previousRefundMinor - previousFeeMinor,
+        refundMinor, refundCount, previousRefundMinor, feeMinor, previousFeeMinor,
         payingCustomers: payerKeys.size, arpuMinor: payerKeys.size ? Math.round(grossMinor / payerKeys.size) : 0,
         currencies: [target], byBucketCurrency, coverage: meta.coverage, warnings: meta.warnings
     };
@@ -380,6 +395,7 @@ module.exports = {
     revenueSummary,
     commerceRevenue,
     refundFromEvent,
+    historyRecord,
     eventRecords,
     rememberRecent
 };

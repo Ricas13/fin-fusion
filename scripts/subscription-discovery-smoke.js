@@ -11,6 +11,8 @@ assert(discovery.recurringId('stripe', 'sub_123'));
 assert(discovery.recurringId('paypal', 'I-ABC123'));
 assert(!discovery.recurringId('stripe', 'pi_123'));
 assert(!discovery.recurringId('paypal', 'PAY-123'));
+assert(!discovery.recurringId('stripe', ' sub_123 '), 'padded local Stripe IDs must remain visible to provider-link repair');
+assert(!discovery.recurringId('paypal', ' I-ABC123 '), 'padded local PayPal IDs must remain visible to provider-link repair');
 assert(discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), 'a real Stripe subscription ID must remain linked');
 assert(!discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_123' }), 'a PaymentIntent must never count as a linked recurring Stripe subscription');
 const legacyEnding = { source: 'migration', billing_mode: 'manual', provider_subscription_id: null, cancel_at_period_end: true, commercial_snapshot: { kind:'legacy_import', migrated:true, providerLinkDisposition:'ending' } };
@@ -90,7 +92,7 @@ assert.strictEqual(matches[0].state, 'ambiguous', 'two live exact matches must n
 assert.strictEqual(matches[0].match, null);
 
 const conflictContext = baseContext();
-conflictContext.providerSubscriptionOwners.set('stripe:sub_live', { subscriptionId: 'some-other-local-sub', customerId: 'someone-else' });
+conflictContext.providerSubscriptionOwners.set('stripe:sub_live', { subscriptionIds: new Set(['some-other-local-sub']), customerIds: new Set(['someone-else']) });
 matches = discovery.matchPremiumRows([local], [stripe], conflictContext);
 assert.strictEqual(matches[0].state, 'conflict', 'a remote subscription already owned locally must never be stolen');
 
@@ -105,6 +107,9 @@ assert.strictEqual(matches[0].state, 'linked', 'already-linked premium users mus
 matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_legacy_wrong_object' }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'safe', 'a legacy PaymentIntent stored as the recurring ID must be offered for verified provider-link repair');
 assert.strictEqual(matches[0].match.id, 'sub_live');
+
+matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: ' sub_existing ' }], [stripe], baseContext());
+assert.notStrictEqual(matches[0].state, 'linked', 'a whitespace-corrupted stored provider ID must not be hidden as a healthy recurring link');
 
 matches = discovery.matchPremiumRows([{ ...local, commercial_snapshot:{ providerLinkDisposition:'ending' }, cancel_at_period_end:true }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'ending', 'an explicitly marked paid term intentionally ending after the current period must be removed from provider-link work');
@@ -128,13 +133,16 @@ assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T
 assert.ok(discoverySource.includes("paypal_reference_id_type || '').toUpperCase() === 'SUB'"), 'PayPal discovery must only treat SUB references as subscription IDs');
 assert.ok(discoverySource.includes("state: 'ending'"), 'subscription discovery must classify explicitly fixed paid terms as reference-only');
 assert.ok(discoverySource.includes("COUNT(*) FILTER(WHERE NOT linked AND NOT ending)::int AS missing"), 'coverage stats must aggregate provider-link integrity in SQL instead of materializing every premium customer row');
+assert.ok(discoverySource.includes('provider_subscription_id IS NOT DISTINCT FROM BTRIM(provider_subscription_id)'), 'coverage stats must classify whitespace-corrupted provider IDs as missing/repairable rather than linked');
 assert.ok(discoverySource.includes("COALESCE(commercial_snapshot->'migrated'='true'::jsonb,FALSE)"), 'coverage SQL must treat a missing commercial snapshot as non-legacy, matching JavaScript fixed-term classification');
 assert.ok(!/async function coverageStats\(\)[\s\S]{0,200}premiumEntitlements\(\)/.test(discoverySource), 'coverage stats must not load the full premium entitlement identity rowset merely to count billing states');
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
+assert.ok(discoverySource.includes('subscriptionIds:new Set()') && discoverySource.includes('owners.subscriptionIds.add') && discoverySource.includes('[...owner.subscriptionIds].some'), 'discovery must preserve every normalized provider-subscription owner so historical duplicates cannot be hidden by Map overwrite order');
 assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lifecycle must own discovered provider-subscription attachment');
 assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
+assert.ok(lifecycleSource.includes('oldDelinquencyKey') && lifecycleSource.includes('oldDelinquencyKey !== newDelinquencyKey') && lifecycleSource.includes('otherLiveOwner') && lifecycleSource.includes("s.status IN('active','trialing','past_due','paused')") && lifecycleSource.includes("status: 'active'"), 'provider-link repair must move stale delinquency authority without releasing a shared old hold while any duplicate live recurring owner still depends on it');
 assert.ok(lifecycleSource.includes('state.recurringProvider(local) && validRemoteRecurringId(local.source, local.provider_subscription_id)'), 'lifecycle must allow repair when billing_mode says recurring but the stored provider object is not a real recurring subscription');
 assert.ok(/plan_id=\$2[\s\S]*external_id=ANY\(\$3::text\[\]\)/.test(lifecycleSource), 'lifecycle must snapshot the exact remote price/plan that maps to the existing premium plan');
 
@@ -142,7 +150,7 @@ assert.ok(manualSource.includes("require('./subscription-discovery')"), 'manual 
 assert.ok(manualSource.includes("require('./lifecycle')"), 'manual recovery must delegate the write to lifecycle');
 assert.ok(manualSource.includes('attachDiscoveredProviderSubscription'), 'manual recovery must use the same canonical attachment owner as automatic discovery');
 assert.ok(manualSource.includes("checkout_mode='subscription' AND plan_id=$2"), 'manual recovery must verify exact local plan mapping');
-assert.ok(manualSource.includes('provider_subscription_id=$2'), 'manual recovery must reject already-owned provider subscriptions');
+assert.ok(manualSource.includes("LOWER(BTRIM(COALESCE(source,'')))=$1") && manualSource.includes("BTRIM(COALESCE(provider_subscription_id,''))=$2"), 'manual recovery preview must reject normalized provider-ID ownership conflicts before mutation');
 assert.ok(manualSource.includes('operatorConfirmed'), 'manual recovery must require explicit operator ownership confirmation');
 assert.ok(manualSource.includes("discovery.currentRemote(remote)"), 'manual recovery must refuse non-current provider subscriptions');
 assert.ok(manualSource.includes('/v1/billing/subscriptions/'), 'manual PayPal recovery must try the current Subscriptions API first');

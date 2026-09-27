@@ -81,7 +81,7 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
           AND i.created_at >= NOW() - ($2::int * INTERVAL '1 day')
           AND (
               (
-                  i.checkout_mode='subscription'
+                  (i.provider='stripe' OR i.checkout_mode='subscription')
                   AND i.state IN ('open','failed','expired','cancelled')
                   AND i.provider_terminal_at IS NULL
               )
