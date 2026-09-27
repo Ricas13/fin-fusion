@@ -76,8 +76,9 @@ assert(revenueIntegrity.includes('payment_loss_event_without_incident')
 assert(revenueIntegrity.includes('invalid_recurring_provider_reference')
     && revenueIntegrity.includes("billing_mode='subscription'")
     && revenueIntegrity.includes("!~* '^sub_'")
-    && revenueIntegrity.includes("!~* '^I-'"),
-    'Revenue integrity must page on malformed live Stripe/PayPal recurring identities.');
+    && revenueIntegrity.includes("!~* '^I-'")
+    && revenueIntegrity.includes('provider_subscription_id IS DISTINCT FROM BTRIM(provider_subscription_id)'),
+    'Revenue integrity must page on malformed or whitespace-padded live Stripe/PayPal recurring identities.');
 const recurringIdentityMigration = read('db/migrations/20260918213000_recurring_provider_identity_guard.sql');
 assert(recurringIdentityMigration.includes('DROP CONSTRAINT IF EXISTS subscriptions_recurring_provider_identity_check')
     && recurringIdentityMigration.includes("NEW.billing_mode='subscription'")
