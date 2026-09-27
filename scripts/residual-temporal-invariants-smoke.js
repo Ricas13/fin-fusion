@@ -91,6 +91,10 @@ function main() {
     assert(sharedFailure.includes("providerStatus:'PAST_DUE'") && sharedFailure.includes('lifecycle.updateProviderSubscription'), 'Current PayPal renewal failure must persist past_due through the canonical subscription/access-state authority.');
     assert(!denied.includes("providerStatus:'suspended'"), 'Delayed PayPal sale denial can still force local suspension from event order alone.');
 
+    assert.strictEqual(billingControl.validRecurringProviderReference({source:'stripe',billing_mode:'subscription',provider_subscription_id:'sub_exact'}), true, 'Canonical Stripe recurring IDs remain valid.');
+    assert.strictEqual(billingControl.validRecurringProviderReference({source:'stripe',billing_mode:'subscription',provider_subscription_id:' sub_exact '}), false, 'Whitespace-padded Stripe recurring IDs must be treated as malformed before provider calls.');
+    assert.strictEqual(billingControl.validRecurringProviderReference({source:'paypal',billing_mode:'subscription',provider_subscription_id:' I-EXACT '}), false, 'Whitespace-padded PayPal recurring IDs must be treated as malformed before provider calls.');
+
     assert.strictEqual(billingControl.providerMissing({ statusCode: 404 }), true, 'Structured provider 404 must still count as confirmed missing.');
     assert.strictEqual(billingControl.providerMissing({ code: 'resource_missing' }), true, 'Stripe resource_missing must still count as confirmed missing.');
     assert.strictEqual(billingControl.providerMissing(new Error('No such subscription: sub_dead')), true, 'Stripe no-such-subscription must still count as confirmed missing.');
