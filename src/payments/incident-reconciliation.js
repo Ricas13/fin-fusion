@@ -289,14 +289,21 @@ async function paypalCurrentState(incident) {
     };
 }
 
-async function localMatch(provider, reference) {
-    if (!reference) return null;
+async function localMatch(provider, reference, expectedCustomerId = null) {
+    const source=String(provider||'').trim().toLowerCase(),providerReference=String(reference||'').trim();
+    if (!providerReference) return null;
     const direct = await query(`
-        SELECT 'customer' scope,customer_id owner_id,id subscription_id,status,current_period_end
+        SELECT 'customer' scope,customer_id owner_id,id subscription_id,status,current_period_end,created_at
         FROM subscriptions
-        WHERE source=$1 AND provider_subscription_id=$2
-        ORDER BY created_at DESC LIMIT 1
-    `, [provider, reference]);
+        WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+          AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+          AND ($3::text IS NULL OR customer_id::text=$3)
+        ORDER BY created_at DESC,id DESC
+    `, [source, providerReference, expectedCustomerId ? String(expectedCustomerId) : null]);
+    if (!expectedCustomerId) {
+        const owners=new Set(direct.rows.map(row=>String(row.owner_id)));
+        if (owners.size>1) throw new Error('Provider billing identity is attached to multiple customers; repair duplicate ownership before incident reconciliation.');
+    }
     return direct.rows[0] || null;
 }
 
@@ -320,7 +327,8 @@ async function reconcile(incidentId, actorUserId = null) {
             : (() => { throw new Error('Unsupported provider.'); })();
 
     const reference = current.reference || incident.provider_subscription_id || null;
-    const match = await localMatch(incident.provider, reference);
+    const expectedCustomerId=incident.scope==='direct'&&incident.customer_id?incident.customer_id:null;
+    const match = await localMatch(incident.provider, reference, expectedCustomerId);
     assertMatchIdentity(incident, match);
 
     const snapshot = {
