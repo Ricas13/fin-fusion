@@ -33,7 +33,25 @@ async function identityFromProviderSubscription(provider,providerSubscriptionId)
   // chargeback terminate an arbitrary customer's access.
   return{scope:'unresolved',customerId:null,ambiguous:direct.rowCount>1};
 }
-async function identityFromMetadata(metadata={}){if(metadata.internal_customer_id)return{scope:'direct',customerId:metadata.internal_customer_id};return{scope:'unresolved',customerId:null}}
+async function existingCustomerIdentity(identity={}){
+  const customerId=String(identity?.customerId||'').trim();
+  if(identity?.scope!=='direct'||!customerId)return{...identity,scope:'unresolved',customerId:null};
+  // Provider metadata is untrusted historical input. Validate UUID syntax
+  // before casting so malformed legacy metadata fails closed without turning a
+  // refund/dispute replay into a database error, while retaining the indexed PK
+  // lookup for normal customer identities.
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customerId)){
+    return{...identity,scope:'unresolved',customerId:null,orphanedCustomerId:customerId};
+  }
+  const existing=await query(`SELECT id FROM customers WHERE id=$1::uuid LIMIT 1`,[customerId]);
+  if(existing.rowCount)return{...identity,scope:'direct',customerId:existing.rows[0].id};
+  return{...identity,scope:'unresolved',customerId:null,orphanedCustomerId:customerId};
+}
+async function identityFromMetadata(metadata={}){
+  const customerId=String(metadata?.internal_customer_id||'').trim();
+  if(!customerId)return{scope:'unresolved',customerId:null};
+  return existingCustomerIdentity({scope:'direct',customerId});
+}
 async function reconcileMany(ids){for(const id of ids){try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Payment incident reconcile failed for customer ${id}:`,error.message)}}}
 function holdSource(provider,caseId){return `${provider}:${String(caseId||'').slice(0,170)}`}
 async function applyHold(identity,provider,caseId,reason){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.addHold({customerId,type:'payment_risk',sourceKey,reason,metadata:{provider,caseId,scope:identity.scope}});await reconcileMany(ids);return ids.length}
@@ -75,7 +93,7 @@ async function refundTerminatesMatchedSubscription(row,{provider,eventId,metadat
 async function record({provider,eventId,caseId=null,kind,status='open',identity=null,providerSubscriptionId=null,amountMinor=null,currency=null,metadata={}}){
   if(!['stripe','paypal','plisio'].includes(provider))throw new Error('Unsupported incident provider.');
   if(!['refund','dispute','chargeback','failed_renewal','checkout_completion'].includes(kind))throw new Error('Unsupported payment incident type.');
-  const resolvedIdentity=identity||await identityFromProviderSubscription(provider,providerSubscriptionId),cfg=await policy();
+  const resolvedIdentity=await existingCustomerIdentity(identity||await identityFromProviderSubscription(provider,providerSubscriptionId)),cfg=await policy();
   let action=policyAction(kind,cfg,metadata);if(status==='won')action='restore';else if(status==='resolved')action='preserve';
   const selected=await query(`
     WITH inserted AS (
@@ -195,4 +213,4 @@ async function reopen(id,actorUserId){
 }
 async function notes(id){const r=await query(`SELECT n.*,u.username actor_username FROM payment_incident_notes n LEFT JOIN app_users u ON u.id=n.actor_user_id WHERE n.incident_id=$1 ORDER BY n.created_at DESC`,[id]);return r.rows}
 async function recent(limit=100){const result=await query(`SELECT pi.*,c.display_name customer_name,au.username assigned_username FROM payment_incidents pi LEFT JOIN customers c ON c.id=pi.customer_id LEFT JOIN app_users au ON au.id=pi.assigned_to ORDER BY pi.created_at DESC LIMIT $1`,[Math.max(1,Math.min(500,Number(limit)||100))]);return result.rows}
-module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};
+module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,existingCustomerIdentity,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};
