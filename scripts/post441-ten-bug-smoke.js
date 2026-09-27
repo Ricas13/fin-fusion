@@ -57,7 +57,10 @@ async function main() {
   const paypalSource = read('src/payments/paypal.js');
   assert(!paypalSource.includes("checkout-intent completion failed (access already granted)"), 'PayPal checkout-intent completion failures must propagate to payment-event retry');
   assert(!paypalSource.includes('PayPal plan-change resolution deferred:'), 'PayPal plan-change completion failures must propagate to payment-event retry');
-  assert(paypalSource.includes("await checkoutIntents.completeVerifiedProvider('paypal',subscription.id,'completed');await resolveRecordedPlanChange"), 'PayPal recurring activation must finish durable checkout and plan-change bookkeeping before webhook completion');
+  const paypalActivate = paypalSource.slice(paypalSource.indexOf('async function activateSubscription'), paypalSource.indexOf('function paypalStatus'));
+  const checkoutDoneAt = paypalActivate.indexOf("await checkoutIntents.completeVerifiedProvider('paypal',subscription.id,'completed')");
+  const planChangeDoneAt = paypalActivate.indexOf('await resolveRecordedPlanChange(mapping,subscription.id)');
+  assert(checkoutDoneAt >= 0 && planChangeDoneAt > checkoutDoneAt, 'PayPal recurring activation must finish durable checkout and plan-change bookkeeping before webhook completion');
 
   const reconciliationSource = read('src/payments/provider-payment-reconciliation.js');
   assert(reconciliationSource.includes('MAX_STRIPE_PAGES'), 'Stripe reconciliation must have bounded pagination');
