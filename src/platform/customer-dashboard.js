@@ -97,6 +97,25 @@ function createCustomerDashboardRouter(){
   const r=express.Router();
   r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){const{message,status}=publicError.present(error,{context:'Discount preview failed',fallback:'Promo code could not be checked.'});return res.status(status).json({valid:false,plans:{},message});}});
   r.get('/account/plan-variants',requireCustomer,async(req,res)=>{try{res.setHeader('Cache-Control','no-store, private, max-age=0');return res.json({plans:await customerVariantState(req.session.customerId)});}catch(error){console.warn('Customer plan variant state failed:',error.message);return res.status(503).json({plans:[],error:'Plan options are temporarily unavailable.'});}});
+  r.get('/account/free-access',requireCustomer,async(req,res,next)=>{
+    try{
+      const customerId=req.session.customerId;
+      const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
+      if(returnStatus.eligible)return res.redirect('/account');
+      const freePlan=await subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+      if(freePlan){
+        if(freePlan.blocked){
+          const reason=returnStatus.error?'Your Free Access status could not be checked safely. Open My Access or contact support instead of creating another account.':'Your existing Free Access is currently restricted. Open My Access instead of creating another account.';
+          return res.redirect('/account/access?error='+encodeURIComponent(reason));
+        }
+        const ready=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
+        if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
+        return res.redirect('/account?message='+encodeURIComponent('You already have a Free Access place. Your Jellyfin setup is still being prepared; you do not need to sign up again.'));
+      }
+      const message=returnStatus.error?'You are signed in. We could not verify a previous Free Access restore state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
+      return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
+    }catch(error){return next(error);}
+  });
   r.get('/account',requireCustomer,async(req,res,next)=>{
     try{
       await runtimeSettings.ensureLoaded();

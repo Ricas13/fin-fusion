@@ -51,5 +51,5 @@
   </form>
   <% } %>
 
-  <div class="footer"><p class="muted" style="margin:0">Already registered? <a href="/account/login">Sign in</a></p><p class="claimHint">Already have a Jellyfin account and received a claim link? Use that link instead of creating a second account.</p></div>
+  <div class="footer"><p class="muted" style="margin:0">Already registered? <% if(freeIntent){ %><a href="/account/login?next=%2Faccount%2Ffree-access">Sign in to continue Free Access</a><% } else { %><a href="/account/login">Sign in</a><% } %></p><p class="claimHint">Already have a Jellyfin account and received a claim link? Use that link instead of creating a second account.</p></div>
 </main></body></html>
