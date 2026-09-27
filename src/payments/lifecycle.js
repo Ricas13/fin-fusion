@@ -337,6 +337,21 @@ async function attachDiscoveredProviderSubscription({
              RETURNING *
         `, [local.id, provider, providerCustomerId || null, providerSubscriptionId, providerMap.external_id || null, providerMap.plan_price_id || null, providerMap.id || null, status, periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd)]);
         const row = updated.rows[0];
+        const oldDelinquencyKey = primitives.paymentDelinquencySourceKey(local.source, local.provider_subscription_id, local.billing_mode);
+        const newDelinquencyKey = primitives.paymentDelinquencySourceKey(provider, providerSubscriptionId, row.billing_mode);
+        if (oldDelinquencyKey && oldDelinquencyKey !== newDelinquencyKey) {
+            // Provider-link repair can replace a malformed or whitespace-padded
+            // billing identity. Move the payment-delinquency authority with the
+            // repaired identity so a stale hold keyed by the corrupt old value
+            // cannot keep otherwise-recovered access blocked forever.
+            await primitives.syncProviderAccessState({
+                customerId: row.customer_id,
+                provider: local.source,
+                providerSubscriptionId: local.provider_subscription_id,
+                status: 'active',
+                billingMode: local.billing_mode
+            }, client);
+        }
         await primitives.syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status, billingMode: row.billing_mode }, client);
 
         const now = new Date(), next = new Date(now.getTime() + 6 * 60 * 60 * 1000);
