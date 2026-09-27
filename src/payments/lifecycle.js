@@ -342,23 +342,25 @@ async function attachDiscoveredProviderSubscription({
         if (oldDelinquencyKey && oldDelinquencyKey !== newDelinquencyKey) {
             // Provider-link repair can replace a malformed billing identity.
             // Release the old payment-delinquency key only when no other live
-            // recurring row for this customer still depends on that canonical
+            // recurring row for this customer still owns that canonical
             // provider identity; historical whitespace variants can otherwise
-            // share the same hold key.
+            // share the same hold key. Preserve the hold fail-closed while any
+            // duplicate live owner remains, even if that duplicate's local
+            // status is itself stale.
             const oldProvider=String(local.source||'').trim().toLowerCase();
             const oldProviderId=String(local.provider_subscription_id||'').trim();
-            const otherDelinquent=await client.query(`
+            const otherLiveOwner=await client.query(`
                 SELECT 1
                 FROM subscriptions s
                 WHERE s.customer_id=$1 AND s.id<>$2
                   AND LOWER(BTRIM(COALESCE(s.source,'')))=$3
                   AND BTRIM(COALESCE(s.provider_subscription_id,''))=$4
                   AND s.billing_mode='subscription'
-                  AND s.status IN('past_due','paused')
+                  AND s.status IN('active','trialing','past_due','paused')
                   AND s.superseded_by IS NULL
                 LIMIT 1
             `,[row.customer_id,local.id,oldProvider,oldProviderId]);
-            if(!otherDelinquent.rowCount){
+            if(!otherLiveOwner.rowCount){
                 await primitives.syncProviderAccessState({
                     customerId: row.customer_id,
                     provider: local.source,
