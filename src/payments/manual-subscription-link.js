@@ -167,7 +167,14 @@ async function preview({ subscriptionId, provider, providerSubscriptionId }) {
     const local = await localPremium(subscriptionId);
     const remote = await remoteSubscription(provider, providerSubscriptionId);
     if (!discovery.currentRemote(remote)) throw new Error(`${providerLabel(remote.provider)} subscription is ${remote.status || 'not current'} and cannot be linked to active Premium access.`);
-    const duplicate = await query(`SELECT id,customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND id<>$3 LIMIT 1`, [remote.provider, remote.id, local.subscription_id]);
+    const duplicate = await query(`
+        SELECT id,customer_id
+        FROM subscriptions
+        WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+          AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+          AND id<>$3
+        LIMIT 1
+    `, [String(remote.provider||'').trim().toLowerCase(), String(remote.id||'').trim(), local.subscription_id]);
     if (duplicate.rowCount) throw new Error('This provider subscription is already attached to another local subscription.');
     const { mapping, externalPlanIds } = await verifyPlan(local, remote);
     const identity = await verifyOwnership(local, remote);
