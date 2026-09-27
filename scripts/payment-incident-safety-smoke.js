@@ -84,6 +84,9 @@ function main() {
     if (!source.includes('scope=COALESCE($2,scope)')) {
         throw new Error('Provider reconciliation does not promote a matched unresolved incident to direct scope.');
     }
+    if (!source.includes("BTRIM(COALESCE(provider_subscription_id,''))=$2") || !source.includes('repair duplicate ownership before incident reconciliation')) {
+        throw new Error('Incident reconciliation must normalize historical provider IDs and fail closed when one provider identity belongs to multiple customers.');
+    }
 
     // Generic provider status "resolved" is ambiguous (especially for PayPal):
     // only an explicitly merchant-winning webhook may use the automatic restore
@@ -95,6 +98,9 @@ function main() {
     }
     if (!incidentSource.includes("else if(status==='resolved')action='preserve'")) {
         throw new Error('Ambiguous resolved incidents are not forced to preserve access holds.');
+    }
+    if (!incidentSource.includes('SELECT DISTINCT customer_id') || !incidentSource.includes('ambiguous:direct.rowCount>1') || !incidentSource.includes('for(const matchedRow of matched.rows)')) {
+        throw new Error('Historical duplicate provider identities must never choose an arbitrary customer, and confirmed loss must terminate every unsuperseded local row owned by the resolved customer.');
     }
 
     // Stripe webhook delivery is not guaranteed to arrive in lifecycle order.
