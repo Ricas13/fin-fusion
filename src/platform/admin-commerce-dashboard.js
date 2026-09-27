@@ -59,7 +59,7 @@ function summarizeEvents(events, range, reporting) {
 async function refundAndFailureSeries(range) {
     const bucket = ['day', 'week', 'month'].includes(range.bucket) ? range.bucket : 'day';
     const [refunds, failures] = await Promise.all([
-        query(`SELECT date_trunc('${bucket}',created_at) bucket,COUNT(*)::int n FROM payment_events WHERE event_type IN('charge.refunded','PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED','PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED') AND created_at>=$1 AND created_at<$2 GROUP BY 1`, [range.start, range.end]),
+        query(`SELECT date_trunc('${bucket}',created_at) bucket,COUNT(*)::int n FROM payment_events WHERE processed_at IS NOT NULL AND processing_error IS NULL AND event_type IN('charge.refunded','PAYMENT.SALE.REFUNDED','PAYMENT.SALE.REVERSED','PAYMENT.CAPTURE.REFUNDED','PAYMENT.CAPTURE.REVERSED') AND created_at>=$1 AND created_at<$2 GROUP BY 1`, [range.start, range.end]),
         query(`SELECT date_trunc('${bucket}',created_at) bucket,COUNT(*)::int n FROM payment_events WHERE processing_error IS NOT NULL AND created_at>=$1 AND created_at<$2 GROUP BY 1`, [range.start, range.end])
     ]);
     const r = fillSeries(range, refunds.rows, ['n']);
