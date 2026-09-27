@@ -22,7 +22,10 @@ function objectId(value) { return typeof value === 'string' ? clean(value, 255) 
 // additionally requires a real provider recurring object before calling a row
 // "linked", so legacy/corrupt pi_/PAY-* references stay repairable.
 function recurringId(provider, id) {
-    return billingMode.validRecurringProviderId(provider, clean(id, 255));
+    // Keep the stored representation intact for validation. Trimming here would
+    // hide a whitespace-corrupted provider ID from the repair queue even though
+    // provider API calls use the literal durable identifier.
+    return billingMode.validRecurringProviderId(provider, String(id == null ? '' : id).slice(0, 255));
 }
 function localRecurring(row) {
     return billingMode.isRecurring(row) && recurringId(String(row?.source || '').toLowerCase(), row?.provider_subscription_id);
@@ -369,9 +372,13 @@ async function coverageStats() {
                    (
                        LOWER(BTRIM(COALESCE(billing_mode,'')))='subscription'
                        AND (
-                           (LOWER(BTRIM(COALESCE(source,'')))='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^sub_')
+                           (LOWER(BTRIM(COALESCE(source,'')))='stripe'
+                            AND provider_subscription_id IS NOT DISTINCT FROM BTRIM(provider_subscription_id)
+                            AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^sub_')
                            OR
-                           (LOWER(BTRIM(COALESCE(source,'')))='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^I-')
+                           (LOWER(BTRIM(COALESCE(source,'')))='paypal'
+                            AND provider_subscription_id IS NOT DISTINCT FROM BTRIM(provider_subscription_id)
+                            AND BTRIM(COALESCE(provider_subscription_id,'')) ~* '^I-')
                        )
                    ) AS linked,
                    (
