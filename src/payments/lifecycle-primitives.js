@@ -164,6 +164,28 @@ async function assertSettlementCheckout(client, checkoutIntentId, { customerId, 
     return row;
 }
 
+function serviceCreditSettlementConflict(message) {
+    const error = new Error(message);
+    error.code = 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT';
+    return error;
+}
+
+async function settleCheckoutServiceCredit(client, checkoutIntentId, contract) {
+    const expectedMinor = Math.max(0, Number(contract?.serviceCreditMinor || 0));
+    const expectedCurrency = String(contract?.serviceCreditCurrency || contract?.currency || '').trim().toUpperCase();
+    const settled = await serviceCreditReservations.settle(client, checkoutIntentId, 'completed');
+    if (expectedMinor <= 0) return settled;
+    if (!settled) {
+        throw serviceCreditSettlementConflict(`Paid provider checkout ${checkoutIntentId} expected ${expectedMinor} ${expectedCurrency || 'service-credit minor units'} but its service-credit reservation is missing.`);
+    }
+    const actualMinor = Number(settled.amount_minor || 0);
+    const actualCurrency = String(settled.currency || '').trim().toUpperCase();
+    if (settled.state !== 'applied' || actualMinor !== expectedMinor || (expectedCurrency && actualCurrency !== expectedCurrency)) {
+        throw serviceCreditSettlementConflict(`Paid provider checkout ${checkoutIntentId} service-credit settlement does not match its immutable checkout contract.`);
+    }
+    return settled;
+}
+
 async function confirmedMoneyLoss(client, provider, providerSubscriptionId, { billingMode: subscriptionBillingMode = null } = {}) {
     const recurring = billingMode.normalize(subscriptionBillingMode) === billingMode.BILLING_MODES.SUBSCRIPTION
         && billingMode.PROVIDER_RECURRING_SOURCES.has(String(provider || '').trim().toLowerCase());
@@ -340,7 +362,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 // transaction that activates access so a late provider payment
                 // can never commit a full entitlement after its credit portion
                 // was released/expired and spent elsewhere.
-                await serviceCreditReservations.settle(client, settlementCheckoutIntentId, 'completed');
+                await settleCheckoutServiceCredit(client, settlementCheckoutIntentId, contract);
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
             await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null })]);
@@ -397,6 +419,7 @@ module.exports = {
     claimRetryablePaymentEvents,
     purchaseSnapshot,
     assertSettlementCheckout,
+    settleCheckoutServiceCredit,
     confirmedMoneyLoss,
     recordCapacitySettlementIncident,
     resolveCapacitySettlementIncident,
