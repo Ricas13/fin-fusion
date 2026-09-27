@@ -302,8 +302,8 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
 
     await assert.rejects(
         query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[thirdCustomer.id,p.id,` ${providerId} `]),
-        /already attached to another subscription/i,
-        'M: a new ownership claim must still reject a whitespace-padded duplicate provider identity'
+        /Invalid recurring provider billing identity/i,
+        'M: new whitespace-padded recurring provider identities must be rejected before they can become ambiguous ownership'
     );
 }
 
