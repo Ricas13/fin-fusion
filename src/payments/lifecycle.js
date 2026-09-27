@@ -278,7 +278,7 @@ async function attachDiscoveredProviderSubscription({
     actorUserId = null,
     matchReason = null
 }) {
-    provider = String(provider || '').toLowerCase();
+    provider = String(provider || '').trim().toLowerCase();
     providerSubscriptionId = String(providerSubscriptionId || '').trim();
     if (!validRemoteRecurringId(provider,providerSubscriptionId)) throw new Error('A valid Stripe or PayPal recurring subscription is required.');
     const remotePlanIds = Array.from(new Set((externalPlanIds || []).map(value => String(value || '').trim()).filter(Boolean)));
