@@ -81,16 +81,23 @@ async function persistTargets(job){
       ORDER BY created_at,id
     `,[job.customer_id]);
     for(const subscription of recurring.rows){
-      const providerSubscriptionId=String(subscription.provider_subscription_id||'').trim()||null;
+      const rawProviderSubscriptionId=String(subscription.provider_subscription_id||'');
+      const providerSubscriptionId=rawProviderSubscriptionId.trim()||null;
+      // Do not silently "repair" a malformed durable billing identity during
+      // customer deletion. A padded ID may look usable after trim, but deletion
+      // is destructive provider work and must wait for the normal verified
+      // billing-link repair path to establish the exact provider resource.
       const providerIdValid=Boolean(providerSubscriptionId)
+        && rawProviderSubscriptionId===providerSubscriptionId
         && ((subscription.source==='stripe'&&/^sub_/i.test(providerSubscriptionId))
           ||(subscription.source==='paypal'&&/^I-/i.test(providerSubscriptionId)));
       await insertTarget(client,{
         jobId:job.id,customerId:job.customer_id,provider:subscription.source,resourceType:'recurring_subscription',
-        externalIdentifier:providerSubscriptionId||`invalid-local-subscription:${subscription.id}`,desiredState:'cancelled',
+        externalIdentifier:providerIdValid?providerSubscriptionId:`invalid-local-subscription:${subscription.id}`,desiredState:'cancelled',
         metadata:{
           subscriptionId:subscription.id,
-          providerSubscriptionId,
+          providerSubscriptionId:rawProviderSubscriptionId||null,
+          normalizedProviderSubscriptionId:providerSubscriptionId,
           invalidProviderIdentity:!providerIdValid,
           localStatus:subscription.status,
           currentPeriodEnd:subscription.current_period_end,
