@@ -38,7 +38,7 @@ function stripeTerminalStatus(status) {
 }
 
 function paypalTerminalStatus(status) {
-    return ['CANCELLED', 'EXPIRED'].includes(String(status || '').toUpperCase());
+    return ['CANCELLED', 'CANCELED', 'EXPIRED'].includes(String(status || '').toUpperCase());
 }
 
 function retryDelayMs(failures) {
