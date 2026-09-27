@@ -23,8 +23,14 @@ BEGIN
        AND NEW.source IN ('stripe','paypal')
        AND NEW.status IN ('active','trialing','past_due','paused')
        AND (
-           (NEW.source='stripe' AND BTRIM(COALESCE(NEW.provider_subscription_id,'')) !~* '^sub_')
-           OR (NEW.source='paypal' AND BTRIM(COALESCE(NEW.provider_subscription_id,'')) !~* '^I-')
+           (NEW.source='stripe' AND (
+               NEW.provider_subscription_id IS DISTINCT FROM BTRIM(NEW.provider_subscription_id)
+               OR BTRIM(COALESCE(NEW.provider_subscription_id,'')) !~* '^sub_'
+           ))
+           OR (NEW.source='paypal' AND (
+               NEW.provider_subscription_id IS DISTINCT FROM BTRIM(NEW.provider_subscription_id)
+               OR BTRIM(COALESCE(NEW.provider_subscription_id,'')) !~* '^I-'
+           ))
        )
        AND (
            TG_OP='INSERT'
