@@ -266,6 +266,42 @@ async function testLRecurringIdentityStatusBoundary() {
     assert.strictEqual(repaired.rows[0].status,'active','L: repairing historical billing identity restores normal status synchronization');
 }
 
+async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
+    const tag=suffix(), firstCustomer=await customer(`m-first-${tag}`), secondCustomer=await customer(`m-second-${tag}`), thirdCustomer=await customer(`m-third-${tag}`);
+    const p=await plan(`recovery-m-${tag}`,'Legacy duplicate identity');
+    const providerId=`sub_legacy_duplicate_${tag}`;
+    const conn=await getPool().connect();
+    let firstId, secondId;
+    try{
+        await conn.query('BEGIN');
+        await conn.query('ALTER TABLE subscriptions DISABLE TRIGGER subscriptions_provider_identity_guard');
+        firstId=(await conn.query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot)
+            VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING id
+        `,[firstCustomer.id,p.id,providerId])).rows[0].id;
+        secondId=(await conn.query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot)
+            VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING id
+        `,[secondCustomer.id,p.id,providerId])).rows[0].id;
+        await conn.query('ALTER TABLE subscriptions ENABLE TRIGGER subscriptions_provider_identity_guard');
+        await conn.query('COMMIT');
+    }catch(error){
+        await conn.query('ROLLBACK');
+        throw error;
+    }finally{conn.release();}
+
+    await query(`UPDATE subscriptions SET status='past_due' WHERE id=$1`,[firstId]);
+    await query(`UPDATE subscriptions SET status='cancelled',cancel_at_period_end=TRUE,current_period_end=LEAST(current_period_end,NOW()) WHERE id=$1`,[secondId]);
+    const reconciled=await query(`SELECT id,status FROM subscriptions WHERE id=ANY($1::uuid[]) ORDER BY id`,[[firstId,secondId]]);
+    assert.deepStrictEqual(new Set(reconciled.rows.map(row=>row.status)),new Set(['past_due','cancelled']),'M: historical duplicate rows must remain writable for delinquency/cancellation reconciliation');
+
+    await assert.rejects(
+        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[thirdCustomer.id,p.id,`  ${providerId}  `]),
+        /already attached to another subscription/i,
+        'M: a new ownership claim must still reject a whitespace-padded duplicate provider identity'
+    );
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -278,7 +314,8 @@ async function main() {
     await testJOldOperationCannotOverwriteNewerDecision();
     await testKProviderBillingIdentitySingleOwner();
     await testLRecurringIdentityStatusBoundary();
-    console.log('provider operation recovery DB smoke: A-L ok');
+    await testMHistoricalDuplicateIdentityRemainsReconcileable();
+    console.log('provider operation recovery DB smoke: A-M ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });
