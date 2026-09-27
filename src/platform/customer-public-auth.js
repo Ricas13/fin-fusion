@@ -41,7 +41,7 @@ async function activateRequestedFreeAccess(created){
 }
 function registrationFailure(error){if(error?.code==='FREE_ACCESS_CAPACITY_EXHAUSTED')return{status:409,message:'No free places currently available'};if(error?.code==='FREE_ACCESS_RESERVATION_EXPIRED')return{status:409,message:String(error.message)};return publicError.present(error,{context:'Customer registration failed',fallback:'Registration could not be completed right now. Please try again later.'});}
 function createCustomerPublicAuthRouter(){const r=express.Router();
- r.get('/account/register',async(req,res,next)=>{try{return res.render('customer/register',await registrationLocals(req,null,req.query.ref))}catch(e){next(e)}});
+ r.get('/account/register',async(req,res,next)=>{try{if(freeIntent(req.query?.intent)&&req.session?.customerId&&req.session?.customerUserId)return res.redirect('/account/free-access');return res.render('customer/register',await registrationLocals(req,null,req.query.ref))}catch(e){next(e)}});
  r.post('/account/register',async(req,res,next)=>{try{
     await runtimeSettings.ensureLoaded();
     if(!csrf.verify(req))return res.status(403).render('customer/register',await registrationLocals(req,'Your form expired. Please try again.',req.body.referralCode));
