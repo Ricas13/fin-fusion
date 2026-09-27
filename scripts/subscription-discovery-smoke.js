@@ -141,6 +141,7 @@ assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(di
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
 assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lifecycle must own discovered provider-subscription attachment');
 assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
+assert.ok(lifecycleSource.includes('oldDelinquencyKey') && lifecycleSource.includes('oldDelinquencyKey !== newDelinquencyKey') && lifecycleSource.includes("status: 'active'"), 'provider-link repair must release any stale payment-delinquency hold keyed by the malformed old provider ID before applying the repaired identity state');
 assert.ok(lifecycleSource.includes('state.recurringProvider(local) && validRemoteRecurringId(local.source, local.provider_subscription_id)'), 'lifecycle must allow repair when billing_mode says recurring but the stored provider object is not a real recurring subscription');
 assert.ok(/plan_id=\$2[\s\S]*external_id=ANY\(\$3::text\[\]\)/.test(lifecycleSource), 'lifecycle must snapshot the exact remote price/plan that maps to the existing premium plan');
 
