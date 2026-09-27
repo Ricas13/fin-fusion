@@ -294,6 +294,11 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
     await query(`UPDATE subscriptions SET status='cancelled',cancel_at_period_end=TRUE,current_period_end=LEAST(current_period_end,NOW()) WHERE id=$1`,[secondId]);
     const reconciled=await query(`SELECT id,status FROM subscriptions WHERE id=ANY($1::uuid[]) ORDER BY id`,[[firstId,secondId]]);
     assert.deepStrictEqual(new Set(reconciled.rows.map(row=>row.status)),new Set(['past_due','cancelled']),'M: historical duplicate rows must remain writable for delinquency/cancellation reconciliation');
+    await assert.rejects(
+        query(`UPDATE subscriptions SET status='active' WHERE id=$1`,[secondId]),
+        /Invalid recurring provider billing identity/i,
+        'M: a historical whitespace-padded provider ID must not be reactivated until repaired'
+    );
 
     await assert.rejects(
         query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[thirdCustomer.id,p.id,` ${providerId} `]),
