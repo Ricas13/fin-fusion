@@ -150,9 +150,15 @@ async function scan() {
               AND source IN('stripe','paypal')
               AND status IN('active','trialing','past_due','paused')
               AND (
-                (source='stripe' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^sub_')
+                (source='stripe' AND (
+                  provider_subscription_id IS DISTINCT FROM BTRIM(provider_subscription_id)
+                  OR BTRIM(COALESCE(provider_subscription_id,'')) !~* '^sub_'
+                ))
                 OR
-                (source='paypal' AND BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-')
+                (source='paypal' AND (
+                  provider_subscription_id IS DISTINCT FROM BTRIM(provider_subscription_id)
+                  OR BTRIM(COALESCE(provider_subscription_id,'')) !~* '^I-'
+                ))
               )
             ORDER BY updated_at
             LIMIT 100
