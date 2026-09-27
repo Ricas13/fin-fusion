@@ -216,6 +216,17 @@ async function testKProviderBillingIdentitySingleOwner() {
     assert.match(String(secondError.message || secondError), /already attached to another subscription/i, 'K: provider identity guard must reject the duplicate at the database boundary');
     const owners = await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1`, [providerId]);
     assert.strictEqual(Number(owners.rows[0].n), 1, 'K: exactly one local subscription may own the provider identity after the race');
+
+    // The pre-existing exact unique index cannot see formatting variants. The
+    // normalized database guard must still prevent a second local owner from
+    // claiming the same external one-time identity with hidden whitespace.
+    const plisioId=`txn_provider_owner_${tag}`;
+    await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','plisio','payment',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[firstCustomer.id,firstPlan.id,plisioId]);
+    await assert.rejects(
+        query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','plisio','payment',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`,[secondCustomer.id,secondPlan.id,` ${plisioId} `]),
+        /already attached to another subscription/i,
+        'K: normalized provider identity ownership must reject whitespace variants that bypass the exact unique index'
+    );
 }
 
 async function testLRecurringIdentityStatusBoundary() {
