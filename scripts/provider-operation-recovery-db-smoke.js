@@ -7,6 +7,8 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const providerOps = require('../src/payments/provider-operations');
+const incidents = require('../src/payments/incidents');
+const incidentReconciliation = require('../src/payments/incident-reconciliation');
 
 const remoteSubscriptions = new Map();
 let providerMutationCount = 0;
@@ -300,6 +302,17 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
         await conn.query('ROLLBACK');
         throw error;
     }finally{conn.release();}
+
+    const ambiguousIdentity=await incidents.identityFromProviderSubscription('stripe',providerId);
+    assert.strictEqual(ambiguousIdentity.scope,'unresolved','M: a normalized provider identity owned by different customers must never be assigned arbitrarily');
+    assert.strictEqual(ambiguousIdentity.ambiguous,true,'M: ambiguous historical ownership must remain explicit to callers');
+    await assert.rejects(
+        incidentReconciliation.localMatch('stripe',providerId),
+        /multiple customers/i,
+        'M: unresolved incident reconciliation must fail closed when normalized provider ownership spans customers'
+    );
+    const scopedMatch=await incidentReconciliation.localMatch('stripe',providerId,firstCustomer.id);
+    assert.strictEqual(String(scopedMatch?.owner_id),String(firstCustomer.id),'M: already-direct incident identity may safely scope a normalized provider match to its known customer');
 
     await query(`UPDATE subscriptions SET status='past_due' WHERE id=$1`,[firstId]);
     await query(`UPDATE subscriptions SET status='cancelled',cancel_at_period_end=TRUE,current_period_end=LEAST(current_period_end,NOW()) WHERE id=$1`,[secondId]);
