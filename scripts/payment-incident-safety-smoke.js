@@ -164,8 +164,8 @@ function main() {
     if (!paypalSource.includes("(existingDelinquent&&!paypalBillingCleared(subscription))") || !paypalSource.includes("paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)")) {
         throw new Error('PayPal ACTIVE with outstanding debt must not clear delinquency or failed-renewal incidents.');
     }
-    if (!paypalSource.includes("status:'past_due'") || !paypalSource.includes('lifecycle.syncProviderAccessState')) {
-        throw new Error('Current PayPal failed renewals do not create the canonical payment-delinquency access hold.');
+    if (!paypalSource.includes("providerStatus:'PAST_DUE'") || !paypalSource.includes('lifecycle.updateProviderSubscription')) {
+        throw new Error('Current PayPal failed renewals must persist past_due on the subscription so later ACTIVE updates with incomplete billing evidence cannot clear delinquency.');
     }
 
     // One Stripe invoice can emit several invoice.payment_failed events while
