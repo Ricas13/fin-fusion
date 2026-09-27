@@ -76,6 +76,7 @@ function main() {
     assert.strictEqual(paypal.paypalHealthy('ACTIVE'), true);
     assert.strictEqual(paypal.paypalHealthy('SUSPENDED'), false);
     assert.strictEqual(paypal.paypalTerminal('CANCELLED'), true);
+    assert.strictEqual(billingControl.paypalTerminalStatus('CANCELED'), true, 'PayPal deletion/reconciliation must accept the alternate terminal cancellation spelling.');
     assert.strictEqual(paypal.paypalTerminal('EXPIRED'), true);
     assert.strictEqual(paypal.paypalTerminal('ACTIVE'), false);
     const paypalSource = source('src/payments/paypal.js');
