@@ -18,12 +18,12 @@ function permanentEnd() { return planExpiry.freeTierEnd(); }
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
 function checkoutBillingMode(input){return billingMode.normalize(input?.commercialSnapshot?.checkoutMode);}
 function validRemoteRecurringId(provider,value){
-    const source=String(provider||'').trim().toLowerCase(),id=String(value||'').trim();
-    // This validates the remote API object family only. Persisted local
-    // recurring truth is billing_mode and must never be inferred from this ID.
-    if(source==='stripe')return /^sub_/i.test(id);
-    if(source==='paypal')return /^I-/i.test(id);
-    return false;
+    const source=String(provider||'').trim().toLowerCase();
+    // Remote IDs are normalized by the caller before attachment. Keeping the
+    // value untrimmed here is intentional: when this helper inspects an existing
+    // local row, whitespace corruption must leave that row repairable rather
+    // than falsely classifying it as a healthy provider link.
+    return billingMode.validRecurringProviderId(source,String(value||''));
 }
 
 async function getProviderOptions(planCode, provider) {
