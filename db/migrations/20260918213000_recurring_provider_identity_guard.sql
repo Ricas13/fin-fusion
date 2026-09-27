@@ -45,17 +45,26 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    provider_key := LOWER(BTRIM(NEW.source)) || ':' || BTRIM(NEW.provider_subscription_id);
-    PERFORM pg_advisory_xact_lock(hashtextextended('captainfin:subscription-provider:' || provider_key, 0));
+    -- Historical duplicate provider identities are surfaced by the integrity
+    -- watchdog, but routine status/billing updates on those legacy rows must
+    -- remain possible so failed-payment and cancellation reconciliation cannot
+    -- be blocked by the guard itself. Enforce single ownership only when an
+    -- identity is first attached or its provider/identifier actually changes.
+    IF TG_OP='INSERT'
+       OR NEW.source IS DISTINCT FROM OLD.source
+       OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id THEN
+        provider_key := LOWER(BTRIM(NEW.source)) || ':' || BTRIM(NEW.provider_subscription_id);
+        PERFORM pg_advisory_xact_lock(hashtextextended('captainfin:subscription-provider:' || provider_key, 0));
 
-    IF EXISTS (
-        SELECT 1
-        FROM public.subscriptions s
-        WHERE s.source=NEW.source
-          AND s.provider_subscription_id=NEW.provider_subscription_id
-          AND s.id IS DISTINCT FROM NEW.id
-    ) THEN
-        RAISE EXCEPTION 'Provider billing identity % is already attached to another subscription', provider_key;
+        IF EXISTS (
+            SELECT 1
+            FROM public.subscriptions s
+            WHERE LOWER(BTRIM(s.source))=LOWER(BTRIM(NEW.source))
+              AND BTRIM(COALESCE(s.provider_subscription_id,''))=BTRIM(NEW.provider_subscription_id)
+              AND s.id IS DISTINCT FROM NEW.id
+        ) THEN
+            RAISE EXCEPTION 'Provider billing identity % is already attached to another subscription', provider_key;
+        END IF;
     END IF;
     RETURN NEW;
 END;
