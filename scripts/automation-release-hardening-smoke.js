@@ -89,8 +89,13 @@ assert(recurringIdentityMigration.includes('DROP CONSTRAINT IF EXISTS subscripti
     'PostgreSQL must reject new malformed recurring provider identities without making legacy invalid rows unwritable by ordinary billing updates.');
 assert(recurringIdentityMigration.includes('guard_subscription_provider_identity')
     && recurringIdentityMigration.includes("pg_advisory_xact_lock")
-    && recurringIdentityMigration.includes("s.provider_subscription_id=NEW.provider_subscription_id"),
-    'Provider billing identities must be serialized and single-owner at the database write boundary.');
+    && recurringIdentityMigration.includes("LOWER(BTRIM(s.source))=LOWER(BTRIM(NEW.source))")
+    && recurringIdentityMigration.includes("BTRIM(COALESCE(s.provider_subscription_id,''))=BTRIM(NEW.provider_subscription_id)"),
+    'Provider billing identities must be normalized, serialized and single-owner at the database write boundary.');
+assert(recurringIdentityMigration.includes("IF TG_OP='INSERT'")
+    && recurringIdentityMigration.includes("OR NEW.source IS DISTINCT FROM OLD.source")
+    && recurringIdentityMigration.includes("OR NEW.provider_subscription_id IS DISTINCT FROM OLD.provider_subscription_id THEN"),
+    'Legacy duplicate provider identities must not block ordinary status reconciliation; duplicate ownership checks run only when the identity is attached or changed.');
 assert(revenueIntegrity.includes('duplicate_provider_billing_identity')
     && revenueIntegrity.includes('HAVING COUNT(*)>1'),
     'Revenue integrity must surface historical duplicate provider billing ownership.');
