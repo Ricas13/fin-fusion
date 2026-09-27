@@ -338,6 +338,38 @@ async function testMHistoricalDuplicateIdentityRemainsReconcileable() {
     );
 }
 
+async function testNOrphanedIncidentMetadataCustomer() {
+    const tag=suffix(), stale=await customer(`n-orphan-${tag}`);
+    const staleId=stale.id;
+    await query(`DELETE FROM customers WHERE id=$1`,[staleId]);
+
+    const identity=await incidents.identityFromMetadata({internal_customer_id:staleId});
+    assert.strictEqual(identity.scope,'unresolved','N: deleted metadata customer must downgrade to unresolved identity');
+    assert.strictEqual(identity.customerId,null,'N: deleted metadata customer must never be written through the payment_incidents customer FK');
+    assert.strictEqual(String(identity.orphanedCustomerId),String(staleId),'N: orphaned metadata identity should remain diagnosable in memory');
+
+    const recorded=await incidents.record({
+        provider:'stripe',
+        eventId:`evt_orphan_refund_${tag}`,
+        caseId:`ch_orphan_refund_${tag}`,
+        kind:'refund',
+        status:'recorded',
+        identity,
+        providerSubscriptionId:`pi_orphan_refund_${tag}`,
+        amountMinor:600,
+        currency:'USD',
+        metadata:{internal_customer_id:staleId,fullRefund:true,originalAmountMinor:600}
+    });
+    assert.strictEqual(recorded.incident.scope,'unresolved','N: orphaned historical refund must remain durable without inventing a live customer');
+    assert.strictEqual(recorded.incident.customer_id,null,'N: orphaned historical refund must store NULL customer_id');
+    assert.strictEqual(Number(recorded.incident.amount_minor),600,'N: historical refund amount must still be preserved');
+    assert.strictEqual(recorded.incident.metadata.internal_customer_id,String(staleId),'N: original provider metadata must preserve the deleted customer reference for audit');
+
+    const malformed=await incidents.identityFromMetadata({internal_customer_id:'not-a-uuid'});
+    assert.strictEqual(malformed.scope,'unresolved','N: malformed historical metadata customer IDs must fail closed instead of throwing a UUID cast error');
+    assert.strictEqual(malformed.customerId,null,'N: malformed historical metadata customer IDs must never become direct identity');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -351,7 +383,8 @@ async function main() {
     await testKProviderBillingIdentitySingleOwner();
     await testLRecurringIdentityStatusBoundary();
     await testMHistoricalDuplicateIdentityRemainsReconcileable();
-    console.log('provider operation recovery DB smoke: A-M ok');
+    await testNOrphanedIncidentMetadataCustomer();
+    console.log('provider operation recovery DB smoke: A-N ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });
