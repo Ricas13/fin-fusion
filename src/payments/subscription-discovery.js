@@ -135,9 +135,13 @@ async function identityContext(premiumRows) {
         if (!billingMode.validRecurringProviderId(provider,providerSubscriptionId)) continue;
         // A malformed local contract (including a whitespace-corrupted ID or
         // wrong billing_mode) is not a healthy link, but a recognizable remote
-        // subscription ID still represents an ownership claim. Keep that claim
-        // visible so repair cannot offer the same provider resource elsewhere.
-        providerSubscriptionOwners.set(`${provider}:${providerSubscriptionId}`, { subscriptionId: String(row.id), customerId: String(row.customer_id) });
+        // subscription ID still represents an ownership claim. Preserve every
+        // historical owner instead of letting Map overwrite order choose one.
+        const key=`${provider}:${providerSubscriptionId}`;
+        if(!providerSubscriptionOwners.has(key))providerSubscriptionOwners.set(key,{subscriptionIds:new Set(),customerIds:new Set()});
+        const owners=providerSubscriptionOwners.get(key);
+        owners.subscriptionIds.add(String(row.id));
+        owners.customerIds.add(String(row.customer_id));
     }
     return { providerIdentityToCustomers, emailToCustomers, externalToPlans, providerSubscriptionOwners };
 }
@@ -187,7 +191,7 @@ function matchPremiumRows(premiumRows, remotes, context) {
             const planMatch = mappedPlans(remote, context).has(String(local.plan_id));
             const customerReasons = customerEvidence(remote, local, context);
             const owner = context.providerSubscriptionOwners.get(`${remote.provider}:${remote.id}`);
-            const conflict = Boolean(owner && owner.subscriptionId !== String(local.subscription_id));
+            const conflict = Boolean(owner && [...owner.subscriptionIds].some(id=>id!==String(local.subscription_id)));
             if (planMatch && customerReasons.length) candidateDetails.push({ remote, customerReasons, conflict, owner });
         }
         const nonConflicting = candidateDetails.filter(item => !item.conflict);
