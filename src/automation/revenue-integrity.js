@@ -158,15 +158,17 @@ async function scan() {
             LIMIT 100
         `),
         query(`
-            SELECT MIN(id::text) AS id,source,provider_subscription_id,
+            SELECT MIN(id::text) AS id,
+                   LOWER(BTRIM(source)) AS source,
+                   BTRIM(provider_subscription_id) AS provider_subscription_id,
                    COUNT(*)::int AS subscription_count,
                    array_agg(DISTINCT customer_id::text ORDER BY customer_id::text) AS customer_ids
             FROM subscriptions
             WHERE source IN('stripe','paypal','plisio')
               AND NULLIF(BTRIM(COALESCE(provider_subscription_id,'')),'') IS NOT NULL
-            GROUP BY source,provider_subscription_id
+            GROUP BY LOWER(BTRIM(source)),BTRIM(provider_subscription_id)
             HAVING COUNT(*)>1
-            ORDER BY COUNT(*) DESC,source,provider_subscription_id
+            ORDER BY COUNT(*) DESC,LOWER(BTRIM(source)),BTRIM(provider_subscription_id)
             LIMIT 100
         `),
         query(`
