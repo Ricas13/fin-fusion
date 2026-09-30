@@ -90,6 +90,10 @@ async function reconcileCommittedCustomer(customerId, context = 'Entitlement') {
     }
 }
 
+async function reconcileCommittedCustomerStrict(customerId) {
+    return reconcileCustomer(customerId);
+}
+
 async function ensurePaymentCustomer({ customerId, provider, providerCustomerId }) {
     if (!providerCustomerId) return null;
     const result = await query(`INSERT INTO payment_customers(customer_id,provider,provider_customer_id) VALUES($1,$2,$3) ON CONFLICT(customer_id,provider) DO UPDATE SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW() RETURNING *`, [customerId, provider, providerCustomerId]);
@@ -412,6 +416,7 @@ module.exports = {
     isHistoricalCheckoutReplay,
     syncProviderAccessState,
     reconcileCommittedCustomer,
+    reconcileCommittedCustomerStrict,
     ensurePaymentCustomer,
     findPaymentCustomer,
     beginPaymentEvent,
