@@ -146,8 +146,6 @@ const lifecycleAdmin = read('src/platform/admin-jellyfin-lifecycle.js');
 const planAdmin = read('src/platform/admin-request-plan-policy.js');
 const pinPlacementMigration = read('db/migrations/20260918001000_server_pin_placement_only.sql');
 const cleanupReturn = read('src/entitlements/jellyfin-cleanup-return.js');
-const inactivityRestore = read('src/entitlements/jellyfin-inactivity-restore.js');
-const adminHolds = read('src/platform/admin-customer-access-holds.js');
 
 // Allocation is one boundary: subscription start, actual account creation,
 // lane transition, or a later return from Permanent Access -- whichever is newest.
@@ -167,13 +165,21 @@ assert.match(base, /EXISTS\([\s\S]*?active_playback_sessions[\s\S]*?aps\.jellyfi
 assert.match(base, /ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/, 'Free playback must preserve orphaned same-customer/server history while allocation boundaries exclude old episodes');
 assert.doesNotMatch(base, /noPlaybackEligible|noPlaybackDays/, 'Free inactivity must have no login/activity timer');
 
-// Enforcement must delete exactly the selected Free account and persist a hold;
-// it must not route deletion through the broad entitlement reconciler.
+// Enforcement must delete exactly the selected Free account, then end the exact
+// Free subscription and release the temporary inactivity hold. The portal user
+// survives, but there is no retained/restorable Free plan.
 assert.match(enforcement, /await provisioning\.deleteJellyfinAccount\(/);
 assert.match(enforcement, /entitlement\.subscription_id[\s\S]*?fresh\.subscription_id/, 'final destructive recheck must require the exact Free subscription episode');
-assert.doesNotMatch(enforcement, /await provisioning\.reconcileCustomer\(/, 'inactivity removal must not invoke broad reconciliation');
+const removeEligibleStart=enforcement.indexOf('async function removeEligibleAccount');
+const runPlanRulesStart=enforcement.indexOf('async function runPlanRules',removeEligibleStart);
+const removeEligibleSource=enforcement.slice(removeEligibleStart,runPlanRulesStart);
+assert.doesNotMatch(removeEligibleSource, /await provisioning\.reconcileCustomer\(/, 'inactivity removal must not invoke broad reconciliation');
 assert.match(enforcement, /await accessHolds\.addHold\([\s\S]*?await provisioning\.deleteJellyfinAccount/, 'the durable inactivity hold must exist before deletion');
-assert(enforcement.indexOf("'customer.inactivity.remove_jellyfin'") > enforcement.indexOf('await verifyRemoved(row.account_id)'), 'successful removal audit must be written only after deletion is verified');
+assert.match(enforcement, /await verifyRemoved\(row\.account_id\)[\s\S]*?await finishRemovedFreePlan/, 'the Free plan must end only after Jellyfin deletion is verified');
+assert.match(enforcement, /subscriptionTermination\.terminateLocal\([\s\S]*?Free Server plan ended after inactivity removal/, 'successful inactivity removal must terminate the exact Free subscription');
+assert.match(enforcement, /finishRemovedFreePlan[\s\S]*?accessHolds\.releaseHold/, 'terminal removal must release its temporary inactivity hold');
+assert.match(enforcement, /finalizeDetachedRemovals/, 'partial legacy removals with an already-deleted account must be finalized on later worker runs');
+assert(enforcement.indexOf("'customer.inactivity.remove_jellyfin'") > enforcement.indexOf('await finishRemovedFreePlan'), 'successful removal audit must be written only after plan termination and hold release');
 assert.doesNotMatch(enforcement, /refreshServerUserActivity|candidate_user_not_observed_in_fresh_users_response/, 'login/user-inventory refresh must not be a retention rule');
 assert.doesNotMatch(enforcement, /massRemovalRisk|CIRCUIT_BREAKER_/, 'retired mass-removal rules must be gone');
 assert.doesNotMatch(enforcement, /forceDryRun/, 'configured dry-run must be the only execution-mode authority');
@@ -198,12 +204,10 @@ assert.match(grace, /async function applyLegacySafetyWindow/);
 assert.match(grace, /inactivity_observation_reset_at/);
 assert.match(grace, /module\.exports = \{ applyLegacySafetyWindow \}/,'legacy safety module must expose one runtime concept only');
 
-// Every normal restore entry point must use the same hold-release/reprovision
-// owner so a failed restore cannot silently leave inactivity authority cleared.
-assert.match(cleanupReturn, /inactivityRestore\.restoreDisabledFreeAccess\(customerId,\{reconcile\}\)/,'customer portal restore must delegate to canonical inactivity restoration');
-assert.match(adminHolds, /inactivityRestore\.restoreDisabledFreeAccess\(customerId,/,'admin inactivity-hold release must delegate to canonical inactivity restoration');
-assert.match(inactivityRestore, /FREE_JELLYFIN_RESTORE_POSTCONDITION_FAILED/,'restore must verify the resulting Free account');
-assert.match(inactivityRestore, /catch \(error\) \{[\s\S]*?await accessHolds\.addHold\(/,'any failed restore or postcondition must put the inactivity hold back');
+// Customer return cleanup is now deliberately separate from Free inactivity.
+assert.doesNotMatch(cleanupReturn, /jellyfin-inactivity-restore|restoreDisabledFreeAccess|declineDeletedFreeAccess/,'customer portal cleanup must never resurrect an inactivity-removed Free plan');
+assert.match(cleanupReturn, /canRestoreDeletedFree:false/,'compatibility status must explicitly report that Free inactivity is not restorable');
+assert.match(cleanupReturn, /Free Server inactivity is terminal/,'the lifecycle boundary must be documented next to the customer-return state');
 
 // Status and admin UI must describe the same two rules.
 assert.doesNotMatch(status, /refreshCandidateUserActivity/);

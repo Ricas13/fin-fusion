@@ -193,9 +193,17 @@ async function disableAccounts(accounts) {
 // lifecycle (customer-inactivity-scoped.js) rather than this immediate path.
 async function retireAccounts(accounts, { deleteAccounts = false, reason = '' } = {}) {
     for (const account of accounts) {
+        // Definitive entitlement removal must never silently keep a local
+        // server assignment merely because the server is currently disabled.
+        // Attempt deletion and surface the operational failure so repair keeps
+        // retrying; blocked/reversible access may still skip an unavailable
+        // server because the account is intentionally retained.
+        if (deleteAccounts) {
+            await base.deleteJellyfinAccount(account, { reason });
+            continue;
+        }
         if (!account.server_enabled) continue;
-        if (deleteAccounts) await base.deleteJellyfinAccount(account, { reason });
-        else if (!account.disabled) await base.disableJellyfinAccount(account);
+        if (!account.disabled) await base.disableJellyfinAccount(account);
     }
 }
 
@@ -325,10 +333,18 @@ async function recoverMissingLaneAccount(customerId, entitlement, lane, staleAcc
 async function reconcileLane(customerId, entitlement, lane, accounts, { makePrimary = false } = {}) {
     const laneAccounts = accounts.filter(account => account.access_lane === lane);
     if (!entitlement || entitlement.blocked) {
-        const definitivelyGone = lane === 'primary' && (!entitlement || entitlement.admin_jellyfin_removed === true);
+        // A lane with no entitlement must not leave a Jellyfin identity behind.
+        // Blocked is different: the plan still exists, so we retain the mapping
+        // disabled for a reversible hold. "No plan" always converges to
+        // "no server account" for both primary and Free lanes.
+        const definitivelyGone = !entitlement || entitlement.admin_jellyfin_removed === true;
         await retireAccounts(laneAccounts, {
             deleteAccounts: definitivelyGone,
-            reason: entitlement?.admin_jellyfin_removed ? 'Jellyfin access removed by administrator' : 'No valid paid entitlement'
+            reason: entitlement?.admin_jellyfin_removed
+                ? 'Jellyfin access removed by administrator'
+                : lane === 'free'
+                    ? 'No valid Free Server entitlement'
+                    : 'No valid paid entitlement'
         });
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
@@ -477,7 +493,12 @@ async function reconcileCustomerUnlocked(customerId) {
                 // stray/mis-tagged row doesn't operate on an id retireAccounts
                 // may have just deleted.
                 const stray = accounts.filter(account => !['primary', 'free'].includes(account.access_lane));
-                if (stray.length) await disableAccounts(stray);
+                if (stray.length) {
+                    await retireAccounts(stray, {
+                        deleteAccounts: !primaryEntitlement && !freeLaneEntitlement,
+                        reason: 'No valid Jellyfin entitlement for unassigned account lane'
+                    });
+                }
             }
 
             const stremio = require('../stremio/entitlements');

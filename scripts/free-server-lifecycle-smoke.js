@@ -5,8 +5,6 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const registry = require('../src/jellyfin/registry');
 const lifecycle = require('../src/automation/customer-inactivity-scoped');
-const freeCapacityBackfill = require('../src/automation/free-capacity-backfill');
-const planCapacity = require('../src/entitlements/plan-capacity');
 const lifecyclePolicy = require('../src/entitlements/jellyfin-lifecycle-policy');
 const inactivityRestore = require('../src/entitlements/jellyfin-inactivity-restore');
 const serviceAdminControl = require('../src/entitlements/service-admin-control');
@@ -120,7 +118,7 @@ const originalRequest = registry.request;
         assert.strictEqual(stillPresent.rows[0].disabled, false, 'failed deletion must leave the existing account enabled');
         const pendingHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
         assert.strictEqual(pendingHold.rowCount, 1, 'failed enforcement must leave exactly one inactivity hold for retry');
-        assert.strictEqual(pendingHold.rows[0].released_at, null, 'failed deletion must keep the inactivity hold active until retry succeeds or access is explicitly restored');
+        assert.strictEqual(pendingHold.rows[0].released_at, null, 'failed deletion must keep the inactivity hold active until the retry can finish deletion and end the Free plan');
 
         // Once the activity policy is breached there is no separate disabled
         // grace state. The successful retry removes the Jellyfin identity now.
@@ -131,74 +129,27 @@ const originalRequest = registry.request;
         assert.strictEqual(deleteCalls, 2, 'retry must issue the second Jellyfin DELETE even while the Free account is server-pinned');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE id=$1', [accountId])).rows[0].n, 0, 'Free Jellyfin mapping must be absent after successful remote deletion');
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM customers WHERE id=$1', [customerId])).rows[0].n, 1, 'portal customer must survive Jellyfin deletion');
-        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [customerId])).rows[0].n, 1, 'Free subscription history must survive Jellyfin deletion');
+        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [customerId])).rows[0].n, 1, 'Free subscription history must survive Jellyfin deletion for audit/history');
+        const endedSubscription = await query('SELECT status,current_period_end FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 ORDER BY created_at DESC LIMIT 1', [customerId, planId]);
+        assert.strictEqual(endedSubscription.rows[0].status, 'cancelled', 'successful inactivity removal must end the Free plan itself');
+        assert(new Date(endedSubscription.rows[0].current_period_end).getTime() <= Date.now() + 5000, 'ended Free plan must not retain a future access period');
         const recovery = await query(`SELECT removal_reason FROM customer_media_access_recovery WHERE customer_id=$1 AND service_type='jellyfin' AND access_lane='free'`, [customerId]);
         assert.strictEqual(recovery.rowCount, 1, 'direct inactivity deletion must preserve Free media recovery state');
         assert.match(String(recovery.rows[0].removal_reason || ''), /^Free Server inactivity:/, 'recovery state must retain the actual inactivity removal reason');
-        const activeHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
-        assert.strictEqual(activeHold.rowCount, 1, 'successful inactivity removal must leave the Free-lane hold active');
-        assert.strictEqual(activeHold.rows[0].released_at, null, 'inactivity hold must remain active until explicit restoration');
+        const releasedHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
+        assert.strictEqual(releasedHold.rowCount, 1, 'successful inactivity removal keeps hold history for audit');
+        assert(releasedHold.rows[0].released_at, 'successful inactivity removal must release the temporary hold after ending the Free plan');
 
-        // Capacity and vacancy backfill must apply the exact same Free-lane
-        // blocker semantics as entitlement truth before LIMIT. Otherwise a
-        // large set of inactivity-held customers can reserve phantom places or
-        // starve genuinely provisionable customers behind them.
-        const blockedCapacity = await planCapacity.usage(planId);
-        const blockedQueue = await freeCapacityBackfill.waitingCandidates(1000);
-        assert(!blockedQueue.some(row => String(row.customer_id) === String(customerId)),
-            'inactivity-held Free customer must not occupy the vacancy backfill candidate queue');
+        const noFreeEntitlement = await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true });
+        assert.strictEqual(noFreeEntitlement, null, 'inactivity-removed customer must have no live Free entitlement at all');
 
-        // Explicit admin-present authority is allowed to override automatic
-        // inactivity, so the same customer must become capacity-owning and
-        // backfill-eligible while that authority is active.
-        await serviceAdminControl.setPresent(customerId, 'jellyfin', {
-            reason: 'integration test: explicit admin grant overrides inactivity'
-        });
-        const grantedCapacity = await planCapacity.usage(planId);
-        assert.strictEqual(Number(grantedCapacity.pendingUsers), Number(blockedCapacity.pendingUsers) + 1,
-            'explicit admin-present Free access must reserve its owed server place despite the inactivity hold');
-        const grantedQueue = await freeCapacityBackfill.waitingCandidates(1000);
-        assert(grantedQueue.some(row => String(row.customer_id) === String(customerId)),
-            'explicit admin-present Free access must remain eligible for vacancy backfill');
-
-        // Return to placement-only pinning for the rest of the lifecycle test.
-        await serviceAdminControl.pinServer(customerId, serverId, {
-            reason: 'integration test: restore placement-only authority after blocker check'
-        });
-        const repinnedQueue = await freeCapacityBackfill.waitingCandidates(1000);
-        assert(!repinnedQueue.some(row => String(row.customer_id) === String(customerId)),
-            'server pin must not bypass the active inactivity hold in the backfill queue');
-
-        const pinnedBlocked = await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true });
-        assert.strictEqual(pinnedBlocked.admin_jellyfin_mode, 'forced_server', 'fixture must still be server-pinned after inactivity removal');
-        assert.strictEqual(pinnedBlocked.blocked, true, 'server pin must not erase the active inactivity hold');
+        const restoreState = await inactivityRestore.restoreStatus(customerId);
+        assert.strictEqual(restoreState.eligible, false, 'terminal inactivity removal must not be restorable');
+        assert.strictEqual(restoreState.reason, 'no_live_free_jellyfin_entitlement', 'restore inspection must see no remaining Free plan');
 
         await provisioning.reconcileCustomer(customerId);
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane=\'free\'', [customerId])).rows[0].n, 0,
-            'canonical reconciliation must not recreate a server-pinned Free account while its inactivity hold is active');
-
-        // Explicit restoration means absent -> freshly provisioned + enabled,
-        // never toggling a disabled account back on.
-        let restoredAccountId = null;
-        const restored = await inactivityRestore.restoreDisabledFreeAccess(customerId, {
-            actorUserId: null,
-            reconcile: async id => {
-                assert.strictEqual(id, customerId);
-                const replacement = await query(`
-                    INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,is_primary)
-                    VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',NOW(),TRUE) RETURNING id
-                `, [customerId, serverId, `restored-${remoteUserId}`, `Free_restored_${suffix}`]);
-                restoredAccountId = replacement.rows[0].id;
-                return { active:true, account:replacement.rows[0] };
-            }
-        });
-        assert.strictEqual(restored.enabled, true, 'explicit Free restoration must converge to an enabled account');
-        assert(restoredAccountId, 'restoration must create a replacement Jellyfin account');
-        const restoredRow = await query('SELECT disabled FROM jellyfin_accounts WHERE id=$1', [restoredAccountId]);
-        assert.strictEqual(restoredRow.rowCount, 1);
-        assert.strictEqual(restoredRow.rows[0].disabled, false, 'replacement Free account must be enabled');
-        const releasedHold = await query(`SELECT released_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='inactivity_policy' AND source_key=('plan:'||$2::text) ORDER BY created_at DESC LIMIT 1`, [customerId, planId]);
-        assert(releasedHold.rows[0].released_at, 'explicit restore must release the inactivity hold');
+            'canonical reconciliation must not recreate Free access after the Free plan has ended');
 
         console.log('free server lifecycle db smoke: ok');
     } finally {

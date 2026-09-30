@@ -31,10 +31,11 @@ assert(retryBlock.includes('reconcile:provisioning.reconcileCustomer'),'explicit
 assert(retryBlock.includes('provisioning.reconcileCustomer(customerId)'),'ordinary retry must continue to reconcile customers without restoration state');
 
 const inspectStart=cleanup.indexOf('async function returningCustomerStatus');
-const firstMutationStart=cleanup.indexOf('async function declineDeletedFreeAccess');
+const retiredDeclineStart=cleanup.indexOf('async function declineDeletedFreeAccess');
 const restoreMutationStart=cleanup.indexOf('async function restoreReturningCustomer');
-assert(inspectStart>=0&&firstMutationStart>inspectStart&&restoreMutationStart>firstMutationStart,'cleanup-return service must separate read-only inspection from explicit decline/restore mutations');
-const inspectBlock=cleanup.slice(inspectStart,firstMutationStart);
+assert(inspectStart>=0&&restoreMutationStart>inspectStart,'cleanup-return service must separate read-only inspection from the explicit active-plan restore mutation');
+assert.strictEqual(retiredDeclineStart,-1,'Free inactivity must not expose the retired customer decline/restore lifecycle');
+const inspectBlock=cleanup.slice(inspectStart,restoreMutationStart);
 assert(!inspectBlock.includes('releaseHold('),'read-only restoration inspection must not release access holds');
 assert(!inspectBlock.includes('UPDATE jellyfin_account_lifecycle'),'read-only restoration inspection must not mutate lifecycle history');
 assert(!inspectBlock.includes('INSERT INTO audit_log'),'read-only restoration inspection must not append mutation audit events');

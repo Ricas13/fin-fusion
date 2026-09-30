@@ -46,16 +46,6 @@ function legacyAccessRedirect(req,res){
   const queryString=params.toString();
   return res.redirect(302,'/account/access'+(queryString?'?'+queryString:''));
 }
-function markRemovedFreeAccess(subscriptions,returnStatus){
-  const rows=Array.isArray(subscriptions)?subscriptions:[];
-  if(!returnStatus?.canRestoreDeletedFree)return rows;
-  const freePlanId=String(returnStatus.freePlanId||'');
-  return rows.map(subscription=>{
-    if(!subscription?.is_free_tier)return subscription;
-    if(freePlanId&&String(subscription.plan_id||'')!==freePlanId)return subscription;
-    return{...subscription,access_removed:true,access_removed_reason:'inactivity'};
-  });
-}
 function inactiveReason(subscription,holdType=null,{removedForInactivity=false}={}){
   if(removedForInactivity||holdType==='inactivity_policy'||holdType==='jellyfin_cleanup')return'Free Server access was removed because the activity requirements were not met.';
   if(holdType==='payment_delinquency')return'Access ended because payment could not be collected.';
@@ -294,9 +284,27 @@ function createCustomerJellyfinRouter(){
     try{
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
+      const liveFree=await subscriptionState.liveFreeJellyfinSubscription(customerId).catch(()=>null);
+      let incompleteFreeSubscriptionId=null;
+      if(liveFree&&!liveFree.blocked){
+        const readyFree=await query(`
+          SELECT 1
+          FROM jellyfin_accounts ja
+          JOIN jellyfin_servers js ON js.id=ja.server_id
+          WHERE ja.customer_id=$1
+            AND ja.account_purpose='jellyfin'
+            AND ja.access_lane='free'
+            AND ja.disabled=FALSE
+            AND js.enabled=TRUE
+            AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+          LIMIT 1
+        `,[customerId]);
+        if(!readyFree.rowCount)incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
+      }
       const portal=await customers.getCustomerPortal(customerId);
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
         .filter(customerNav.liveServiceSubscription)
+        .filter(subscription=>!incompleteFreeSubscriptionId||String(subscription.subscription_id||subscription.id||'')!==incompleteFreeSubscriptionId)
         .sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
       const [accounts,requestState,returnStatus,rawFreeUsage]=await Promise.all([
         accessAccountsForCustomer(customerId,portal),
@@ -304,8 +312,30 @@ function createCustomerJellyfinRouter(){
         cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,canRestoreDeletedFree:false,freePlanId:null,error:error.message})),
         inactivityStatus.customerStatus(customerId).catch(error=>({applies:false,error:error.message,telemetry:{ready:false}}))
       ]);
-      const subscriptions=markRemovedFreeAccess(rawSubscriptions,returnStatus),freeUsage=freeAccessHealth(rawFreeUsage);
+      const subscriptions=rawSubscriptions,freeUsage=freeAccessHealth(rawFreeUsage);
       if(!subscriptions.length&&!requestState.eligible){
+        if(incompleteFreeSubscriptionId){
+          const message='You do not currently have a Free Server plan. Choose an available plan from the plans page if you want access again.';
+          return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
+        }
+        const removed=await query(`
+          SELECT 1
+          FROM audit_log a
+          WHERE a.entity_type='customer'
+            AND a.entity_id=$1
+            AND a.action IN ('customer.inactivity.remove_jellyfin','customer.inactivity.finalize_free_plan')
+            AND NOT EXISTS (
+              SELECT 1 FROM subscriptions s
+              WHERE s.customer_id=$1
+                AND s.created_at>a.created_at
+            )
+          ORDER BY a.created_at DESC
+          LIMIT 1
+        `,[customerId]).catch(()=>({rowCount:0}));
+        if(removed.rowCount){
+          const message='Your Free Server access was removed because of inactivity. You now have no active Free Server plan. There is nothing reserved to restore; choose an available plan from the plans page if you want access again.';
+          return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
+        }
         return res.redirect('/account?error='+encodeURIComponent('You do not currently have active streaming access.'));
       }
       res.setHeader('Cache-Control','no-store, private, max-age=0');
@@ -362,4 +392,4 @@ function createCustomerJellyfinRouter(){
   return router;
 }
 
-module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,markRemovedFreeAccess,freeAccessHealth,inactiveAccessHistory};
+module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,freeAccessHealth,inactiveAccessHistory};

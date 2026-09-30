@@ -6,6 +6,9 @@ const read = file => fs.readFileSync(file, 'utf8');
 
 const readiness = read('src/jellyfin/free-claim-readiness.js');
 const bridge = read('src/jellyfin/free-claim-provisioning.js');
+const lifecycle = read('src/payments/lifecycle.js');
+const reconciliation = read('src/jellyfin/resilient-provisioning.js');
+const backfill = read('src/automation/free-capacity-backfill.js');
 const jobs = read('src/automation/jobs.js');
 const worker = read('scripts/automation-worker.js');
 const registration = read('src/platform/customer-public-auth.js');
@@ -14,19 +17,25 @@ const router = read('src/platform/router.js');
 assert.match(readiness, /async function hasReadyFreeAccount/, 'Free claims must verify a real Jellyfin account');
 assert.match(readiness, /ja\.access_lane='free'/, 'Free readiness must require the Free lane');
 assert.match(readiness, /ja\.disabled=FALSE[\s\S]*js\.enabled=TRUE/, 'Free readiness must require an enabled account on an enabled server');
-assert.match(readiness, /await control\.forceCustomerDue\(customerId\)/, 'a committed but unready Free claim must become immediately due');
-assert.match(readiness, /Math\.min\(1, Number\(attempts\)/, 'request-path repair must allow at most one extra Jellyfin retry');
-assert.match(readiness, /free_capacity_backfill job owns vacancy recovery/, 'capacity failures must be handed to the dedicated Free backfill');
-assert.match(bridge, /ensureFreeClaimProvisioned: readiness\.ensureFreeClaimReady/, 'the customer routes must use the canonical readiness helper');
+assert.doesNotMatch(readiness, /forceCustomerDue|reconcileCustomer|retrying automatically|free_capacity_backfill job owns vacancy recovery/, 'Free claim readiness must not create a deployment-pending retry state');
+assert.match(bridge, /ensureFreeClaimProvisioned: readiness\.ensureFreeClaimReady/, 'customer routes must use the canonical readiness verifier');
 
-assert.match(jobs, /async free_capacity_backfill\(\)\{return freeCapacityBackfill\.run\(\{limit:100\}\)\}/, 'the single Free vacancy backfill job must remain registered');
-assert.doesNotMatch(jobs, /async free_claim_provisioning\(/, 'do not introduce a second competing Free provisioning worker');
-assert.match(worker, /free_capacity_backfill:30/, 'Free vacancy recovery must remain on the 30-second cadence');
-assert.doesNotMatch(worker, /free_claim_provisioning:30/, 'do not schedule a duplicate Free claim worker');
+assert.match(lifecycle, /reconcileCommittedCustomerStrict\(customerId\)/, 'Free claim activation must synchronously reconcile the exact customer');
+assert.match(lifecycle, /readyFreeAccountForSubscription\(customerId,created\.id\)/, 'Free claim success must require the exact subscription to own a ready Free account');
+assert.match(lifecycle, /rollbackUnprovisionedFreeClaim\(customerId,created\.id/, 'an unprovisioned Free claim must be rolled back instead of retained');
+assert.match(lifecycle, /replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed'/, 'rolled-back Free claims must remain schema-valid while being excluded from one-time historical claim eligibility');
+assert.match(reconciliation, /const definitivelyGone = !entitlement \|\| entitlement\.admin_jellyfin_removed === true/, 'no-entitlement Free lanes must delete their Jellyfin account rather than leave a disabled orphan');
 
-assert.match(registration, /ensureFreeClaimProvisioned\(created\.customer\.id,\{attempts:2\}\)/, 'verified Free registrations must verify actual Jellyfin readiness');
-assert.match(registration, /Your Free Access place is reserved and Jellyfin setup is retrying automatically now/, 'registration must not claim Jellyfin is ready when it is not');
-assert.match(router, /ensureFreeClaimProvisioned\(req\.session\.customerId,\{attempts:2\}\)/, 'existing customers claiming Free Access must verify actual Jellyfin readiness');
-assert.match(router, /Your Jellyfin account is ready/, 'direct Free claims must distinguish actual Jellyfin readiness');
+assert.match(jobs, /async free_capacity_backfill\(\)\{return freeCapacityBackfill\.run\(\{limit:100\}\)\}/, 'the single Free repair/backfill job must remain registered');
+assert.match(worker, /free_capacity_backfill:30/, 'Free lifecycle repair must remain on the 30-second cadence');
+assert.match(backfill, /rollbackUnprovisionedFreeClaim/, 'legacy Free plan-without-server rows must be removed rather than left waiting');
+assert.match(backfill, /orphanAccountCandidates/, 'Free server-without-plan rows must be discovered for cleanup');
+assert.match(backfill, /waiting: 0/, 'the Free backfill result must not expose a deployment-waiting state');
 
-console.log('free claim provisioning readiness smoke: ok');
+assert.match(registration, /ensureFreeClaimProvisioned\(created\.customer\.id\)/, 'verified Free registrations must verify actual Jellyfin readiness');
+assert.doesNotMatch(registration, /setup is retrying automatically|place is reserved and Jellyfin setup/, 'registration must not advertise deployment pending');
+assert.match(router, /ensureFreeClaimProvisioned\(req\.session\.customerId\)/, 'existing customers claiming Free Access must verify actual Jellyfin readiness');
+assert.doesNotMatch(router, /place is reserved and Jellyfin setup is retrying automatically/, 'direct Free claims must never advertise deployment pending');
+assert.match(router, /Free Access claimed\. Your Jellyfin account is ready\./, 'direct Free claims have one successful end state: plan plus ready account');
+
+console.log('free claim binary provisioning smoke: ok');

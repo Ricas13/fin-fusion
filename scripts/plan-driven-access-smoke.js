@@ -109,7 +109,10 @@ assert(inactivity.includes('!row.currently_playing'),'A currently playing Free a
 assert(inactivity.includes("HOLD_TYPE = 'inactivity_policy'")||inactivity.includes("HOLD_TYPE='inactivity_policy'"),'Lifecycle actions must use an explicit Jellyfin hold');
 assert(!inactivity.includes('CLEANUP_HOLD_TYPE')&&!inactivity.includes('cleanupCandidates')&&!inactivity.includes('deleteDormantAccount')&&!inactivity.includes('runCleanup'),'The unsafe, unguarded dormant-account cleanup pipeline must not return to this module');
 const engineCore=read('src/jellyfin/provisioning-engine.js');
-assert(inactivityScoped.includes('provisioning.deleteJellyfinAccount')&&!inactivityScoped.includes('provisioning.reconcileCustomer(row.customer_id)'),'Free inactivity removal must target only the exact account, not run broad reconciliation');
+const removeEligibleStart=inactivityScoped.indexOf('async function removeEligibleAccount');
+const runPlanRulesStart=inactivityScoped.indexOf('async function runPlanRules',removeEligibleStart);
+const removeEligibleSource=inactivityScoped.slice(removeEligibleStart,runPlanRulesStart);
+assert(removeEligibleSource.includes('provisioning.deleteJellyfinAccount')&&!removeEligibleSource.includes('provisioning.reconcileCustomer(row.customer_id)'),'Free inactivity removal must target only the exact account, not run broad reconciliation');
 assert(inactivityScoped.includes('requireNoActivePlayback: true'),'Automatic inactivity deletion must request a live playback precondition');
 assert(engineCore.includes('assertNoActivePlaybackBeforeDelete')&&engineCore.includes("registry.request(account.server_id, '/Sessions'"),'The destructive boundary must recheck live Jellyfin sessions');
 assert(engineCore.includes('/Users/${encodeURIComponent(account.jellyfin_user_id)}')&&engineCore.includes("method: 'DELETE'"),'The canonical delete path must delete the Jellyfin user remotely');

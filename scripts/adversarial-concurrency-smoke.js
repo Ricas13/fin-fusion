@@ -7,6 +7,7 @@ const { query, transaction, getPool } = require('../src/db');
 const discounts = require('../src/payments/discounts');
 const intents = require('../src/payments/checkout-intents');
 const lifecycle = require('../src/payments/lifecycle');
+const jellyfinRegistry = require('../src/jellyfin/registry');
 const providerOps = require('../src/payments/provider-operations');
 const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
@@ -72,13 +73,42 @@ async function freeClaimRace() {
     const free=await query(`UPDATE plans SET capacity_limit=1,updated_at=NOW() WHERE is_free_tier=TRUE RETURNING *`);
     assert.strictEqual(free.rowCount,1,'Fresh database must contain exactly one canonical Free Access plan');
     const p=free.rows[0],c=await customer('free');
-    const results=await Promise.allSettled([lifecycle.claimFreePlan(c.id,p.code),lifecycle.claimFreePlan(c.id,p.code)]);
-    assert.strictEqual(results.filter(x=>x.status==='fulfilled').length,1,'Concurrent free claim must produce exactly one successful claim');
-    assert.strictEqual(results.filter(x=>x.status==='rejected').length,1,'Concurrent free claim must reject the duplicate claim');
-    const count=await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'`,[c.id,p.id]);
-    assert.strictEqual(Number(count.rows[0].n),1,'Concurrent free claim persisted duplicate subscriptions');
-    const persisted=await query(`SELECT current_period_end FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'`,[c.id,p.id]);
-    assert(new Date(persisted.rows[0].current_period_end).getUTCFullYear()===9999,'Canonical Free Access claim must be non-expiring');
+
+    // Free claims are now binary: success requires an actual enabled Jellyfin
+    // account. Stub the Jellyfin API for this concurrency-only test so a real
+    // server/network dependency cannot turn both contenders into provisioning
+    // failures and hide the duplicate-claim race we are testing.
+    const originalRequest=jellyfinRegistry.request;
+    const users=new Map();
+    let nextUser=1;
+    jellyfinRegistry.request=async(_serverId,endpoint,options={})=>{
+        const method=String(options.method||'GET').toUpperCase();
+        if(endpoint==='/Users'&&method==='GET')return Array.from(users.values());
+        if(endpoint==='/Library/VirtualFolders'&&method==='GET')return[];
+        if(endpoint==='/Users/New'&&method==='POST'){
+            const user={Id:`race-free-user-${nextUser++}`,Name:String(options.body?.Name||'race-user'),Policy:{IsAdministrator:false}};
+            users.set(user.Id,user);
+            return user;
+        }
+        const userMatch=String(endpoint).match(/^\/Users\/([^/]+)$/);
+        if(userMatch&&method==='GET')return users.get(decodeURIComponent(userMatch[1]))||{};
+        if(userMatch&&method==='DELETE'){users.delete(decodeURIComponent(userMatch[1]));return{};}
+        if(/^\/Users\/[^/]+\/Policy$/.test(String(endpoint))&&method==='POST')return{};
+        throw new Error(`Unexpected Jellyfin stub request: ${method} ${endpoint}`);
+    };
+
+    try{
+        const results=await Promise.allSettled([lifecycle.claimFreePlan(c.id,p.code),lifecycle.claimFreePlan(c.id,p.code)]);
+        assert.strictEqual(results.filter(x=>x.status==='fulfilled').length,1,'Concurrent free claim must produce exactly one successful claim');
+        assert.strictEqual(results.filter(x=>x.status==='rejected').length,1,'Concurrent free claim must reject the duplicate claim');
+        const count=await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND status IN('active','trialing','past_due','paused') AND current_period_end>NOW()`,[c.id,p.id]);
+        assert.strictEqual(Number(count.rows[0].n),1,'Concurrent free claim persisted duplicate live subscriptions');
+        const persisted=await query(`SELECT current_period_end FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND status='active' ORDER BY created_at DESC LIMIT 1`,[c.id,p.id]);
+        assert.strictEqual(persisted.rowCount,1,'Concurrent Free claim did not retain exactly one active subscription');
+        assert(new Date(persisted.rows[0].current_period_end).getUTCFullYear()===9999,'Canonical Free Access claim must be non-expiring');
+    }finally{
+        jellyfinRegistry.request=originalRequest;
+    }
 }
 
 async function checkoutSurvivesCatalogueRetirement() {

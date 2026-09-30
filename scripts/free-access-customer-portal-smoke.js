@@ -37,14 +37,16 @@ assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jell
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');
 
-assert(/declineDeletedFreeAccess/.test(cleanupReturn),'returning Free Access flow must expose an explicit decline mutation');
-assert(/subscriptionTermination\.terminateLocal\(status\.freeSubscriptionId/.test(cleanupReturn),'declining restore must cancel the retained Free Access subscription');
-assert(/type:INACTIVITY_HOLD_TYPE/.test(cleanupReturn)&&/releasedInactivityHold/.test(cleanupReturn),'declining restore must release the matching inactivity hold');
-assert(/freeSubscriptionId:freeEntitlement\?\.subscription_id/.test(cleanupReturn),'restore inspection must retain the exact Free Access subscription identity');
-assert(/\/account\/jellyfin\/free-access\/decline/.test(dash)&&/cleanupReturn\.declineDeletedFreeAccess/.test(dash),'customer portal must wire the explicit Free Access decline route');
-assert(/csrf\.verify\(req\)/.test(dash),'Free Access decline route must remain CSRF protected');
-assert(/Free Access was removed\. You can join again whenever a spot is available\./.test(dash),'decline flow must explain that re-application depends on capacity');
-assert(/action="\/account\/jellyfin\/free-access\/decline"/.test(dash)&&/Continue without restoring/.test(dash),'deleted Free Access restore prompt must submit the destructive decline action rather than silently retain the plan');
+assert(!/declineDeletedFreeAccess/.test(cleanupReturn),'Free inactivity removal must not retain a customer-facing decline/restore lifecycle');
+assert(!/jellyfin-inactivity-restore|restoreDisabledFreeAccess/.test(cleanupReturn),'customer return cleanup must not resurrect an inactivity-removed Free plan');
+assert(/canRestoreDeletedFree:false/.test(cleanupReturn),'customer return status must explicitly say Free inactivity is not restorable');
+assert(!/\/account\/jellyfin\/free-access\/decline/.test(dash),'customer portal must not expose the retired Free inactivity decline route');
+assert(!/Free Access entitlement is still reserved|Free Access plan will be released|account\/jellyfin\/free-access\/decline/.test(dash),'portal copy must not describe inactivity-removed Free access as reserved or restorable');
+assert(/Your Free Server access was removed because of inactivity\. You now have no active Free Server plan/.test(dash),'inactivity-removed users must get an explicit no-plan message');
+assert(/excludeSubscriptionIds/.test(dash)&&/effectiveCurrentPlan=incompleteFreeSubscriptionId/.test(dash),'a live Free row without a ready server must be excluded from both raw portal subscriptions and current-plan selection');
+assert(/You do not currently have a Free Server plan/.test(dash),'incomplete legacy Free rows must be presented simply as no active Free plan, never as deployment pending');
+assert(/liveFreeJellyfinSubscription\(customerId\),stremioEntitlements/.test(dash),'blocked/removed Free entitlements must not be rendered as active dashboard plans');
+assert(/No active plan/.test(onboarding)&&/you do not currently have a streaming plan/.test(onboarding),'onboarding must make the no-plan state explicit');
 assert(/<button class="button free full" type="submit">Join<\/button>/.test(onboarding),'available Free Access must expose a Join action after the old plan is released');
 assert(/aria-disabled="true">Full<\/span>/.test(onboarding),'sold-out Free Access must render as Full');
 assert(!/Free Access is full\. Join the Discord/.test(onboarding),'sold-out Free Access must not replace the Full state with a Discord subscription action');
@@ -64,8 +66,8 @@ assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'signup-inten
 assert(/freeIntent\(req\.query\?\.intent\).*customerId.*customerUserId.*\/account\/free-access/.test(publicAuth),'signed-in visitors following a Free Access signup link must leave registration and resume through their existing account');
 assert(/\/account\/login\?next=%2Faccount%2Ffree-access/.test(register)&&/Sign in to continue Free Access/.test(register),'existing-account sign-in from Free Access registration must preserve the Free Access continuation path');
 assert(/next==='\/account\/free-access'\?'\/account\/register\?intent=free'/.test(login),'Free Access login must preserve the registration path for genuinely new customers');
-assert(/r\.get\('\/account\/free-access'/.test(dash)&&/cleanupReturn\.returningCustomerStatus/.test(dash)&&/liveFreeJellyfinSubscription/.test(dash),'existing-account Free Access continuation must distinguish restore, existing entitlement and fresh-claim states');
-assert(/You already have a Free Access place/.test(dash)&&/choose the Free Server option below/.test(dash),'existing-account Free Access continuation must give a clear result instead of returning users to a signup loop');
+assert(/r\.get\('\/account\/free-access'/.test(dash)&&/liveFreeJellyfinSubscription/.test(dash),'existing-account Free Access continuation must distinguish an existing Free entitlement from a fresh claim without a restore state');
+assert(/Your Free Access is already active\./.test(dash)&&/choose the Free Server option below/.test(dash),'existing-account Free Access continuation must give a clear result instead of returning users to a signup loop');
 assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/turnstileScript=turnstileEnabled/.test(storefront),'storefront may preload Turnstile assets while registration owns the challenge widget');
 assert(!/cf-turnstile/.test(storefront),'storefront itself must not render the registration Turnstile widget after the Free CTA became a GET link');
 assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrogate-Control','no-store/.test(storefront),'storefront capacity must be no-store at browser and surrogate caches');

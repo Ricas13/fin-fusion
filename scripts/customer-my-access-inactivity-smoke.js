@@ -13,15 +13,14 @@ const view=read('views/customer/jellyfin.ejs');
 const stremioRoute=read('src/platform/customer-stremio.js');
 const client=read('public/js/customer-jellyfin.js');
 
-assert.match(route,/jellyfin-cleanup-return/,'My Access must consult the canonical returning-customer inactivity state');
-assert.match(route,/cleanupReturn\.returningCustomerStatus\(customerId\)/,'My Access must resolve intentional inactivity removal before rendering subscriptions');
-assert.match(route,/function markRemovedFreeAccess\(/,'My Access must decorate retained Free Server entitlements that were intentionally removed');
-assert.match(route,/access_removed:true,access_removed_reason:'inactivity'/,'inactivity-removed Free Server access must carry an explicit non-active presentation state');
-assert.match(route,/const subscriptions=markRemovedFreeAccess\(rawSubscriptions,returnStatus\)/,'the decorated subscription state must be the state rendered by My Access');
+assert.match(route,/jellyfin-cleanup-return/,'My Access may still restore a cleaned profile for a currently active non-inactivity plan');
+assert.match(route,/cleanupReturn\.returningCustomerStatus\(customerId\)/,'My Access must still resolve generic cleanup state before rendering subscriptions');
+assert.doesNotMatch(route,/function markRemovedFreeAccess\(/,'Free inactivity removal must not decorate a retained entitlement because the Free plan ends');
+assert.doesNotMatch(route,/access_removed:true,access_removed_reason:'inactivity'/,'Free inactivity removal must not preserve a hidden restorable plan state');
+assert.match(route,/Your Free Server access was removed because of inactivity\. You now have no active Free Server plan/,'My Access must send inactivity-removed customers to an explicit no-plan state');
 
-assert.match(view,/Removed for inactivity/,'removed Free Server access must never be labelled Active');
-assert.match(view,/Free Server access removed for inactivity/,'My Access must explain why Free Server access ended');
-assert.match(view,/Restore Free Server access/,'a retained Free Server entitlement must offer explicit restoration');
+assert.doesNotMatch(view,/Restore Free Server access/,'My Access must not offer one-click restoration after inactivity removal');
+assert.doesNotMatch(view,/underlying Free Server entitlement is retained/i,'My Access must not claim an inactivity-removed Free entitlement is retained');
 assert.match(view,/class="freeWatchLabel">Watch status</,'Free Server access must keep the compact watch-status treatment');
 assert.match(view,/freeAccessHealth--<%= freeHealth\.tone %>/,'My Access styling must be driven by shared Free Server health state');
 assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current rolling window');

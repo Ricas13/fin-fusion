@@ -16,6 +16,7 @@ const reconciliationControl = read('src/jellyfin/reconciliation-control.js');
 const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
+const lifecyclePrimitives = read('src/payments/lifecycle-primitives.js');
 const paymentEventRetry = read('src/payments/payment-event-retry.js');
 const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
@@ -65,8 +66,17 @@ assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jel
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 
-assert(lifecycle.includes("await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan')"),
-    'Free plan acquisition must attempt immediate canonical reconciliation');
+assert(lifecycle.includes('await primitives.reconcileCommittedCustomerStrict(customerId)')
+    && lifecycle.includes('rollbackUnprovisionedFreeClaim(customerId,created.id'),
+    'Free plan acquisition must synchronously reconcile and roll back if no enabled Free Server account is created');
+assert(lifecycle.includes('rollbackUnprovisionedJellyfinTrial(customerId,created.id')
+    && lifecycle.includes("replacement_reason='trial_activation_failed'"),
+    'unpaid Jellyfin trials must roll back when no enabled primary server account can be created');
+assert(lifecyclePrimitives.includes("await reconcileCustomer(customerId)")
+    && lifecyclePrimitives.includes("return null;"),
+    'the retryable non-strict reconciliation helper must remain available for paid entitlements');
+assert(lifecyclePrimitives.includes("await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss ? 'Money-loss checkout replay' : historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription')"),
+    'paid subscription activation is the deliberate plan-without-server exception and must retain the committed plan while reconciliation retries');
 assert(planChange.includes("const provisioning=require('../jellyfin/resilient-provisioning')")
     && planChange.includes('await provisioning.reconcileCustomer(change.customer_id)')
     && planChange.indexOf('await provisioning.reconcileCustomer(change.customer_id)') < planChange.indexOf("SET state='applied',provider_schedule_state='applied'"),
@@ -122,8 +132,8 @@ assert(compactJobs.includes('blocked:blockedCount'),
 assert(!compact(freeBackfill).includes('c.access_paused_atISNULL'),
     'Free capacity backfill must not trust the denormalized legacy access_paused_at summary');
 assert(freeBackfill.includes('liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true })')
-    && freeBackfill.includes('if (!entitlement || entitlement.blocked)'),
-    'Free capacity backfill must re-read canonical entitlement/hold authority immediately before provisioning');
+    && freeBackfill.includes("String(entitlement.subscription_id || '') !== String(row.subscription_id || '')"),
+    'Free lifecycle repair must re-read canonical entitlement/hold authority and exact subscription identity before provisioning or rollback');
 
 const compactIntentRecovery = compact(creationIntentRecovery);
 const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");
@@ -139,9 +149,13 @@ const compactScopedInactivity = compact(scopedInactivity);
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
     && compactScopedInactivity.includes('eligible.slice(0,MAX_ENFORCEMENTS_PER_RUN)'),
     'large inactivity cleanups may be throughput-capped without changing eligibility');
-assert(scopedInactivity.includes('await provisioning.deleteJellyfinAccount(')
-    && !scopedInactivity.includes('await provisioning.reconcileCustomer('),
-    'inactivity removal must delete the exact Free account directly instead of routing through broad reconciliation');
+const inactivityRemovalStart=scopedInactivity.indexOf('async function removeEligibleAccount');
+const inactivityRemovalEnd=scopedInactivity.indexOf('async function runPlanRules',inactivityRemovalStart);
+const inactivityRemovalBlock=scopedInactivity.slice(inactivityRemovalStart,inactivityRemovalEnd);
+assert(inactivityRemovalStart>=0
+    && inactivityRemovalBlock.includes('await provisioning.deleteJellyfinAccount(')
+    && !inactivityRemovalBlock.includes('await provisioning.reconcileCustomer('),
+    'inactivity removal itself must delete the exact Free account directly; protected partial-recovery finalization may reconcile separately');
 assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'"),
     'inactivity enforcement must fail closed when permanent/admin-present authority protects Free access');
 assert(scopedInactivity.includes('withCustomerReconciliationLock'),

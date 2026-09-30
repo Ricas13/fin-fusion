@@ -10,6 +10,7 @@ const inactivityHolds = require('../entitlements/inactivity-hold-reconciliation'
 const planExpiry = require('../entitlements/plan-expiry');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
+const provisioning = require('../jellyfin/resilient-provisioning');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -118,13 +119,13 @@ async function saveTrialPolicy(input, actorUserId = null) {
 async function enforceTrialEligibility(customerId, plan) {
     const policy = await trialPolicy();
     if (policy.trialMode === 'once_per_plan') {
-        const prior = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 LIMIT 1`, [customerId, plan.id]);
+        const prior = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND COALESCE(replacement_reason,'')<>'trial_activation_failed' LIMIT 1`, [customerId, plan.id]);
         if (prior.rowCount) throw new Error('This trial has already been used.');
         return policy;
     }
     const priorTrial = await query(`SELECT s.service_type_snapshot,p.service_type,p.name
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial'`, [customerId]);
+        WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial' AND COALESCE(s.replacement_reason,'')<>'trial_activation_failed'`, [customerId]);
     if (priorTrial.rows.some(row=>serviceScope.overlaps(row,plan))) throw new Error(`A ${serviceScope.label(plan)} trial has already been used on this account.`);
     if (policy.trialMode === 'before_paid') {
         const paid = await query(`SELECT s.service_type_snapshot,p.service_type,p.name
@@ -133,6 +134,71 @@ async function enforceTrialEligibility(customerId, plan) {
         if (paid.rows.some(row=>serviceScope.overlaps(row,plan))) throw new Error(`${serviceScope.label(plan)} trials are only available before the first paid subscription for that service.`);
     }
     return policy;
+}
+
+async function readyPrimaryJellyfinAccountForSubscription(customerId,subscriptionId){
+    const entitlement=await state.effectiveSubscription(customerId,{includeBlocked:true});
+    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    const accounts=await provisioning.normalAccounts(customerId);
+    const forcedServerId=entitlement.admin_forced_server_id||null;
+    return accounts.find(account=>{
+        if(String(account.access_lane||'primary')!=='primary'||account.disabled||!account.server_enabled)return false;
+        if(forcedServerId)return String(account.server_id||'')===String(forcedServerId);
+        return String(account.server_class||'')===String(entitlement.server_class||'');
+    })||null;
+}
+
+async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
+    let targetIsCurrent=false;
+    try{
+        return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+            const current=await state.effectiveSubscription(customerId,{includeBlocked:true});
+            targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+            if(targetIsCurrent){
+                const accounts=(await provisioning.normalAccounts(customerId))
+                    .filter(account=>String(account.access_lane||'primary')==='primary');
+                for(const account of accounts){
+                    await provisioning.deleteJellyfinAccount(account,{reason:'Jellyfin trial activation failed before server assignment completed'});
+                }
+            }
+
+            return transaction(async client=>{
+                const ended=await client.query(`
+                    UPDATE subscriptions
+                    SET status='cancelled',
+                        current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                        service_extension_days=0,
+                        cancel_at_period_end=TRUE,
+                        replacement_reason='trial_activation_failed',
+                        updated_at=NOW()
+                    WHERE id=$1 AND customer_id=$2
+                    RETURNING id,status,current_period_end,superseded_by
+                `,[subscriptionId,customerId]);
+                await client.query(`
+                    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                    VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
+                `,[subscriptionId,JSON.stringify({
+                    customerId,
+                    reason:String(reason||'Jellyfin trial activation failed').slice(0,500),
+                    targetWasCurrent:targetIsCurrent,
+                    noPlanNoServer:targetIsCurrent
+                })]);
+                return ended.rows[0]||null;
+            });
+        });
+    }catch(error){
+        // If server deletion succeeded but the trial row could not be ended,
+        // attempt to restore the server assignment. A non-paid trial must not
+        // be left as a live plan with no server account.
+        if(targetIsCurrent){
+            await provisioning.reconcileCustomer(customerId).catch(repairError=>{
+                console.error('Trial rollback compensation failed to restore server assignment.',{
+                    customerId,subscriptionId,error:repairError.message
+                });
+            });
+        }
+        throw error;
+    }
 }
 
 async function startFreeTrial(customerId, planCode) {
@@ -167,8 +233,29 @@ async function startFreeTrial(customerId, planCode) {
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
-    await primitives.reconcileCommittedCustomer(customerId, 'Trial');
-    return created;
+
+    const type=serviceScope.serviceType(plan);
+    const jellyfinTrial=serviceScope.capabilities(plan).has('jellyfin');
+    if(jellyfinTrial){
+        let reconcileError=null;
+        try{
+            await primitives.reconcileCommittedCustomerStrict(customerId);
+        }catch(error){
+            reconcileError=error;
+        }
+        const readyAccount=await readyPrimaryJellyfinAccountForSubscription(customerId,created.id);
+        if(!readyAccount){
+            const reason=reconcileError?.message||'Jellyfin trial reconciliation completed without an enabled primary account.';
+            await rollbackUnprovisionedJellyfinTrial(customerId,created.id,{reason});
+            const error=new Error('The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.');
+            error.code='TRIAL_JELLYFIN_PROVISIONING_FAILED';
+            error.cause=reconcileError||undefined;
+            throw error;
+        }
+    }else{
+        await primitives.reconcileCommittedCustomer(customerId, 'Trial');
+    }
+    return {...created,effective_service_type:type};
 }
 
 async function reservedFreePlan(reservationId){
@@ -179,6 +266,85 @@ async function reservedFreePlan(reservationId){
     stremio.assertAcquirable(plan,{context:'reserved free claim'});
     if(!planExpiry.isFreeTier(plan)||Number(plan.price_minor)!==0||plan.billing_interval==='trial'||plan.is_addon)throw new Error('This Free Access reservation is not valid.');
     return plan;
+}
+
+async function readyFreeAccountForSubscription(customerId,subscriptionId){
+    const entitlement=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    const accounts=await provisioning.normalAccounts(customerId);
+    const forcedServerId=entitlement.admin_forced_server_id||null;
+    return accounts.find(account=>{
+        if(String(account.access_lane||'')!=='free'||account.disabled||!account.server_enabled)return false;
+        if(forcedServerId)return String(account.server_id||'')===String(forcedServerId);
+        return String(account.server_class||'')===String(entitlement.server_class||'');
+    })||null;
+}
+
+async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created'}={}){
+    let targetIsCurrent=false;
+    try{
+        return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+            const current=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+            targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+
+            // Only the current failed Free episode owns the Free-lane account.
+            // If a newer subscription already superseded it, do not delete that
+            // newer account while cleaning up the stale claim.
+            if(targetIsCurrent){
+                const accounts=(await provisioning.normalAccounts(customerId))
+                    .filter(account=>String(account.access_lane||'')==='free');
+                for(const account of accounts){
+                    await provisioning.deleteJellyfinAccount(account,{reason:'Free claim activation failed before completion'});
+                }
+            }
+
+            return transaction(async client=>{
+                const ended=await client.query(`
+                    UPDATE subscriptions
+                    SET status='cancelled',
+                        current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                        service_extension_days=0,
+                        cancel_at_period_end=TRUE,
+                        replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed' ELSE replacement_reason END,
+                        updated_at=NOW()
+                    WHERE id=$1 AND customer_id=$2
+                    RETURNING id,status,current_period_end,superseded_by
+                `,[subscriptionId,customerId]);
+
+                if(reservationId){
+                    await client.query(`
+                        UPDATE free_access_registration_reservations
+                        SET released_at=COALESCE(released_at,NOW()),updated_at=NOW()
+                        WHERE id=$1 AND customer_id=$2
+                    `,[reservationId,customerId]);
+                }
+
+                await client.query(`
+                    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                    VALUES('subscription.free.claim_rolled_back','subscription',$1,$2::jsonb)
+                `,[subscriptionId,JSON.stringify({
+                    customerId,
+                    reservationId:reservationId||null,
+                    reason:String(reason||'Free claim activation failed').slice(0,500),
+                    targetWasCurrent:targetIsCurrent,
+                    noPlanNoServer:targetIsCurrent
+                })]);
+                return ended.rows[0]||null;
+            });
+        });
+    }catch(error){
+        // If account deletion succeeded but the plan close failed, restore the
+        // account while the Free entitlement is still live. This prevents a
+        // partial rollback from leaving Free plan + no server.
+        if(targetIsCurrent){
+            await provisioning.reconcileCustomer(customerId).catch(repairError=>{
+                console.error('Free claim rollback compensation failed to restore server assignment.',{
+                    customerId,subscriptionId,error:repairError.message
+                });
+            });
+        }
+        throw error;
+    }
 }
 
 async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null } = {}) {
@@ -195,7 +361,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
             if(!reservation||reservation.consumed_at||reservation.released_at||new Date(reservation.expires_at).getTime()<=Date.now()||String(reservation.plan_id)!==String(plan.id))throw new Error('Your Free Access hold has expired.');
         }
         await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan',{excludeReservationId:reservationId});
-        const historical = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`,[customerId,plan.id]);
+        const historical = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND COALESCE(replacement_reason,'')<>'free_claim_activation_failed' LIMIT 1`,[customerId,plan.id]);
         const liveFree = await client.query(`
             SELECT s.id,s.plan_id
             FROM subscriptions s
@@ -226,8 +392,27 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
-    await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan');
-    return created;
+
+    let reconcileError=null;
+    try{
+        await primitives.reconcileCommittedCustomerStrict(customerId);
+    }catch(error){
+        reconcileError=error;
+    }
+
+    // A Free claim is complete only when the exact subscription owns an
+    // enabled Free-lane Jellyfin account on the correct placement. We never
+    // retain a live Free plan in a "deployment pending" state.
+    const readyAccount=await readyFreeAccountForSubscription(customerId,created.id);
+    if(readyAccount)return created;
+
+    const reason=reconcileError?.message||'Free Server reconciliation completed without an enabled account.';
+    await rollbackUnprovisionedFreeClaim(customerId,created.id,{reservationId,reason});
+
+    const error=new Error('Free Access could not be activated because a Free Server account could not be created. No Free plan was retained.');
+    error.code='FREE_CLAIM_PROVISIONING_FAILED';
+    error.cause=reconcileError||undefined;
+    throw error;
 }
 
 async function autoDowngradeEligibleCustomer(customerId) {
@@ -397,6 +582,10 @@ module.exports = {
     getProviderPlan,
     getProviderPlanByExternalId,
     startFreeTrial,
+    readyPrimaryJellyfinAccountForSubscription,
+    rollbackUnprovisionedJellyfinTrial,
+    readyFreeAccountForSubscription,
+    rollbackUnprovisionedFreeClaim,
     claimFreePlan,
     activatePurchase,
     attachDiscoveredProviderSubscription,

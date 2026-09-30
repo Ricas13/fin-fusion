@@ -127,9 +127,10 @@ assert(compactFreeBackfill.includes('ORDERBYcreated_atASC,customer_idASC'),
     'Free Server backfill must allocate waiting entitlements oldest-first');
 assert(compactFreeBackfill.includes('awaitprovisioning.reconcileCustomer(row.customer_id)'),
     'Free Server backfill must reuse the canonical resilient customer reconciler');
-assert(compactFreeBackfill.includes('if(!entitlement||entitlement.blocked)')
-    && compactFreeBackfill.includes('exhaustedPlans.add(planKey)'),
-    'Free Server backfill must skip blocked entitlements and stop hammering a plan after real capacity is exhausted');
+assert(compactFreeBackfill.includes('if(!entitlement||entitlement.blocked')
+    && compactFreeBackfill.includes('rollbackUnprovisionedFreeClaim')
+    && compactFreeBackfill.includes('waiting:0'),
+    'Free Server lifecycle repair must skip blocked entitlements and converge failed plan-without-server rows to no-plan instead of retaining a waiting deployment state');
 
 const compose = read('docker-compose.yml');
 const envExample = read('.env.example');

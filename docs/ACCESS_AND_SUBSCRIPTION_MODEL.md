@@ -49,6 +49,7 @@ For Stripe, webhook event payloads are not assumed to be current truth when orde
 - Paid Jellyfin, Free Jellyfin, Emby, Stremio and Discord state must be considered by the multi-service reconciler.
 - Existing healthy service placement is sticky unless a product rule explicitly requires migration; maintenance/drain state primarily affects new placement.
 - A successful reconcile result must not be recorded if an entitled Jellyfin lane failed to converge to an enabled account.
+- A Jellyfin lane with no entitlement must converge by deleting its service account, not by leaving a disabled orphan.
 - Re-running reconciliation must be safe and must converge toward the same desired state.
 - Concurrent reconciliation for the same customer must serialize across web and worker processes using the PostgreSQL advisory lock.
 - Calls waiting behind an existing customer reconciliation must run afterwards rather than being coalesced onto the first result, because new holds/payment events may have arrived while the first run was executing.
@@ -77,7 +78,16 @@ The primary lane represents the current non-free Jellyfin/bundle entitlement whe
 
 ### Free lane
 
-The free lane represents retained Free Server access. It is resolved independently from the paid lane and must not outrank a live paid entitlement merely because a historical free subscription has a far-future/sentinel date.
+The free lane represents current Free Server access. It is resolved independently from the paid lane and must not outrank a live paid entitlement merely because a historical free subscription has a far-future/sentinel date.
+
+Free Server has a binary delivery invariant:
+
+- **Free plan present** -> an enabled Free-lane Jellyfin account must exist on the correct eligible server.
+- **No Free plan** -> no Free-lane Jellyfin account may remain.
+- A Free claim must never be left as "deployment pending". If synchronous Free provisioning cannot create the account, the incomplete Free subscription is rolled back and scarce capacity is released.
+- The deliberate exception is a **paid Jellyfin entitlement**: payment may already have committed the plan when remote server assignment fails. That paid plan remains valid while reconciliation retries server assignment; it must not be rolled back merely because provisioning failed. An unpaid Jellyfin trial follows the binary rule and is rolled back if its server account cannot be created.
+- Inactivity removal is terminal for that Free subscription: the Jellyfin identity is deleted, the exact Free subscription is ended, and the customer returns to the no-plan state. There is no restore path; any later access must be acquired under the current plan eligibility and capacity rules.
+- Repair jobs may make one convergence attempt for legacy inconsistent rows, but they must finish each repair as either plan+server or no-plan+no-server rather than retaining a waiting entitlement.
 
 An account may be adopted into the free lane when historical data predates lane-aware provisioning, provided the adoption rules can identify the appropriate existing account.
 

@@ -242,7 +242,7 @@ async function testDiscordRoleHistory() {
   assert(managed.has(roleB), 'new role must be managed');
 }
 
-async function testFreeRestoreUsesInactivityHold() {
+async function testFreeInactivityIsNotCustomerRestorable() {
   const customerId = await customer('free-restore');
   const canonical = await query(`
     SELECT id FROM plans
@@ -266,8 +266,8 @@ async function testFreeRestoreUsesInactivityHold() {
   const lifecycleRows = await query(`SELECT id FROM jellyfin_account_lifecycle WHERE customer_id=$1`, [customerId]);
   assert.strictEqual(lifecycleRows.rowCount, 0, 'fixture must prove restore without the retired lifecycle ledger');
   const status = await cleanupReturn.returningCustomerStatus(customerId);
-  assert.strictEqual(status.canRestoreDeletedFree, true, 'active inactivity hold + Free entitlement must make restore visible');
-  assert.strictEqual(status.eligible, true, 'Free inactivity removal must be self-service restorable without retired ledger data');
+  assert.strictEqual(status.canRestoreDeletedFree, false, 'Free inactivity removal must never surface a reserved/restorable customer entitlement');
+  assert.strictEqual(status.eligible, false, 'an inactivity hold alone must not open the customer profile-restore flow');
 }
 
 async function cleanup() {
@@ -292,7 +292,7 @@ async function cleanup() {
   await testConcurrentRecurringSettlement();
   await testEnableDoesNotUndoDestructiveAuthority();
   await testDiscordRoleHistory();
-  await testFreeRestoreUsesInactivityHold();
+  await testFreeInactivityIsNotCustomerRestorable();
   console.log('state-machine invariants DB smoke: ok');
 })().finally(async () => {
   await cleanup();

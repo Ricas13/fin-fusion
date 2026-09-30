@@ -138,7 +138,11 @@ function createRouter() {
                 console.warn('Automatic Stremio trial installation setup failed:', { customerId: req.session.customerId, error: stremioError.message });
                 return res.redirect('/account?welcome=1&error=' + encodeURIComponent('Your Stremio trial is active, but the installation link could not be created automatically. Use the Stremio setup action below to retry.') + '#stremio-access');
             }
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Access is being prepared; each service will show as ready as soon as setup finishes.'));
+            const trialType=String(subscription?.effective_service_type||'').toLowerCase();
+            const message=['jellyfin','bundle'].includes(trialType)
+                ? 'Your trial is active and your Jellyfin account is ready.'
+                : 'Your trial is active.';
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free trial start failed', fallback: 'Your trial could not be started.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));
@@ -148,11 +152,9 @@ function createRouter() {
     router.post('/account/claim-free/:planCode', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
             await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
-            const provisioning=await freeClaimProvisioning.ensureFreeClaimProvisioned(req.session.customerId,{attempts:2});
-            const message=provisioning.ready
-                ? 'Free Access claimed. Your Jellyfin account is ready.'
-                : 'Free Access claimed. Your place is reserved and Jellyfin setup is retrying automatically now.';
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message));
+            const provisioning=await freeClaimProvisioning.ensureFreeClaimProvisioned(req.session.customerId);
+            if(!provisioning.ready)throw provisioning.error||new Error('Free Access did not create an enabled Free Server account.');
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your Jellyfin account is ready.'));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free plan claim failed', fallback: 'Free Access could not be claimed.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));
