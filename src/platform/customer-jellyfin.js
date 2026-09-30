@@ -315,7 +315,7 @@ function createCustomerJellyfinRouter(){
       const subscriptions=rawSubscriptions,freeUsage=freeAccessHealth(rawFreeUsage);
       if(!subscriptions.length&&!requestState.eligible){
         if(incompleteFreeSubscriptionId){
-          const message='A Free Access claim without an active Free Server account was detected. It is not treated as active access and automatic lifecycle repair will remove the incomplete plan.';
+          const message='You do not currently have a Free Server plan. If a place is available, you can join again from the plans page.';
           return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
         }
         const removed=await query(`
