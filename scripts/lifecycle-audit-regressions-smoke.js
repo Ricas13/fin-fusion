@@ -84,8 +84,11 @@ function freeInactivitySafetyContract(){
   assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true}),false,'partial lifecycle settings must not authorize destructive automation');
   assert.equal(lifecyclePolicy.explicitlyConfigured({enabled:true,dryRun:false}),true,'both execution fields must be explicit before enforcement');
 
-  assert.match(scoped,/await provisioning\.deleteJellyfinAccount\(/,'inactivity must delete the exact selected Free account');
-  assert.doesNotMatch(scoped,/await provisioning\.reconcileCustomer\(/,'inactivity deletion must not depend on broad entitlement reconciliation');
+  const removalStart=scoped.indexOf('async function removeEligibleAccount');
+  const removalEnd=scoped.indexOf('async function runPlanRules',removalStart);
+  const removalBlock=scoped.slice(removalStart,removalEnd);
+  assert.match(removalBlock,/await provisioning\.deleteJellyfinAccount\(/,'inactivity must delete the exact selected Free account');
+  assert.doesNotMatch(removalBlock,/await provisioning\.reconcileCustomer\(/,'the inactivity delete path must not depend on broad entitlement reconciliation; detached/protected recovery may reconcile separately');
   assert.doesNotMatch(scoped,/refreshServerUserActivity|candidate_user_not_observed_in_fresh_users_response/,'login/user inventory is not retention authority');
   assert.doesNotMatch(scoped,/massRemovalRisk|CIRCUIT_BREAKER_/,'retired mass-removal policy must not remain in runtime');
   assert.match(scoped,/eligible\.slice\(0, MAX_ENFORCEMENTS_PER_RUN\)/,'large cleanups may be throughput-bounded without changing eligibility');
