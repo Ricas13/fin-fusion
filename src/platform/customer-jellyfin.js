@@ -294,22 +294,11 @@ function createCustomerJellyfinRouter(){
     try{
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
-      const liveFree=await subscriptionState.liveFreeJellyfinSubscription(customerId).catch(()=>null);
+      const freeAccess=await customerAccessState.freeJellyfin(customerId,{includeBlocked:true}).catch(()=>null);
+      const liveFree=freeAccess?.entitlement||null;
       let incompleteFreeSubscriptionId=null;
-      if(liveFree&&!liveFree.blocked){
-        const readyFree=await query(`
-          SELECT 1
-          FROM jellyfin_accounts ja
-          JOIN jellyfin_servers js ON js.id=ja.server_id
-          WHERE ja.customer_id=$1
-            AND ja.account_purpose='jellyfin'
-            AND ja.access_lane='free'
-            AND ja.disabled=FALSE
-            AND js.enabled=TRUE
-            AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-          LIMIT 1
-        `,[customerId]);
-        if(!readyFree.rowCount)incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
+      if(liveFree&&!liveFree.blocked&&freeAccess?.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
+        incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
       }
       const portal=await customers.getCustomerPortal(customerId);
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
