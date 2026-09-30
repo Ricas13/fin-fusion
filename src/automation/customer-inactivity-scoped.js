@@ -149,10 +149,13 @@ async function detachedRemovalRows(limit = MAX_ENFORCEMENTS_PER_RUN) {
     return result.rows;
 }
 
-function subscriptionAlreadyEnded(row) {
+function subscriptionAlreadyEnded(row, now = Date.now()) {
     const status = String(row?.status || '').toLowerCase();
-    if (['cancelled', 'canceled', 'expired', 'refunded'].includes(status)) return true;
-    return false;
+    if (!['cancelled', 'canceled', 'expired', 'refunded'].includes(status)) return false;
+    const extensionDays = Math.max(0, Number(row?.service_extension_days || 0));
+    if (extensionDays > 0) return false;
+    const end = row?.current_period_end ? new Date(row.current_period_end).getTime() : NaN;
+    return Number.isFinite(end) ? end <= now : true;
 }
 
 async function finalizeDetachedRemovals({ actorUserId = null, limit = MAX_ENFORCEMENTS_PER_RUN } = {}) {
@@ -169,19 +172,38 @@ async function finalizeDetachedRemovals({ actorUserId = null, limit = MAX_ENFORC
                 && String(current.subscription_id || '') === String(row.subscription_id || '');
 
             if (sameSubscription && adminProtectedFreeEntitlement(current)) {
+                // The Jellyfin identity is already gone. Administrator/permanent
+                // authority may preserve the plan, but only if we can restore the
+                // Free account synchronously. Never release the hold into a
+                // plan-without-server state.
+                const outcome = await provisioning.reconcileCustomer(row.customer_id);
+                if (!(outcome?.free?.active && outcome?.free?.account && !outcome.free.account.disabled)) {
+                    const error = new Error('Protected Free entitlement could not be restored to an enabled Free Server account.');
+                    error.code = 'FREE_INACTIVITY_PROTECTED_RESTORE_FAILED';
+                    throw error;
+                }
                 const released = await accessHolds.releaseHold({
                     customerId: row.customer_id,
                     type: base.HOLD_TYPE,
                     sourceKey: row.source_key,
                     actorUserId,
-                    resolutionReason: 'Explicit administrator authority superseded pending inactivity plan closure'
+                    resolutionReason: 'Explicit administrator authority restored Free access after interrupted inactivity removal'
                 });
+                if (released !== 1) {
+                    const error = new Error('Protected Free access was restored, but its inactivity hold was not released exactly once.');
+                    error.code = 'FREE_INACTIVITY_PROTECTED_HOLD_RELEASE_FAILED';
+                    throw error;
+                }
                 summary.released += released;
                 summary.protected += 1;
                 continue;
             }
 
-            if (!row.superseded_by && !subscriptionAlreadyEnded(row)) {
+            if (!row.superseded_by) {
+                // Always run the canonical termination, even for a subscription
+                // already labelled cancelled/expired. It clears service-extension
+                // time and clamps the access end to NOW(), preventing a cancelled
+                // row from remaining effectively live after the hold is released.
                 await subscriptionTermination.terminateLocal(
                     row.subscription_id,
                     row.customer_id,
@@ -200,6 +222,11 @@ async function finalizeDetachedRemovals({ actorUserId = null, limit = MAX_ENFORC
                 actorUserId,
                 resolutionReason: 'Completed Free Server inactivity plan closure'
             });
+            if (released !== 1) {
+                const error = new Error('Completed Free inactivity plan closure did not release its hold exactly once.');
+                error.code = 'FREE_INACTIVITY_HOLD_RELEASE_FAILED';
+                throw error;
+            }
             summary.released += released;
 
             await query(
