@@ -16,9 +16,21 @@ const RANGE_OPTIONS=Object.freeze([
   {key:'ytd',label:'YTD',days:null,bucket:'month'},
   {key:'all',label:'All time',days:null,bucket:'month'}
 ]);
+const ACTIVITY_SCOPE_OPTIONS=Object.freeze([
+  {key:'all',label:'All activity',detail:'Free + Premium combined',serverClass:null},
+  {key:'free',label:'Free Server',detail:'Free Server only',serverClass:'free'},
+  {key:'premium',label:'Premium Server',detail:'Premium Server only',serverClass:'premium'}
+]);
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/activity'));}
 function rangeOption(raw){return RANGE_OPTIONS.find(option=>option.key===String(raw||''))||RANGE_OPTIONS[1];}
+function scopeOption(raw){return ACTIVITY_SCOPE_OPTIONS.find(option=>option.key===String(raw||''))||ACTIVITY_SCOPE_OPTIONS[0];}
+function scopePredicate(rawScope,alias='ph'){
+  const scope=scopeOption(typeof rawScope==='object'&&rawScope?rawScope.key:rawScope);
+  return scope.serverClass
+    ? ` AND EXISTS (SELECT 1 FROM jellyfin_servers activity_scope_server WHERE activity_scope_server.id=${alias}.server_id AND activity_scope_server.server_class='${scope.serverClass}')`
+    : '';
+}
 function utcDayStart(value){const d=new Date(value);return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));}
 function rangeStart(option,now=new Date()){
   if(option.key==='all')return null;
@@ -167,13 +179,15 @@ function summaryFrom(row){
   const seconds=number(row?.seconds),sessions=number(row?.sessions);
   return{watchHours:Math.round((seconds/3600)*10)/10,watchSeconds:seconds,titlesWatched:number(row?.titles_watched),episodesWatched:number(row?.episodes_watched),sessions,activeDays:number(row?.active_days),averageMinutes:sessions?Math.round((seconds/60)/sessions):0,lastPlayback:row?.last_playback||null};
 }
-function fallbackInsights(rawRange,{reason='analytics_unavailable'}={}){
-  const now=new Date(),range=rangeOption(rawRange),startAt=rangeStart(range,now),previous=previousRange(startAt,now);
+function fallbackInsights(rawRange,{reason='analytics_unavailable',scope='all'}={}){
+  const now=new Date(),range=rangeOption(rawRange),selectedScope=scopeOption(scope),startAt=rangeStart(range,now),previous=previousRange(startAt,now);
   let timeline=[];
   if(range.bucket==='day'&&startAt)timeline=fillDailyTimeline([],startAt,now);
   return{
     range,
     rangeOptions:RANGE_OPTIONS,
+    scope:selectedScope,
+    scopeOptions:ACTIVITY_SCOPE_OPTIONS,
     summary:{...summaryFrom({}),averageRating:null},
     comparison:{watchTime:0,titles:0,episodes:0,label:range.key==='30d'?'vs previous 30 days':'vs previous period',available:Boolean(previous.start)},
     genres:[],platforms:[],timeline,heatmap:heatmap([]),recent:[],peakTime:'No peak yet',
@@ -191,11 +205,11 @@ async function optionalInsightQuery(label,run,fallbackRows=[]){
     return{rows:fallbackRows,failed:true};
   }
 }
-async function insightData(customerId,rawRange){
-  const now=new Date(),range=rangeOption(rawRange),startAt=rangeStart(range,now),previous=previousRange(startAt,now),duration=safeDurationSql('ph');
+async function insightData(customerId,rawRange,rawScope='all'){
+  const now=new Date(),range=rangeOption(rawRange),scope=scopeOption(rawScope),scopeClause=scopePredicate(scope,'ph'),startAt=rangeStart(range,now),previous=previousRange(startAt,now),duration=safeDurationSql('ph');
   const params=[customerId,startAt?startAt.toISOString():null];
-  const predicate=`ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)`;
-  const summarySql=`SELECT COUNT(*)::int sessions,COALESCE(SUM(${duration}),0) seconds,COUNT(DISTINCT COALESCE(NULLIF(ph.item_id,''),NULLIF(ph.item_name,''),ph.playback_key))::int titles_watched,COUNT(*) FILTER (WHERE lower(COALESCE(ph.item_type,''))='episode')::int episodes_watched,COUNT(DISTINCT DATE(ph.started_at))::int active_days,MAX(COALESCE(ph.last_seen_at,ph.started_at)) last_playback FROM playback_history ph WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz) AND ($3::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)<$3::timestamptz)`;
+  const predicate=`ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${scopeClause}`;
+  const summarySql=`SELECT COUNT(*)::int sessions,COALESCE(SUM(${duration}),0) seconds,COUNT(DISTINCT COALESCE(NULLIF(ph.item_id,''),NULLIF(ph.item_name,''),ph.playback_key))::int titles_watched,COUNT(*) FILTER (WHERE lower(COALESCE(ph.item_type,''))='episode')::int episodes_watched,COUNT(DISTINCT DATE(ph.started_at))::int active_days,MAX(COALESCE(ph.last_seen_at,ph.started_at)) last_playback FROM playback_history ph WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz) AND ($3::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)<$3::timestamptz)${scopeClause}`;
   const previousParams=[customerId,previous.start?previous.start.toISOString():null,previous.end?previous.end.toISOString():null];
   const bucket=range.bucket;
   const [summaryResult,previousResult,topResult,deviceResult,timelineResult,heatResult,recentResult]=await Promise.all([
@@ -217,6 +231,8 @@ async function insightData(customerId,rawRange){
   return{
     range,
     rangeOptions:RANGE_OPTIONS,
+    scope,
+    scopeOptions:ACTIVITY_SCOPE_OPTIONS,
     summary:{...summary,averageRating:rating},
     comparison:{watchTime:percentChange(summary.watchSeconds,prior.watchSeconds),titles:percentChange(summary.titlesWatched,prior.titlesWatched),episodes:percentChange(summary.episodesWatched,prior.episodesWatched),label:range.key==='30d'?'vs previous 30 days':'vs previous period',available:Boolean(previous.start)},
     genres,
@@ -235,23 +251,24 @@ async function insightData(customerId,rawRange){
     degradedReason:degraded?'partial_query_failure':null
   };
 }
-async function data(customerId,rawRange){
+async function data(customerId,rawRange,rawScope='all'){
+  const scope=scopeOption(rawScope),playbackScopeClause=scopePredicate(scope,'ph'),eventScopeClause=scopePredicate(scope,'stream_policy_events');
   const [activityRows,eventRows,freeUsage,portal,insights]=await Promise.all([
-    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId]),
-    query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]),
+    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId]),
+    query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1${eventScopeClause} ORDER BY created_at DESC LIMIT 100`,[customerId]),
     inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
     customers.getCustomerPortal(customerId),
-    insightData(customerId,rawRange).catch(error=>{
+    insightData(customerId,rawRange,scope.key).catch(error=>{
       console.warn('Customer activity personalised analytics unavailable; rendering core activity page:',{error:error.message});
-      return fallbackInsights(rawRange,{reason:'unexpected_analytics_failure'});
+      return fallbackInsights(rawRange,{reason:'unexpected_analytics_failure',scope:scope.key});
     })
   ]);
   const customer=portal?.customer||{};
-  return{activity:activityRows.rows,events:eventRows.rows,freeUsage,insights,displayName:customer.display_name||customer.login_username||customer.username||null,navOptions:customerNav.optionsFromPortal(portal)};
+  return{activity:activityRows.rows,events:eventRows.rows,freeUsage,insights,scope,scopeOptions:ACTIVITY_SCOPE_OPTIONS,displayName:customer.display_name||customer.login_username||customer.username||null,navOptions:customerNav.optionsFromPortal(portal)};
 }
 function createCustomerActivityRouter(){
   const r=express.Router();
-  r.get('/account/activity',requireCustomer,async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const d=await data(req.session.customerId,req.query.range);res.setHeader('Cache-Control','no-store, private, max-age=0');return res.render('customer/activity',{siteName:runtimeSettings.siteName(),...d});}catch(error){return next(error)}});
+  r.get('/account/activity',requireCustomer,async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const d=await data(req.session.customerId,req.query.range,req.query.scope);res.setHeader('Cache-Control','no-store, private, max-age=0');return res.render('customer/activity',{siteName:runtimeSettings.siteName(),...d});}catch(error){return next(error)}});
   return r;
 }
-module.exports={createCustomerActivityRouter,data,insightData,fallbackInsights,optionalInsightQuery,rangeOption,rangeStart,previousRange,heatmap,aggregatePlatforms,RANGE_OPTIONS};
+module.exports={createCustomerActivityRouter,data,insightData,fallbackInsights,optionalInsightQuery,rangeOption,scopeOption,scopePredicate,rangeStart,previousRange,heatmap,aggregatePlatforms,RANGE_OPTIONS,ACTIVITY_SCOPE_OPTIONS};
