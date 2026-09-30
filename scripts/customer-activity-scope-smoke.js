@@ -26,12 +26,12 @@ assert.match(activity.scopePredicate('free'),/inactivity_observation_reset_at IS
 assert.match(activity.scopePredicate('free'),/='free'/);
 assert.match(activity.scopePredicate('premium'),/='primary'/,'Premium activity is the paid\/primary lane, including custom pools');
 assert.match(activity.scopePredicate('free'),/CASE WHEN activity_scope_server\.server_class='free' THEN 'free' ELSE 'primary' END/,'orphaned pre-snapshot history needs a server-pool fallback after account deletion');
-assert.match(activity.scopePredicate('free','stream_policy_events'),/stream_policy_events\.created_at/,'stream-policy history must use its event timestamp for lane-transition fallback');
+assert.match(activity.scopePredicate('free','stream_policy_events','created_at'),/stream_policy_events\.created_at/,'stream-policy history must use its explicit event timestamp for lane-transition fallback');
 
 assert.match(route,/insightData\(customerId,rawRange,rawScope='all'\)/,'analytics must accept a server scope');
 assert.match(route,/scopeClause=scopePredicate\(scope,'ph'\)/,'analytics must apply the selected scope to playback history');
 assert.match(route,/playbackScopeClause=scopePredicate\(scope,'ph'\)/,'recent playback must use the selected server scope');
-assert.match(route,/eventScopeClause=scopePredicate\(scope,'stream_policy_events'\)/,'stream-policy events must use the selected server scope');
+assert.match(route,/eventScopeClause=scopePredicate\(scope,'stream_policy_events','created_at'\)/,'stream-policy events must use the selected server scope with the correct event timestamp');
 assert.match(route,/COALESCE\(ph\.last_seen_at,ph\.started_at\)>?=\$2::timestamptz/,'detailed playback rows must respect the selected time period');
 assert.match(route,/created_at>?=\$2::timestamptz/,'stream-policy rows must respect the selected time period');
 assert.match(route,/activity_scope_account\.access_lane/,'server scope must use the Jellyfin account lane when a snapshot is unavailable');
