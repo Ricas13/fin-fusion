@@ -43,6 +43,8 @@ assert(/canRestoreDeletedFree:false/.test(cleanupReturn),'customer return status
 assert(!/\/account\/jellyfin\/free-access\/decline/.test(dash),'customer portal must not expose the retired Free inactivity decline route');
 assert(!/Free Access entitlement is still reserved|Free Access plan will be released|account\/jellyfin\/free-access\/decline/.test(dash),'portal copy must not describe inactivity-removed Free access as reserved or restorable');
 assert(/Your Free Server access was removed because of inactivity\. You now have no active Free Server plan/.test(dash),'inactivity-removed users must get an explicit no-plan message');
+assert(/excludeSubscriptionIds/.test(dash)&&/effectiveCurrentPlan=incompleteFreeSubscriptionId/.test(dash),'a live Free row without a ready server must be excluded from both raw portal subscriptions and current-plan selection');
+assert(/You do not currently have a Free Server plan/.test(dash),'incomplete legacy Free rows must be presented simply as no active Free plan, never as deployment pending');
 assert(/liveFreeJellyfinSubscription\(customerId\),stremioEntitlements/.test(dash),'blocked/removed Free entitlements must not be rendered as active dashboard plans');
 assert(/No active plan/.test(onboarding)&&/you do not currently have a streaming plan/.test(onboarding),'onboarding must make the no-plan state explicit');
 assert(/<button class="button free full" type="submit">Join<\/button>/.test(onboarding),'available Free Access must expose a Join action after the old plan is released');
