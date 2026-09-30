@@ -126,6 +126,11 @@ function kindsFor(findings, customerId) {
 
     const paidMissing = await makeCustomer('paid-missing');
     await makeSubscription(paidMissing, paidPlanId, { source: 'stripe' });
+    // Subscription lifecycle hooks may eagerly create retry state. This fixture
+    // specifically represents the unsafe case the watchdog is meant to detect:
+    // a committed paid entitlement with neither a ready account nor durable
+    // provisioning recovery state.
+    await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [paidMissing]);
 
     const findings = await accessIntegrity.scan({ limit: 500 });
 
