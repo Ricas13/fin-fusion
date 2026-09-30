@@ -69,11 +69,14 @@ assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','f
 assert(lifecycle.includes('await primitives.reconcileCommittedCustomerStrict(customerId)')
     && lifecycle.includes('rollbackUnprovisionedFreeClaim(customerId,created.id'),
     'Free plan acquisition must synchronously reconcile and roll back if no enabled Free Server account is created');
+assert(lifecycle.includes('rollbackUnprovisionedJellyfinTrial(customerId,created.id')
+    && lifecycle.includes("replacement_reason='trial_activation_failed'"),
+    'unpaid Jellyfin trials must roll back when no enabled primary server account can be created');
 assert(lifecyclePrimitives.includes("await reconcileCustomer(customerId)")
     && lifecyclePrimitives.includes("return null;"),
-    'ordinary paid/trial activation must keep its committed plan when server assignment fails so reconciliation can retry');
+    'the retryable non-strict reconciliation helper must remain available for paid entitlements');
 assert(lifecyclePrimitives.includes("await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss ? 'Money-loss checkout replay' : historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription')"),
-    'paid subscription activation must use retryable non-strict reconciliation rather than Free-style rollback');
+    'paid subscription activation is the deliberate plan-without-server exception and must retain the committed plan while reconciliation retries');
 assert(planChange.includes("const provisioning=require('../jellyfin/resilient-provisioning')")
     && planChange.includes('await provisioning.reconcileCustomer(change.customer_id)')
     && planChange.indexOf('await provisioning.reconcileCustomer(change.customer_id)') < planChange.indexOf("SET state='applied',provider_schedule_state='applied'"),
