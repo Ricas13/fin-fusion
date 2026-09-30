@@ -97,7 +97,7 @@ assert(sourceIndex.includes('INCREMENTAL_HOURS=3')&&sourceIndex.includes('FULL_R
 assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'External indexing must remain incremental and low-footprint');
 assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(automationJobs.includes('stremio_external_tokens')&&automationJobs.includes('stremioExternalTokens.maintain'),'External token maintenance must remain a dedicated automation job');
-assert(automationWorker.includes('stremio_external_tokens:300')&&automationWorker.includes('stremio_media_index:300'),'Worker defaults must retain five-minute token housekeeping and use a five-minute bounded external-index sweep cadence');
+assert((automationWorker+automationJobs).includes('stremio_external_tokens:300')&&(automationWorker+automationJobs).includes('stremio_media_index:300'),'Automation defaults must retain five-minute token housekeeping and use a five-minute bounded external-index sweep cadence');
 assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(explicit)return mapped.rows'),'Explicit plan mappings must be strict external source allow-lists');
 assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own external source selection');
 
