@@ -23,7 +23,7 @@ assert.match(bridge, /ensureFreeClaimProvisioned: readiness\.ensureFreeClaimRead
 assert.match(lifecycle, /reconcileCommittedCustomerStrict\(customerId\)/, 'Free claim activation must synchronously reconcile the exact customer');
 assert.match(lifecycle, /readyFreeAccountForSubscription\(customerId,created\.id\)/, 'Free claim success must require the exact subscription to own a ready Free account');
 assert.match(lifecycle, /rollbackUnprovisionedFreeClaim\(customerId,created\.id/, 'an unprovisioned Free claim must be rolled back instead of retained');
-assert.match(lifecycle, /source=CASE WHEN source='free_claim' THEN 'free_claim_failed'/, 'rolled-back Free claims must not consume one-time historical claim eligibility');
+assert.match(lifecycle, /replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed'/, 'rolled-back Free claims must remain schema-valid while being excluded from one-time historical claim eligibility');
 assert.match(reconciliation, /const definitivelyGone = !entitlement \|\| entitlement\.admin_jellyfin_removed === true/, 'no-entitlement Free lanes must delete their Jellyfin account rather than leave a disabled orphan');
 
 assert.match(jobs, /async free_capacity_backfill\(\)\{return freeCapacityBackfill\.run\(\{limit:100\}\)\}/, 'the single Free repair/backfill job must remain registered');
