@@ -25,11 +25,10 @@ const ACTIVITY_SCOPE_OPTIONS=Object.freeze([
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/activity'));}
 function rangeOption(raw){return RANGE_OPTIONS.find(option=>option.key===String(raw||''))||RANGE_OPTIONS[1];}
 function scopeOption(raw){return ACTIVITY_SCOPE_OPTIONS.find(option=>option.key===String(raw||''))||ACTIVITY_SCOPE_OPTIONS[0];}
-function scopePredicate(rawScope,alias='ph',observedAtColumn=null){
+function scopePredicate(rawScope,alias='ph',observedAtColumn='started_at'){
   const scope=scopeOption(typeof rawScope==='object'&&rawScope?rawScope.key:rawScope);
   if(!scope.accessLane)return'';
-  const atColumn=observedAtColumn||(/stream_policy_events$/.test(alias)?'created_at':'started_at');
-  const observedAt=`${alias}.${atColumn}`;
+  const observedAt=`${alias}.${observedAtColumn}`;
   // New rows snapshot the access lane at observation time so later account
   // deletion or lane changes cannot rewrite history. For older rows, derive the
   // lane from the current account when possible. A trustworthy explicit
@@ -274,7 +273,7 @@ async function insightData(customerId,rawRange,rawScope='all'){
   };
 }
 async function data(customerId,rawRange,rawScope='all'){
-  const scope=scopeOption(rawScope),range=rangeOption(rawRange),startAt=rangeStart(range,new Date()),playbackScopeClause=scopePredicate(scope,'ph'),eventScopeClause=scopePredicate(scope,'stream_policy_events');
+  const scope=scopeOption(rawScope),range=rangeOption(rawRange),startAt=rangeStart(range,new Date()),playbackScopeClause=scopePredicate(scope,'ph'),eventScopeClause=scopePredicate(scope,'stream_policy_events','created_at');
   const [activityRows,eventRows,freeUsage,portal,insights]=await Promise.all([
     query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 AND ($2::timestamptz IS NULL OR created_at>=$2::timestamptz)${eventScopeClause} ORDER BY created_at DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
