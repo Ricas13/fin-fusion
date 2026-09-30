@@ -104,7 +104,7 @@ for(const marker of ['app.use(createCustomerPasswordSyncRouter())','app.use(crea
 
 const activity=read('src/platform/customer-activity.js');
 assert(activity.includes("optionalInsightQuery('summary'")&&activity.includes("optionalInsightQuery('recent-items'"),'personalised Activity analytics must isolate production query failures by analytics slice');
-assert(activity.includes('insightData(customerId,rawRange).catch(error=>'),'optional personalised analytics must never make the core Activity page return a 500');
+assert(/insightData\(customerId,rawRange(?:,[^)]+)?\)\.catch\(error=>/.test(activity),'optional personalised analytics must never make the core Activity page return a 500');
 assert(activity.includes('fallbackInsights(rawRange'),'/account/activity must have a complete no-analytics fallback model');
 const activityModule=require('../src/platform/customer-activity');
 const fallback=activityModule.fallbackInsights('30d');

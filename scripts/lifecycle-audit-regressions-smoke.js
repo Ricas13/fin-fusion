@@ -73,7 +73,7 @@ function freeInactivitySafetyContract(){
   const lifecycle=source('src/entitlements/jellyfin-lifecycle-policy.js');
   const adminControl=source('src/jellyfin/admin-control.js');
 
-  assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/,'Free inactivity must preserve current and orphaned same-customer/server playback continuity');
+  assert.match(inactivity,/ph\.jellyfin_account_id=ja\.id[\s\S]*?ph\.jellyfin_account_id IS NULL[\s\S]*?ph\.access_lane_snapshot='free'[\s\S]*?ph\.access_lane_snapshot IS NULL/,'Free inactivity must preserve exact-account and conservative orphan continuity while excluding orphan playback known to belong to the paid lane');
   assert.match(inactivity,/GREATEST\([\s\S]*?fa\.starts_at[\s\S]*?ja\.created_at[\s\S]*?ja\.access_lane_changed_at[\s\S]*?automation_resume\.resumed_at/,'Free allocation must start at the newest real allocation boundary');
   assert.doesNotMatch(inactivity,/historical_first_playback_at|any_playback_history/,'legacy playback heuristics must not decide current allocation state');
   assert.doesNotMatch(inactivity,/noPlaybackDays|noPlaybackEligible/,'Free retention must not have a separate login/activity rule');
