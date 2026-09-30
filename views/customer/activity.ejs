@@ -155,7 +155,7 @@
     </tbody></table></div><% } %>
   </section>
 
-  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams in the selected period and server scope appear here. Normal playback does not create an action.</p></div></div>
+  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams in the selected period and access scope appear here. The scope follows the session involved in the action; an observed stream count can include concurrent sessions from your other access. Normal playback does not create an action.</p></div></div>
     <% if (!events.length) { %><div class="empty">No stream-limit actions.</div><% } else { %><% events.forEach(function(e){const stopped=['stopped','stop_failed'].includes(String(e.decision||'')); %><div class="activityDecision <%= stopped?'stop':'' %>"><strong><%= e.decision==='stopped'?'Playback stopped':e.decision==='stop_failed'?'Stop attempt failed':'Stream policy decision' %></strong> · <%= when(e.created_at) %><p><%= e.observed_streams == null ? '?' : e.observed_streams %> active stream(s) / limit <%= e.stream_limit == null ? '?' : e.stream_limit %></p><div class="accessMeta"><%= e.reason || 'No additional detail' %></div></div><% }) %><% } %>
   </section>
 </main></div></body></html>
