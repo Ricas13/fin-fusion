@@ -5,6 +5,7 @@ const {rateLimit}=require('express-rate-limit');
 const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
+const lifecycle=require('../payments/lifecycle');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const inactivityStatus=require('../automation/customer-inactivity-status');
 const runtimeSettings=require('./runtime-settings');
@@ -284,6 +285,24 @@ function createCustomerJellyfinRouter(){
     try{
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
+      const liveFree=await subscriptionState.liveFreeJellyfinSubscription(customerId).catch(()=>null);
+      if(liveFree&&!liveFree.blocked){
+        const readyFree=await query(`
+          SELECT 1
+          FROM jellyfin_accounts ja
+          JOIN jellyfin_servers js ON js.id=ja.server_id
+          WHERE ja.customer_id=$1
+            AND ja.account_purpose='jellyfin'
+            AND ja.access_lane='free'
+            AND ja.disabled=FALSE
+            AND js.enabled=TRUE
+            AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+          LIMIT 1
+        `,[customerId]);
+        if(!readyFree.rowCount){
+          await lifecycle.rollbackUnprovisionedFreeClaim(customerId,liveFree.subscription_id,{reason:'My Access repaired a live Free plan without an enabled Free Server account'});
+        }
+      }
       const portal=await customers.getCustomerPortal(customerId);
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
         .filter(customerNav.liveServiceSubscription)
