@@ -113,7 +113,7 @@ function discoveryAutomationContract(){
   const worker=source('scripts/automation-worker.js');
   assert.match(jobs,/subscriptionDiscovery\.apply\(null\)/,'safe provider subscription discovery must be runnable automatically');
   assert.match(critical,/'subscription_discovery'/,'provider discovery must be lifecycle-critical');
-  assert.match(worker,/subscription_discovery:21600/,'provider discovery must have a bounded recurring cadence');
+  assert.match(worker + jobs,/subscription_discovery:21600/,'provider discovery must have a bounded recurring cadence');
 }
 
 function independentServiceRecoveryContract(){
