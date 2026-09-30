@@ -124,7 +124,7 @@ function createCustomerDashboardRouter(){
         if(freePlan.blocked){
           const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
           if(inactivityRemoval){
-            const message='Your previous Free Server access was removed because of inactivity. That Free plan is ending and is not reserved. You will be able to join again only as a new Free Server place when capacity is available.';
+            const message='Your previous Free Server access was removed because of inactivity. That Free plan is ending and is not reserved. There is no reserved Free entitlement to restore. Choose an available plan below if you want access again.';
             return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
           }
           const reason=returnStatus.error?'Your Free Access status could not be checked safely. Open My Access or contact support instead of creating another account.':'Your existing Free Access is currently restricted. Open My Access instead of creating another account.';
@@ -132,7 +132,7 @@ function createCustomerDashboardRouter(){
         }
         const ready=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
         if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
-        return res.redirect('/account?message='+encodeURIComponent('You do not currently have a Free Server plan. If a place is available, you can join again below.')+'#plans');
+        return res.redirect('/account?message='+encodeURIComponent('You do not currently have a Free Server plan. Choose an available plan below if you want access again.')+'#plans');
       }
       const message=returnStatus.error?'You are signed in. We could not verify your current Free Access state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
       return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
@@ -166,7 +166,7 @@ function createCustomerDashboardRouter(){
       if(!accessRows.length&&!openPlanChange){
         const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
         const noPlanMessage=inactivityRemoval
-          ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. If a place is available, you can join again below as a new Free Server user.'
+          ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. There is nothing reserved to restore; choose an available plan below if you want access again.'
           :incompleteFreePlan
             ?'You do not currently have a Free Server plan. If a place is available, you can join again below.'
             :null;
