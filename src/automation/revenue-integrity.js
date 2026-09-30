@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../db');
 const notifications = require('../integrations/notification-dispatch');
 const moneyFormat = require('../platform/money-format');
+const accessIntegrity = require('../access/access-integrity');
 
 const ALERT_BUCKET_MS = 6 * 60 * 60 * 1000;
 const ADMIN_ACTOR_ENFORCED_AT = '2026-09-12T08:32:17.000Z';
@@ -359,6 +360,10 @@ async function scan() {
     for (const row of duplicateActiveJellyfinLanes.rows) findings.push(finding('jellyfin_duplicate_active_lane', row, `Customer has ${row.active_count} active Jellyfin accounts in ${row.access_lane || 'unknown'} lane across server(s) ${(row.server_ids || []).join(', ')}.`));
     for (const row of actorlessAdministrativeHolds.rows) findings.push(finding('actorless_administrative_hold', row, `Active ${row.hold_type} hold ${row.id} was created without an administrator actor${row.reason ? `: ${row.reason}` : ''}`));
     for (const row of accessHoldSummaryDrift.rows) findings.push(finding('access_hold_summary_drift', row, `Legacy access summary disagrees with canonical holds (access_paused_at=${row.access_paused_at || 'null'}, hasActiveHold=${Boolean(row.has_active_hold)}).`));
+
+    // Access invariants are scanned independently from reconciliation so a bug
+    // in the worker cannot teach the watchdog the same wrong answer.
+    findings.push(...await accessIntegrity.scan());
 
     return findings;
 }
