@@ -315,7 +315,7 @@ function createCustomerJellyfinRouter(){
       const subscriptions=rawSubscriptions,freeUsage=freeAccessHealth(rawFreeUsage);
       if(!subscriptions.length&&!requestState.eligible){
         if(incompleteFreeSubscriptionId){
-          const message='You do not currently have a Free Server plan. If a place is available, you can join again from the plans page.';
+          const message='You do not currently have a Free Server plan. Choose an available plan from the plans page if you want access again.';
           return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
         }
         const removed=await query(`
@@ -333,7 +333,7 @@ function createCustomerJellyfinRouter(){
           LIMIT 1
         `,[customerId]).catch(()=>({rowCount:0}));
         if(removed.rowCount){
-          const message='Your Free Server access was removed because of inactivity. You now have no active Free Server plan. If a place is available, you can join again from the plans page.';
+          const message='Your Free Server access was removed because of inactivity. You now have no active Free Server plan. There is nothing reserved to restore; choose an available plan from the plans page if you want access again.';
           return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
         }
         return res.redirect('/account?error='+encodeURIComponent('You do not currently have active streaming access.'));
