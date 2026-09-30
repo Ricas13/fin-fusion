@@ -22,8 +22,8 @@
   function trendArrow(v){return Number(v)>0?'↑':Number(v)<0?'↓':'→';}
   function trendValue(v){return`${Math.abs(Number(v||0))}%`;}
   function genreGradient(rows){const palette=['#3198f6','#ff9e2f','#45d4a3','#f6cd45','#b483ff','#755bdc','#7f92f6','#52708a'];let cursor=0;const stops=[];(rows||[]).forEach((row,index)=>{const next=Math.min(100,cursor+Number(row.percent||0));stops.push(`${palette[index%palette.length]} ${cursor}% ${next}%`);cursor=next;});if(cursor<100)stops.push(`#223246 ${cursor}% 100%`);return`conic-gradient(${stops.join(',')})`;}
-  const insight=insights||{},summary=insight.summary||{},comparison=insight.comparison||{},range=insight.range||{key:'30d',label:'30 days'};
-  const rangeOptions=Array.isArray(insight.rangeOptions)?insight.rangeOptions:[],timeline=Array.isArray(insight.timeline)?insight.timeline:[],genres=Array.isArray(insight.genres)?insight.genres:[],recent=Array.isArray(insight.recent)?insight.recent:[],platforms=Array.isArray(insight.platforms)?insight.platforms:[],heatRows=Array.isArray(insight.heatmap)?insight.heatmap:[],cards=insight.insightCards||{};
+  const insight=insights||{},summary=insight.summary||{},comparison=insight.comparison||{},range=insight.range||{key:'30d',label:'30 days'},scope=insight.scope||{key:'all',label:'All activity',detail:'Free + Premium combined'};
+  const rangeOptions=Array.isArray(insight.rangeOptions)?insight.rangeOptions:[],scopeOptions=Array.isArray(insight.scopeOptions)?insight.scopeOptions:[],timeline=Array.isArray(insight.timeline)?insight.timeline:[],genres=Array.isArray(insight.genres)?insight.genres:[],recent=Array.isArray(insight.recent)?insight.recent:[],platforms=Array.isArray(insight.platforms)?insight.platforms:[],heatRows=Array.isArray(insight.heatmap)?insight.heatmap:[],cards=insight.insightCards||{};
   const maxTimeline=Math.max(0,...timeline.map(row=>Number(row.hours||0))),genrePalette=['#3198f6','#ff9e2f','#45d4a3','#f6cd45','#b483ff','#755bdc','#7f92f6','#52708a'];
   const axisIndexes=timeline.length?[0,Math.floor((timeline.length-1)*.25),Math.floor((timeline.length-1)*.5),Math.floor((timeline.length-1)*.75),timeline.length-1]:[];
   const accountInitial=String(displayName||'A').trim().charAt(0).toUpperCase()||'A';
@@ -34,12 +34,20 @@
   <%- include('_nav',{active:'activity'}) %>
 
   <header class="activityPageHeader">
-    <div><h1>Your activity</h1><p>A personalised overview of your watching habits and account activity.</p></div>
-    <form class="activityPeriodSelect" method="get" action="/account/activity">
-      <span aria-hidden="true">▣</span>
-      <select name="range" aria-label="Activity period" data-activity-range-select>
-        <% rangeOptions.forEach(function(option){ %><option value="<%= option.key %>" <%= option.key===range.key?'selected':'' %>><%= option.key==='30d'?'Last 30 days':option.label %></option><% }) %>
-      </select>
+    <div><h1>Your activity</h1><p>A personalised overview of your watching habits and account activity. <strong><%= scope.detail||scope.label %></strong>.</p></div>
+    <form class="activityFilters" method="get" action="/account/activity">
+      <label class="activityPeriodSelect activityScopeSelect">
+        <span aria-hidden="true">◫</span>
+        <select name="scope" aria-label="Activity server" data-activity-scope-select>
+          <% scopeOptions.forEach(function(option){ %><option value="<%= option.key %>" <%= option.key===scope.key?'selected':'' %>><%= option.label %></option><% }) %>
+        </select>
+      </label>
+      <label class="activityPeriodSelect">
+        <span aria-hidden="true">▣</span>
+        <select name="range" aria-label="Activity period" data-activity-range-select>
+          <% rangeOptions.forEach(function(option){ %><option value="<%= option.key %>" <%= option.key===range.key?'selected':'' %>><%= option.key==='30d'?'Last 30 days':option.label %></option><% }) %>
+        </select>
+      </label>
     </form>
   </header>
 
@@ -64,7 +72,7 @@
 
   <section class="activityTopGrid">
     <article class="activityCard activityWatchCard">
-      <div class="activityCardHeading"><h2>Watch time</h2><nav class="activityRangeTabs" aria-label="Watch-time period"><% rangeOptions.forEach(function(option){ %><a href="/account/activity?range=<%= encodeURIComponent(option.key) %>" class="<%= option.key===range.key?'active':'' %>"><%= option.label %></a><% }) %></nav></div>
+      <div class="activityCardHeading"><h2>Watch time</h2><nav class="activityRangeTabs" aria-label="Watch-time period"><% rangeOptions.forEach(function(option){ %><a href="/account/activity?range=<%= encodeURIComponent(option.key) %>&amp;scope=<%= encodeURIComponent(scope.key) %>" class="<%= option.key===range.key?'active':'' %>"><%= option.label %></a><% }) %></nav></div>
       <div class="activityChart" role="img" aria-label="Watch time over <%= range.label %>">
         <div class="activityYAxis"><span>8h</span><span>6h</span><span>4h</span><span>2h</span><span>0h</span></div>
         <div class="activityBars">
@@ -125,8 +133,8 @@
     </div>
   </section>
 
-  <% if(freeUsage&&freeUsage.applies){ %>
-  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Free Server usage</h2><p>Your Free Server plan can use playback activity to decide whether an inactive place should be released.</p></div><span class="pill <%= freeUsage.telemetry&&freeUsage.telemetry.ready?'good':'warn' %>"><%= freeUsage.telemetry&&freeUsage.telemetry.ready?'Playback tracking healthy':'Removal paused' %></span></div>
+  <% if(freeUsage&&freeUsage.applies&&scope.key!=='premium'){ %>
+  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Free Server usage requirement</h2><p>This retention status is calculated only from Free Server playback. Premium Server viewing does not count toward it.</p></div><span class="pill <%= freeUsage.telemetry&&freeUsage.telemetry.ready?'good':'warn' %>"><%= freeUsage.telemetry&&freeUsage.telemetry.ready?'Playback tracking healthy':'Removal paused' %></span></div>
     <div class="notice"><strong>Based on what the server reported.</strong> Short clips under ~30s may not appear.</div>
     <div class="usageGrid"><div class="usageStat"><span>Last recognised playback</span><strong><%= when(freeUsage.lastPlaybackAt) %></strong></div><div class="usageStat"><span>Playback in current window</span><strong><%= freeUsage.playbackMinutes %> min</strong></div><div class="usageStat"><span>Usage rule</span><strong><%= ruleText(freeUsage.policy) %></strong></div><div class="usageStat"><span>Right now</span><strong><%= freeUsage.currentlyPlaying?'Playing now':freeUsage.alreadyHeld?'Access currently held':freeUsage.eligible?'Below current usage rule':'Usage requirement satisfied' %></strong></div></div>
     <div class="usageStatus">
