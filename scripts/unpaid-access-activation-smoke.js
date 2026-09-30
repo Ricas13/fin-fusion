@@ -84,6 +84,27 @@ const { activateOrRollback } = require('../src/payments/unpaid-access-activation
       'postcondition failure without a reconcile error must use the explicit missing-account reason');
   }
 
+  {
+    let rollbackCalls = 0;
+    const verifyFailure = new Error('verification database unavailable');
+    await assert.rejects(
+      activateOrRollback({
+        customerId: 'customer-5',
+        subscriptionId: 'subscription-5',
+        reconcile: async () => {},
+        verify: async () => { throw verifyFailure; },
+        rollback: async () => { rollbackCalls += 1; },
+        missingReason: 'missing',
+        failureMessage: 'failed',
+        failureCode: 'FAILED'
+      }),
+      error => error === verifyFailure,
+      'an uncertain verification read must surface its original error rather than pretending access is absent'
+    );
+    assert.strictEqual(rollbackCalls, 0,
+      'verification infrastructure failure must not trigger destructive unpaid rollback');
+  }
+
   console.log('unpaid access activation smoke: ok');
 })().catch(error => {
   console.error('unpaid access activation smoke failed:', error);
