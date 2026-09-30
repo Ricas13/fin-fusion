@@ -25,15 +25,26 @@ const ACTIVITY_SCOPE_OPTIONS=Object.freeze([
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/activity'));}
 function rangeOption(raw){return RANGE_OPTIONS.find(option=>option.key===String(raw||''))||RANGE_OPTIONS[1];}
 function scopeOption(raw){return ACTIVITY_SCOPE_OPTIONS.find(option=>option.key===String(raw||''))||ACTIVITY_SCOPE_OPTIONS[0];}
-function scopePredicate(rawScope,alias='ph'){
+function scopePredicate(rawScope,alias='ph',observedAtColumn=null){
   const scope=scopeOption(typeof rawScope==='object'&&rawScope?rawScope.key:rawScope);
   if(!scope.accessLane)return'';
-  // The account lane is the source of truth: an administrator may deliberately
-  // place a Free account on a non-Free server pool (or vice versa). Old history
-  // loses jellyfin_account_id when that account is deleted, so only those
-  // orphaned rows fall back to the server pool as the best historical signal.
+  const atColumn=observedAtColumn||(/stream_policy_events$/.test(alias)?'created_at':'started_at');
+  const observedAt=`${alias}.${atColumn}`;
+  // New rows snapshot the access lane at observation time so later account
+  // deletion or lane changes cannot rewrite history. For older rows, derive the
+  // lane from the current account when possible. A trustworthy explicit
+  // primary->free transition has a lane boundary; playback before that boundary
+  // is still paid/primary history. Ambiguous pre-tracking legacy Free accounts
+  // are intentionally not split by their synthetic backfill timestamp.
   const lane=`COALESCE(
-    (SELECT activity_scope_account.access_lane
+    ${alias}.access_lane_snapshot,
+    (SELECT CASE
+              WHEN activity_scope_account.access_lane='free'
+               AND activity_scope_account.inactivity_observation_reset_at IS NULL
+               AND ${observedAt}<activity_scope_account.access_lane_changed_at
+              THEN 'primary'
+              ELSE activity_scope_account.access_lane
+            END
        FROM jellyfin_accounts activity_scope_account
       WHERE activity_scope_account.id=${alias}.jellyfin_account_id),
     (SELECT CASE WHEN activity_scope_server.server_class='free' THEN 'free' ELSE 'primary' END
