@@ -7,6 +7,7 @@ const criticalJobs = require('../src/automation/critical-jobs');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const readMaybe = file => fs.existsSync(path.join(root, file)) ? read(file) : '';
 const compact = value => String(value || '').replace(/\s+/g, '');
 
 const worker = read('scripts/automation-worker.js');
@@ -26,6 +27,8 @@ const freeObservationReset = read('db/migrations/20260912090000_free_inactivity_
 const serviceRecovery = read('src/automation/customer-service-recovery.js');
 const activationCleanup = read('src/automation/activation-cleanup.js');
 const freeBackfill = read('src/automation/free-capacity-backfill.js');
+const customerAccessState = read('src/access/customer-access-state.js');
+const accessRepair = readMaybe('src/access/access-repair.js');
 const creationIntentRecovery = read('src/automation/jellyfin-creation-intent-recovery.js');
 const inactivity = read('src/automation/customer-inactivity.js');
 const scopedInactivity = read('src/automation/customer-inactivity-scoped.js');
@@ -131,9 +134,18 @@ assert(compactJobs.includes('blocked:blockedCount'),
 
 assert(!compact(freeBackfill).includes('c.access_paused_atISNULL'),
     'Free capacity backfill must not trust the denormalized legacy access_paused_at summary');
-assert(freeBackfill.includes('liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true })')
-    && freeBackfill.includes("String(entitlement.subscription_id || '') !== String(row.subscription_id || '')"),
-    'Free lifecycle repair must re-read canonical entitlement/hold authority and exact subscription identity before provisioning or rollback');
+assert(customerAccessState.includes('subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked })'),
+    'canonical Free access state must re-read entitlement and hold authority before repair decisions');
+assert(
+    (
+        freeBackfill.includes('customerAccessState.freeJellyfin(row.customer_id, { includeBlocked: true })')
+        && freeBackfill.includes("String(entitlement.subscription_id || '') !== String(row.subscription_id || '')")
+    )
+    || (
+        accessRepair.includes('customerAccessState.freeJellyfin(customerId, { includeBlocked: true })')
+        && accessRepair.includes("String(access.entitlement.subscription_id || '') !== String(subscriptionId || '')")
+    ),
+    'Free lifecycle repair must re-read canonical authority and exact subscription identity before provisioning or rollback');
 
 const compactIntentRecovery = compact(creationIntentRecovery);
 const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");
