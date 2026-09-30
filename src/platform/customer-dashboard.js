@@ -124,7 +124,7 @@ function createCustomerDashboardRouter(){
         if(freePlan.blocked){
           const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
           if(inactivityRemoval){
-            const message='Your previous Free Server access was removed because of inactivity. That Free plan is ending and is not reserved. There is no reserved Free entitlement to restore. Choose an available plan below if you want access again.';
+            const message='Your previous Free Server access was removed because of inactivity. You do not have an active Free Server plan and there is nothing reserved to restore. Choose an available plan below if you want access again.';
             return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
           }
           const reason=returnStatus.error?'Your Free Access status could not be checked safely. Open My Access or contact support instead of creating another account.':'Your existing Free Access is currently restricted. Open My Access instead of creating another account.';
@@ -168,7 +168,7 @@ function createCustomerDashboardRouter(){
         const noPlanMessage=inactivityRemoval
           ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. There is nothing reserved to restore; choose an available plan below if you want access again.'
           :incompleteFreePlan
-            ?'You do not currently have a Free Server plan. If a place is available, you can join again below.'
+            ?'You do not currently have a Free Server plan. Choose an available plan below if you want access again.'
             :null;
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
