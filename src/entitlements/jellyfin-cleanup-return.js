@@ -3,94 +3,62 @@
 const {query}=require('../db');
 const accessHolds=require('./access-holds');
 const subscriptionState=require('./subscription-state');
-const subscriptionTermination=require('../payments/subscription-termination');
-const inactivityRestore=require('./jellyfin-inactivity-restore');
+
 const CLEANUP_HOLD_TYPE='jellyfin_cleanup';
-const INACTIVITY_HOLD_TYPE='inactivity_policy';
+
+function emptyStatus(extra={}){
+  return{
+    eligible:false,
+    cleanupSources:[],
+    canRestoreDeletedFree:false,
+    inactivitySource:null,
+    freePlanId:null,
+    freeSubscriptionId:null,
+    ...extra
+  };
+}
 
 async function returningCustomerStatus(customerId){
-  const [cleanupHolds,restoreState]=await Promise.all([
-    query(`SELECT source_key FROM customer_access_holds WHERE customer_id=$1 AND hold_type=$2 AND released_at IS NULL ORDER BY created_at`,[customerId,CLEANUP_HOLD_TYPE]),
-    inactivityRestore.restoreStatus(customerId)
-  ]);
-
-  const freeEntitlement=restoreState.entitlement||null;
-  const inactivitySource=restoreState.sourceKey||(
-    freeEntitlement?.plan_id?`plan:${freeEntitlement.plan_id}`:null
+  const cleanupHolds=await query(
+    `SELECT source_key
+     FROM customer_access_holds
+     WHERE customer_id=$1
+       AND hold_type=$2
+       AND released_at IS NULL
+     ORDER BY created_at`,
+    [customerId,CLEANUP_HOLD_TYPE]
   );
-  const canRestoreDeletedFree=Boolean(restoreState.eligible);
   const cleanupSources=cleanupHolds.rows.map(row=>row.source_key);
 
-  if(!cleanupSources.length&&!canRestoreDeletedFree){
-    return{
-      eligible:false,
-      cleanupSources:[],
-      canRestoreDeletedFree:false,
-      inactivitySource,
-      freePlanId:freeEntitlement?.plan_id||null,
-      freeSubscriptionId:freeEntitlement?.subscription_id||null
-    };
-  }
+  // Free Server inactivity is terminal: once that policy removes access, the
+  // Free subscription is ended and is never surfaced here as restorable.
+  // This flow now exists only for a live Jellyfin/bundle plan whose media
+  // profile was cleaned up for a non-Free lifecycle reason.
+  if(!cleanupSources.length)return emptyStatus();
 
-  if(cleanupSources.length){
-    const genericEntitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
-    const delivery=String(genericEntitlement?.service_type_snapshot||genericEntitlement?.service_type||'jellyfin');
-    if(!genericEntitlement||!['jellyfin','bundle'].includes(delivery)){
-      return{
-        eligible:false,
-        reason:'no_jellyfin_entitlement',
-        cleanupSources,
-        canRestoreDeletedFree,
-        inactivitySource,
-        freePlanId:freeEntitlement?.plan_id||null,
-        freeSubscriptionId:freeEntitlement?.subscription_id||null
-      };
-    }
+  const entitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
+  const delivery=String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin');
+  if(!entitlement||!['jellyfin','bundle'].includes(delivery)){
+    return emptyStatus({
+      cleanupSources,
+      reason:'no_jellyfin_entitlement'
+    });
   }
 
   return{
     eligible:true,
     cleanupSources,
-    canRestoreDeletedFree,
-    inactivitySource,
-    freePlanId:freeEntitlement?.plan_id||null,
-    freeSubscriptionId:freeEntitlement?.subscription_id||null
+    canRestoreDeletedFree:false,
+    inactivitySource:null,
+    freePlanId:null,
+    freeSubscriptionId:null
   };
-}
-
-async function declineDeletedFreeAccess(customerId,{actorUserId=null}={}){
-  const status=await returningCustomerStatus(customerId);
-  if(!status.canRestoreDeletedFree||!status.freeSubscriptionId){
-    return{removed:false,reason:'no_restorable_free_access'};
-  }
-
-  const reason='Customer declined Free Access restoration after inactivity';
-  await subscriptionTermination.terminateLocal(status.freeSubscriptionId,customerId,{
-    actorUserId,
-    reason,
-    reference:`free-access-inactivity-decline:${status.freeSubscriptionId}`
-  });
-  const released=await accessHolds.releaseHold({
-    customerId,
-    type:INACTIVITY_HOLD_TYPE,
-    sourceKey:status.inactivitySource,
-    actorUserId,
-    resolutionReason:reason
-  });
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'jellyfin.cleanup.decline_free_restore','customer',$2,$3::jsonb)`,[
-    actorUserId,
-    customerId,
-    JSON.stringify({subscriptionId:status.freeSubscriptionId,freePlanId:status.freePlanId,releasedInactivityHold:Boolean(released),portalReturn:true,explicitDecline:true})
-  ]);
-  return{removed:true,subscriptionId:status.freeSubscriptionId,freePlanId:status.freePlanId,releasedInactivityHold:Boolean(released)};
 }
 
 async function restoreReturningCustomer(customerId,{reconcile}={}){
   const status=await returningCustomerStatus(customerId);
   if(!status.eligible)return{restored:false,reason:status.reason||null};
 
-  // Generic cleanup holds are separate from Free inactivity. Release them
-  // because the customer explicitly requested restoration.
   for(const sourceKey of status.cleanupSources){
     await accessHolds.releaseHold({
       customerId,
@@ -100,47 +68,49 @@ async function restoreReturningCustomer(customerId,{reconcile}={}){
     });
   }
 
-  let freeRestore=null;
   try{
-    if(status.canRestoreDeletedFree){
-      // One canonical inactivity restoration path: release the exact hold,
-      // reprovision, restore the hold on failure, and verify one Free account.
-      freeRestore=await inactivityRestore.restoreDisabledFreeAccess(customerId,{reconcile});
-    }else if(typeof reconcile==='function'){
-      await reconcile(customerId);
-    }
+    if(typeof reconcile==='function')await reconcile(customerId);
   }catch(error){
-    await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[
-      customerId,
-      JSON.stringify({
-        releasedCleanupHolds:status.cleanupSources.length,
-        releasedInactivityHold:false,
-        portalReturn:true,
-        explicitRestore:true,
-        freePlanId:status.freePlanId,
-        reprovisionPending:true,
-        error:String(error?.message||error).slice(0,500)
-      })
-    ]).catch(()=>{});
+    await query(
+      `INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+       VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,
+      [
+        customerId,
+        JSON.stringify({
+          releasedCleanupHolds:status.cleanupSources.length,
+          portalReturn:true,
+          explicitRestore:true,
+          reprovisionPending:true,
+          error:String(error?.message||error).slice(0,500)
+        })
+      ]
+    ).catch(()=>{});
     throw error;
   }
 
-  await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[
-    customerId,
-    JSON.stringify({
-      releasedCleanupHolds:status.cleanupSources.length,
-      releasedInactivityHold:Boolean(freeRestore?.restored),
-      portalReturn:true,
-      explicitRestore:true,
-      freePlanId:status.freePlanId,
-      reprovisionPending:false
-    })
-  ]);
+  await query(
+    `INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+     VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,
+    [
+      customerId,
+      JSON.stringify({
+        releasedCleanupHolds:status.cleanupSources.length,
+        portalReturn:true,
+        explicitRestore:true,
+        reprovisionPending:false
+      })
+    ]
+  );
 
   return{
     restored:true,
-    released:Number(status.cleanupSources.length)+Number(Boolean(freeRestore?.restored)),
-    freeLifecycleRestored:Boolean(freeRestore?.restored)
+    released:Number(status.cleanupSources.length),
+    freeLifecycleRestored:false
   };
 }
-module.exports={CLEANUP_HOLD_TYPE,INACTIVITY_HOLD_TYPE,returningCustomerStatus,declineDeletedFreeAccess,restoreReturningCustomer};
+
+module.exports={
+  CLEANUP_HOLD_TYPE,
+  returningCustomerStatus,
+  restoreReturningCustomer
+};
