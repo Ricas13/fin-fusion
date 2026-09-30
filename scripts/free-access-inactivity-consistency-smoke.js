@@ -162,7 +162,7 @@ assert.match(base, /WHERE ph\.started_at>=allocation\.allocation_start_at/,'pre-
 assert.match(base, /LEAST\(COALESCE\(ph\.ended_at,ph\.last_seen_at\),NOW\(\)\)/);
 assert.match(base, /GREATEST\([\s\S]*?ph\.started_at[\s\S]*?NOW\(\)-\(js\.free_playback_window_days/,'sessions may still contribute only their overlap with the rolling window once they belong to the current allocation');
 assert.match(base, /EXISTS\([\s\S]*?active_playback_sessions[\s\S]*?aps\.jellyfin_account_id=ja\.id/, 'currently-playing protection must target the exact account');
-assert.match(base, /ph\.jellyfin_account_id=ja\.id OR ph\.jellyfin_account_id IS NULL/, 'Free playback must preserve orphaned same-customer/server history while allocation boundaries exclude old episodes');
+assert.match(base, /ph\.jellyfin_account_id=ja\.id[\s\S]*?ph\.jellyfin_account_id IS NULL[\s\S]*?ph\.access_lane_snapshot='free'[\s\S]*?ph\.access_lane_snapshot IS NULL/, 'Free playback must keep exact-account activity, retain unknown legacy orphan history conservatively, and exclude orphan rows known to belong to the paid lane');
 assert.doesNotMatch(base, /noPlaybackEligible|noPlaybackDays/, 'Free inactivity must have no login/activity timer');
 
 // Enforcement must delete exactly the selected Free account, then end the exact
