@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
+const subscriptionState = require('../entitlements/subscription-state');
 const scanCursor = require('../automation/scan-cursor');
 
 const DEFAULT_RECONCILE_CONCURRENCY = 2;
@@ -211,6 +212,25 @@ async function dueActiveCustomers(limit = 250) {
     return dueCustomers(limit);
 }
 
+async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
+    const entitlement = await subscriptionState.effectiveSubscription(customerId, { includeBlocked: true });
+    if (!entitlement || entitlement.blocked || entitlement.is_free_tier) return false;
+    if (String(entitlement.contract_billing_interval || entitlement.billing_interval || '').toLowerCase() !== 'trial') return false;
+    if (!['jellyfin', 'bundle'].includes(String(entitlement.service_type_snapshot || entitlement.service_type || 'jellyfin').toLowerCase())) return false;
+
+    const lifecycle = require('../payments/lifecycle');
+    const ready = await lifecycle.readyPrimaryJellyfinAccountForSubscription(customerId, entitlement.subscription_id);
+    if (ready) return false;
+
+    await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
+        reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account'
+    });
+    // Converge the now no-plan state so customer_provisioning_state stops
+    // advertising a pending deployment for a trial that no longer exists.
+    await provisioning.reconcileCustomer(customerId);
+    return true;
+}
+
 async function ensureFailureBackoff(customerId, error) {
     let state = await provisioning.control.getCustomerState(customerId).catch(() => null);
     if (!['failed', 'blocked'].includes(String(state?.status || ''))) {
@@ -233,6 +253,17 @@ async function reconcileActiveEntitlements(options = {}) {
             await provisioning.reconcileCustomer(row.customer_id);
             return { status: 'succeeded' };
         } catch (error) {
+            // The only supported non-paid Jellyfin states are plan+server or
+            // no-plan+no-server. Repair legacy/unexpected trial rows here rather
+            // than letting them enter the paid-style provisioning retry queue.
+            try {
+                if (await rollbackStrandedUnpaidJellyfinTrial(row.customer_id, error)) {
+                    return { status: 'succeeded', repaired: 'trial_rolled_back' };
+                }
+            } catch (trialRollbackError) {
+                console.error(`Unpaid trial rollback failed for ${row.customer_id}:`, trialRollbackError.message);
+            }
+
             // Some failures can occur before reconcileCustomerUnlocked reaches
             // markCustomerRunning (for example an entitlement/hold read). Make
             // sure those failures still receive durable backoff; otherwise a
@@ -314,6 +345,7 @@ module.exports = {
     wakeEntitlementRetry,
     reconcileActiveEntitlements,
     ensureFailureBackoff,
+    rollbackStrandedUnpaidJellyfinTrial,
     healthcheckAllServers,
     cleanFailureMessage,
     summarizeFailureReasons
