@@ -148,11 +148,9 @@ function createRouter() {
     router.post('/account/claim-free/:planCode', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
             await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
-            const provisioning=await freeClaimProvisioning.ensureFreeClaimProvisioned(req.session.customerId,{attempts:2});
-            const message=provisioning.ready
-                ? 'Free Access claimed. Your Jellyfin account is ready.'
-                : 'Free Access claimed. Your place is reserved and Jellyfin setup is retrying automatically now.';
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message));
+            const provisioning=await freeClaimProvisioning.ensureFreeClaimProvisioned(req.session.customerId);
+            if(!provisioning.ready)throw provisioning.error||new Error('Free Access did not create an enabled Free Server account.');
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your Jellyfin account is ready.'));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free plan claim failed', fallback: 'Free Access could not be claimed.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));
