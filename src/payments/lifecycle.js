@@ -195,50 +195,58 @@ async function readyFreeAccountForSubscription(customerId,subscriptionId){
 }
 
 async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created'}={}){
-    // Remove any incomplete Free-lane identity before ending the plan so the
-    // only durable outcome is no server + no plan.
-    const accounts=(await provisioning.normalAccounts(customerId))
-        .filter(account=>String(account.access_lane||'')==='free');
-    for(const account of accounts){
-        await provisioning.deleteJellyfinAccount(account,{reason:'Free claim activation failed before completion'});
-    }
+    return provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+        const current=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+        const targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
 
-    const result=await transaction(async client=>{
-        const ended=await client.query(`
-            UPDATE subscriptions
-            SET status='cancelled',
-                current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
-                service_extension_days=0,
-                cancel_at_period_end=TRUE,
-                source=CASE WHEN source='free_claim' THEN 'free_claim_failed' ELSE source END,
-                updated_at=NOW()
-            WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
-            RETURNING id,status,current_period_end
-        `,[subscriptionId,customerId]);
-
-        if(reservationId){
-            await client.query(`
-                UPDATE free_access_registration_reservations
-                SET released_at=COALESCE(released_at,NOW()),updated_at=NOW()
-                WHERE id=$1 AND customer_id=$2
-            `,[reservationId,customerId]);
+        // Only the current failed Free episode owns the Free-lane account. If a
+        // newer subscription already superseded it, do not delete that newer
+        // account while cleaning up the stale claim.
+        if(targetIsCurrent){
+            const accounts=(await provisioning.normalAccounts(customerId))
+                .filter(account=>String(account.access_lane||'')==='free');
+            for(const account of accounts){
+                await provisioning.deleteJellyfinAccount(account,{reason:'Free claim activation failed before completion'});
+            }
         }
 
-        await client.query(`
-            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
-            VALUES('subscription.free.claim_rolled_back','subscription',$1,$2::jsonb)
-        `,[subscriptionId,JSON.stringify({
-            customerId,
-            reservationId:reservationId||null,
-            reason:String(reason||'Free claim activation failed').slice(0,500),
-            noPlanNoServer:true
-        })]);
-        return ended.rows[0]||null;
+        const result=await transaction(async client=>{
+            const ended=await client.query(`
+                UPDATE subscriptions
+                SET status='cancelled',
+                    current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                    service_extension_days=0,
+                    cancel_at_period_end=TRUE,
+                    source=CASE WHEN source='free_claim' THEN 'free_claim_failed' ELSE source END,
+                    updated_at=NOW()
+                WHERE id=$1 AND customer_id=$2
+                RETURNING id,status,current_period_end,superseded_by
+            `,[subscriptionId,customerId]);
+
+            if(reservationId){
+                await client.query(`
+                    UPDATE free_access_registration_reservations
+                    SET released_at=COALESCE(released_at,NOW()),updated_at=NOW()
+                    WHERE id=$1 AND customer_id=$2
+                `,[reservationId,customerId]);
+            }
+
+            await client.query(`
+                INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                VALUES('subscription.free.claim_rolled_back','subscription',$1,$2::jsonb)
+            `,[subscriptionId,JSON.stringify({
+                customerId,
+                reservationId:reservationId||null,
+                reason:String(reason||'Free claim activation failed').slice(0,500),
+                targetWasCurrent:targetIsCurrent,
+                noPlanNoServer:targetIsCurrent
+            })]);
+            return ended.rows[0]||null;
+        });
+
+        return result;
     });
-
-    return result;
 }
-
 
 async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null } = {}) {
     if(!automatic)await commerce.assertOpen();
