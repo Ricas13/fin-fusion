@@ -40,6 +40,8 @@ assert.match(playbackWebhook,/access_lane_snapshot/,'webhook-based playback must
 assert.match(laneMigration,/ALTER TABLE playback_history[\s\S]*access_lane_snapshot/,'the migration must persist playback lane identity');
 assert.match(laneMigration,/ALTER TABLE stream_policy_events[\s\S]*access_lane_snapshot/,'the migration must persist stream-policy lane identity');
 assert.match(laneMigration,/ph\.started_at<ja\.access_lane_changed_at/,'historical backfill must separate paid-era playback before an explicit Free adoption');
+assert.match(laneMigration,/ph\.jellyfin_account_id IS NOT NULL/,'historical lane snapshots must only be asserted when the original account identity is still known');
+assert.doesNotMatch(laneMigration,/js\.server_class/,'the migration must not permanently guess an orphaned historical lane from server pool alone');
 assert.match(route,/req\.query\.range,req\.query\.scope/,'the activity route must accept both range and scope');
 
 assert.match(view,/name="scope"[^>]*data-activity-scope-select/,'the activity page must expose a server selector');
