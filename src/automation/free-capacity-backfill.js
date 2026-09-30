@@ -2,7 +2,7 @@
 
 const { query } = require('../db');
 const provisioning = require('../jellyfin/resilient-provisioning');
-const subscriptionState = require('../entitlements/subscription-state');
+const customerAccessState = require('../access/customer-access-state');
 const planCapacity = require('../entitlements/plan-capacity');
 const freeReadiness = require('../jellyfin/free-claim-readiness');
 
@@ -189,8 +189,9 @@ async function run({ limit = 100 } = {}) {
   const failures = [...claimRetries.failures];
 
   for (const row of rows) {
-    const entitlement = await subscriptionState.liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true });
-    if (!entitlement || entitlement.blocked || String(entitlement.subscription_id || '') !== String(row.subscription_id || '')) {
+    const access = await customerAccessState.freeJellyfin(row.customer_id, { includeBlocked: true });
+    const entitlement = access.entitlement;
+    if (!entitlement || access.state === customerAccessState.ACCESS_STATES.ACTIVE_BLOCKED || String(entitlement.subscription_id || '') !== String(row.subscription_id || '')) {
       skipped += 1;
       continue;
     }
