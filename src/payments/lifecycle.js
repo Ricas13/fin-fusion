@@ -289,7 +289,7 @@ async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reserva
                     current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
                     service_extension_days=0,
                     cancel_at_period_end=TRUE,
-                    source=CASE WHEN source='free_claim' THEN 'free_claim_failed' ELSE source END,
+                    replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed' ELSE replacement_reason END,
                     updated_at=NOW()
                 WHERE id=$1 AND customer_id=$2
                 RETURNING id,status,current_period_end,superseded_by
@@ -334,7 +334,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
             if(!reservation||reservation.consumed_at||reservation.released_at||new Date(reservation.expires_at).getTime()<=Date.now()||String(reservation.plan_id)!==String(plan.id))throw new Error('Your Free Access hold has expired.');
         }
         await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan',{excludeReservationId:reservationId});
-        const historical = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`,[customerId,plan.id]);
+        const historical = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND COALESCE(replacement_reason,'')<>'free_claim_activation_failed' LIMIT 1`,[customerId,plan.id]);
         const liveFree = await client.query(`
             SELECT s.id,s.plan_id
             FROM subscriptions s
