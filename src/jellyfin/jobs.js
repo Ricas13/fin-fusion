@@ -3,7 +3,6 @@
 const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
-const subscriptionState = require('../entitlements/subscription-state');
 const customerAccessState = require('../access/customer-access-state');
 const scanCursor = require('../automation/scan-cursor');
 
