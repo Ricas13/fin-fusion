@@ -37,48 +37,39 @@ $$;
 -- the account. For explicit primary->Free adoptions, access_lane_changed_at is
 -- authoritative; playback before that boundary remains primary. Legacy Free
 -- accounts marked with inactivity_observation_reset_at have an intentionally
--- ambiguous synthetic boundary, so keep their current Free lane.
+-- ambiguous synthetic boundary, so keep their current Free lane. Rows whose
+-- account reference was already lost remain NULL: server pool alone is useful
+-- for display fallback, but is not strong enough evidence to rewrite durable
+-- retention history.
 UPDATE playback_history ph
-SET access_lane_snapshot=COALESCE(
-    (
-        SELECT CASE
-                 WHEN ja.access_lane='free'
-                  AND ja.inactivity_observation_reset_at IS NULL
-                  AND ph.started_at<ja.access_lane_changed_at
-                 THEN 'primary'
-                 ELSE ja.access_lane
-               END
-        FROM jellyfin_accounts ja
-        WHERE ja.id=ph.jellyfin_account_id
-    ),
-    (
-        SELECT CASE WHEN js.server_class='free' THEN 'free' ELSE 'primary' END
-        FROM jellyfin_servers js
-        WHERE js.id=ph.server_id
-    )
+SET access_lane_snapshot=(
+    SELECT CASE
+             WHEN ja.access_lane='free'
+              AND ja.inactivity_observation_reset_at IS NULL
+              AND ph.started_at<ja.access_lane_changed_at
+             THEN 'primary'
+             ELSE ja.access_lane
+           END
+    FROM jellyfin_accounts ja
+    WHERE ja.id=ph.jellyfin_account_id
 )
-WHERE ph.access_lane_snapshot IS NULL;
+WHERE ph.access_lane_snapshot IS NULL
+  AND ph.jellyfin_account_id IS NOT NULL;
 
 UPDATE stream_policy_events spe
-SET access_lane_snapshot=COALESCE(
-    (
-        SELECT CASE
-                 WHEN ja.access_lane='free'
-                  AND ja.inactivity_observation_reset_at IS NULL
-                  AND spe.created_at<ja.access_lane_changed_at
-                 THEN 'primary'
-                 ELSE ja.access_lane
-               END
-        FROM jellyfin_accounts ja
-        WHERE ja.id=spe.jellyfin_account_id
-    ),
-    (
-        SELECT CASE WHEN js.server_class='free' THEN 'free' ELSE 'primary' END
-        FROM jellyfin_servers js
-        WHERE js.id=spe.server_id
-    )
+SET access_lane_snapshot=(
+    SELECT CASE
+             WHEN ja.access_lane='free'
+              AND ja.inactivity_observation_reset_at IS NULL
+              AND spe.created_at<ja.access_lane_changed_at
+             THEN 'primary'
+             ELSE ja.access_lane
+           END
+    FROM jellyfin_accounts ja
+    WHERE ja.id=spe.jellyfin_account_id
 )
-WHERE spe.access_lane_snapshot IS NULL;
+WHERE spe.access_lane_snapshot IS NULL
+  AND spe.jellyfin_account_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS playback_history_customer_lane_recent_idx
     ON playback_history(customer_id,access_lane_snapshot,started_at DESC);
