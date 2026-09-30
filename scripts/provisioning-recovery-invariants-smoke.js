@@ -68,6 +68,11 @@ assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','f
 assert(lifecycle.includes('await primitives.reconcileCommittedCustomerStrict(customerId)')
     && lifecycle.includes('rollbackUnprovisionedFreeClaim(customerId,created.id'),
     'Free plan acquisition must synchronously reconcile and roll back if no enabled Free Server account is created');
+assert(lifecyclePrimitives.includes("await reconcileCustomer(customerId)")
+    && lifecyclePrimitives.includes("return null;"),
+    'ordinary paid/trial activation must keep its committed plan when server assignment fails so reconciliation can retry');
+assert(lifecyclePrimitives.includes("await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss ? 'Money-loss checkout replay' : historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription')"),
+    'paid subscription activation must use retryable non-strict reconciliation rather than Free-style rollback');
 assert(planChange.includes("const provisioning=require('../jellyfin/resilient-provisioning')")
     && planChange.includes('await provisioning.reconcileCustomer(change.customer_id)')
     && planChange.indexOf('await provisioning.reconcileCustomer(change.customer_id)') < planChange.indexOf("SET state='applied',provider_schedule_state='applied'"),
@@ -123,8 +128,8 @@ assert(compactJobs.includes('blocked:blockedCount'),
 assert(!compact(freeBackfill).includes('c.access_paused_atISNULL'),
     'Free capacity backfill must not trust the denormalized legacy access_paused_at summary');
 assert(freeBackfill.includes('liveFreeJellyfinSubscription(row.customer_id, { includeBlocked: true })')
-    && freeBackfill.includes('if (!entitlement || entitlement.blocked)'),
-    'Free capacity backfill must re-read canonical entitlement/hold authority immediately before provisioning');
+    && freeBackfill.includes("String(entitlement.subscription_id || '') !== String(row.subscription_id || '')"),
+    'Free lifecycle repair must re-read canonical entitlement/hold authority and exact subscription identity before provisioning or rollback');
 
 const compactIntentRecovery = compact(creationIntentRecovery);
 const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");
