@@ -132,7 +132,7 @@ function createCustomerDashboardRouter(){
         }
         const ready=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
         if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
-        return res.redirect('/account?message='+encodeURIComponent('This incomplete Free Access claim has no active Free Server account, so it is not treated as active access. Automatic lifecycle repair will remove it; you can join again once a place is available.')+'#plans');
+        return res.redirect('/account?message='+encodeURIComponent('You do not currently have a Free Server plan. If a place is available, you can join again below.')+'#plans');
       }
       const message=returnStatus.error?'You are signed in. We could not verify your current Free Access state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
       return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
@@ -168,7 +168,7 @@ function createCustomerDashboardRouter(){
         const noPlanMessage=inactivityRemoval
           ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. If a place is available, you can join again below as a new Free Server user.'
           :incompleteFreePlan
-            ?'A Free Access claim without an active Free Server account was detected. It is not treated as active access and automatic lifecycle repair will remove the incomplete plan.'
+            ?'You do not currently have a Free Server plan. If a place is available, you can join again below.'
             :null;
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
