@@ -5,6 +5,7 @@ const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const legacyGrace = require('../entitlements/jellyfin-inactivity-grace');
 const subscriptionState = require('../entitlements/subscription-state');
+const subscriptionTermination = require('../payments/subscription-termination');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
 const base = require('./customer-inactivity');
@@ -59,6 +60,185 @@ function adminProtectedFreeEntitlement(entitlement) {
         entitlement.permanent_access
         || mode === 'present'
     );
+}
+
+function freePlanEndReference(subscriptionId) {
+    return `free-access-inactivity:${subscriptionId}`;
+}
+
+async function finishRemovedFreePlan(row, actorUserId = null) {
+    const sourceKey = `plan:${row.plan_id}`;
+    const reason = String(
+        row.removal_reason
+        || row.reason
+        || `Free Server inactivity: ${Array.isArray(row.triggers) ? row.triggers.join('; ') : 'activity requirements were not met'}`
+    ).slice(0, 500);
+
+    const ended = await subscriptionTermination.terminateLocal(
+        row.subscription_id,
+        row.customer_id,
+        {
+            actorUserId,
+            reason,
+            reference: freePlanEndReference(row.subscription_id)
+        }
+    );
+
+    const released = await accessHolds.releaseHold({
+        customerId: row.customer_id,
+        type: base.HOLD_TYPE,
+        sourceKey,
+        actorUserId,
+        resolutionReason: 'Free Server plan ended after inactivity removal'
+    });
+    if (released !== 1) {
+        const error = new Error('Free Server plan ended, but its inactivity hold was not released exactly once.');
+        error.code = 'FREE_INACTIVITY_HOLD_RELEASE_FAILED';
+        throw error;
+    }
+
+    return { ended, released };
+}
+
+async function detachedRemovalRows(limit = MAX_ENFORCEMENTS_PER_RUN) {
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || MAX_ENFORCEMENTS_PER_RUN));
+    const result = await query(`
+        SELECT
+            h.customer_id,
+            h.source_key,
+            h.reason AS removal_reason,
+            h.metadata,
+            s.id AS subscription_id,
+            s.plan_id,
+            s.status,
+            s.current_period_end,
+            s.service_extension_days,
+            s.superseded_by,
+            p.code AS plan_code
+        FROM customer_access_holds h
+        JOIN subscriptions s
+          ON s.customer_id=h.customer_id
+         AND s.id::text=h.metadata->>'subscriptionId'
+        JOIN plans p ON p.id=s.plan_id
+        WHERE h.hold_type=$1
+          AND h.released_at IS NULL
+          AND h.source_key=('plan:'||s.plan_id::text)
+          AND p.is_free_tier=TRUE
+          AND COALESCE(p.is_addon,FALSE)=FALSE
+          AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
+          AND h.metadata->>'accountId' IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jellyfin_accounts removed
+              WHERE removed.id::text=h.metadata->>'accountId'
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jellyfin_accounts present
+              JOIN jellyfin_servers js ON js.id=present.server_id
+              WHERE present.customer_id=h.customer_id
+                AND present.account_purpose='jellyfin'
+                AND present.access_lane='free'
+                AND present.disabled=FALSE
+                AND js.enabled=TRUE
+                AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+          )
+        ORDER BY h.created_at,h.id
+        LIMIT $2
+    `, [base.HOLD_TYPE, safeLimit]);
+    return result.rows;
+}
+
+function subscriptionAlreadyEnded(row) {
+    const status = String(row?.status || '').toLowerCase();
+    if (['cancelled', 'canceled', 'expired', 'refunded'].includes(status)) return true;
+    return false;
+}
+
+async function finalizeDetachedRemovals({ actorUserId = null, limit = MAX_ENFORCEMENTS_PER_RUN } = {}) {
+    const rows = await detachedRemovalRows(limit);
+    const summary = { processed: rows.length, finalized: 0, released: 0, protected: 0, failed: 0 };
+
+    for (const row of rows) {
+        try {
+            const current = await subscriptionState.liveFreeJellyfinSubscription(
+                row.customer_id,
+                { includeBlocked: true }
+            );
+            const sameSubscription = current
+                && String(current.subscription_id || '') === String(row.subscription_id || '');
+
+            if (sameSubscription && adminProtectedFreeEntitlement(current)) {
+                const released = await accessHolds.releaseHold({
+                    customerId: row.customer_id,
+                    type: base.HOLD_TYPE,
+                    sourceKey: row.source_key,
+                    actorUserId,
+                    resolutionReason: 'Explicit administrator authority superseded pending inactivity plan closure'
+                });
+                summary.released += released;
+                summary.protected += 1;
+                continue;
+            }
+
+            if (!row.superseded_by && !subscriptionAlreadyEnded(row)) {
+                await subscriptionTermination.terminateLocal(
+                    row.subscription_id,
+                    row.customer_id,
+                    {
+                        actorUserId,
+                        reason: row.removal_reason || 'Free Server plan ended after inactivity removal',
+                        reference: freePlanEndReference(row.subscription_id)
+                    }
+                );
+            }
+
+            const released = await accessHolds.releaseHold({
+                customerId: row.customer_id,
+                type: base.HOLD_TYPE,
+                sourceKey: row.source_key,
+                actorUserId,
+                resolutionReason: 'Completed Free Server inactivity plan closure'
+            });
+            summary.released += released;
+
+            await query(
+                `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                 VALUES($1,'customer.inactivity.finalize_free_plan','customer',$2,$3::jsonb)`,
+                [
+                    actorUserId,
+                    row.customer_id,
+                    JSON.stringify({
+                        subscriptionId: row.subscription_id,
+                        planId: row.plan_id,
+                        planCode: row.plan_code,
+                        activePlanRetained: false,
+                        portalAccountPreserved: true,
+                        recoveredAfterAccountDeletion: true,
+                        inactivityHoldReleased: Boolean(released)
+                    })
+                ]
+            ).catch(() => {});
+            summary.finalized += 1;
+        } catch (error) {
+            summary.failed += 1;
+            await query(
+                `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                 VALUES($1,'customer.inactivity.finalize_free_plan_failed','customer',$2,$3::jsonb)`,
+                [
+                    actorUserId,
+                    row.customer_id,
+                    JSON.stringify({
+                        subscriptionId: row.subscription_id,
+                        planId: row.plan_id,
+                        error: String(error?.message || error).slice(0, 500)
+                    })
+                ]
+            ).catch(() => {});
+        }
+    }
+
+    return summary;
 }
 
 async function finalEligibility(row, globalCfg) {
@@ -172,6 +352,7 @@ async function recordDryRun(row, actorUserId) {
             JSON.stringify({
                 planId: row.plan_id,
                 planCode: row.plan_code,
+                subscriptionId: row.subscription_id,
                 accountId: row.account_id,
                 serverId: row.server_id,
                 allocationStartAt: row.allocation_start_at || null,
@@ -179,7 +360,10 @@ async function recordDryRun(row, actorUserId) {
                 lastPlaybackAt: row.last_playback_at || null,
                 playbackMinutes: Math.floor(Number(row.playback_seconds || 0) / 60),
                 triggers: row.triggers,
-                portalAccountPreserved: true
+                portalAccountPreserved: true,
+                freePlanEnded: true,
+                activePlanRetained: false,
+                inactivityHoldReleased: true
             })
         ]
     );
@@ -214,6 +398,12 @@ async function removeEligibleAccount(row, actorUserId) {
             { reason, actorUserId, requireNoActivePlayback: true }
         );
         await verifyRemoved(row.account_id);
+
+        // Inactivity removal is a terminal Free-plan event. The customer portal
+        // account remains, but the Free subscription itself is ended and the
+        // capacity reservation is released. There is no retained/restorable
+        // Free entitlement after a successful removal.
+        await finishRemovedFreePlan({ ...row, removal_reason: reason }, actorUserId);
     } catch (error) {
         if (error?.code === 'JELLYFIN_ACTIVE_PLAYBACK_DELETE_BLOCKED') {
             // If this run created the hold and playback started between the
@@ -231,9 +421,9 @@ async function removeEligibleAccount(row, actorUserId) {
             throw error;
         }
 
-        // The hold is the durable "removal pending/removed" authority for a
-        // genuine DELETE failure. Keep it active so the next run retries the
-        // exact account and unrelated reconciliation cannot recreate access.
+        // Keep the hold active on any partial failure. If the Jellyfin identity
+        // was already deleted but plan termination/release failed, the detached
+        // finalizer above completes that exact subscription on a later run.
         await query(
             `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
              VALUES($1,'customer.inactivity.remove_failed','customer',$2,$3::jsonb)`,
@@ -242,6 +432,7 @@ async function removeEligibleAccount(row, actorUserId) {
                 row.customer_id,
                 JSON.stringify({
                     planId: row.plan_id,
+                    subscriptionId: row.subscription_id,
                     accountId: row.account_id,
                     serverId: row.server_id,
                     error: String(error?.message || error).slice(0, 500)
@@ -251,7 +442,8 @@ async function removeEligibleAccount(row, actorUserId) {
         throw error;
     }
 
-    // Record "removed" only after the remote user and local mapping are gone.
+    // Record "removed" only after the Jellyfin identity is gone, the Free plan
+    // is ended, and its inactivity hold has been released.
     await query(
         `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
          VALUES($1,'customer.inactivity.remove_jellyfin','customer',$2,$3::jsonb)`,
@@ -275,6 +467,10 @@ async function removeEligibleAccount(row, actorUserId) {
 }
 
 async function runPlanRules({ actorUserId = null } = {}) {
+    // Finish any older/partial inactivity removals where the Jellyfin identity
+    // is already gone but the Free subscription was left behind by a previous
+    // release. This repair is independent of whether new removals are enabled.
+    const detachedFinalization = await finalizeDetachedRemovals({ actorUserId });
     const globalCfg = await lifecyclePolicy.get();
     if (!globalCfg.enabled) {
         return {
@@ -282,7 +478,8 @@ async function runPlanRules({ actorUserId = null } = {}) {
             eligible: 0,
             enforced: 0,
             wouldRemove: 0,
-            failed: 0,
+            failed: Number(detachedFinalization.failed || 0),
+            finalizedPlanClosures: detachedFinalization.finalized,
             dryRun: true,
             skipped: globalCfg.configurationMissing
                 ? 'lifecycle_configuration_missing'
@@ -297,7 +494,8 @@ async function runPlanRules({ actorUserId = null } = {}) {
             eligible: 0,
             enforced: 0,
             wouldRemove: 0,
-            failed: 1,
+            failed: 1 + Number(detachedFinalization.failed || 0),
+            finalizedPlanClosures: detachedFinalization.finalized,
             dryRun: true,
             skipped: 'activity_worker_stale',
             warning: 'Free Server inactivity is paused because playback collection is stale.',
@@ -377,7 +575,8 @@ async function runPlanRules({ actorUserId = null } = {}) {
         eligible: eligible.length,
         enforced,
         wouldRemove,
-        failed,
+        failed: failed + Number(detachedFinalization.failed || 0),
+        finalizedPlanClosures: detachedFinalization.finalized,
         deferred,
         safetySkipped,
         warning,
@@ -414,6 +613,11 @@ module.exports = {
     eligibleOnReadyServers,
     telemetrySummary,
     adminProtectedFreeEntitlement,
+    freePlanEndReference,
+    finishRemovedFreePlan,
+    detachedRemovalRows,
+    subscriptionAlreadyEnded,
+    finalizeDetachedRemovals,
     finalEligibility,
     verifyRemoved,
     removeEligibleAccount,
