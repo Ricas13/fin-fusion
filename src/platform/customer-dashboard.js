@@ -26,7 +26,6 @@ const customerNav=require('./customer-nav-html');
 const productReadiness=require('./product-readiness');
 const checkoutIntents=require('../payments/checkout-intents');
 const planChange=require('../payments/customer-plan-change');
-const lifecycle=require('../payments/lifecycle');
 const csrf=require('../auth/csrf');
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
@@ -133,8 +132,7 @@ function createCustomerDashboardRouter(){
         }
         const ready=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
         if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
-        await lifecycle.rollbackUnprovisionedFreeClaim(customerId,freePlan.subscription_id,{reason:'Legacy Free plan had no enabled Free Server account'});
-        return res.redirect('/account?message='+encodeURIComponent('Your previous Free Access claim did not have an active Free Server account, so the incomplete plan was removed. If a place is available, you can join again below.')+'#plans');
+        return res.redirect('/account?message='+encodeURIComponent('This incomplete Free Access claim has no active Free Server account, so it is not treated as active access. Automatic lifecycle repair will remove it; you can join again once a place is available.')+'#plans');
       }
       const message=returnStatus.error?'You are signed in. We could not verify your current Free Access state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
       return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
@@ -150,11 +148,11 @@ function createCustomerDashboardRouter(){
       const [currentPlan,freePlan,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
         provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
-      let effectiveFreePlan=freePlan;
+      let effectiveFreePlan=freePlan,incompleteFreePlan=false;
       if(effectiveFreePlan&&!effectiveFreePlan.blocked){
         const readyFree=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
         if(!readyFree.rowCount){
-          await lifecycle.rollbackUnprovisionedFreeClaim(customerId,effectiveFreePlan.subscription_id,{reason:'Customer portal repaired a live Free plan without an enabled Free Server account'});
+          incompleteFreePlan=true;
           effectiveFreePlan=null;
         }
       }
@@ -167,7 +165,9 @@ function createCustomerDashboardRouter(){
         const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
         const noPlanMessage=inactivityRemoval
           ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. If a place is available, you can join again below as a new Free Server user.'
-          :null;
+          :incompleteFreePlan
+            ?'A Free Access claim without an active Free Server account was detected. It is not treated as active access and automatic lifecycle repair will remove the incomplete plan.'
+            :null;
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
       const jellyfinPlan=currentPlan||effectiveFreePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
