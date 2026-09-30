@@ -8,6 +8,7 @@ const connectionBudget = require('../src/security/database-connection-budget');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const readMaybe = file => fs.existsSync(path.join(root, file)) ? read(file) : '';
 const compact = value => String(value || '').replace(/\s+/g, '');
 
 assert.strictEqual(jobHealth.failedCountFromResult({ failed: 4 }), 4, 'failed result count should be detected');
@@ -68,6 +69,8 @@ assert(!worker.includes('if (due.length) await runBatch(due);'),
 const automationJobs = read('src/automation/jobs.js');
 const revenueIntegrity = read('src/automation/revenue-integrity.js');
 const freeBackfill = read('src/automation/free-capacity-backfill.js');
+const customerAccessState = read('src/access/customer-access-state.js');
+const accessRepair = readMaybe('src/access/access-repair.js');
 assert(revenueIntegrity.includes('payment_loss_event_without_incident')
     && revenueIntegrity.includes("e.processed_at IS NOT NULL")
     && revenueIntegrity.includes("NOT EXISTS(")
@@ -125,10 +128,12 @@ assert(compactFreeBackfill.includes("p.is_free_tier=TRUE")
     'Free Server backfill must select live Free entitlements that do not already have an enabled Free-lane account');
 assert(compactFreeBackfill.includes('ORDERBYcreated_atASC,customer_idASC'),
     'Free Server backfill must allocate waiting entitlements oldest-first');
-assert(compactFreeBackfill.includes('awaitprovisioning.reconcileCustomer(row.customer_id)'),
-    'Free Server backfill must reuse the canonical resilient customer reconciler');
-assert(compactFreeBackfill.includes('if(!entitlement||entitlement.blocked')
-    && compactFreeBackfill.includes('rollbackUnprovisionedFreeClaim')
+const compactFreeRepair = compact(freeBackfill + accessRepair);
+assert(compactFreeRepair.includes('provisioning.reconcileCustomer('),
+    'Free Server repair must reuse the canonical resilient customer reconciler');
+assert((compactFreeBackfill.includes('ACCESS_STATES.ACTIVE_BLOCKED') || compactFreeRepair.includes('ACCESS_STATES.ACTIVE_BLOCKED'))
+    && customerAccessState.includes('ACTIVE_BLOCKED')
+    && compactFreeRepair.includes('rollbackUnprovisionedFreeClaim')
     && compactFreeBackfill.includes('waiting:0'),
     'Free Server lifecycle repair must skip blocked entitlements and converge failed plan-without-server rows to no-plan instead of retaining a waiting deployment state');
 
