@@ -119,13 +119,13 @@ async function saveTrialPolicy(input, actorUserId = null) {
 async function enforceTrialEligibility(customerId, plan) {
     const policy = await trialPolicy();
     if (policy.trialMode === 'once_per_plan') {
-        const prior = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 LIMIT 1`, [customerId, plan.id]);
+        const prior = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source<>'trial_activation_failed' LIMIT 1`, [customerId, plan.id]);
         if (prior.rowCount) throw new Error('This trial has already been used.');
         return policy;
     }
     const priorTrial = await query(`SELECT s.service_type_snapshot,p.service_type,p.name
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial'`, [customerId]);
+        WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial' AND s.source<>'trial_activation_failed'`, [customerId]);
     if (priorTrial.rows.some(row=>serviceScope.overlaps(row,plan))) throw new Error(`A ${serviceScope.label(plan)} trial has already been used on this account.`);
     if (policy.trialMode === 'before_paid') {
         const paid = await query(`SELECT s.service_type_snapshot,p.service_type,p.name
@@ -134,6 +134,57 @@ async function enforceTrialEligibility(customerId, plan) {
         if (paid.rows.some(row=>serviceScope.overlaps(row,plan))) throw new Error(`${serviceScope.label(plan)} trials are only available before the first paid subscription for that service.`);
     }
     return policy;
+}
+
+async function readyPrimaryJellyfinAccountForSubscription(customerId,subscriptionId){
+    const entitlement=await state.effectiveSubscription(customerId,{includeBlocked:true});
+    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    const accounts=await provisioning.normalAccounts(customerId);
+    const forcedServerId=entitlement.admin_forced_server_id||null;
+    return accounts.find(account=>{
+        if(String(account.access_lane||'primary')!=='primary'||account.disabled||!account.server_enabled)return false;
+        if(forcedServerId)return String(account.server_id||'')===String(forcedServerId);
+        return String(account.server_class||'')===String(entitlement.server_class||'');
+    })||null;
+}
+
+async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
+    return provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+        const current=await state.effectiveSubscription(customerId,{includeBlocked:true});
+        const targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+        if(targetIsCurrent){
+            const accounts=(await provisioning.normalAccounts(customerId))
+                .filter(account=>String(account.access_lane||'primary')==='primary');
+            for(const account of accounts){
+                await provisioning.deleteJellyfinAccount(account,{reason:'Jellyfin trial activation failed before server assignment completed'});
+            }
+        }
+
+        const result=await transaction(async client=>{
+            const ended=await client.query(`
+                UPDATE subscriptions
+                SET status='cancelled',
+                    current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                    service_extension_days=0,
+                    cancel_at_period_end=TRUE,
+                    source='trial_activation_failed',
+                    updated_at=NOW()
+                WHERE id=$1 AND customer_id=$2
+                RETURNING id,status,current_period_end,superseded_by
+            `,[subscriptionId,customerId]);
+            await client.query(`
+                INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
+            `,[subscriptionId,JSON.stringify({
+                customerId,
+                reason:String(reason||'Jellyfin trial activation failed').slice(0,500),
+                targetWasCurrent:targetIsCurrent,
+                noPlanNoServer:targetIsCurrent
+            })]);
+            return ended.rows[0]||null;
+        });
+        return result;
+    });
 }
 
 async function startFreeTrial(customerId, planCode) {
@@ -168,8 +219,29 @@ async function startFreeTrial(customerId, planCode) {
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
-    await primitives.reconcileCommittedCustomer(customerId, 'Trial');
-    return created;
+
+    const type=serviceScope.serviceType(plan);
+    const jellyfinTrial=serviceScope.capabilities(plan).has('jellyfin');
+    if(jellyfinTrial){
+        let reconcileError=null;
+        try{
+            await primitives.reconcileCommittedCustomerStrict(customerId);
+        }catch(error){
+            reconcileError=error;
+        }
+        const readyAccount=await readyPrimaryJellyfinAccountForSubscription(customerId,created.id);
+        if(!readyAccount){
+            const reason=reconcileError?.message||'Jellyfin trial reconciliation completed without an enabled primary account.';
+            await rollbackUnprovisionedJellyfinTrial(customerId,created.id,{reason});
+            const error=new Error('The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.');
+            error.code='TRIAL_JELLYFIN_PROVISIONING_FAILED';
+            error.cause=reconcileError||undefined;
+            throw error;
+        }
+    }else{
+        await primitives.reconcileCommittedCustomer(customerId, 'Trial');
+    }
+    return {...created,effective_service_type:type};
 }
 
 async function reservedFreePlan(reservationId){
@@ -483,6 +555,8 @@ module.exports = {
     getProviderPlan,
     getProviderPlanByExternalId,
     startFreeTrial,
+    readyPrimaryJellyfinAccountForSubscription,
+    rollbackUnprovisionedJellyfinTrial,
     readyFreeAccountForSubscription,
     rollbackUnprovisionedFreeClaim,
     claimFreePlan,
