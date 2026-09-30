@@ -32,6 +32,8 @@ assert.match(route,/insightData\(customerId,rawRange,rawScope='all'\)/,'analytic
 assert.match(route,/scopeClause=scopePredicate\(scope,'ph'\)/,'analytics must apply the selected scope to playback history');
 assert.match(route,/playbackScopeClause=scopePredicate\(scope,'ph'\)/,'recent playback must use the selected server scope');
 assert.match(route,/eventScopeClause=scopePredicate\(scope,'stream_policy_events'\)/,'stream-policy events must use the selected server scope');
+assert.match(route,/COALESCE\(ph\.last_seen_at,ph\.started_at\)>?=\$2::timestamptz/,'detailed playback rows must respect the selected time period');
+assert.match(route,/created_at>?=\$2::timestamptz/,'stream-policy rows must respect the selected time period');
 assert.match(route,/activity_scope_account\.access_lane/,'server scope must use the Jellyfin account lane when a snapshot is unavailable');
 assert.match(activityCollector,/access_lane_snapshot/,'poll-based playback and policy events must snapshot their access lane');
 assert.match(playbackWebhook,/access_lane_snapshot/,'webhook-based playback must snapshot its access lane');
