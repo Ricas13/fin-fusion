@@ -4,6 +4,7 @@ const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
 const subscriptionState = require('../entitlements/subscription-state');
+const customerAccessState = require('../access/customer-access-state');
 const scanCursor = require('../automation/scan-cursor');
 
 const DEFAULT_RECONCILE_CONCURRENCY = 2;
@@ -213,15 +214,13 @@ async function dueActiveCustomers(limit = 250) {
 }
 
 async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
-    const entitlement = await subscriptionState.effectiveSubscription(customerId, { includeBlocked: true });
-    if (!entitlement || entitlement.blocked || entitlement.is_free_tier) return false;
+    const access = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
+    const entitlement = access.entitlement;
+    if (!entitlement || access.state !== customerAccessState.ACCESS_STATES.INCONSISTENT_UNPAID) return false;
     if (String(entitlement.contract_billing_interval || entitlement.billing_interval || '').toLowerCase() !== 'trial') return false;
     if (!['jellyfin', 'bundle'].includes(String(entitlement.service_type_snapshot || entitlement.service_type || 'jellyfin').toLowerCase())) return false;
 
     const lifecycle = require('../payments/lifecycle');
-    const ready = await lifecycle.readyPrimaryJellyfinAccountForSubscription(customerId, entitlement.subscription_id);
-    if (ready) return false;
-
     await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
         reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account'
     });
