@@ -45,7 +45,7 @@ assert(!/Free Access entitlement is still reserved|Free Access plan will be rele
 assert(/Your Free Server access was removed because of inactivity\. You now have no active Free Server plan/.test(dash),'inactivity-removed users must get an explicit no-plan message');
 assert(/excludeSubscriptionIds/.test(dash)&&/effectiveCurrentPlan=incompleteFreeSubscriptionId/.test(dash),'a live Free row without a ready server must be excluded from both raw portal subscriptions and current-plan selection');
 assert(/You do not currently have a Free Server plan/.test(dash),'incomplete legacy Free rows must be presented simply as no active Free plan, never as deployment pending');
-assert(/liveFreeJellyfinSubscription\(customerId\),stremioEntitlements/.test(dash),'blocked/removed Free entitlements must not be rendered as active dashboard plans');
+assert(/customerAccessState\.freeJellyfin\(customerId,\{includeBlocked:false\}\)/.test(dash)&&/freeAccess\.state!==customerAccessState\.ACCESS_STATES\.ACTIVE_READY/.test(dash),'blocked, removed or incomplete Free entitlements must not be rendered as active dashboard plans');
 assert(/No active plan/.test(onboarding)&&/you do not currently have a streaming plan/.test(onboarding),'onboarding must make the no-plan state explicit');
 assert(/<button class="button free full" type="submit">Join<\/button>/.test(onboarding),'available Free Access must expose a Join action after the old plan is released');
 assert(/aria-disabled="true">Full<\/span>/.test(onboarding),'sold-out Free Access must render as Full');
@@ -66,7 +66,7 @@ assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'signup-inten
 assert(/freeIntent\(req\.query\?\.intent\).*customerId.*customerUserId.*\/account\/free-access/.test(publicAuth),'signed-in visitors following a Free Access signup link must leave registration and resume through their existing account');
 assert(/\/account\/login\?next=%2Faccount%2Ffree-access/.test(register)&&/Sign in to continue Free Access/.test(register),'existing-account sign-in from Free Access registration must preserve the Free Access continuation path');
 assert(/next==='\/account\/free-access'\?'\/account\/register\?intent=free'/.test(login),'Free Access login must preserve the registration path for genuinely new customers');
-assert(/r\.get\('\/account\/free-access'/.test(dash)&&/liveFreeJellyfinSubscription/.test(dash),'existing-account Free Access continuation must distinguish an existing Free entitlement from a fresh claim without a restore state');
+assert(/r\.get\('\/account\/free-access'/.test(dash)&&/customerAccessState\.freeJellyfin/.test(dash),'existing-account Free Access continuation must distinguish canonical existing Free access from a fresh claim without a restore state');
 assert(/Your Free Access is already active\./.test(dash)&&/choose the Free Server option below/.test(dash),'existing-account Free Access continuation must give a clear result instead of returning users to a signup loop');
 assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/turnstileScript=turnstileEnabled/.test(storefront),'storefront may preload Turnstile assets while registration owns the challenge widget');
 assert(!/cf-turnstile/.test(storefront),'storefront itself must not render the registration Turnstile widget after the Free CTA became a GET link');

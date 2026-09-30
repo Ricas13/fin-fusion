@@ -5,6 +5,7 @@ const {rateLimit}=require('express-rate-limit');
 const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
+const customerAccessState=require('../access/customer-access-state');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const inactivityStatus=require('../automation/customer-inactivity-status');
 const runtimeSettings=require('./runtime-settings');
@@ -190,12 +191,12 @@ async function mediaRows(customerId){
   return result.rows;
 }
 
-async function entitlementForAccount(customerId,account){
+async function entitlementForAccount(customerId,account,accessSnapshot=null){
   if(!account)return null;
   if(mediaType(account)==='emby')return subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}).catch(()=>null);
-  if(String(account.access_lane||'primary')==='free')return subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}).catch(()=>null);
-  const current=await provisioning.currentEntitlement(customerId).catch(()=>null);
-  return current&&!current.is_free_tier?current:null;
+  const access=accessSnapshot||await customerAccessState.snapshot(customerId).catch(()=>null);
+  if(String(account.access_lane||'primary')==='free')return access?.free?.entitlement||null;
+  return access?.primary?.entitlement||null;
 }
 
 function mergeAccount(account,portalAccount,profile,entitlement,error=null){
@@ -228,9 +229,18 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
 
 async function accessAccountsForCustomer(customerId,portal){
   const portalAccounts=new Map((Array.isArray(portal?.accounts)?portal.accounts:[]).map(account=>[String(account.id),account]));
-  const rows=await mediaRows(customerId),result=[];
+  const [rows,accessSnapshot,embyEntitlement]=await Promise.all([
+    mediaRows(customerId),
+    customerAccessState.snapshot(customerId).catch(()=>null),
+    subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}).catch(()=>null)
+  ]);
+  const result=[];
   for(const account of rows){
-    const entitlement=await entitlementForAccount(customerId,account);
+    const entitlement=mediaType(account)==='emby'
+      ?embyEntitlement
+      :String(account.access_lane||'primary')==='free'
+        ?accessSnapshot?.free?.entitlement||null
+        :accessSnapshot?.primary?.entitlement||null;
     if(mediaType(account)!=='jellyfin'){
       result.push(mergeAccount(account,portalAccounts.get(String(account.id)),null,entitlement));
       continue;
@@ -284,22 +294,11 @@ function createCustomerJellyfinRouter(){
     try{
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
-      const liveFree=await subscriptionState.liveFreeJellyfinSubscription(customerId).catch(()=>null);
+      const freeAccess=await customerAccessState.freeJellyfin(customerId,{includeBlocked:true}).catch(()=>null);
+      const liveFree=freeAccess?.entitlement||null;
       let incompleteFreeSubscriptionId=null;
-      if(liveFree&&!liveFree.blocked){
-        const readyFree=await query(`
-          SELECT 1
-          FROM jellyfin_accounts ja
-          JOIN jellyfin_servers js ON js.id=ja.server_id
-          WHERE ja.customer_id=$1
-            AND ja.account_purpose='jellyfin'
-            AND ja.access_lane='free'
-            AND ja.disabled=FALSE
-            AND js.enabled=TRUE
-            AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-          LIMIT 1
-        `,[customerId]);
-        if(!readyFree.rowCount)incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
+      if(liveFree&&!liveFree.blocked&&freeAccess?.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
+        incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
       }
       const portal=await customers.getCustomerPortal(customerId);
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])

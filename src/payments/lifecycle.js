@@ -11,6 +11,7 @@ const planExpiry = require('../entitlements/plan-expiry');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const customerAccessState = require('../access/customer-access-state');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -137,15 +138,9 @@ async function enforceTrialEligibility(customerId, plan) {
 }
 
 async function readyPrimaryJellyfinAccountForSubscription(customerId,subscriptionId){
-    const entitlement=await state.effectiveSubscription(customerId,{includeBlocked:true});
-    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
-    const accounts=await provisioning.normalAccounts(customerId);
-    const forcedServerId=entitlement.admin_forced_server_id||null;
-    return accounts.find(account=>{
-        if(String(account.access_lane||'primary')!=='primary'||account.disabled||!account.server_enabled)return false;
-        if(forcedServerId)return String(account.server_id||'')===String(forcedServerId);
-        return String(account.server_class||'')===String(entitlement.server_class||'');
-    })||null;
+    const access=await customerAccessState.primaryJellyfin(customerId,{includeBlocked:true});
+    if(!access.entitlement||String(access.entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    return access.state===customerAccessState.ACCESS_STATES.ACTIVE_READY?access.account:null;
 }
 
 async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
@@ -269,15 +264,9 @@ async function reservedFreePlan(reservationId){
 }
 
 async function readyFreeAccountForSubscription(customerId,subscriptionId){
-    const entitlement=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
-    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
-    const accounts=await provisioning.normalAccounts(customerId);
-    const forcedServerId=entitlement.admin_forced_server_id||null;
-    return accounts.find(account=>{
-        if(String(account.access_lane||'')!=='free'||account.disabled||!account.server_enabled)return false;
-        if(forcedServerId)return String(account.server_id||'')===String(forcedServerId);
-        return String(account.server_class||'')===String(entitlement.server_class||'');
-    })||null;
+    const access=await customerAccessState.freeJellyfin(customerId,{includeBlocked:true});
+    if(!access.entitlement||String(access.entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    return access.state===customerAccessState.ACCESS_STATES.ACTIVE_READY?access.account:null;
 }
 
 async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created'}={}){
