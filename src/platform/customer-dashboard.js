@@ -14,6 +14,7 @@ const variantCapacity=require('../payments/access-variant-capacity');
 const billingMode=require('../payments/subscription-billing-mode');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
+const customerAccessState=require('../access/customer-access-state');
 const stremioEntitlements=require('../stremio/entitlements');
 const householdAccess=require('../stremio/household-access');
 const installRecovery=require('../stremio/install-credential-recovery');
@@ -119,9 +120,10 @@ function createCustomerDashboardRouter(){
       const customerId=req.session.customerId;
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible)return res.redirect('/account');
-      const freePlan=await subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+      const freeAccess=await customerAccessState.freeJellyfin(customerId,{includeBlocked:true});
+      const freePlan=freeAccess.entitlement;
       if(freePlan){
-        if(freePlan.blocked){
+        if(freeAccess.state===customerAccessState.ACCESS_STATES.ACTIVE_BLOCKED){
           const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
           if(inactivityRemoval){
             const message='Your previous Free Server access was removed because of inactivity. You do not have an active Free Server plan and there is nothing reserved to restore. Choose an available plan below if you want access again.';
@@ -130,8 +132,7 @@ function createCustomerDashboardRouter(){
           const reason=returnStatus.error?'Your Free Access status could not be checked safely. Open My Access or contact support instead of creating another account.':'Your existing Free Access is currently restricted. Open My Access instead of creating another account.';
           return res.redirect('/account/access?error='+encodeURIComponent(reason));
         }
-        const ready=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
-        if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
+        if(freeAccess.state===customerAccessState.ACCESS_STATES.ACTIVE_READY)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
         return res.redirect('/account?message='+encodeURIComponent('You do not currently have a Free Server plan. Choose an available plan below if you want access again.')+'#plans');
       }
       const message=returnStatus.error?'You are signed in. We could not verify your current Free Access state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
@@ -145,17 +146,15 @@ function createCustomerDashboardRouter(){
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
       const portalRaw=await customers.getCustomerPortal(customerId),currency=await planPricing.platformDefaultCurrency();
-      const [currentPlan,freePlan,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
-        provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
+      const [currentPlan,freeAccess,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+        provisioning.currentEntitlement(customerId),customerAccessState.freeJellyfin(customerId,{includeBlocked:true}),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
+      const freePlan=freeAccess.entitlement;
       let effectiveFreePlan=freePlan,incompleteFreePlan=false,incompleteFreeSubscriptionId=null;
-      if(effectiveFreePlan&&!effectiveFreePlan.blocked){
-        const readyFree=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
-        if(!readyFree.rowCount){
-          incompleteFreePlan=true;
-          incompleteFreeSubscriptionId=subscriptionId(effectiveFreePlan);
-          effectiveFreePlan=null;
-        }
+      if(effectiveFreePlan&&!effectiveFreePlan.blocked&&freeAccess.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
+        incompleteFreePlan=true;
+        incompleteFreeSubscriptionId=subscriptionId(effectiveFreePlan);
+        effectiveFreePlan=null;
       }
       const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
       const accessRows=canonicalAccessRows(portalRaw,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
