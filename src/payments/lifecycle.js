@@ -12,6 +12,7 @@ const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const customerAccessState = require('../access/customer-access-state');
+const unpaidAccessActivation = require('./unpaid-access-activation');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -232,21 +233,16 @@ async function startFreeTrial(customerId, planCode) {
     const type=serviceScope.serviceType(plan);
     const jellyfinTrial=serviceScope.capabilities(plan).has('jellyfin');
     if(jellyfinTrial){
-        let reconcileError=null;
-        try{
-            await primitives.reconcileCommittedCustomerStrict(customerId);
-        }catch(error){
-            reconcileError=error;
-        }
-        const readyAccount=await readyPrimaryJellyfinAccountForSubscription(customerId,created.id);
-        if(!readyAccount){
-            const reason=reconcileError?.message||'Jellyfin trial reconciliation completed without an enabled primary account.';
-            await rollbackUnprovisionedJellyfinTrial(customerId,created.id,{reason});
-            const error=new Error('The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.');
-            error.code='TRIAL_JELLYFIN_PROVISIONING_FAILED';
-            error.cause=reconcileError||undefined;
-            throw error;
-        }
+        await unpaidAccessActivation.activateOrRollback({
+            customerId,
+            subscriptionId:created.id,
+            reconcile:primitives.reconcileCommittedCustomerStrict,
+            verify:readyPrimaryJellyfinAccountForSubscription,
+            rollback:rollbackUnprovisionedJellyfinTrial,
+            missingReason:'Jellyfin trial reconciliation completed without an enabled primary account.',
+            failureMessage:'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.',
+            failureCode:'TRIAL_JELLYFIN_PROVISIONING_FAILED'
+        });
     }else{
         await primitives.reconcileCommittedCustomer(customerId, 'Trial');
     }
@@ -382,26 +378,21 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
 
-    let reconcileError=null;
-    try{
-        await primitives.reconcileCommittedCustomerStrict(customerId);
-    }catch(error){
-        reconcileError=error;
-    }
-
     // A Free claim is complete only when the exact subscription owns an
     // enabled Free-lane Jellyfin account on the correct placement. We never
     // retain a live Free plan in a "deployment pending" state.
-    const readyAccount=await readyFreeAccountForSubscription(customerId,created.id);
-    if(readyAccount)return created;
-
-    const reason=reconcileError?.message||'Free Server reconciliation completed without an enabled account.';
-    await rollbackUnprovisionedFreeClaim(customerId,created.id,{reservationId,reason});
-
-    const error=new Error('Free Access could not be activated because a Free Server account could not be created. No Free plan was retained.');
-    error.code='FREE_CLAIM_PROVISIONING_FAILED';
-    error.cause=reconcileError||undefined;
-    throw error;
+    await unpaidAccessActivation.activateOrRollback({
+        customerId,
+        subscriptionId:created.id,
+        reconcile:primitives.reconcileCommittedCustomerStrict,
+        verify:readyFreeAccountForSubscription,
+        rollback:rollbackUnprovisionedFreeClaim,
+        rollbackOptions:{reservationId},
+        missingReason:'Free Server reconciliation completed without an enabled account.',
+        failureMessage:'Free Access could not be activated because a Free Server account could not be created. No Free plan was retained.',
+        failureCode:'FREE_CLAIM_PROVISIONING_FAILED'
+    });
+    return created;
 }
 
 async function autoDowngradeEligibleCustomer(customerId) {
