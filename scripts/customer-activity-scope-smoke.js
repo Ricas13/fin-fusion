@@ -3,6 +3,7 @@
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
+const ejs=require('ejs');
 const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const activity=require('../src/platform/customer-activity');
@@ -13,6 +14,8 @@ const client=read('public/js/customer-activity.js');
 const activityCollector=read('src/jellyfin/activity.js');
 const playbackWebhook=read('src/jellyfin/playback-webhook.js');
 const laneMigration=read('db/migrations/20260930211500_activity_access_lane_snapshot.sql');
+
+assert.doesNotThrow(()=>ejs.compile(view,{filename:path.join(root,'views/customer/activity.ejs')}),'Activity EJS must remain syntactically compilable');
 
 assert.equal(activity.scopeOption('all').accessLane,null);
 assert.equal(activity.scopeOption('free').accessLane,'free');
