@@ -24,9 +24,7 @@ function accountMatchesEntitlement(account, entitlement, lane) {
     if (!account || !entitlement) return false;
     if (laneOf(account) !== lane) return false;
     if (account.disabled || !account.server_enabled) return false;
-    const forcedServerId = entitlement.admin_forced_server_id || null;
-    if (forcedServerId) return sameId(account.server_id, forcedServerId);
-    return String(account.server_class || '') === String(entitlement.server_class || '');
+    return provisioning.accountMatchesEntitlementPlacement(account, entitlement);
 }
 
 function isTrial(entitlement) {
