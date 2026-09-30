@@ -22,7 +22,7 @@ assert.match(route,/Your Free Server access was removed because of inactivity\. 
 assert.doesNotMatch(view,/Restore Free Server access/,'My Access must not offer one-click restoration after inactivity removal');
 assert.doesNotMatch(view,/underlying Free Server entitlement is retained/i,'My Access must not claim an inactivity-removed Free entitlement is retained');
 assert.match(view,/class="freeWatchLabel">Free Server activity requirement</,'Free Server access must identify the activity requirement explicitly');
-assert.match(route,/Only playback on the Free Server counts; Premium Server viewing does not count toward this requirement\./,'My Access must explicitly say Premium playback does not satisfy Free retention');
+assert.match(route,/Only playback through your Free Server access counts; playback through paid\/Premium access does not count toward this requirement\./,'My Access must explicitly say paid/Premium access does not satisfy Free retention');
 assert.match(view,/freeAccessHealth--<%= freeHealth\.tone %>/,'My Access styling must be driven by shared Free Server health state');
 assert.match(view,/Current <%= Number\(freeHealth\.playbackWindowDays\)\|\|7 %>-day window/,'Free Server watch status must show the current rolling window');
 
