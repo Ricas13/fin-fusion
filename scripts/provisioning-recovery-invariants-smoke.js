@@ -16,6 +16,7 @@ const reconciliationControl = read('src/jellyfin/reconciliation-control.js');
 const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
+const lifecyclePrimitives = read('src/payments/lifecycle-primitives.js');
 const paymentEventRetry = read('src/payments/payment-event-retry.js');
 const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
