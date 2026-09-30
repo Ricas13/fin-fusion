@@ -85,7 +85,7 @@ Free Server has a binary delivery invariant:
 - **Free plan present** -> an enabled Free-lane Jellyfin account must exist on the correct eligible server.
 - **No Free plan** -> no Free-lane Jellyfin account may remain.
 - A Free claim must never be left as "deployment pending". If synchronous Free provisioning cannot create the account, the incomplete Free subscription is rolled back and scarce capacity is released.
-- The deliberate exception is a **paid/trial Jellyfin entitlement**: payment may already have committed the plan when remote server assignment fails. That paid/trial plan remains valid while reconciliation retries server assignment; it must not be rolled back merely because provisioning failed.
+- The deliberate exception is a **paid Jellyfin entitlement**: payment may already have committed the plan when remote server assignment fails. That paid plan remains valid while reconciliation retries server assignment; it must not be rolled back merely because provisioning failed. An unpaid Jellyfin trial follows the binary rule and is rolled back if its server account cannot be created.
 - Inactivity removal is terminal for that Free subscription: the Jellyfin identity is deleted, the exact Free subscription is ended, and the customer returns to the no-plan state. Re-entry is a fresh claim subject to capacity.
 - Repair jobs may make one convergence attempt for legacy inconsistent rows, but they must finish each repair as either plan+server or no-plan+no-server rather than retaining a waiting entitlement.
 
