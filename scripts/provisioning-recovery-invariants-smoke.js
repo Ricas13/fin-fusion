@@ -18,6 +18,7 @@ const subscriptionState = read('src/entitlements/subscription-state.js');
 const deploymentVerify = read('scripts/verify-deployment.js');
 const lifecycle = read('src/payments/lifecycle.js');
 const lifecyclePrimitives = read('src/payments/lifecycle-primitives.js');
+const unpaidActivation = readMaybe('src/payments/unpaid-access-activation.js');
 const paymentEventRetry = read('src/payments/payment-event-retry.js');
 const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
@@ -69,10 +70,22 @@ assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jel
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 
-assert(lifecycle.includes('await primitives.reconcileCommittedCustomerStrict(customerId)')
-    && lifecycle.includes('rollbackUnprovisionedFreeClaim(customerId,created.id'),
+assert(lifecycle.includes('reconcileCommittedCustomerStrict')
+    && (
+        lifecycle.includes('rollbackUnprovisionedFreeClaim(customerId,created.id')
+        || (
+            lifecycle.includes('rollback:rollbackUnprovisionedFreeClaim')
+            && unpaidActivation.includes('await rollback(customerId, subscriptionId')
+        )
+    ),
     'Free plan acquisition must synchronously reconcile and roll back if no enabled Free Server account is created');
-assert(lifecycle.includes('rollbackUnprovisionedJellyfinTrial(customerId,created.id')
+assert((
+        lifecycle.includes('rollbackUnprovisionedJellyfinTrial(customerId,created.id')
+        || (
+            lifecycle.includes('rollback:rollbackUnprovisionedJellyfinTrial')
+            && unpaidActivation.includes('await rollback(customerId, subscriptionId')
+        )
+    )
     && lifecycle.includes("replacement_reason='trial_activation_failed'"),
     'unpaid Jellyfin trials must roll back when no enabled primary server account can be created');
 assert(lifecyclePrimitives.includes("await reconcileCustomer(customerId)")
