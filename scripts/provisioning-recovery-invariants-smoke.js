@@ -65,8 +65,9 @@ assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jel
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 
-assert(lifecycle.includes("await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan')"),
-    'Free plan acquisition must attempt immediate canonical reconciliation');
+assert(lifecycle.includes('await primitives.reconcileCommittedCustomerStrict(customerId)')
+    && lifecycle.includes('rollbackUnprovisionedFreeClaim(customerId,created.id'),
+    'Free plan acquisition must synchronously reconcile and roll back if no enabled Free Server account is created');
 assert(planChange.includes("const provisioning=require('../jellyfin/resilient-provisioning')")
     && planChange.includes('await provisioning.reconcileCustomer(change.customer_id)')
     && planChange.indexOf('await provisioning.reconcileCustomer(change.customer_id)') < planChange.indexOf("SET state='applied',provider_schedule_state='applied'"),
