@@ -35,10 +35,10 @@ function deliveryType(entitlement){return productReadiness.serviceType({service_
 function liveSubscription(row){if(!row||row.superseded_by||!['active','trialing','past_due','paused'].includes(String(row.status||'')))return false;if(!row.current_period_end)return true;const end=new Date(row.current_period_end);return !Number.isNaN(end.getTime())&&end.getTime()>Date.now();}
 function recurringProvider(row){return billingMode.recurringProvider(row);}
 function subscriptionId(row){return row&&(row.subscription_id||row.id)?String(row.subscription_id||row.id):null;}
-function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=null,embyPlan=null,entitlements=[]}={}){
-  const rowsById=new Map(),forcedIds=new Set();
+function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=null,embyPlan=null,entitlements=[],excludeSubscriptionIds=[]}={}){
+  const rowsById=new Map(),forcedIds=new Set(),excludedIds=new Set((excludeSubscriptionIds||[]).map(String).filter(Boolean));
   function add(row,{force=false}={}){
-    const id=subscriptionId(row);if(!id)return;
+    const id=subscriptionId(row);if(!id||excludedIds.has(id))return;
     rowsById.set(id,{...(rowsById.get(id)||{}),...row,id,subscription_id:id});
     if(force)forcedIds.add(id);
   }
@@ -148,15 +148,17 @@ function createCustomerDashboardRouter(){
       const [currentPlan,freePlan,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
         provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
-      let effectiveFreePlan=freePlan,incompleteFreePlan=false;
+      let effectiveFreePlan=freePlan,incompleteFreePlan=false,incompleteFreeSubscriptionId=null;
       if(effectiveFreePlan&&!effectiveFreePlan.blocked){
         const readyFree=await query(`SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free' AND ja.disabled=FALSE AND js.enabled=TRUE AND COALESCE(js.media_server_type,'jellyfin')='jellyfin' LIMIT 1`,[customerId]);
         if(!readyFree.rowCount){
           incompleteFreePlan=true;
+          incompleteFreeSubscriptionId=subscriptionId(effectiveFreePlan);
           effectiveFreePlan=null;
         }
       }
-      const accessRows=canonicalAccessRows(portalRaw,{currentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
+      const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
+      const accessRows=canonicalAccessRows(portalRaw,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
       const portal=portalRaw,navOptions=customerNav.optionsFromPortal(portal);
       await tagMediaServerAccounts(customerId,await hideInternalAccounts(customerId,portal));
       canonicalizePortalSubscriptions(portal,accessRows);
@@ -170,7 +172,7 @@ function createCustomerDashboardRouter(){
             :null;
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
-      const jellyfinPlan=currentPlan||effectiveFreePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
+      const jellyfinPlan=effectiveCurrentPlan||effectiveFreePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
       return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}
   });
