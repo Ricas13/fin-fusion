@@ -138,7 +138,11 @@ function createRouter() {
                 console.warn('Automatic Stremio trial installation setup failed:', { customerId: req.session.customerId, error: stremioError.message });
                 return res.redirect('/account?welcome=1&error=' + encodeURIComponent('Your Stremio trial is active, but the installation link could not be created automatically. Use the Stremio setup action below to retry.') + '#stremio-access');
             }
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Access is being prepared; each service will show as ready as soon as setup finishes.'));
+            const trialType=String(subscription?.effective_service_type||'').toLowerCase();
+            const message=['jellyfin','bundle'].includes(trialType)
+                ? 'Your trial is active and your Jellyfin account is ready.'
+                : 'Your trial is active.';
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free trial start failed', fallback: 'Your trial could not be started.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));
