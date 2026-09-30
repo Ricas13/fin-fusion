@@ -112,10 +112,13 @@ async function waitingCandidates(limit = 100, options = {}) {
         AND NOT EXISTS(
           SELECT 1
           FROM jellyfin_accounts ja
+          JOIN jellyfin_servers ready_js ON ready_js.id=ja.server_id
           WHERE ja.customer_id=s.customer_id
             AND ja.account_purpose='jellyfin'
             AND ja.access_lane='free'
             AND ja.disabled=FALSE
+            AND ready_js.enabled=TRUE
+            AND COALESCE(ready_js.media_server_type,'jellyfin')='jellyfin'
         )
       ORDER BY s.customer_id,s.created_at DESC,s.id DESC
     )
