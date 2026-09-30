@@ -33,13 +33,10 @@ function staticContracts(){
   assert(inactivity.includes("ja.access_lane='free'")&&inactivity.includes('ph.server_id=ja.server_id'),'Free inactivity must use only Free-lane server playback');
   assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity candidates must not depend on how Free access was acquired');
   assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("ja.access_lane='free'"),'Free entitlement blocking must recognize source-agnostic Free-lane inactivity and cleanup holds');
-  // The dormant-free-account restore path now lives in jellyfin-cleanup-return.js
-  // (customer-inactivity.js's own copy of restoreReturningCustomer was dead code -
-  // never wired to any route - and has been removed). The retired lifecycle
-  // ledger is no longer authoritative: recovery requires a live Free-tier
-  // entitlement plus its matching active inactivity hold, so an unrelated paid
-  // Jellyfin visit cannot resurrect an abandoned Free account by itself.
-  assert(cleanupReturn.includes('inactivityRestore.restoreStatus(customerId)')&&cleanupReturn.includes('canRestoreDeletedFree=Boolean(restoreState.eligible)'),'paid Jellyfin portal visits must only expose explicit Free restoration when the canonical exact-episode inactivity restore state is eligible');
+  // Free inactivity is terminal. Generic cleanup-return restoration remains
+  // available only for a profile cleanup on a still-live non-inactivity plan;
+  // an unrelated paid Jellyfin visit must never resurrect old Free access.
+  assert(cleanupReturn.includes('canRestoreDeletedFree:false')&&!cleanupReturn.includes('restoreDisabledFreeAccess')&&!cleanupReturn.includes('declineDeletedFreeAccess'),'paid Jellyfin portal visits must never expose restoration for inactivity-removed Free access');
   assert(provisioning.includes("'reconcile','started'")&&!provisioning.includes("'reconcile_multi_access','started'"),'multi-access provisioning runs must use a schema-valid action');
   assert(migration.includes("CHECK (access_lane IN ('primary','free'))")&&migration.includes("p_source='free_claim'"),'applied migration must remain unchanged while runtime supplements legacy-source Free blocking');
 }
