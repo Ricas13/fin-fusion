@@ -5,7 +5,6 @@ const {rateLimit}=require('express-rate-limit');
 const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
-const lifecycle=require('../payments/lifecycle');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const inactivityStatus=require('../automation/customer-inactivity-status');
 const runtimeSettings=require('./runtime-settings');
@@ -286,6 +285,7 @@ function createCustomerJellyfinRouter(){
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
       const liveFree=await subscriptionState.liveFreeJellyfinSubscription(customerId).catch(()=>null);
+      let incompleteFreeSubscriptionId=null;
       if(liveFree&&!liveFree.blocked){
         const readyFree=await query(`
           SELECT 1
@@ -299,13 +299,12 @@ function createCustomerJellyfinRouter(){
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
           LIMIT 1
         `,[customerId]);
-        if(!readyFree.rowCount){
-          await lifecycle.rollbackUnprovisionedFreeClaim(customerId,liveFree.subscription_id,{reason:'My Access repaired a live Free plan without an enabled Free Server account'});
-        }
+        if(!readyFree.rowCount)incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
       }
       const portal=await customers.getCustomerPortal(customerId);
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
         .filter(customerNav.liveServiceSubscription)
+        .filter(subscription=>!incompleteFreeSubscriptionId||String(subscription.subscription_id||subscription.id||'')!==incompleteFreeSubscriptionId)
         .sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
       const [accounts,requestState,returnStatus,rawFreeUsage]=await Promise.all([
         accessAccountsForCustomer(customerId,portal),
@@ -315,6 +314,10 @@ function createCustomerJellyfinRouter(){
       ]);
       const subscriptions=rawSubscriptions,freeUsage=freeAccessHealth(rawFreeUsage);
       if(!subscriptions.length&&!requestState.eligible){
+        if(incompleteFreeSubscriptionId){
+          const message='A Free Access claim without an active Free Server account was detected. It is not treated as active access and automatic lifecycle repair will remove the incomplete plan.';
+          return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
+        }
         const removed=await query(`
           SELECT 1
           FROM audit_log a
