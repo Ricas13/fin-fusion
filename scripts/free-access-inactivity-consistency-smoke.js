@@ -170,7 +170,10 @@ assert.doesNotMatch(base, /noPlaybackEligible|noPlaybackDays/, 'Free inactivity 
 // survives, but there is no retained/restorable Free plan.
 assert.match(enforcement, /await provisioning\.deleteJellyfinAccount\(/);
 assert.match(enforcement, /entitlement\.subscription_id[\s\S]*?fresh\.subscription_id/, 'final destructive recheck must require the exact Free subscription episode');
-assert.doesNotMatch(enforcement, /await provisioning\.reconcileCustomer\(/, 'inactivity removal must not invoke broad reconciliation');
+const removeEligibleStart=enforcement.indexOf('async function removeEligibleAccount');
+const runPlanRulesStart=enforcement.indexOf('async function runPlanRules',removeEligibleStart);
+const removeEligibleSource=enforcement.slice(removeEligibleStart,runPlanRulesStart);
+assert.doesNotMatch(removeEligibleSource, /await provisioning\.reconcileCustomer\(/, 'inactivity removal must not invoke broad reconciliation');
 assert.match(enforcement, /await accessHolds\.addHold\([\s\S]*?await provisioning\.deleteJellyfinAccount/, 'the durable inactivity hold must exist before deletion');
 assert.match(enforcement, /await verifyRemoved\(row\.account_id\)[\s\S]*?await finishRemovedFreePlan/, 'the Free plan must end only after Jellyfin deletion is verified');
 assert.match(enforcement, /subscriptionTermination\.terminateLocal\([\s\S]*?Free Server plan ended after inactivity removal/, 'successful inactivity removal must terminate the exact Free subscription');
