@@ -193,9 +193,17 @@ async function disableAccounts(accounts) {
 // lifecycle (customer-inactivity-scoped.js) rather than this immediate path.
 async function retireAccounts(accounts, { deleteAccounts = false, reason = '' } = {}) {
     for (const account of accounts) {
+        // Definitive entitlement removal must never silently keep a local
+        // server assignment merely because the server is currently disabled.
+        // Attempt deletion and surface the operational failure so repair keeps
+        // retrying; blocked/reversible access may still skip an unavailable
+        // server because the account is intentionally retained.
+        if (deleteAccounts) {
+            await base.deleteJellyfinAccount(account, { reason });
+            continue;
+        }
         if (!account.server_enabled) continue;
-        if (deleteAccounts) await base.deleteJellyfinAccount(account, { reason });
-        else if (!account.disabled) await base.disableJellyfinAccount(account);
+        if (!account.disabled) await base.disableJellyfinAccount(account);
     }
 }
 
