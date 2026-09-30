@@ -11,20 +11,22 @@ const route=read('src/platform/customer-activity.js');
 const view=read('views/customer/activity.ejs');
 const client=read('public/js/customer-activity.js');
 
-assert.equal(activity.scopeOption('all').serverClass,null);
-assert.equal(activity.scopeOption('free').serverClass,'free');
-assert.equal(activity.scopeOption('premium').serverClass,'premium');
+assert.equal(activity.scopeOption('all').accessLane,null);
+assert.equal(activity.scopeOption('free').accessLane,'free');
+assert.equal(activity.scopeOption('premium').accessLane,'primary');
 assert.equal(activity.scopeOption('anything-else').key,'all');
 
 assert.equal(activity.scopePredicate('all'),'');
-assert.match(activity.scopePredicate('free'),/server_class='free'/);
-assert.match(activity.scopePredicate('premium'),/server_class='premium'/);
+assert.match(activity.scopePredicate('free'),/access_lane/,'Free activity must prefer the durable account lane');
+assert.match(activity.scopePredicate('free'),/='free'/);
+assert.match(activity.scopePredicate('premium'),/='primary'/,'Premium activity is the paid\/primary lane, including custom pools');
+assert.match(activity.scopePredicate('free'),/CASE WHEN activity_scope_server\.server_class='free' THEN 'free' ELSE 'primary' END/,'orphaned historical rows need a server-pool fallback after account deletion');
 
 assert.match(route,/insightData\(customerId,rawRange,rawScope='all'\)/,'analytics must accept a server scope');
 assert.match(route,/scopeClause=scopePredicate\(scope,'ph'\)/,'analytics must apply the selected scope to playback history');
 assert.match(route,/playbackScopeClause=scopePredicate\(scope,'ph'\)/,'recent playback must use the selected server scope');
 assert.match(route,/eventScopeClause=scopePredicate\(scope,'stream_policy_events'\)/,'stream-policy events must use the selected server scope');
-assert.match(route,/server_class='\$\{scope\.serverClass\}'/,'server scope must be derived from the durable Jellyfin server class');
+assert.match(route,/activity_scope_account\.access_lane/,'server scope must use the Jellyfin account lane when the account still exists');
 assert.match(route,/req\.query\.range,req\.query\.scope/,'the activity route must accept both range and scope');
 
 assert.match(view,/name="scope"[^>]*data-activity-scope-select/,'the activity page must expose a server selector');
