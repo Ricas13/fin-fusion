@@ -75,7 +75,7 @@ function freeAccessHealth(status,{now=Date.now()}={}){
   const missedFirstPlaybackDeadline=Boolean(firstPlayback&&status.firstPlaybackOnTime===false);
   const activated=Boolean(!missedFirstPlaybackDeadline&&(firstPlayback||status.hasPlayback||status.currentlyPlaying));
   const playbackMinutes=Math.max(0,Number(status.playbackMinutes)||0);
-  const rulesText=`Free Server rules: play your first stream within ${firstPlaybackGraceDays} day${firstPlaybackGraceDays===1?'':'s'} of receiving a place, then watch at least ${minimumPlaybackMinutes} minutes in each rolling ${playbackWindowDays}-day window. Only playback on the Free Server counts; Premium Server viewing does not count toward this requirement.`;
+  const rulesText=`Free Server rules: play your first stream within ${firstPlaybackGraceDays} day${firstPlaybackGraceDays===1?'':'s'} of receiving a place, then watch at least ${minimumPlaybackMinutes} minutes in each rolling ${playbackWindowDays}-day window. Only playback through your Free Server access counts; playback through paid/Premium access does not count toward this requirement.`;
   const enforcementNote=status.automationProtected
     ?'Automatic inactivity removal is disabled for this protected account.'
     :status.globalEnforcementEnabled===false
