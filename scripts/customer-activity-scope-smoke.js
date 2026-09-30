@@ -50,7 +50,7 @@ assert.match(view,/name="scope"[^>]*data-activity-scope-select/,'the activity pa
 assert.match(view,/All activity/,'the activity page must expose the combined scope');
 assert.match(view,/scope=<%= encodeURIComponent\(scope\.key\) %>/,'range tabs must preserve the selected server scope');
 assert.match(view,/freeUsage&&freeUsage\.applies&&scope\.key!=='premium'/,'Free retention status must not be shown as part of Premium-only analytics');
-assert.match(view,/Premium Server viewing does not count toward it/,'Free retention panel must explain Premium playback exclusion');
+assert.match(view,/Paid\/Premium access does not count toward it/,'Free retention panel must explain paid/Premium access exclusion');
 
 assert.match(client,/data-activity-range-select\],\[data-activity-scope-select/,'range and server selectors must both auto-submit');
 
