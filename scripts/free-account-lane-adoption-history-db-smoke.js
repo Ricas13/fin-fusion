@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const inactivity = require('../src/automation/customer-inactivity');
 const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace');
+const customerActivity = require('../src/platform/customer-activity');
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
@@ -234,6 +235,19 @@ async function candidateWithGrace(customerId) {
         `known Free orphan playback should contribute only its own ~20 minutes; seconds=${knownFreeOrphan.playback_seconds}`
     );
 
+    const freeScopedCount = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('free','ph')}
+    `, [orphanCustomerId]);
+    const premiumScopedCount = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('premium','ph')}
+    `, [orphanCustomerId]);
+    assert.strictEqual(Number(freeScopedCount.rows[0].count), 1, 'Free Activity scope must include the known Free orphan and exclude the known paid orphan');
+    assert.strictEqual(Number(premiumScopedCount.rows[0].count), 1, 'Premium Activity scope must include the known paid orphan and exclude the known Free orphan');
+
     // Case 5: pre-snapshot orphan history remains deliberately conservative.
     // Unknown orphan rows continue to count so this migration cannot create a
     // new false-removal path for legacy users.
@@ -263,6 +277,19 @@ async function candidateWithGrace(customerId) {
     const unknownOrphan = await candidateFor(unknownCustomerId);
     assert.strictEqual(unknownOrphan.has_playback, true, 'unknown legacy orphan playback must retain the pre-migration conservative Free continuity behavior');
     assert(Number(unknownOrphan.playback_seconds||0)>=4*60, 'unknown legacy orphan playback must continue to contribute its observed minutes');
+
+    const unknownFreeDisplay = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('free','ph')}
+    `, [unknownCustomerId]);
+    const unknownPremiumDisplay = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('premium','ph')}
+    `, [unknownCustomerId]);
+    assert.strictEqual(Number(unknownFreeDisplay.rows[0].count), 0, 'an unsnapshotted orphan on a Premium-class server cannot be proven Free for historical display');
+    assert.strictEqual(Number(unknownPremiumDisplay.rows[0].count), 1, 'historical display must use the physical server class only as the final fallback for an unknown orphan');
 
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
