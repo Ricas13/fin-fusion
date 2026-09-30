@@ -24,20 +24,6 @@ const CONNECTION_BUDGET = automationConnectionBudget();
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS || 15000)));
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = buildInfo.gitSha;
-const DEFAULT_JOB_INTERVALS=Object.freeze({
-    free_capacity_backfill:30,
-    free_places_digest:30,
-    creation_intent_recovery:60,
-    customer_service_recovery:60,
-    revenue_integrity:60,
-    paypal_history_reconciliation:300,
-    provider_checkout_recovery:300,
-    subscription_discovery:21600,
-    data_retention:3600,
-    discord_roles:43200,
-    stremio_external_tokens:300,
-    stremio_media_index:300
-});
 const CRITICAL_JOB_KEYS=Object.freeze(criticalJobs.names());
 let stopping = false;
 let running = new Set();
@@ -77,7 +63,7 @@ function resultMetrics(jobKey, value = {}) {
 
 async function ensureRows() {
     for (const jobKey of jobRegistry.names()) {
-        const interval=Number(DEFAULT_JOB_INTERVALS[jobKey]||300);
+        const interval=jobRegistry.defaultIntervalSeconds(jobKey);
         await query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at)
             VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING`, [jobKey,interval]);
     }
