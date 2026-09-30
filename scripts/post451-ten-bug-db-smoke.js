@@ -7,6 +7,7 @@ const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
 const totp = require('../src/auth/totp');
 const lifecycle = require('../src/payments/lifecycle');
+const jellyfinRegistry = require('../src/jellyfin/registry');
 const subscriptionExpiry = require('../src/entitlements/subscription-expiry');
 const householdAccess = require('../src/stremio/household-access');
 const networkLeases = require('../src/access/network-leases');
@@ -184,10 +185,45 @@ async function serviceScopedAutoDowngrade(suffix) {
 
   await lifecycle.saveTrialPolicy({ trialMode: 'once_ever', freeMode: 'renewable', downgradeToFree: true, downgradeFreePlanCode: freePlan.code });
 
-  const downgraded = await lifecycle.autoDowngradeEligibleCustomer(customer.id);
-  assert(downgraded, 'an unrelated live Stremio entitlement must not suppress a Jellyfin free-tier auto-downgrade');
-  const freeRow = (await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'`, [customer.id, freePlan.id])).rows[0];
-  assert(freeRow, 'the customer must actually receive the configured Jellyfin free plan');
+  const originalRequest = jellyfinRegistry.request;
+  const users = new Map();
+  let nextUser = 1;
+  jellyfinRegistry.request = async (_serverId, endpoint, options = {}) => {
+    const method = String(options.method || 'GET').toUpperCase();
+    if (endpoint === '/Users' && method === 'GET') return Array.from(users.values());
+    if (endpoint === '/Library/VirtualFolders' && method === 'GET') return [];
+    if (endpoint === '/Users/New' && method === 'POST') {
+      const user = { Id: `post451-free-user-${nextUser++}`, Name: String(options.body?.Name || 'post451-user'), Policy: { IsAdministrator: false } };
+      users.set(user.Id, user);
+      return user;
+    }
+    const userMatch = String(endpoint).match(/^\/Users\/([^/]+)$/);
+    if (userMatch && method === 'GET') return users.get(decodeURIComponent(userMatch[1])) || {};
+    if (userMatch && method === 'DELETE') { users.delete(decodeURIComponent(userMatch[1])); return {}; }
+    if (/^\/Users\/[^/]+\/Policy$/.test(String(endpoint)) && method === 'POST') return {};
+    throw new Error(`Unexpected Jellyfin stub request: ${method} ${endpoint}`);
+  };
+
+  try {
+    const downgraded = await lifecycle.autoDowngradeEligibleCustomer(customer.id);
+    assert(downgraded, 'an unrelated live Stremio entitlement must not suppress a Jellyfin free-tier auto-downgrade');
+    const freeRow = (await query(`
+      SELECT 1
+      FROM subscriptions
+      WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'
+        AND status='active' AND current_period_end>NOW()
+    `, [customer.id, freePlan.id])).rows[0];
+    assert(freeRow, 'the customer must actually receive the configured Jellyfin free plan');
+    const account = (await query(`
+      SELECT 1
+      FROM jellyfin_accounts
+      WHERE customer_id=$1 AND access_lane='free' AND disabled=FALSE
+      LIMIT 1
+    `, [customer.id])).rows[0];
+    assert(account, 'binary Free auto-downgrade must also create an enabled Free Server account');
+  } finally {
+    jellyfinRegistry.request = originalRequest;
+  }
 }
 
 // Item 7: expiry reconciliation failures must be visible in the automation
