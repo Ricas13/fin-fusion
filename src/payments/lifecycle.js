@@ -10,6 +10,7 @@ const inactivityHolds = require('../entitlements/inactivity-hold-reconciliation'
 const planExpiry = require('../entitlements/plan-expiry');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
+const provisioning = require('../jellyfin/resilient-provisioning');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -181,6 +182,64 @@ async function reservedFreePlan(reservationId){
     return plan;
 }
 
+async function readyFreeAccountForSubscription(customerId,subscriptionId){
+    const entitlement=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    const accounts=await provisioning.normalAccounts(customerId);
+    const forcedServerId=entitlement.admin_forced_server_id||null;
+    return accounts.find(account=>{
+        if(String(account.access_lane||'')!=='free'||account.disabled||!account.server_enabled)return false;
+        if(forcedServerId)return String(account.server_id||'')===String(forcedServerId);
+        return String(account.server_class||'')===String(entitlement.server_class||'');
+    })||null;
+}
+
+async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created'}={}){
+    // Remove any incomplete Free-lane identity before ending the plan so the
+    // only durable outcome is no server + no plan.
+    const accounts=(await provisioning.normalAccounts(customerId))
+        .filter(account=>String(account.access_lane||'')==='free');
+    for(const account of accounts){
+        await provisioning.deleteJellyfinAccount(account,{reason:'Free claim activation failed before completion'});
+    }
+
+    const result=await transaction(async client=>{
+        const ended=await client.query(`
+            UPDATE subscriptions
+            SET status='cancelled',
+                current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                service_extension_days=0,
+                cancel_at_period_end=TRUE,
+                source=CASE WHEN source='free_claim' THEN 'free_claim_failed' ELSE source END,
+                updated_at=NOW()
+            WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
+            RETURNING id,status,current_period_end
+        `,[subscriptionId,customerId]);
+
+        if(reservationId){
+            await client.query(`
+                UPDATE free_access_registration_reservations
+                SET released_at=COALESCE(released_at,NOW()),updated_at=NOW()
+                WHERE id=$1 AND customer_id=$2
+            `,[reservationId,customerId]);
+        }
+
+        await client.query(`
+            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES('subscription.free.claim_rolled_back','subscription',$1,$2::jsonb)
+        `,[subscriptionId,JSON.stringify({
+            customerId,
+            reservationId:reservationId||null,
+            reason:String(reason||'Free claim activation failed').slice(0,500),
+            noPlanNoServer:true
+        })]);
+        return ended.rows[0]||null;
+    });
+
+    return result;
+}
+
+
 async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null } = {}) {
     if(!automatic)await commerce.assertOpen();
     const plan = reservationId ? await reservedFreePlan(reservationId) : await assertDirectPlan(planCode, { free: true });
@@ -226,8 +285,27 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
-    await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan');
-    return created;
+
+    let reconcileError=null;
+    try{
+        await primitives.reconcileCommittedCustomerStrict(customerId);
+    }catch(error){
+        reconcileError=error;
+    }
+
+    // A Free claim is complete only when the exact subscription owns an
+    // enabled Free-lane Jellyfin account on the correct placement. We never
+    // retain a live Free plan in a "deployment pending" state.
+    const readyAccount=await readyFreeAccountForSubscription(customerId,created.id);
+    if(readyAccount)return created;
+
+    const reason=reconcileError?.message||'Free Server reconciliation completed without an enabled account.';
+    await rollbackUnprovisionedFreeClaim(customerId,created.id,{reservationId,reason});
+
+    const error=new Error('Free Access could not be activated because a Free Server account could not be created. No Free plan was retained.');
+    error.code='FREE_CLAIM_PROVISIONING_FAILED';
+    error.cause=reconcileError||undefined;
+    throw error;
 }
 
 async function autoDowngradeEligibleCustomer(customerId) {
@@ -397,6 +475,8 @@ module.exports = {
     getProviderPlan,
     getProviderPlanByExternalId,
     startFreeTrial,
+    readyFreeAccountForSubscription,
+    rollbackUnprovisionedFreeClaim,
     claimFreePlan,
     activatePurchase,
     attachDiscoveredProviderSubscription,
