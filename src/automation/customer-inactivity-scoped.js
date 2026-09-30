@@ -361,9 +361,8 @@ async function recordDryRun(row, actorUserId) {
                 playbackMinutes: Math.floor(Number(row.playback_seconds || 0) / 60),
                 triggers: row.triggers,
                 portalAccountPreserved: true,
-                freePlanEnded: true,
-                activePlanRetained: false,
-                inactivityHoldReleased: true
+                wouldEndFreePlan: true,
+                wouldRetainActivePlan: false
             })
         ]
     );
@@ -453,6 +452,7 @@ async function removeEligibleAccount(row, actorUserId) {
             JSON.stringify({
                 planId: row.plan_id,
                 planCode: row.plan_code,
+                subscriptionId: row.subscription_id,
                 accountId: row.account_id,
                 serverId: row.server_id,
                 allocationStartAt: row.allocation_start_at || null,
@@ -460,7 +460,10 @@ async function removeEligibleAccount(row, actorUserId) {
                 lastPlaybackAt: row.last_playback_at || null,
                 playbackMinutes: Math.floor(Number(row.playback_seconds || 0) / 60),
                 triggers: row.triggers,
-                portalAccountPreserved: true
+                portalAccountPreserved: true,
+                freePlanEnded: true,
+                activePlanRetained: false,
+                inactivityHoldReleased: true
             })
         ]
     );
