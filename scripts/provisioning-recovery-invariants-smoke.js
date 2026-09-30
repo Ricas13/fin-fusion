@@ -146,9 +146,13 @@ const compactScopedInactivity = compact(scopedInactivity);
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
     && compactScopedInactivity.includes('eligible.slice(0,MAX_ENFORCEMENTS_PER_RUN)'),
     'large inactivity cleanups may be throughput-capped without changing eligibility');
-assert(scopedInactivity.includes('await provisioning.deleteJellyfinAccount(')
-    && !scopedInactivity.includes('await provisioning.reconcileCustomer('),
-    'inactivity removal must delete the exact Free account directly instead of routing through broad reconciliation');
+const inactivityRemovalStart=scopedInactivity.indexOf('async function removeEligibleAccount');
+const inactivityRemovalEnd=scopedInactivity.indexOf('async function runPlanRules',inactivityRemovalStart);
+const inactivityRemovalBlock=scopedInactivity.slice(inactivityRemovalStart,inactivityRemovalEnd);
+assert(inactivityRemovalStart>=0
+    && inactivityRemovalBlock.includes('await provisioning.deleteJellyfinAccount(')
+    && !inactivityRemovalBlock.includes('await provisioning.reconcileCustomer('),
+    'inactivity removal itself must delete the exact Free account directly; protected partial-recovery finalization may reconcile separately');
 assert(scopedInactivity.includes("reason: 'admin_authority_protects_free_access'"),
     'inactivity enforcement must fail closed when permanent/admin-present authority protects Free access');
 assert(scopedInactivity.includes('withCustomerReconciliationLock'),
