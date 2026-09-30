@@ -148,14 +148,14 @@
   </section>
   <% } %>
 
-  <section class="panel activityDetailsPanel" id="recent-playback"><div class="sectionHead"><div><h2>Recent playback</h2><p>Up to your latest 100 recorded Jellyfin playbacks.</p></div></div>
+  <section class="panel activityDetailsPanel" id="recent-playback"><div class="sectionHead"><div><h2>Recent playback</h2><p>Up to your latest 100 recorded Jellyfin playbacks in the selected period and server scope.</p></div></div>
     <% if (!activity.length) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
     <div class="tableWrap"><table class="activityTable"><thead><tr><th>Started</th><th>Media</th><th>Playback</th><th>Device</th><th>Server</th><th>Ended</th></tr></thead><tbody>
       <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong><% if(a.item_type){ %><span class="activityRecentType"><%= a.item_type %></span><% } %></td><td><%= playbackLabel(a.playback_method) %></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
     </tbody></table></div><% } %>
   </section>
 
-  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams appear here. Normal playback does not create an action.</p></div></div>
+  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams in the selected period and server scope appear here. Normal playback does not create an action.</p></div></div>
     <% if (!events.length) { %><div class="empty">No stream-limit actions.</div><% } else { %><% events.forEach(function(e){const stopped=['stopped','stop_failed'].includes(String(e.decision||'')); %><div class="activityDecision <%= stopped?'stop':'' %>"><strong><%= e.decision==='stopped'?'Playback stopped':e.decision==='stop_failed'?'Stop attempt failed':'Stream policy decision' %></strong> · <%= when(e.created_at) %><p><%= e.observed_streams == null ? '?' : e.observed_streams %> active stream(s) / limit <%= e.stream_limit == null ? '?' : e.stream_limit %></p><div class="accessMeta"><%= e.reason || 'No additional detail' %></div></div><% }) %><% } %>
   </section>
 </main></div></body></html>
