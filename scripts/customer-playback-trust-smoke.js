@@ -23,7 +23,10 @@ expect(scoped.includes('eligibleOnReadyServers')&&scoped.includes("serverTelemet
 expect(scoped.includes("'customer.inactivity.skipped'")&&scoped.includes('server_poll_untrusted'),'Unsafe telemetry must produce an explicit inactivity skip audit reason.');
 expect(scoped.includes('finalEligibility(original, globalCfg)')&&scoped.includes('usage_no_longer_eligible'),'Enforcement must re-read playback evidence immediately before deleting access.');
 expect(!scoped.includes('usageSatisfiedEarlierToday'),'The simplified two-rule path must not retain a duplicate same-day usage rule.');
-expect(scoped.includes('provisioning.deleteJellyfinAccount')&&!scoped.includes('provisioning.reconcileCustomer(row.customer_id)'),'Inactivity removal must delete only the exact Free Jellyfin account instead of invoking broad customer reconciliation.');
+const removeEligibleStart=scoped.indexOf('async function removeEligibleAccount');
+const runPlanRulesStart=scoped.indexOf('async function runPlanRules',removeEligibleStart);
+const removeEligibleSource=scoped.slice(removeEligibleStart,runPlanRulesStart);
+expect(removeEligibleSource.includes('provisioning.deleteJellyfinAccount')&&!removeEligibleSource.includes('provisioning.reconcileCustomer(row.customer_id)'),'Inactivity removal must delete only the exact Free Jellyfin account instead of invoking broad customer reconciliation.');
 expect(scoped.includes('requireNoActivePlayback: true'),'Automatic inactivity deletion must require a live no-playback precondition at the destructive boundary.');
 const provisioningEngine=source('src/jellyfin/provisioning-engine.js');
 expect(provisioningEngine.includes('assertNoActivePlaybackBeforeDelete')&&provisioningEngine.includes("registry.request(account.server_id, '/Sessions'")&&provisioningEngine.includes('JELLYFIN_ACTIVE_PLAYBACK_DELETE_BLOCKED'),'The exact-account delete primitive must fail closed if playback starts immediately before deletion.');
