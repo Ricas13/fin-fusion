@@ -81,4 +81,13 @@ assert(
   'Free claim readiness must delegate to canonical access state'
 );
 
+assert(
+  myAccess.includes("customerAccessState.freeJellyfin(customerId,{includeBlocked:true})"),
+  'My Access must use canonical Free access readiness instead of issuing its own Free account readiness query'
+);
+assert(
+  !myAccess.includes("AND ja.access_lane='free'\n            AND ja.disabled=FALSE\n            AND js.enabled=TRUE"),
+  'My Access must not rebuild canonical Free-ready SQL'
+);
+
 console.log('customer access state smoke: ok');
