@@ -38,6 +38,44 @@ async function pendingClaimCandidates(limit = 100, options = {}) {
   return result.rows;
 }
 
+async function orphanAccountCandidates(limit = 100) {
+  const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
+  const result = await query(`
+    SELECT DISTINCT ja.customer_id
+    FROM jellyfin_accounts ja
+    JOIN jellyfin_servers js ON js.id=ja.server_id
+    WHERE ja.account_purpose='jellyfin'
+      AND ja.access_lane='free'
+      AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM subscriptions s
+        JOIN plans p ON p.id=s.plan_id
+        LEFT JOIN customer_entitlement_overrides o
+          ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+        WHERE s.customer_id=ja.customer_id
+          AND p.is_free_tier=TRUE
+          AND COALESCE(p.is_addon,FALSE)=FALSE
+          AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+          AND s.superseded_by IS NULL
+          AND s.starts_at<=NOW()
+          AND (
+            (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+            OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+            OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+            OR (
+              COALESCE(s.service_extension_days,0)>0
+              AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+              AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW()
+            )
+          )
+      )
+    ORDER BY ja.customer_id
+    LIMIT $1
+  `, [bounded]);
+  return result.rows;
+}
+
 async function waitingCandidates(limit = 100, options = {}) {
   const planId = options?.planId || null;
   const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
@@ -138,9 +176,11 @@ async function run({ limit = 100 } = {}) {
   // a "deployment pending" state afterwards: success means server + plan;
   // failure means the incomplete Free plan is removed.
   const rows = await waitingCandidates(limit);
+  const orphanAccounts = await orphanAccountCandidates(limit);
   let attempted = 0;
   let assigned = 0;
   let removed = 0;
+  let orphanAccountsRemoved = 0;
   let skipped = 0;
   let failed = claimRetries.failed;
   const failures = [...claimRetries.failures];
@@ -183,12 +223,30 @@ async function run({ limit = 100 } = {}) {
     }
   }
 
+  for (const row of orphanAccounts) {
+    try {
+      await provisioning.reconcileCustomer(row.customer_id);
+      const remaining = (await provisioning.normalAccounts(row.customer_id))
+        .filter(account => String(account.access_lane || '') === 'free');
+      if (remaining.length) throw new Error('Free Server account remained after no-plan reconciliation.');
+      orphanAccountsRemoved += 1;
+    } catch (error) {
+      failed += 1;
+      failures.push(String(error?.message || error || 'Unknown orphan Free account cleanup failure').slice(0, 300));
+      console.error('Orphan Free Server account cleanup failed.', {
+        customerId: row.customer_id,
+        error: error.message
+      });
+    }
+  }
+
   return {
-    total: rows.length + claimRetries.total,
-    processed: attempted + claimRetries.attempted,
+    total: rows.length + claimRetries.total + orphanAccounts.length,
+    processed: attempted + claimRetries.attempted + orphanAccounts.length,
     attempted,
     assigned,
     removed,
+    orphanAccountsRemoved,
     waiting: 0,
     skipped,
     failed,
@@ -201,4 +259,4 @@ async function run({ limit = 100 } = {}) {
   };
 }
 
-module.exports = { pendingClaimCandidates, retryVerifiedClaims, waitingCandidates, run, noCapacity };
+module.exports = { pendingClaimCandidates, retryVerifiedClaims, orphanAccountCandidates, waitingCandidates, run, noCapacity };
