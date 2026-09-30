@@ -17,9 +17,9 @@ const RANGE_OPTIONS=Object.freeze([
   {key:'all',label:'All time',days:null,bucket:'month'}
 ]);
 const ACTIVITY_SCOPE_OPTIONS=Object.freeze([
-  {key:'all',label:'All activity',detail:'Free + Premium combined',serverClass:null},
-  {key:'free',label:'Free Server',detail:'Free Server only',serverClass:'free'},
-  {key:'premium',label:'Premium Server',detail:'Premium Server only',serverClass:'premium'}
+  {key:'all',label:'All activity',detail:'All Jellyfin servers combined',accessLane:null},
+  {key:'free',label:'Free Server',detail:'Free Server only',accessLane:'free'},
+  {key:'premium',label:'Premium Server',detail:'Premium / paid Jellyfin only',accessLane:'primary'}
 ]);
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/activity'));}
@@ -27,9 +27,20 @@ function rangeOption(raw){return RANGE_OPTIONS.find(option=>option.key===String(
 function scopeOption(raw){return ACTIVITY_SCOPE_OPTIONS.find(option=>option.key===String(raw||''))||ACTIVITY_SCOPE_OPTIONS[0];}
 function scopePredicate(rawScope,alias='ph'){
   const scope=scopeOption(typeof rawScope==='object'&&rawScope?rawScope.key:rawScope);
-  return scope.serverClass
-    ? ` AND EXISTS (SELECT 1 FROM jellyfin_servers activity_scope_server WHERE activity_scope_server.id=${alias}.server_id AND activity_scope_server.server_class='${scope.serverClass}')`
-    : '';
+  if(!scope.accessLane)return'';
+  // The account lane is the source of truth: an administrator may deliberately
+  // place a Free account on a non-Free server pool (or vice versa). Old history
+  // loses jellyfin_account_id when that account is deleted, so only those
+  // orphaned rows fall back to the server pool as the best historical signal.
+  const lane=`COALESCE(
+    (SELECT activity_scope_account.access_lane
+       FROM jellyfin_accounts activity_scope_account
+      WHERE activity_scope_account.id=${alias}.jellyfin_account_id),
+    (SELECT CASE WHEN activity_scope_server.server_class='free' THEN 'free' ELSE 'primary' END
+       FROM jellyfin_servers activity_scope_server
+      WHERE activity_scope_server.id=${alias}.server_id)
+  )`;
+  return ` AND ${lane}='${scope.accessLane}'`;
 }
 function utcDayStart(value){const d=new Date(value);return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));}
 function rangeStart(option,now=new Date()){
