@@ -46,16 +46,6 @@ function legacyAccessRedirect(req,res){
   const queryString=params.toString();
   return res.redirect(302,'/account/access'+(queryString?'?'+queryString:''));
 }
-function markRemovedFreeAccess(subscriptions,returnStatus){
-  const rows=Array.isArray(subscriptions)?subscriptions:[];
-  if(!returnStatus?.canRestoreDeletedFree)return rows;
-  const freePlanId=String(returnStatus.freePlanId||'');
-  return rows.map(subscription=>{
-    if(!subscription?.is_free_tier)return subscription;
-    if(freePlanId&&String(subscription.plan_id||'')!==freePlanId)return subscription;
-    return{...subscription,access_removed:true,access_removed_reason:'inactivity'};
-  });
-}
 function inactiveReason(subscription,holdType=null,{removedForInactivity=false}={}){
   if(removedForInactivity||holdType==='inactivity_policy'||holdType==='jellyfin_cleanup')return'Free Server access was removed because the activity requirements were not met.';
   if(holdType==='payment_delinquency')return'Access ended because payment could not be collected.';
@@ -304,8 +294,26 @@ function createCustomerJellyfinRouter(){
         cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,canRestoreDeletedFree:false,freePlanId:null,error:error.message})),
         inactivityStatus.customerStatus(customerId).catch(error=>({applies:false,error:error.message,telemetry:{ready:false}}))
       ]);
-      const subscriptions=markRemovedFreeAccess(rawSubscriptions,returnStatus),freeUsage=freeAccessHealth(rawFreeUsage);
+      const subscriptions=rawSubscriptions,freeUsage=freeAccessHealth(rawFreeUsage);
       if(!subscriptions.length&&!requestState.eligible){
+        const removed=await query(`
+          SELECT 1
+          FROM audit_log a
+          WHERE a.entity_type='customer'
+            AND a.entity_id=$1
+            AND a.action IN ('customer.inactivity.remove_jellyfin','customer.inactivity.finalize_free_plan')
+            AND NOT EXISTS (
+              SELECT 1 FROM subscriptions s
+              WHERE s.customer_id=$1
+                AND s.created_at>a.created_at
+            )
+          ORDER BY a.created_at DESC
+          LIMIT 1
+        `,[customerId]).catch(()=>({rowCount:0}));
+        if(removed.rowCount){
+          const message='Your Free Server access was removed because of inactivity. You now have no active Free Server plan. If a place is available, you can join again from the plans page.';
+          return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
+        }
         return res.redirect('/account?error='+encodeURIComponent('You do not currently have active streaming access.'));
       }
       res.setHeader('Cache-Control','no-store, private, max-age=0');
@@ -362,4 +370,4 @@ function createCustomerJellyfinRouter(){
   return router;
 }
 
-module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,markRemovedFreeAccess,freeAccessHealth,inactiveAccessHistory};
+module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,freeAccessHealth,inactiveAccessHistory};
