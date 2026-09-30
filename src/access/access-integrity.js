@@ -67,7 +67,7 @@ async function scan({ limit = 100 } = {}) {
       SELECT s.id AS subscription_id,s.customer_id,p.code AS plan_code,s.created_at
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
-      WHERE ${freeLive}
+      WHERE TRUE ${freeLive}
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
         AND NOT public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
         AND NOT EXISTS(
@@ -105,7 +105,7 @@ async function scan({ limit = 100 } = {}) {
       SELECT s.id AS subscription_id,s.customer_id,p.code AS plan_code,s.created_at
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
-      WHERE ${primaryLive}
+      WHERE TRUE ${primaryLive}
         AND COALESCE(NULLIF(s.billing_interval_snapshot,''),p.billing_interval)='trial'
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
         AND NOT public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
@@ -145,7 +145,7 @@ async function scan({ limit = 100 } = {}) {
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
       LEFT JOIN customer_provisioning_state cps ON cps.customer_id=s.customer_id
-      WHERE ${primaryLive}
+      WHERE TRUE ${primaryLive}
         AND COALESCE(NULLIF(s.billing_interval_snapshot,''),p.billing_interval)<>'trial'
         AND COALESCE(s.price_minor_snapshot,p.price_minor,0)>0
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
