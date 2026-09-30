@@ -91,7 +91,24 @@ async function customerVariantState(customerId){
 }
 
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function returningAccessPage(req,status){const site=runtimeSettings.siteName(),isFree=Boolean(status.canRestoreDeletedFree),copy=isFree?'Your Free Server profile was removed after inactivity, but your Free Access entitlement is still reserved. Restore it to create fresh Jellyfin access.':'A previous Jellyfin profile was cleaned up while inactive. You can restore streaming access now.',declineCopy=isFree?'<p class="accessMeta">If you continue without restoring, your Free Access plan will be released. You can apply again later only when a free spot is available.</p>':'',secondary=isFree?`<form class="plainForm" method="post" action="/account/jellyfin/free-access/decline"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button secondary" type="submit">Continue without restoring</button></form>`:'<a class="button secondary" href="/account?skipRestore=1">Continue without restoring</a>';return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Restore access · ${esc(site)}</title><link rel="icon" href="/branding/favicon"><link rel="stylesheet" href="/css/customer-portal.css"><style>body{margin:0;background:#0d1117;color:#e8edf3}.restoreMain{width:min(580px,calc(100% - 28px));margin:0 auto;padding:48px 0}.restoreCard{padding:24px}.restoreActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.plainForm{margin:0}</style></head><body><main class="restoreMain"><section class="panel restoreCard"><div class="eyebrow">Welcome back</div><h1>Restore Jellyfin access?</h1><p>${esc(copy)}</p><p class="accessMeta">Opening this page did not change your account or contact Jellyfin. Restoration only starts when you choose Restore access.</p>${declineCopy}<div class="restoreActions"><form class="plainForm" method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button primary" type="submit">Restore access</button></form>${secondary}</div></section></main></body></html>`;}
+async function recentFreeInactivityRemoval(customerId){
+  const result=await query(`
+    SELECT a.created_at
+    FROM audit_log a
+    WHERE a.entity_type='customer'
+      AND a.entity_id=$1
+      AND a.action IN ('customer.inactivity.remove_jellyfin','customer.inactivity.finalize_free_plan')
+      AND NOT EXISTS (
+        SELECT 1 FROM subscriptions s
+        WHERE s.customer_id=$1
+          AND s.created_at>a.created_at
+      )
+    ORDER BY a.created_at DESC
+    LIMIT 1
+  `,[customerId]);
+  return result.rows[0]||null;
+}
+function returningAccessPage(req,status){const site=runtimeSettings.siteName(),copy='A Jellyfin profile tied to your current active plan was cleaned up while inactive. You can restore that profile without changing your plan.';return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Restore access · ${esc(site)}</title><link rel="icon" href="/branding/favicon"><link rel="stylesheet" href="/css/customer-portal.css"><style>body{margin:0;background:#0d1117;color:#e8edf3}.restoreMain{width:min(580px,calc(100% - 28px));margin:0 auto;padding:48px 0}.restoreCard{padding:24px}.restoreActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.plainForm{margin:0}</style></head><body><main class="restoreMain"><section class="panel restoreCard"><div class="eyebrow">Welcome back</div><h1>Restore Jellyfin profile?</h1><p>${esc(copy)}</p><p class="accessMeta">This option is only for a profile cleanup on an active plan. Free Server access removed for inactivity is not retained or restorable.</p><div class="restoreActions"><form class="plainForm" method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button primary" type="submit">Restore profile</button></form><a class="button secondary" href="/account?skipRestore=1">Continue without restoring</a></div></section></main></body></html>`;}
 
 function createCustomerDashboardRouter(){
   const r=express.Router();
@@ -105,6 +122,11 @@ function createCustomerDashboardRouter(){
       const freePlan=await subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
       if(freePlan){
         if(freePlan.blocked){
+          const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
+          if(inactivityRemoval){
+            const message='Your previous Free Server access was removed because of inactivity. That Free plan is ending and is not reserved. You will be able to join again only as a new Free Server place when capacity is available.';
+            return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
+          }
           const reason=returnStatus.error?'Your Free Access status could not be checked safely. Open My Access or contact support instead of creating another account.':'Your existing Free Access is currently restricted. Open My Access instead of creating another account.';
           return res.redirect('/account/access?error='+encodeURIComponent(reason));
         }
@@ -112,7 +134,7 @@ function createCustomerDashboardRouter(){
         if(ready.rowCount)return res.redirect('/account/access?message='+encodeURIComponent('Your Free Access is already active.'));
         return res.redirect('/account?message='+encodeURIComponent('You already have a Free Access place. Your Jellyfin setup is still being prepared; you do not need to sign up again.'));
       }
-      const message=returnStatus.error?'You are signed in. We could not verify a previous Free Access restore state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
+      const message=returnStatus.error?'You are signed in. We could not verify your current Free Access state, but you can use an available Free Server plan below.':'You are signed in. If a Free Server place is available, choose the Free Server option below.';
       return res.redirect('/account?message='+encodeURIComponent(message)+'#plans');
     }catch(error){return next(error);}
   });
@@ -124,20 +146,25 @@ function createCustomerDashboardRouter(){
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
       const portalRaw=await customers.getCustomerPortal(customerId),currency=await planPricing.platformDefaultCurrency();
       const [currentPlan,freePlan,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
-        provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
+        provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
       const accessRows=canonicalAccessRows(portalRaw,{currentPlan,freePlan,stremioPlan,embyPlan}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
       const portal=portalRaw,navOptions=customerNav.optionsFromPortal(portal);
       await tagMediaServerAccounts(customerId,await hideInternalAccounts(customerId,portal));
       canonicalizePortalSubscriptions(portal,accessRows);
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
-      if(!accessRows.length&&!openPlanChange)return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
+      if(!accessRows.length&&!openPlanChange){
+        const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
+        const noPlanMessage=inactivityRemoval
+          ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. If a place is available, you can join again below as a new Free Server user.'
+          :null;
+        return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
+      }
       const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
       return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}
   });
-  r.post('/account/jellyfin/free-access/decline',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const result=await cleanupReturn.declineDeletedFreeAccess(req.session.customerId);if(!result?.removed)return res.redirect('/account?skipRestore=1');return res.redirect('/account?message='+encodeURIComponent('Free Access was removed. You can join again whenever a spot is available.'));}catch(error){console.error('[Customer Portal] Failed to decline Free Access restoration',error);return res.redirect('/account?error='+encodeURIComponent('Unable to remove Free Access right now. Please try again.'));}});
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));const outcome=await provisioning.reconcileCustomer(customerId);if(outcome?.active&&(outcome?.account?.id||outcome?.emby?.account?.id||outcome?.stremio?.status==='active'))return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your streaming access has been refreshed.'));const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});
   return r;
 }
-module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,homeCataloguePlans,readySalePlans,customerVariantState,liveSubscription,recurringProvider,canonicalAccessRows,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,returningAccessPage};
+module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,homeCataloguePlans,readySalePlans,customerVariantState,liveSubscription,recurringProvider,canonicalAccessRows,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,recentFreeInactivityRemoval,returningAccessPage};
