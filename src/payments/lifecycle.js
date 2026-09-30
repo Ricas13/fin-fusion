@@ -281,57 +281,70 @@ async function readyFreeAccountForSubscription(customerId,subscriptionId){
 }
 
 async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created'}={}){
-    return provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
-        const current=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
-        const targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+    let targetIsCurrent=false;
+    try{
+        return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+            const current=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
+            targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
 
-        // Only the current failed Free episode owns the Free-lane account. If a
-        // newer subscription already superseded it, do not delete that newer
-        // account while cleaning up the stale claim.
-        if(targetIsCurrent){
-            const accounts=(await provisioning.normalAccounts(customerId))
-                .filter(account=>String(account.access_lane||'')==='free');
-            for(const account of accounts){
-                await provisioning.deleteJellyfinAccount(account,{reason:'Free claim activation failed before completion'});
+            // Only the current failed Free episode owns the Free-lane account.
+            // If a newer subscription already superseded it, do not delete that
+            // newer account while cleaning up the stale claim.
+            if(targetIsCurrent){
+                const accounts=(await provisioning.normalAccounts(customerId))
+                    .filter(account=>String(account.access_lane||'')==='free');
+                for(const account of accounts){
+                    await provisioning.deleteJellyfinAccount(account,{reason:'Free claim activation failed before completion'});
+                }
             }
-        }
 
-        const result=await transaction(async client=>{
-            const ended=await client.query(`
-                UPDATE subscriptions
-                SET status='cancelled',
-                    current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
-                    service_extension_days=0,
-                    cancel_at_period_end=TRUE,
-                    replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed' ELSE replacement_reason END,
-                    updated_at=NOW()
-                WHERE id=$1 AND customer_id=$2
-                RETURNING id,status,current_period_end,superseded_by
-            `,[subscriptionId,customerId]);
-
-            if(reservationId){
-                await client.query(`
-                    UPDATE free_access_registration_reservations
-                    SET released_at=COALESCE(released_at,NOW()),updated_at=NOW()
+            return transaction(async client=>{
+                const ended=await client.query(`
+                    UPDATE subscriptions
+                    SET status='cancelled',
+                        current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                        service_extension_days=0,
+                        cancel_at_period_end=TRUE,
+                        replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed' ELSE replacement_reason END,
+                        updated_at=NOW()
                     WHERE id=$1 AND customer_id=$2
-                `,[reservationId,customerId]);
-            }
+                    RETURNING id,status,current_period_end,superseded_by
+                `,[subscriptionId,customerId]);
 
-            await client.query(`
-                INSERT INTO audit_log(action,entity_type,entity_id,metadata)
-                VALUES('subscription.free.claim_rolled_back','subscription',$1,$2::jsonb)
-            `,[subscriptionId,JSON.stringify({
-                customerId,
-                reservationId:reservationId||null,
-                reason:String(reason||'Free claim activation failed').slice(0,500),
-                targetWasCurrent:targetIsCurrent,
-                noPlanNoServer:targetIsCurrent
-            })]);
-            return ended.rows[0]||null;
+                if(reservationId){
+                    await client.query(`
+                        UPDATE free_access_registration_reservations
+                        SET released_at=COALESCE(released_at,NOW()),updated_at=NOW()
+                        WHERE id=$1 AND customer_id=$2
+                    `,[reservationId,customerId]);
+                }
+
+                await client.query(`
+                    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                    VALUES('subscription.free.claim_rolled_back','subscription',$1,$2::jsonb)
+                `,[subscriptionId,JSON.stringify({
+                    customerId,
+                    reservationId:reservationId||null,
+                    reason:String(reason||'Free claim activation failed').slice(0,500),
+                    targetWasCurrent:targetIsCurrent,
+                    noPlanNoServer:targetIsCurrent
+                })]);
+                return ended.rows[0]||null;
+            });
         });
-
-        return result;
-    });
+    }catch(error){
+        // If account deletion succeeded but the plan close failed, restore the
+        // account while the Free entitlement is still live. This prevents a
+        // partial rollback from leaving Free plan + no server.
+        if(targetIsCurrent){
+            await provisioning.reconcileCustomer(customerId).catch(repairError=>{
+                console.error('Free claim rollback compensation failed to restore server assignment.',{
+                    customerId,subscriptionId,error:repairError.message
+                });
+            });
+        }
+        throw error;
+    }
 }
 
 async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null } = {}) {
