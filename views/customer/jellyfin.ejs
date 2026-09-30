@@ -18,7 +18,7 @@
   function serviceType(subscription){const type=String(subscription?.service_type_snapshot||subscription?.service_type||'jellyfin').toLowerCase();return ['jellyfin','emby','stremio','bundle'].includes(type)?type:'jellyfin';}
   function subscriptionName(subscription){return subscription?.plan_name||subscription?.contract_plan_name||subscription?.name||subscription?.plan_code||subscription?.code||'Streaming access';}
   function subscriptionKind(subscription){if(subscription?.is_free_tier)return'Free Server';const type=serviceType(subscription);if(type==='emby')return'Emby Share';if(type==='stremio')return'Stremio';if(type==='bundle')return'Jellyfin + Stremio';return String(subscription?.billing_interval_snapshot||subscription?.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin';}
-  function subscriptionStatus(subscription){if(subscription?.access_removed_reason==='inactivity')return'Removed for inactivity';if(subscription?.status==='trialing')return'Trial active';if(subscription?.status==='past_due')return'Payment needs attention';if(subscription?.status==='paused')return'Paused';return'Active';}
+  function subscriptionStatus(subscription){if(subscription?.status==='trialing')return'Trial active';if(subscription?.status==='past_due')return'Payment needs attention';if(subscription?.status==='paused')return'Paused';return'Active';}
   function trialWindow(subscription){
     const interval=String(subscription?.billing_interval_snapshot||subscription?.billing_interval||'').toLowerCase();
     const status=String(subscription?.status||'').toLowerCase();
@@ -28,13 +28,12 @@
     return start&&end&&end.getTime()>start.getTime()&&end.getTime()>Date.now()?{start,end}:null;
   }
   const accessRows=Array.isArray(subscriptions)?subscriptions:[];
-  const activeSubscriptions=accessRows.filter(subscription=>!subscription.access_removed);
+  const activeSubscriptions=accessRows;
   const subscriptionById=new Map();
   activeSubscriptions.forEach(subscription=>{
     if(subscription?.id)subscriptionById.set(String(subscription.id),subscription);
     if(subscription?.subscription_id)subscriptionById.set(String(subscription.subscription_id),subscription);
   });
-  const removedSubscriptions=accessRows.filter(subscription=>subscription.access_removed);
   const stremioSubscriptions=activeSubscriptions.filter(subscription=>['stremio','bundle'].includes(serviceType(subscription)));
   const stremioSubscription=stremioSubscriptions[0]||null;
   const hasStremioAccess=Boolean(stremioSubscription);
@@ -53,24 +52,6 @@
     <div><span class="eyebrow">Streaming access</span><h1>My Access</h1><p>Your servers, sign-in details and personal library visibility in one place.</p></div>
     <div class="jellyfinHeroActions"><a class="button secondary" href="/account/activity">Playback activity</a><a class="button secondary" href="/account?skipRestore=1#plans">View plans</a></div>
   </section>
-
-  <% if(removedSubscriptions.length){ %>
-  <section class="panel" aria-labelledby="removed-subscriptions-heading">
-    <div class="jellyfinSubhead"><div><span class="eyebrow">Access currently removed</span><h2 id="removed-subscriptions-heading">Free Server access removed for inactivity</h2><p>Your Jellyfin profile was removed after the Free Server activity rules were met. It is not active and is not waiting for normal provisioning.</p></div><span class="jellyfinLibraryCount"><%= removedSubscriptions.length %> removed</span></div>
-    <div class="jellyfinCredentialGrid">
-      <% removedSubscriptions.forEach(function(subscription){ %>
-        <article class="jellyfinCredential">
-          <span><%= subscriptionKind(subscription) %> · <%= subscriptionStatus(subscription) %></span>
-          <strong><%= subscriptionName(subscription) %></strong>
-          <small>The underlying Free Server entitlement is retained only so you can explicitly restore a fresh Jellyfin profile.</small>
-        </article>
-      <% }) %>
-    </div>
-    <% if(accessReturnStatus.canRestoreDeletedFree){ %>
-    <div class="jellyfinSetupNotice"><div><strong>Want to come back?</strong><span>Restore Free Server access to create fresh Jellyfin access again. Availability and the normal Free Server rules still apply.</span></div><form method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary" type="submit">Restore Free Server access</button></form></div>
-    <% } %>
-  </section>
-  <% } %>
 
   <% if(!accounts.length&&hasPendingMediaAccess){ %>
   <section class="panel jellyfinPending"><div><h2>Server access is being prepared</h2><p>One of your active Jellyfin or Emby plans does not have its server account yet. It will appear here when provisioning completes.</p></div><form method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary" type="submit">Retry setup</button></form></section>
