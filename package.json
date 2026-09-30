@@ -75,6 +75,8 @@
     "stripe": "22.5.0"
   },
   "overrides": {
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "brace-expansion": "2.1.7",
+    "ip-address": "10.7.2"
   }
 }
