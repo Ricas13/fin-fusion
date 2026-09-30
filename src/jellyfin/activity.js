@@ -164,7 +164,6 @@ async function upsertHistorySession(s, seenAt = new Date()) {
         ON CONFLICT(server_id,playback_key) DO UPDATE SET
             customer_id=EXCLUDED.customer_id,
             jellyfin_account_id=EXCLUDED.jellyfin_account_id,
-            access_lane_snapshot=COALESCE(playback_history.access_lane_snapshot,EXCLUDED.access_lane_snapshot),
             last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
             playback_method=EXCLUDED.playback_method,
             transcode_reasons=EXCLUDED.transcode_reasons,
