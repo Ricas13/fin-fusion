@@ -1,10 +1,12 @@
 'use strict';
 
 const crypto=require('crypto');
+const bcrypt=require('bcryptjs');
 const {query,transaction}=require('../db');
 const totp=require('../auth/totp');
 const {keyFromEnv,encryptWithEnv,decryptWithEnv}=require('./purpose-crypto');
 const emailChange=require('./customer-email-change');
+const passwordBreach=require('./password-breach');
 
 function normalizeRecovery(code){
   return String(code||'').toUpperCase().replace(/[^A-Z2-7]/g,'');
@@ -192,6 +194,84 @@ async function bumpSecurityVersion(userId,currentSessionId){
   });
 }
 
+async function revokeOtherSessions(userId,currentSessionId){
+  return transaction(async client=>{
+    const rows=await client.query(
+      `SELECT session_id FROM auth_sessions
+       WHERE user_id=$1 AND role='customer'
+         AND session_id<>$2 AND revoked_at IS NULL`,
+      [userId,currentSessionId]
+    );
+    const ids=rows.rows.map(row=>row.session_id);
+    await client.query(
+      `UPDATE auth_sessions
+       SET revoked_at=NOW()
+       WHERE user_id=$1 AND role='customer'
+         AND session_id<>$2 AND revoked_at IS NULL`,
+      [userId,currentSessionId]
+    );
+    if(ids.length)await client.query('DELETE FROM user_sessions WHERE sid=ANY($1::text[])',[ids]);
+    return ids.length;
+  });
+}
+
+async function changePassword(userId,currentPassword,newPassword,currentSessionId){
+  if(typeof newPassword!=='string'||newPassword.length<8||newPassword.length>200){
+    throw new Error('Password must be between 8 and 200 characters');
+  }
+  await passwordBreach.assertNotBreached(newPassword);
+  const found=await query(
+    `SELECT password_hash FROM app_users
+     WHERE id=$1 AND role='customer' AND active=TRUE`,
+    [userId]
+  );
+  if(!found.rowCount||!(await bcrypt.compare(String(currentPassword||''),found.rows[0].password_hash))){
+    throw new Error('Current password was not accepted.');
+  }
+  if(await bcrypt.compare(newPassword,found.rows[0].password_hash)){
+    throw new Error('New password must be different from the current password.');
+  }
+  const hash=await bcrypt.hash(newPassword,12);
+  return transaction(async client=>{
+    const updated=await client.query(
+      `UPDATE app_users
+       SET password_hash=$2,password_changed_at=NOW(),
+           session_version=session_version+1,updated_at=NOW()
+       WHERE id=$1 AND role='customer'
+       RETURNING session_version`,
+      [userId,hash]
+    );
+    if(!updated.rowCount)throw new Error('Customer account not found.');
+    const version=Number(updated.rows[0].session_version);
+    const other=await client.query(
+      `SELECT session_id FROM auth_sessions
+       WHERE user_id=$1 AND role='customer' AND session_id<>$2`,
+      [userId,currentSessionId]
+    );
+    const ids=other.rows.map(row=>row.session_id);
+    await client.query(
+      `UPDATE auth_sessions
+       SET revoked_at=NOW()
+       WHERE user_id=$1 AND role='customer'
+         AND session_id<>$2 AND revoked_at IS NULL`,
+      [userId,currentSessionId]
+    );
+    await client.query(
+      `UPDATE auth_sessions
+       SET session_version=$3,last_seen_at=NOW()
+       WHERE user_id=$1 AND role='customer' AND session_id=$2`,
+      [userId,currentSessionId,version]
+    );
+    if(ids.length)await client.query('DELETE FROM user_sessions WHERE sid=ANY($1::text[])',[ids]);
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1::uuid,'customer.password.change','app_user',$1::text,$2::jsonb)`,
+      [userId,JSON.stringify({revokedSessions:ids.length})]
+    );
+    return{sessionVersion:version,revokedSessions:ids.length};
+  });
+}
+
 async function revokeSession(userId,sessionId){
   const result=await query(
     `UPDATE auth_sessions
@@ -211,5 +291,7 @@ module.exports={
   regenerateRecoveryCodes,
   disableTwoFactor,
   bumpSecurityVersion,
-  revokeSession
+  revokeSession,
+  revokeOtherSessions,
+  changePassword
 };
