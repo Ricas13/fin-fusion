@@ -59,10 +59,13 @@ assert.match(forceAccess,/const accessLane=provisioning\.requestedAccessLane\(en
 assert.match(forceAccess,/access_lane_changed_at=CASE WHEN access_lane IS DISTINCT FROM \$5 THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE WHEN access_lane IS DISTINCT FROM \$5 THEN NULL[\s\S]*access_lane=\$5/,'forced recovery must record a real boundary for either Free or primary lane recovery');
 assert.match(durableCreation,/access_lane_changed_at=CASE[\s\S]*access_lane IS DISTINCT FROM EXCLUDED\.access_lane THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE[\s\S]*access_lane IS DISTINCT FROM EXCLUDED\.access_lane THEN NULL/,'durable account recovery must clear a synthetic legacy marker whenever it performs a real lane transition');
 assert.match(manualAssignment,/const accessLane=provisioning\.requestedAccessLane\(state\.entitlement\)/,'manual server assignment must derive the account lane from the entitlement rather than defaulting to paid\/primary');
+assert.match(manualAssignment,/activeAccounts\.some\(account=>String\(account\.access_lane\|\|'primary'\)===accessLane\)/,'an active Free account must not block adding independent paid\/primary access, or vice versa');
+assert.match(manualAssignment,/COALESCE\(access_lane,'primary'\)=\$3/,'manual assignment must only reuse an account from the entitlement lane instead of hijacking the other lane');
 assert.match(manualAssignment,/access_lane_changed_at=CASE WHEN access_lane IS DISTINCT FROM \$2 THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE WHEN access_lane IS DISTINCT FROM \$2 THEN NULL[\s\S]*access_lane=\$2/,'reusing a manual-assignment account must record a trustworthy lane transition');
 assert.match(manualAssignment,/allowOverCapacity:true,accessLane/,'new manual assignments must pass the entitlement lane into account creation explicitly');
 assert.match(forceMove,/const accessLane=provisioning\.requestedAccessLane\(entitlement\)/,'forced server moves must derive the lane from the active entitlement');
 assert.match(forceMove,/same\(account\.server_id,target\.id\)&&account\.access_lane===accessLane/,'forced server moves must not repurpose an account belonging to the other access lane');
+assert.match(forceMove,/if\(String\(account\.access_lane\|\|'primary'\)!==accessLane\)continue/,'moving one Jellyfin lane must not delete the customer\'s independent other-lane account');
 assert.match(forceMove,/allowOverCapacity:true,[\s\S]*accessLane/,'forced server moves must create the destination account in the entitlement lane explicitly');
 assert.match(route,/req\.query\.range,req\.query\.scope/,'the activity route must accept both range and scope');
 
