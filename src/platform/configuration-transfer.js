@@ -3,6 +3,8 @@
 const crypto=require('crypto');
 const {query,transaction}=require('../db');
 const planCommands=require('../catalog/plan-command-service');
+const notificationPreferenceCommands=require('../integrations/notification-preferences-command-service');
+const jobHealth=require('../automation/job-health');
 
 const FORMAT='steam-fusion-portable-configuration';
 const VERSION=2;
@@ -253,7 +255,10 @@ async function previewImport(input){const document=parseDocument(input),result=a
 
 function lower(value){return String(value||'').toLowerCase();}
 async function applySettings(client,settings,actorUserId){let count=0;for(const[key,value]of Object.entries(settings||{})){if(!V1_SETTINGS.has(key)&&!V2_SETTINGS.has(key))continue;await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=CASE WHEN $1='storefront_features' THEN EXCLUDED.setting_value ELSE CASE WHEN jsonb_typeof(platform_settings.setting_value)='object' AND jsonb_typeof(EXCLUDED.setting_value)='object' THEN platform_settings.setting_value||EXCLUDED.setting_value ELSE EXCLUDED.setting_value END END,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[key,JSON.stringify(value),actorUserId||null]);count++;}return count;}
-async function applyNotifications(client,items,actorUserId){let count=0;for(const item of items||[]){await client.query(`INSERT INTO notification_preferences(event_type,telegram_enabled,email_enabled,updated_by,updated_at) VALUES($1,$2,$3,$4,NOW()) ON CONFLICT(event_type) DO UPDATE SET telegram_enabled=EXCLUDED.telegram_enabled,email_enabled=EXCLUDED.email_enabled,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[item.event_type,item.telegram_enabled,item.email_enabled,actorUserId||null]);count++;}return count;}
+async function applyNotifications(client,items,actorUserId){
+    return notificationPreferenceCommands.applyImportedPreferences(client,items,actorUserId);
+}
+
 async function applyPlans(client,plans,version=1){
     return planCommands.applyImportedPlans(client,plans,version);
 }
@@ -261,17 +266,8 @@ async function applyV2Extras(client,configuration){
     const providerResult=await planCommands.applyImportedProviderMappings(client,configuration.directPaymentMappings||[]);
     let automationApplied=0,skippedReferences=providerResult.skippedReferences;
     for(const job of configuration.automation||[]){
-        const result=await client.query(
-            `UPDATE automation_job_state
-             SET enabled=$2,
-                 interval_seconds=$3,
-                 next_run_at=CASE WHEN $2 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
-                 force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,
-                 updated_at=NOW()
-             WHERE job_key=$1`,
-            [job.jobKey,job.enabled,job.intervalSeconds]
-        );
-        if(result.rowCount)automationApplied++;
+        const saved=await jobHealth.applyImportedState(client,job);
+        if(saved)automationApplied++;
         else skippedReferences++;
     }
     return{
