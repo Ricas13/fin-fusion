@@ -110,6 +110,17 @@ async function main() {
         'unknown and inactive customer logins must execute a bcrypt comparison before returning'
     );
 
+    const customerSecurityRoute = read('src/platform/customer-security.js');
+    const customerSecurityCommands = read('src/security/customer-security-commands.js');
+    assert(customerSecurityRoute.includes("require('../security/customer-security-commands')"),
+        'customer security routes must delegate authentication persistence to the security domain');
+    for (const forbidden of ["require('../db')","require('bcryptjs')","require('../auth/totp')","require('../security/purpose-crypto')",'UPDATE app_users','UPDATE auth_sessions','DELETE FROM auth_recovery_codes','DELETE FROM auth_totp_enrollments']) {
+        assert(!customerSecurityRoute.includes(forbidden), `customer security platform route must not own auth persistence: ${forbidden}`);
+    }
+    for (const required of ['disableTwoFactor','bumpSecurityVersion','revokeSession','regenerateRecoveryCodes','confirmEnrollment']) {
+        assert(customerSecurityCommands.includes(`async function ${required}`), `security command owner is missing ${required}`);
+    }
+
     const activation = read('src/auth/account-activation.js');
     assert(activation.includes("require('../security/password-breach')"), 'customer activation must use the shared breach-password service');
     assert(
