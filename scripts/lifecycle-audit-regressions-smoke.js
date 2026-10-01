@@ -82,6 +82,8 @@ function operatorProtectedRollbackContract(){
     'direct unpaid-trial rollback must refuse Permanent Access and administrator-present authority');
   assert.match(repair,/customerAccessState\.operatorProtected/,
     'access repair must consume the same canonical operator-protection classification');
+  assert.match(source('src/automation/customer-inactivity-scoped.js'),/customerAccessState\.operatorProtected\(entitlement\)/,
+    'Free inactivity must consume the same canonical operator-protection classification');
 }
 
 function freeInactivitySafetyContract(){
