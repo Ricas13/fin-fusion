@@ -33,21 +33,24 @@ BEGIN
 END
 $$;
 
--- Existing rows that still retain an account reference can be classified from
--- the account. For explicit primary->Free adoptions, access_lane_changed_at is
--- authoritative; playback before that boundary remains primary. Legacy Free
--- accounts marked with inactivity_observation_reset_at have an intentionally
--- ambiguous synthetic boundary, so keep their current Free lane. Rows whose
--- account reference was already lost remain NULL: server pool alone is useful
--- for display fallback, but is not strong enough evidence to rewrite durable
--- retention history.
+-- Existing rows that still retain an account reference can usually be
+-- classified from the account. For explicit primary->Free adoptions,
+-- access_lane_changed_at is authoritative; playback before that boundary
+-- remains primary. Legacy Free accounts marked with
+-- inactivity_observation_reset_at have an intentionally ambiguous synthetic
+-- boundary, so rows before that boundary remain NULL rather than being
+-- permanently mislabeled as Free. Rows whose account reference was already
+-- lost also remain NULL: server pool alone is useful as a display fallback,
+-- but is not strong enough evidence to rewrite durable history.
 UPDATE playback_history ph
 SET access_lane_snapshot=(
     SELECT CASE
              WHEN ja.access_lane='free'
-              AND ja.inactivity_observation_reset_at IS NULL
               AND ph.started_at<ja.access_lane_changed_at
-             THEN 'primary'
+             THEN CASE
+                    WHEN ja.inactivity_observation_reset_at IS NULL THEN 'primary'
+                    ELSE NULL
+                  END
              ELSE ja.access_lane
            END
     FROM jellyfin_accounts ja
@@ -60,9 +63,11 @@ UPDATE stream_policy_events spe
 SET access_lane_snapshot=(
     SELECT CASE
              WHEN ja.access_lane='free'
-              AND ja.inactivity_observation_reset_at IS NULL
               AND spe.created_at<ja.access_lane_changed_at
-             THEN 'primary'
+             THEN CASE
+                    WHEN ja.inactivity_observation_reset_at IS NULL THEN 'primary'
+                    ELSE NULL
+                  END
              ELSE ja.access_lane
            END
     FROM jellyfin_accounts ja
