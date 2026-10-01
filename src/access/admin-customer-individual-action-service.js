@@ -140,6 +140,39 @@ async function setExpiry({customerId,actorUserId,subscriptionId,expiryDate}){
   return `Expiry set to ${expiryDate} for the selected subscription.${warnings.length?` Warning: ${warnings.join('; ')}`:''}`;
 }
 
+
+async function resetExpiryToPlan({customerId,actorUserId=null}){
+  const entitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
+  if(!entitlement)throw new Error('This customer has no active plan to reset expiry against.');
+  if(subscriptionState.recurringProvider(entitlement))throw new Error('This expiry is controlled by Stripe/PayPal. Use Billing instead.');
+  const subscriptionId=entitlement.subscription_id||entitlement.id;
+  const end=planExpiry.endForPlan(entitlement);
+  await transaction(async client=>{
+    const locked=await client.query(
+      'SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',
+      [subscriptionId,customerId]
+    );
+    if(!locked.rowCount)throw new Error('The active subscription changed before expiry could be reset.');
+    const updated=await client.query(
+      'UPDATE subscriptions SET current_period_end=$2,service_extension_days=0,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id',
+      [subscriptionId,end,customerId]
+    );
+    if(!updated.rowCount)throw new Error('The active subscription changed before expiry could be reset.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.customer.expiry.reset_to_plan','customer',$2,$3::jsonb)`,
+      [actorUserId,customerId,JSON.stringify({
+        subscriptionId,
+        planId:entitlement.plan_id,
+        currentPeriodEnd:end.toISOString(),
+        providerBillingChanged:false
+      })]
+    );
+  });
+  await provisioning.reconcileCustomer(customerId);
+  return{subscriptionId,end};
+}
+
 async function suspend({customerId,actorUserId,reason}){
   await accessHolds.addHold({
     customerId,type:'admin_suspended',sourceKey:'admin',reason,actorUserId,metadata:{origin:'customer_360'}
@@ -201,6 +234,7 @@ module.exports={
   jellyfinAccounts,
   extend,
   setExpiry,
+  resetExpiryToPlan,
   suspend,
   deleteJellyfin
 };
