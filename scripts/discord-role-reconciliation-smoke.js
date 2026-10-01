@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const reconciliation = require('../src/integrations/discord-role-reconciliation');
 const discordRoles = require('../src/integrations/discord-roles');
+const automationRegistry = require('../src/automation/jobs');
 
 async function main() {
     const source = fs.readFileSync('src/integrations/discord-role-reconciliation.js', 'utf8');
@@ -71,7 +72,7 @@ async function main() {
 
     assert.match(jobs, /async discord_roles\(\)\{return discordRoleReconciliation\.reconcileLinkedCustomers\(\)\}/,
         'persistent automation registry must expose the Discord repair sweep');
-    assert.match(worker + jobs, /discord_roles:43200/,
+    assert.strictEqual(automationRegistry.defaultIntervalSeconds('discord_roles'), 43200,
         'Discord role repair sweep must default to every 12 hours');
 
     const legacyPlanId = '11111111-1111-4111-8111-111111111111';
