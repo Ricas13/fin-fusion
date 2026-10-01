@@ -183,7 +183,7 @@ assert(jobs.includes("require('../access/access-repair')"),
 assert(backfill.includes("require('../access/access-repair')"),
   'Free capacity repair must delegate repair decisions to the canonical access repair layer');
 assert(customer360.includes("require('../access/customer-access-state')")
-  && customer360.includes('customerAccessState.snapshot(customerId)'),
+  && customer360.includes('customerAccessState.fullSnapshot(customerId)'),
   'Customer 360 must load one canonical cross-service access snapshot');
 assert(customer360Truth.includes('canonical.emby?.entitlement')
   && customer360Truth.includes('canonical.stremio?.entitlement'),
