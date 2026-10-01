@@ -49,20 +49,24 @@ function resultRows(detail) {
   const result = snapshot(detail);
   const live = currentSubscriptions(detail);
   const canonical = detail?.canonicalAccessState || null;
-  const loadedPrimary = canonical?.primary?.entitlement || detail?.primaryEntitlement || null;
-  const loadedFree = canonical?.free?.entitlement || detail?.freeEntitlement || null;
-  const primaryEntitlement = loadedPrimary && supports(loadedPrimary, 'jellyfin') && !loadedPrimary.is_free_tier
-    ? loadedPrimary
-    : live.find(row => supports(row, 'jellyfin') && !row.is_free_tier) || null;
-  const freeEntitlement = loadedFree && supports(loadedFree, 'jellyfin') && loadedFree.is_free_tier
-    ? loadedFree
-    : live.find(row => supports(row, 'jellyfin') && row.is_free_tier) || null;
+  const legacyPrimary = detail?.primaryEntitlement || null;
+  const legacyFree = detail?.freeEntitlement || null;
+  const primaryEntitlement = canonical
+    ? canonical.primary?.entitlement || null
+    : (legacyPrimary && supports(legacyPrimary, 'jellyfin') && !legacyPrimary.is_free_tier
+      ? legacyPrimary
+      : live.find(row => supports(row, 'jellyfin') && !row.is_free_tier) || null);
+  const freeEntitlement = canonical
+    ? canonical.free?.entitlement || null
+    : (legacyFree && supports(legacyFree, 'jellyfin') && legacyFree.is_free_tier
+      ? legacyFree
+      : live.find(row => supports(row, 'jellyfin') && row.is_free_tier) || null);
   const embyEntitlement = canonical
     ? canonical.emby?.entitlement || null
-    : (loadedPrimary && supports(loadedPrimary, 'emby') ? loadedPrimary : live.find(row => supports(row, 'emby')) || null);
+    : (legacyPrimary && supports(legacyPrimary, 'emby') ? legacyPrimary : live.find(row => supports(row, 'emby')) || null);
   const stremioEntitlement = canonical
     ? canonical.stremio?.entitlement || null
-    : (loadedPrimary && supports(loadedPrimary, 'stremio') ? loadedPrimary : live.find(row => supports(row, 'stremio')) || null);
+    : (legacyPrimary && supports(legacyPrimary, 'stremio') ? legacyPrimary : live.find(row => supports(row, 'stremio')) || null);
   const accounts = (detail?.accounts || []).filter(row => String(row?.account_purpose || 'jellyfin') !== 'stremio_internal');
   const primaryAccount = accounts.find(row => String(row?.access_lane || 'primary') === 'primary') || null;
   const freeAccount = accounts.find(row => String(row?.access_lane || '') === 'free') || null;
@@ -97,7 +101,7 @@ function resultRows(detail) {
       target: result.serverId ? String(result.serverId) : 'Managed Stremio delivery', issue: null, reconciledAt
     },
     {
-      key: 'discord', service: 'Discord roles', desired: live.length || loadedPrimary ? 'Synced to active plans' : 'No active plan roles',
+      key: 'discord', service: 'Discord roles', desired: (canonical ? [primaryEntitlement,freeEntitlement,embyEntitlement,stremioEntitlement].some(Boolean) : live.length || legacyPrimary) ? 'Synced to active plans' : 'No active plan roles',
       actual: result.discordStatus ? text(result.discordStatus) : 'No reconciliation snapshot', plan: 'Active plan roles',
       target: 'Discord integration', issue: null, reconciledAt
     }
