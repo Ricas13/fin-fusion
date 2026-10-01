@@ -52,13 +52,23 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
         const subscription=assertJellyfinPrimary(row.rows[0]||null);
         const permanent=await permanentAccess.revokeInTransaction(client,customerId,{actorUserId,reason:`Jellyfin plan ended: ${note}`.slice(0,500),expectedSubscriptionId:subscription.id});
         const permanentOnOtherSubscription=Boolean(permanent.subscriptionMismatch);
+        let permanentOnOtherPrimary=false;
+        if(permanentOnOtherSubscription){
+            const pinned=await client.query(`
+                SELECT COALESCE(p.is_free_tier,FALSE) AS is_free_tier
+                FROM subscriptions s
+                JOIN plans p ON p.id=s.plan_id
+                WHERE s.id=$1 AND s.customer_id=$2
+                LIMIT 1
+            `,[permanent.subscriptionId,customerId]);
+            permanentOnOtherPrimary=Boolean(pinned.rowCount&&!pinned.rows[0].is_free_tier);
+        }
         // Free and primary Jellyfin access are independent lanes. Ending an
-        // exact Free subscription must never revoke, or be blocked by, a
-        // Permanent Access override pinned to the customer's paid/primary
-        // subscription. A mismatch remains an error for primary-plan
-        // termination because that operation may otherwise strand the
-        // operator override on an unrelated contract.
-        if(permanentOnOtherSubscription&&!subscription.is_free_tier)throw new Error('Permanent access is pinned to a different subscription. Reconcile the customer before ending this plan.');
+        // exact Free subscription may preserve Permanent Access only when that
+        // override is proven to belong to the independent paid/primary lane.
+        // A same-lane/stale Free mismatch still fails closed so automation
+        // cannot silently defeat an administrator's Free-access override.
+        if(permanentOnOtherSubscription&&(!subscription.is_free_tier||!permanentOnOtherPrimary))throw new Error('Permanent access is pinned to a different subscription. Reconcile the customer before ending this plan.');
         const ended=await client.query(`
             UPDATE subscriptions
             SET status='cancelled',current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),service_extension_days=0,cancel_at_period_end=TRUE,updated_at=NOW()
@@ -66,8 +76,8 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         if(!ended.rowCount)throw new Error('Subscription changed before it could be ended.');
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_local','subscription',$2,$3::jsonb)`,[actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription),provider:subscription.source||null,providerBillingChanged:Boolean(providerBillingChanged),permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherSubscription})]);
-        return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherSubscription,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference};
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_local','subscription',$2,$3::jsonb)`,[actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription),provider:subscription.source||null,providerBillingChanged:Boolean(providerBillingChanged),permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary})]);
+        return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference};
     });
 }
 
