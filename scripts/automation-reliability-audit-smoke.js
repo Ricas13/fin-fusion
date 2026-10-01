@@ -34,8 +34,10 @@ for (const name of requiredCritical) {
 
 const worker = source('scripts/automation-worker.js');
 for (const name of ['creation_intent_recovery', 'customer_service_recovery', 'revenue_integrity']) {
-    assert(worker.includes(`${name}:60`), `${name} must default to a one-minute cadence`);
+    assert.strictEqual(jobs.defaultIntervalSeconds(name), 60, `${name} must default to a one-minute cadence`);
 }
+assert(worker.includes('jobRegistry.defaultIntervalSeconds(jobKey)'),
+    'automation worker must consume cadence from the canonical job registry');
 
 const retry = source('src/payments/payment-event-retry.js');
 assert(retry.includes('provider=ANY($2::text[])'), 'payment retry claim must filter supported providers in SQL');

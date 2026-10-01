@@ -71,7 +71,7 @@ async function main() {
 
     assert.match(jobs, /async discord_roles\(\)\{return discordRoleReconciliation\.reconcileLinkedCustomers\(\)\}/,
         'persistent automation registry must expose the Discord repair sweep');
-    assert.match(worker, /discord_roles:43200/,
+    assert.match(worker + jobs, /discord_roles:43200/,
         'Discord role repair sweep must default to every 12 hours');
 
     const legacyPlanId = '11111111-1111-4111-8111-111111111111';

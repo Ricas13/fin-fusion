@@ -117,6 +117,22 @@ async function revenueIntegrityWithPayPal(){
  };
 }
 
+const DEFAULT_INTERVAL_SECONDS=Object.freeze({
+ free_capacity_backfill:30,
+ free_places_digest:30,
+ creation_intent_recovery:60,
+ customer_service_recovery:60,
+ revenue_integrity:60,
+ paypal_history_reconciliation:300,
+ provider_checkout_recovery:300,
+ subscription_discovery:21600,
+ data_retention:3600,
+ discord_roles:43200,
+ stremio_external_tokens:300,
+ stremio_media_index:300
+});
+function defaultIntervalSeconds(jobKey){return Number(DEFAULT_INTERVAL_SECONDS[jobKey]||300)}
+
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0),blockedCount=Number(active.blocked||0);return{...active,blocked:blockedCount,expired:expiredCount,expiryFailed,downgradeRetries,warnings,serviceEndEmails:serviceEnd,processed:Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
@@ -155,4 +171,4 @@ const jobs={
 };
 function names(){return Object.keys(jobs)}
 async function run(jobKey){const job=jobs[jobKey];if(!job)throw new Error(`Unknown automation job: ${jobKey}`);return job()}
-module.exports={jobs,names,run,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,revenueIntegrityWithPayPal};
+module.exports={jobs,names,run,DEFAULT_INTERVAL_SECONDS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,revenueIntegrityWithPayPal};

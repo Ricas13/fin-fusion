@@ -85,7 +85,8 @@ assert(/Starting signup opens a \$\{FREE_INTENT_MINUTES\}-minute window/.test(fr
 assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live signup-intent duration constant instead of hardcoding it separately');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/allowEveryone:false/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful validated Free Server reservation must nudge the persistent Discord status immediately after commit');
-assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');
+const automationDefaults = fs.readFileSync('scripts/automation-worker.js','utf8') + fs.readFileSync('src/automation/jobs.js','utf8');
+assert(/free_places_digest:30/.test(automationDefaults),'persistent Discord capacity must also reconcile at least every 30 seconds');
 
 assert(/allowOverCapacity = false/.test(serverMigration)&&/targetAtCapacity && !allowOverCapacity/.test(serverMigration),'normal customer moves must still fail closed at target capacity');
 assert(/overCapacityOverride: targetAtCapacity && Boolean\(allowOverCapacity\)/.test(serverMigration),'server migration preflight must explicitly report an armed over-capacity override');
