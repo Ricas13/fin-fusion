@@ -288,6 +288,40 @@ function accessState({ free = [], primary = [] } = {}) {
     );
   }
 
+
+  {
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [{ state: STATES.ORPHAN_ACCOUNT, entitlement: null, account: { id: 'orphan-failed' } }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('server API unavailable'); } },
+      lifecycle: () => ({})
+    });
+    await assert.rejects(
+      repair.removeOrphanFreeAccount('customer'),
+      /server API unavailable/,
+      'orphan cleanup must not report success when reconciliation itself is uncertain'
+    );
+  }
+
+  {
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [
+          { state: STATES.ORPHAN_ACCOUNT, entitlement: null, account: { id: 'orphan-stuck' } },
+          { state: STATES.ORPHAN_ACCOUNT, entitlement: null, account: { id: 'orphan-stuck' } }
+        ]
+      }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({})
+    });
+    await assert.rejects(
+      repair.removeOrphanFreeAccount('customer'),
+      /remained after no-plan reconciliation/,
+      'orphan cleanup must verify the destructive postcondition instead of trusting a successful reconcile call'
+    );
+  }
+
   console.log('access repair behavior smoke: ok');
 })().catch(error => {
   console.error('access repair behavior smoke failed:', error);
