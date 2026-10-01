@@ -347,31 +347,12 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         }
         await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan',{excludeReservationId:reservationId});
         const historical = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND COALESCE(replacement_reason,'')<>'free_claim_activation_failed' LIMIT 1`,[customerId,plan.id]);
-        const liveFree = await client.query(`
-            SELECT s.id,s.plan_id
-            FROM subscriptions s
-            JOIN plans p ON p.id=s.plan_id
-            LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
-            WHERE s.customer_id=$1 AND s.source='free_claim' AND p.is_free_tier=TRUE
-              AND COALESCE(p.is_addon,FALSE)=FALSE AND s.superseded_by IS NULL
-              AND s.starts_at<=NOW()
-              AND (
-                (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
-                OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
-                OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
-                OR (
-                  COALESCE(s.service_extension_days,0)>0
-                  AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
-                  AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW()
-                )
-              )
-            FOR UPDATE OF s
-        `,[customerId]);
-        if(liveFree.rows.some(row=>String(row.plan_id)===String(plan.id)))throw new Error('You already have free access on this plan.');
+        const liveFree = await state.lockLiveFreeClaimSubscriptions(client,customerId);
+        if(liveFree.some(row=>String(row.plan_id)===String(plan.id)))throw new Error('You already have free access on this plan.');
         if(policy.freeMode!=='renewable'&&historical.rowCount)throw new Error('Free access on this plan has already been claimed.');
         const startsAt=new Date(),endsAt=permanentEnd();
         const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',$3,$4) RETURNING *`,[customerId,plan.id,startsAt,endsAt]);
-        for(const old of liveFree.rows)await state.markSuperseded(client,{subscriptionId:old.id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
+        for(const old of liveFree)await state.markSuperseded(client,{subscriptionId:old.id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
         if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id]);
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,parallelWithPaid:true,reservationId:reservation?.id||null})]);
         return row.rows[0];
