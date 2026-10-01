@@ -430,6 +430,21 @@ for(const required of [
     `catalog plan command service must own Stremio mutation ${required}`);
 }
 
+// Emby plan creation/update uses the same catalog mutation owner.
+const embyPlanEditor=read('src/platform/admin-emby-plan-editor.js');
+assert(embyPlanEditor.includes("require('../catalog/plan-command-service')")
+    && embyPlanEditor.includes('planCommands.upsertEmbyPlan({')
+    && !embyPlanEditor.includes('UPDATE plans SET name=')
+    && !embyPlanEditor.includes('INSERT INTO plans(code,name,description,service_type')
+    && !embyPlanEditor.includes('DELETE FROM plan_server_eligibility')
+    && !embyPlanEditor.includes('INSERT INTO plan_server_eligibility'),
+  'Emby plan editor must delegate catalogue persistence to the shared plan command service');
+assert(planCommandService.includes('async function upsertEmbyPlan')
+    && planCommandService.includes("service_type='emby'")
+    && planCommandService.includes("'admin.emby_plan.update'")
+    && planCommandService.includes("'admin.emby_plan.create'"),
+  'catalog plan command service must own Emby plan create/update persistence and audit');
+
 console.log('canonical ownership smoke: ok');
 
 
