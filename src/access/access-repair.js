@@ -13,15 +13,12 @@ function jellyfinEntitlement(entitlement) {
   );
 }
 
-function operatorProtected(entitlement) {
-  const mode = String(entitlement?.admin_jellyfin_mode || '').toLowerCase();
-  return Boolean(entitlement?.permanent_access || entitlement?.admin_present || mode === 'present');
-}
 
 function createAccessRepair(deps = {}) {
   const accessState = deps.customerAccessState || customerAccessState;
   const provisioningApi = deps.provisioning || provisioning;
   const lifecycleApi = deps.lifecycle || (() => require('../payments/lifecycle'));
+  const isOperatorProtected = deps.operatorProtected || customerAccessState.operatorProtected;
 
   async function repairFreeEntitlement(customerId, subscriptionId, { reason = null } = {}) {
     let access = await accessState.freeJellyfin(customerId, { includeBlocked: true });
@@ -57,7 +54,7 @@ function createAccessRepair(deps = {}) {
     if (access.state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) {
       return { status: 'skipped', reason: 'blocked_after_reconcile' };
     }
-    if (operatorProtected(access.entitlement)) {
+    if (isOperatorProtected(access.entitlement)) {
       // Permanent Access and explicit administrator-present are stronger than
       // automatic repair policy. If provisioning cannot restore the account,
       // retain the entitlement for retry/manual intervention instead of
@@ -82,7 +79,7 @@ function createAccessRepair(deps = {}) {
       return { status: 'skipped' };
     }
 
-    if (operatorProtected(entitlement)) {
+    if (isOperatorProtected(entitlement)) {
       return { status: 'protected', reason: 'admin_protected', subscriptionId: entitlement.subscription_id };
     }
 
@@ -152,7 +149,6 @@ const defaultRepair = createAccessRepair();
 module.exports = {
   trialEntitlement,
   jellyfinEntitlement,
-  operatorProtected,
   createAccessRepair,
   ...defaultRepair
 };
