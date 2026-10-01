@@ -185,8 +185,8 @@ assert(backfill.includes("require('../access/access-repair')"),
 assert(customer360.includes("require('../access/customer-access-state')")
   && customer360.includes('customerAccessState.snapshot(customerId)'),
   'Customer 360 must load one canonical cross-service access snapshot');
-assert(customer360Truth.includes('canonical?.emby?.entitlement')
-  && customer360Truth.includes('canonical?.stremio?.entitlement'),
+assert(customer360Truth.includes('canonical.emby?.entitlement')
+  && customer360Truth.includes('canonical.stremio?.entitlement'),
   'Customer 360 service truth must consume canonical Emby/Stremio entitlement selection instead of re-deciding it');
 
 assert(
