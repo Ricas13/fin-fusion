@@ -8,6 +8,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const routes = read('src/platform/admin-route-composition.js');
 const editor = read('src/platform/admin-jellyfin-plan-editor.js');
+const legacyPlansRouter = read('src/platform/admin-plans.js');
 const stremioEditor = read('src/platform/admin-stremio-plan-editor.js');
 const stremioDispatch = read('src/platform/admin-stremio-plan-dispatch.js');
 const attentionPolicy = read('src/platform/actionable-attention-policy.js');
@@ -63,6 +64,13 @@ assert(planCommandSource.includes('marketing_features=$4::text[]'), 'catalog pla
 assert(!planCommandSource.includes('marketing_features=$4::jsonb'), 'catalog plan commands must never cast marketing features to jsonb');
 assert(planCommandSource.includes('[planId, name, description, features, visible, active'), 'catalog plan commands must bind the feature array directly instead of JSON-encoding it');
 assert(editor.includes('planCommands.updateProduct({'), 'product editor must delegate persistence to the catalog command owner');
+assert(legacyPlansRouter.includes("require('../catalog/plan-command-service')"), 'legacy plan routes must use the catalog command owner');
+assert(legacyPlansRouter.includes('planCommands.updatePlanOverview({'), 'legacy plan overview save must delegate to catalog commands');
+assert(legacyPlansRouter.includes('planCommands.archivePlan({'), 'legacy plan archive must delegate to catalog commands');
+assert(legacyPlansRouter.includes('planCommands.unarchivePlan({'), 'legacy plan unarchive must delegate to catalog commands');
+assert(!legacyPlansRouter.includes('UPDATE plans SET'), 'platform plan routes must not directly update the plans table');
+assert(!legacyPlansRouter.includes('DELETE FROM plan_server_eligibility'), 'platform plan routes must not directly mutate plan server eligibility');
+
 
 // Discord plan roles are ordinary per-plan settings, while reconciliation stays a bounded specialist job.
 assert(editor.includes('Discord plan role') && planCommandSource.includes('discord_role_id=$7'), 'Jellyfin product settings must expose the plan Discord role while catalog commands persist it');
