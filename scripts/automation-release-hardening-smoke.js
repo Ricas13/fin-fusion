@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const jobHealth = require('../src/automation/job-health');
 const connectionBudget = require('../src/security/database-connection-budget');
+const automationRegistry = require('../src/automation/jobs');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -54,7 +55,7 @@ assert(worker.includes('dbConnectionBudget') && worker.includes('CONNECTION_BUDG
     'Automation heartbeat metadata must expose the complete database connection budget');
 assert(worker.includes('Automation request-service settings refresh failed during startup'),
     'Best-effort automation settings refresh failures must remain visible to operators');
-assert((worker + read('src/automation/jobs.js')).includes('free_capacity_backfill:30'),
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('free_capacity_backfill'), 30,
     'Free Server vacancy backfill must run on a short 30-second cadence');
 
 assert(worker.includes('let runningJobs = new Set();'),
