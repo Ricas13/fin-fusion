@@ -77,7 +77,8 @@ async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
   const assignedUsersBefore=Number(server.assigned_users||0);
   const maxUsers=Number(server.max_users||0)||null;
 
-  const effective=await provisioning.effectivePolicyForCustomer(customerId,state.entitlement);
+  const accessLane=provisioning.requestedAccessLane(state.entitlement);
+  const effective=await provisioning.effectivePolicyForCustomer(customerId,state.entitlement,accessLane);
   const libraries=await provisioning.resolveLibraryAccessForServer(server.id,effective.unrestricted,effective.visibleNames,false);
   if(libraries.missing.length)throw new Error(`${server.name} is missing required libraries: ${libraries.missing.join(', ')}.`);
 
@@ -87,12 +88,21 @@ async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
     account=previous.rows[0];
     await provisioning.applyPolicy(account,effective,false);
     await provisioning.markPrimaryAccount(customerId,account.id);
-    await query(`UPDATE jellyfin_accounts SET disabled=FALSE,password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
-    account={...account,disabled:false,is_primary:true,password_setup_required:true};reused=true;
+    await query(`
+      UPDATE jellyfin_accounts
+      SET disabled=FALSE,
+          password_setup_required=TRUE,
+          access_lane_changed_at=CASE WHEN access_lane IS DISTINCT FROM $2 THEN NOW() ELSE access_lane_changed_at END,
+          inactivity_observation_reset_at=CASE WHEN access_lane IS DISTINCT FROM $2 THEN NULL ELSE inactivity_observation_reset_at END,
+          access_lane=$2,
+          updated_at=NOW()
+      WHERE id=$1
+    `,[account.id,accessLane]);
+    account={...account,disabled:false,is_primary:true,password_setup_required:true,access_lane:accessLane};reused=true;
   }else{
     // This is an explicit administrator force action. Capacity is an automatic
     // placement guard only; it must never veto the exact server the operator chose.
-    account=await provisioning.createJellyfinAccount(customerId,server,effective,{makePrimary:true,allowOverCapacity:true});
+    account=await provisioning.createJellyfinAccount(customerId,server,effective,{makePrimary:true,allowOverCapacity:true,accessLane});
     await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
     account.password_setup_required=true;
   }
@@ -101,7 +111,7 @@ async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
 
   const assignedUsersAfter=await assignedUsers(server.id);
   const overCapacityAfter=maxUsers?Math.max(0,assignedUsersAfter-maxUsers):0;
-  const resultMeta={manualAssignment:true,adminForcedServer:true,reusedExistingAccount:reused,serverName:server.name,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter,overriddenRules:server.admin_warnings||[]};
+  const resultMeta={manualAssignment:true,adminForcedServer:true,reusedExistingAccount:reused,accessLane,serverName:server.name,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter,overriddenRules:server.admin_warnings||[]};
   await query(`INSERT INTO customer_provisioning_state(customer_id,status,attempt_count,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at) VALUES($1,'healthy',1,0,NULL,NOW(),NOW(),NULL,$2,$3,$4,$5,$6::jsonb,NOW()) ON CONFLICT(customer_id) DO UPDATE SET status='healthy',consecutive_failures=0,last_error=NULL,last_attempt_at=NOW(),last_success_at=NOW(),next_attempt_at=NULL,subscription_id=EXCLUDED.subscription_id,plan_id=EXCLUDED.plan_id,jellyfin_account_id=EXCLUDED.jellyfin_account_id,server_id=EXCLUDED.server_id,last_result=EXCLUDED.last_result,updated_at=NOW()`,[customerId,state.entitlement.subscription_id,state.entitlement.plan_id,account.id,server.id,JSON.stringify(resultMeta)]);
   await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,capacityOverride?'admin.customer.server_assign.capacity_override':'admin.customer.server_assign',customerId,JSON.stringify({serverId:server.id,serverName:server.name,accountId:account.id,reusedExistingAccount:reused,planId:state.entitlement.plan_id,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter,overriddenRules:server.admin_warnings||[]})]);
   return{account,server,reused,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter};
