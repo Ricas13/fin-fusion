@@ -11,6 +11,7 @@ const viewSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-
 const truthSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-service-truth.js'), 'utf8');
 const compactSource = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360-compact.js'), 'utf8');
 const holdsSource = fs.readFileSync(path.join(root, 'src', 'platform', 'admin-customer-access-holds.js'), 'utf8');
+const accessControlSource = fs.readFileSync(path.join(root, 'src', 'access', 'admin-customer-access-control.js'), 'utf8');
 const primaryActionsSource = fs.readFileSync(path.join(root, 'public', 'js', 'admin-customer-primary-actions.js'), 'utf8');
 
 assert(source.includes("entity_type='customer' AND entity_id::text=$1::text"), 'Customer 360 audit lookup must compare audit entity UUIDs through a consistent text cast');
