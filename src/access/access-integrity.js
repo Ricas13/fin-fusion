@@ -13,7 +13,7 @@ function clean(value, max = 900) {
 function finding(kind, row, detail) {
   return {
     kind,
-    id: String(row.id || row.customer_id || row.subscription_id || 'unknown'),
+    id: String(row.id || row.subscription_id || row.customer_id || 'unknown'),
     customerId: row.customer_id || null,
     detail: clean(detail)
   };

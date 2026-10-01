@@ -8,6 +8,10 @@ const provisioning = require('../jellyfin/resilient-provisioning');
 const providerContract = require('./provider-contract');
 
 const OPERATION_TYPE = 'prorata_refund';
+// Stop short of Stripe's 24-hour idempotency retention window. Use the same
+// conservative window for PayPal; an unknown outcome needs reconciliation,
+// never a fresh cash mutation after the provider may have forgotten the key.
+const MAX_UNOBSERVED_REFUND_AGE_MS = 23 * 60 * 60 * 1000;
 const ELIGIBLE_STATUSES = new Set(['active','trialing','past_due','paused','cancelled']);
 
 function isRecurring(row) {
@@ -117,10 +121,7 @@ function operationKey(quoteValue) {
   return providerOps.key([
     OPERATION_TYPE,
     quoteValue.provider,
-    quoteValue.subscriptionId,
-    quoteValue.originalEnd,
-    quoteValue.alreadyRefundedMinor,
-    quoteValue.refundMinor
+    quoteValue.subscriptionId
   ]);
 }
 
@@ -129,6 +130,27 @@ async function planOperation(subscriptionId, actorUserId, reason) {
   return transaction(async client => {
     const row = await loadForQuote(client, subscriptionId, { lock: true });
     if (!row) throw new Error('Subscription not found.');
+    // This workflow ends the exact prepaid entitlement. It represents one
+    // commercial decision, even if time passes or a webhook changes the local
+    // period before a retry. Re-quoting would produce a different cash amount
+    // and could issue a second refund after an ambiguous provider response.
+    const existing = await client.query(`
+      SELECT * FROM provider_operations
+      WHERE scope='customer' AND owner_id=$1 AND operation_type=$2 AND local_reference=$3
+      ORDER BY created_at,id LIMIT 2
+    `, [row.customer_id, OPERATION_TYPE, String(subscriptionId)]);
+    if (existing.rows.length) {
+      const operation = existing.rows[0];
+      if (existing.rows.length > 1 || operation.manual_review_required
+          || !['planned','provider_applied','local_applied','reconciled'].includes(operation.state)
+          || operation.provider !== row.source
+          || operation.request_snapshot?.providerReference !== row.provider_subscription_id) {
+        const error = new Error('An existing refund requires manual review; refusing to issue another refund.');
+        error.code = 'PRORATA_REFUND_REVIEW_REQUIRED';
+        throw error;
+      }
+      return { operation, quote: operation.request_snapshot };
+    }
     const refundedMinor = await refundedMinorFor(client, row);
     const current = refundableQuoteFromRow(row, { refundedMinor, now: new Date() });
     const idempotencyKey = operationKey(current);
@@ -197,6 +219,24 @@ async function recoverProviderOperation(operation) {
   let op = operation;
   if (!op || op.operation_type !== OPERATION_TYPE) throw new Error('Not a pro-rata refund operation.');
   const request = op.request_snapshot || {};
+
+  if (op.state !== 'reconciled') {
+    const duplicates = await transaction(client => client.query(`
+      SELECT id FROM provider_operations
+      WHERE scope=$1 AND owner_id=$2 AND operation_type=$3 AND local_reference=$4 AND id<>$5
+      LIMIT 1
+    `, [op.scope, op.owner_id, OPERATION_TYPE, op.local_reference, op.id]));
+    const createdMs = new Date(op.created_at).getTime();
+    const staleUnknown = !op.provider_reference && (!Number.isFinite(createdMs)
+      || Date.now() - createdMs >= MAX_UNOBSERVED_REFUND_AGE_MS);
+    if (op.manual_review_required || duplicates.rowCount || staleUnknown) {
+      const error = new Error('Refund outcome requires manual provider reconciliation; refusing to send another refund.');
+      error.code = 'PRORATA_REFUND_REVIEW_REQUIRED';
+      error.providerOperationManual = true;
+      await providerOps.markManual(op.id, error);
+      throw error;
+    }
+  }
 
   if (op.state === 'planned') {
     const remote = await createOrObserveProviderRefund(op);

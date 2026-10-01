@@ -2,8 +2,42 @@
 
 const assert = require('assert');
 const { createOperator } = require('../src/access/access-integrity-operator');
+const integrity = require('../src/access/access-integrity');
+const { createAccessRepair } = require('../src/access/access-repair');
+const { ACCESS_STATES } = require('../src/access/customer-access-state');
 
 (async () => {
+  {
+    // Exercise the actual scanner mapper through the operator and repair owner.
+    // A customer ID cannot stand in for the exact subscription being repaired.
+    const finding = integrity.finding('free_plan_without_ready_server', {
+      customer_id: 'customer-free', subscription_id: 'subscription-free'
+    }, 'missing Free account');
+    assert.strictEqual(finding.id, 'subscription-free');
+    assert.strictEqual(integrity.finding('free_server_without_plan', {
+      id: 'account-free', customer_id: 'customer-free'
+    }, '').id, 'account-free');
+    let reconciliations = 0;
+    const repair = createAccessRepair({
+      customerAccessState: {
+        ACCESS_STATES,
+        freeJellyfin: async () => ({
+          state: reconciliations ? ACCESS_STATES.ACTIVE_READY : ACCESS_STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'subscription-free' },
+          account: reconciliations ? { id: 'account-free' } : null
+        })
+      },
+      provisioning: { reconcileCustomer: async id => {
+        assert.strictEqual(id, 'customer-free');
+        reconciliations++;
+      } }
+    });
+    const operator = createOperator({ scan: async () => [finding], repair: repair.repairIntegrityFinding });
+    const result = await operator.repairCurrent(finding);
+    assert.strictEqual(result.status, 'repaired');
+    assert.strictEqual(reconciliations, 1);
+    assert.strictEqual(result.result.account.id, 'account-free');
+  }
   {
     const scans = [];
     const repairs = [];
