@@ -1,10 +1,11 @@
 'use strict';
 
 const express = require('express');
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
+const planCommands = require('../catalog/plan-command-service');
 const { queuePlanReconciliation } = require('./bulk-jobs');
 const { esc, layout } = require('./admin-html');
 
@@ -132,36 +133,15 @@ function parse(plan, body) {
   };
 }
 async function clearPlanLeases(client, planId) {
-  return client.query(
-    `DELETE FROM access_network_leases
-     WHERE subject_key IN (SELECT id::text FROM subscriptions WHERE plan_id=$1)
-       AND scope IN ('jellyfin','stremio')`,
-    [planId]
-  );
+  return planCommands.clearPlanLeases(client, planId);
 }
 async function save(plan, input, actorUserId) {
-  return transaction(async client => {
-    const count = await subscriberCount(plan.id, client);
-    await client.query(
-      `UPDATE plans SET
-         jellyfin_access_model=$2,jellyfin_household_network_limit=$3,jellyfin_household_lease_minutes=$4,
-         stremio_household_lease_minutes=$5,streams=$6,
-         allow_downloads=$7,allow_video_transcoding=$8,allow_audio_transcoding=$9,allow_remuxing=$10,
-         allow_live_tv=$11,allow_live_tv_management=$12,allow_remote_access=$13,allow_4k=$14,
-         allow_subtitle_editing=$15,updated_at=NOW()
-       WHERE id=$1`,
-      [plan.id, input.accessModel, input.jellyfinHouseholdNetworkLimit, input.jellyfinHouseholdLeaseMinutes, input.stremioHouseholdLeaseMinutes, input.streams,
-       input.allowDownloads, input.allowVideoTranscoding, input.allowAudioTranscoding, input.allowRemuxing, input.allowLiveTv, input.allowLiveTvManagement, input.allowRemoteAccess, input.allow4k,
-       input.allowSubtitleEditing]
-    );
-    await clearPlanLeases(client, plan.id);
-    await client.query(
-      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-       VALUES($1,'admin.plan.access_policy.update','plan',$2,$3::jsonb)`,
-      [actorUserId || null, plan.id, JSON.stringify({ ...input, activeSubscribers: count })]
-    );
-    return count;
+  const result = await planCommands.updateAccessPolicy({
+    planId: plan.id,
+    input,
+    actorUserId
   });
+  return result.activeSubscribers;
 }
 
 function createAdminPlanAccessRouter() {
