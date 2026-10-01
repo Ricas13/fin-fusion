@@ -67,8 +67,9 @@ assert(subscriptionState.includes(canonicalAdminPresent),
     'canonical Jellyfin entitlement truth must include administrator-present access');
 assert(entitlementJobs.includes(canonicalAdminPresent),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
-assert(adminManualEntitlementService.includes(canonicalAdminPresent),
-    'manual grant conflict detection must not ignore administrator-present Jellyfin access');
+assert(subscriptionState.includes('async function livePrimarySubscription') && subscriptionState.includes(canonicalAdminPresent)
+    && adminManualEntitlementService.includes('subscriptionState.livePrimarySubscription'),
+    'manual grant conflict detection must consume canonical primary subscription truth including administrator-present Jellyfin access');
 assert(adminManualEntitlement.includes("require('../entitlements/admin-manual-entitlement-service')"),
     'manual entitlement platform route must delegate conflict detection to the entitlement domain');
 assert(subscriptionState.includes('lockLiveFreeClaimSubscriptions')
