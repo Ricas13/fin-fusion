@@ -5,8 +5,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { getPool } = require('../src/db');
+const migrationEpochs = require('./migration-epochs');
 
-const LEGACY_BRIDGE_COMMIT = 'b39ca004b4bd24ebc6dbdf4546d2bb6b4111b95b';
+const LEGACY_BRIDGE_COMMIT = migrationEpochs.CURRENT_EPOCH.legacyBridgeCommit;
+const CURRENT_BASELINE_FILE = migrationEpochs.CURRENT_EPOCH.baselineFile;
 const BASELINE_ANCHORS = ['app_users','customers','plans','jellyfin_servers','subscriptions'];
 // These objects were all present immediately before the 2026-08-18 schema
 // squash and are folded into 000_database_baseline.sql. An installation that
@@ -191,7 +193,9 @@ async function runMigrations({ argv = process.argv.slice(2), pool = getPool(), c
     const options = parseArguments(argv);
     const dir = path.join(__dirname, '..', 'db', 'migrations');
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
+    migrationEpochs.validate(files);
     let repairedDrift = false;
+    let baselineActivated = false;
 
     try {
         // Inspect before creating/updating the current migration ledger. A
@@ -223,16 +227,24 @@ async function runMigrations({ argv = process.argv.slice(2), pool = getPool(), c
             const verification = await verifyOrBaselineAppliedMigration(pool, filename, checksum, options);
             repairedDrift = repairedDrift || verification.repairedDrift;
             if (verification.applied) {
+                if (filename === CURRENT_BASELINE_FILE) baselineActivated = true;
                 console.log(`skip ${filename}`);
                 continue;
             }
 
-            if (filename === '000_database_baseline.sql' && adoptExistingBaseline) {
+            if (filename === CURRENT_BASELINE_FILE && adoptExistingBaseline) {
                 await adoptBaseline(pool, filename, checksum);
+                baselineActivated = true;
+                continue;
+            }
+
+            if (baselineActivated && migrationEpochs.isFoldedIntoBaseline(filename)) {
+                console.log(`baseline skip ${filename}`);
                 continue;
             }
 
             await applyMigration(pool, filename, sql, checksum, freshInstall);
+            if (filename === CURRENT_BASELINE_FILE) baselineActivated = true;
         }
 
         if (options.acceptDrift && !repairedDrift) {
@@ -252,6 +264,7 @@ if (require.main === module) {
 
 module.exports = {
     LEGACY_BRIDGE_COMMIT,
+    CURRENT_BASELINE_FILE,
     BASELINE_ANCHORS,
     BASELINE_SENTINELS,
     migrationChecksum,

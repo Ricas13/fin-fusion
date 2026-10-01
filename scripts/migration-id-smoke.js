@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const migrationEpochs = require('./migration-epochs');
 
 const LEGACY_MIGRATION_COUNT = 60;
 const LEGACY_PATTERN = /^(\d{3})_[a-z0-9][a-z0-9_]*\.sql$/;
@@ -80,7 +81,30 @@ assert.throws(
 );
 
 const dir = path.join(__dirname, '..', 'db', 'migrations');
-const result = validateMigrationIds(fs.readdirSync(dir));
-console.log(`migration id smoke: ok (${result.legacy} frozen legacy, ${result.timestamped} timestamped)`);
+const migrationFiles = fs.readdirSync(dir);
+const result = validateMigrationIds(migrationFiles);
+const epoch = migrationEpochs.validate(migrationFiles);
+assert.strictEqual(migrationEpochs.classify(migrationEpochs.CURRENT_EPOCH.baselineFile), 'baseline');
+assert.strictEqual(migrationEpochs.isFoldedIntoBaseline(migrationEpochs.CURRENT_EPOCH.baselineFile), false,
+    'the baseline itself must never be classified as folded history');
+assert.deepStrictEqual(
+    migrationEpochs.CURRENT_EPOCH.foldedMigrations,
+    [],
+    'the v1 baseline has no independently recorded migrations that may be skipped'
+);
+assert.strictEqual(migrationEpochs.isFoldedIntoBaseline('001_remove_retired_product.sql'), false,
+    'v1 companion migrations must still execute and be recorded');
+assert.strictEqual(migrationEpochs.isFoldedIntoBaseline('002_add_runtime_session_store.sql'), false,
+    'runtime session storage is not present in the v1 baseline and must still execute');
+assert.strictEqual(migrationEpochs.isFoldedIntoBaseline('003_stremio_source_match_fallbacks.sql'), false,
+    'later legacy-numbered migrations must still execute');
+const representativeIncremental = migrationFiles.find(file => migrationEpochs.classify(file) === 'incremental');
+assert(representativeIncremental && !migrationEpochs.isFoldedIntoBaseline(representativeIncremental),
+    'timestamped incremental migrations must still execute after the baseline');
+assert.strictEqual(epoch.frozenLegacy, result.legacy - 1,
+    'epoch contract must classify the baseline separately from the frozen legacy migration population');
+assert.strictEqual(epoch.incremental, result.timestamped,
+    'every timestamp migration must belong to the current incremental epoch');
+console.log(`migration id smoke: ok (${result.legacy} frozen legacy, ${result.timestamped} timestamped; epoch=${epoch.id})`);
 
 module.exports = { validateMigrationIds, legacyPrefixCollisions, LEGACY_MIGRATION_COUNT, LEGACY_PATTERN, TIMESTAMP_PATTERN, GRANDFATHERED_LEGACY_PREFIX_COLLISIONS };
