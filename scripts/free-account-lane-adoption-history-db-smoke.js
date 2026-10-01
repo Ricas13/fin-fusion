@@ -388,6 +388,40 @@ async function candidateWithGrace(customerId) {
     assert.strictEqual(parallelState.rows[0].permanent_access,true,'Permanent Access flag must be preserved');
     assert.strictEqual(parallelState.rows[0].revoked_at,null,'Free cleanup must not revoke the paid Permanent Access override');
 
+    // Case 8: a mismatched Permanent Access override on another Free
+    // subscription is not an independent lane and must still fail closed.
+    const sameLaneMismatchCustomerId = await makeCustomer('same-free-permanent-mismatch');
+    const oldFree = await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,superseded_by)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '10 days','9999-12-31T23:59:59Z'::timestamptz,NULL)
+        RETURNING id
+    `, [sameLaneMismatchCustomerId, planId]);
+    const newFree = await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '1 day','9999-12-31T23:59:59Z'::timestamptz)
+        RETURNING id
+    `, [sameLaneMismatchCustomerId, planId]);
+    await query(`
+        UPDATE subscriptions SET superseded_by=$2 WHERE id=$1
+    `, [oldFree.rows[0].id,newFree.rows[0].id]);
+    await query(`
+        INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason)
+        VALUES($1,$2,TRUE,'same Free lane mismatch regression')
+    `, [sameLaneMismatchCustomerId,oldFree.rows[0].id]);
+
+    await assert.rejects(
+        () => subscriptionTermination.terminateLocal(
+            newFree.rows[0].id,
+            sameLaneMismatchCustomerId,
+            { reason: 'must fail closed on same-lane Permanent Access mismatch' }
+        ),
+        /Permanent access is pinned to a different subscription/,
+        'Free termination must not bypass Permanent Access pinned to another Free subscription'
+    );
+    const stillLiveNewFree=await query('SELECT status,current_period_end FROM subscriptions WHERE id=$1',[newFree.rows[0].id]);
+    assert.strictEqual(stillLiveNewFree.rows[0].status,'active','failed same-lane mismatch termination must leave the target Free subscription untouched');
+    assert(new Date(stillLiveNewFree.rows[0].current_period_end).getUTCFullYear()===9999,'failed same-lane mismatch termination must preserve the target Free expiry');
+
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
     for (const customerId of created.customers.reverse()) {

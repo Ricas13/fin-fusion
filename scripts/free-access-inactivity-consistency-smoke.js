@@ -178,7 +178,7 @@ assert.match(enforcement, /await accessHolds\.addHold\([\s\S]*?await provisionin
 assert.match(enforcement, /await verifyRemoved\(row\.account_id\)[\s\S]*?await finishRemovedFreePlan/, 'the Free plan must end only after Jellyfin deletion is verified');
 assert.match(enforcement, /subscriptionTermination\.terminateLocal\([\s\S]*?Free Server plan ended after inactivity removal/, 'successful inactivity removal must terminate the exact Free subscription');
 const termination=read('src/payments/subscription-termination.js');
-assert.match(termination,/permanentOnOtherSubscription&&!subscription\.is_free_tier/,'Free subscription termination must preserve Permanent Access pinned to the independent paid\/primary lane');
+assert.match(termination,/permanentOnOtherSubscription&&\(!subscription\.is_free_tier\|\|!permanentOnOtherPrimary\)/,'Free subscription termination must preserve only Permanent Access proven to belong to the independent paid\/primary lane');
 assert.match(enforcement, /finishRemovedFreePlan[\s\S]*?accessHolds\.releaseHold/, 'terminal removal must release its temporary inactivity hold');
 assert.match(enforcement, /finalizeDetachedRemovals/, 'partial legacy removals with an already-deleted account must be finalized on later worker runs');
 assert(enforcement.indexOf("'customer.inactivity.remove_jellyfin'") > enforcement.indexOf('await finishRemovedFreePlan'), 'successful removal audit must be written only after plan termination and hold release');
