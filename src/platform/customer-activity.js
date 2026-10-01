@@ -33,18 +33,15 @@ function scopePredicate(rawScope,alias='ph',observedAtColumn='started_at'){
   // deletion or lane changes cannot rewrite history. For older rows, derive the
   // lane from the current account when possible. A trustworthy explicit
   // primary->free transition has a lane boundary; playback before that boundary
-  // is still paid/primary history. For an ambiguous pre-tracking legacy Free
-  // account, rows before its synthetic boundary stay unknown and fall through
-  // to the physical server pool instead of being asserted as Free.
+  // is still paid/primary history. Ambiguous pre-tracking legacy Free accounts
+  // are intentionally not split by their synthetic backfill timestamp.
   const lane=`COALESCE(
     ${alias}.access_lane_snapshot,
     (SELECT CASE
               WHEN activity_scope_account.access_lane='free'
+               AND activity_scope_account.inactivity_observation_reset_at IS NULL
                AND ${observedAt}<activity_scope_account.access_lane_changed_at
-              THEN CASE
-                     WHEN activity_scope_account.inactivity_observation_reset_at IS NULL THEN 'primary'
-                     ELSE NULL
-                   END
+              THEN 'primary'
               ELSE activity_scope_account.access_lane
             END
        FROM jellyfin_accounts activity_scope_account
