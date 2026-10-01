@@ -5,6 +5,7 @@ const customer=read('src/platform/admin-customer-360.js');
 const customer360Data=read('src/platform/customer-360.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const permanent=read('src/entitlements/permanent-access.js');
+const automationProtection=read('src/access/admin-customer-automation-protection.js');
 const permanentMigration=read('db/migrations/006_customer_permanent_access.sql');
 const permanentAuditMigration=read('db/migrations/010_permanent_access_cleanup_audit_metadata.sql');
 const entitlementContract=read('db/migrations/009_complete_effective_entitlement_contract.sql');
@@ -34,7 +35,7 @@ assert(/providerBillingChanged:false/.test(permanent)&&/previous_automation_prot
 assert(/require\('\.\.\/jellyfin\/resilient-provisioning'\)/.test(permanent),'permanent access follow-up must reconcile Jellyfin/Stremio service types through the service-aware orchestrator');
 assert(/previous_automation_protected_at/.test(permanent)&&/previous_automation_protected_by/.test(permanent),'permanent access must preserve cleanup-protection audit metadata');
 assert(/previous_automation_protected_at/.test(permanentAuditMigration)&&/previous_automation_protected_by/.test(permanentAuditMigration),'permanent cleanup audit migration missing');
-assert(/Remove permanent access before disabling automatic cleanup protection/.test(customer),'permanent access must prevent cleanup protection from being disabled independently');
+assert(/Remove permanent access before disabling automatic cleanup protection/.test(automationProtection)&&/automationProtection\.setAutomationProtection/.test(customer),'permanent access must prevent cleanup protection from being disabled independently through the canonical access-domain owner');
 assert(/superseded_by/.test(permanent)&&/is_effective_subscription/.test(permanent)&&/stale:Boolean/.test(permanent),'permanent access status must reject stale subscription pins');
 assert(/admin\.customer\.permanent_access\.repin/.test(permanent)&&/repinned/.test(permanent),'permanent access must deliberately repin to the current effective entitlement');
 assert(/customer_entitlement_overrides/.test(permanentMigration)&&/'infinity'::timestamptz/.test(permanentMigration),'permanent entitlement must be implemented in the effective entitlement layer');
