@@ -136,16 +136,16 @@ Current concern: plan creation/editing/configuration-transfer can directly mutat
 
 Tasks:
 
-- [ ] Introduce a catalog/domain command owner for plan creation and update.
+- [x] Introduce a catalog/domain command owner for plan creation and update.
 - [ ] Centralize plan validation and normalisation.
 - [ ] Centralize server eligibility persistence.
 - [ ] Centralize provider-price mapping persistence.
 - [ ] Centralize transactional audit persistence.
-- [ ] Make `admin-jellyfin-plan-editor.js` delegate mutations.
+- [x] Make `admin-jellyfin-plan-editor.js` delegate mutations.
 - [x] Make `admin-plan-create-v2.js` delegate mutations.
-- [ ] Make any other plan editor use the same owner.
+- [x] Make any other plan editor use the same owner.
 - [ ] Add behavioural tests for create/update rollback on partial failure.
-- [ ] Add ownership checks preventing plan mutation SQL from reappearing in platform editors.
+- [x] Add ownership checks preventing plan mutation SQL from reappearing in platform editors.
 
 **Done when:** every UI/import path uses the same transactional plan mutation service.
 
@@ -456,5 +456,7 @@ Add dated entries here as implementation batches land.
 - 2026-10-01 — Customer 360 service truth/control reads now prefer `customer-access-state.snapshot()` whenever present. Added regression coverage preventing stale subscription-history rows from being resurrected as current access.
 - 2026-10-01 — P0 audit confirmed the active `Protect main` ruleset enforces PR/thread rules but currently has no required Actions/status-check rule. Repository-administration write access is not available through the connected GitHub integration, so enforcement remains an owner/admin action.
 - 2026-10-01 — Began canonical plan commands: new `src/catalog/plan-command-service.js` owns atomic plan creation, default price persistence and audit. `admin-plan-create-v2.js` now delegates persistence and retains only HTTP/form compatibility responsibilities.
+- 2026-10-01 — Expanded catalog ownership across Jellyfin plan product, access, availability, server placement, libraries, commerce, portal-currency price and payment mappings. Platform editors now retain validation/rendering/provider verification but not those transactions.
+- 2026-10-01 — Moved Stremio plan commerce/storefront/access tracking/availability/payment persistence behind the same catalog command service and updated architectural tests to enforce the shared ownership boundary.
 - 2026-10-01 — P0 inspected: active repository ruleset `Protect main` requires PRs/thread resolution but currently has no required-status-check rule. The available GitHub connector exposes ruleset reads only, so the settings change remains an explicit repository-admin action rather than being falsely marked complete.
 - 2026-10-01 — P1 Customer 360 thinning in progress: profile/portal identity, email verification, automation protection, reset-to-plan expiry, automatic placement, policy/household/library/request overrides, Stremio household reset and renewal subscription selection moved behind domain owners. `admin-customer-360.js` no longer imports the DB module or contains direct mutation SQL. Behavioural coverage for the newly extracted high-risk placement/expiry paths remains to be completed before this item is closed.
