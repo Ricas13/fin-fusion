@@ -133,7 +133,7 @@ fi
 log 'Validating Compose configuration'
 docker compose config >/dev/null
 
-# Runtime container names were historically captainfin*. Adopt those
+# Runtime container names were historically steam-fusion*. Adopt those
 # containers in place before deployment so upgrades keep the same volumes,
 # networks and running state while exposing the CAPTAiNFiN runtime identity.
 adopt_legacy_container() {
