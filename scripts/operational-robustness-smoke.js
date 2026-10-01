@@ -90,14 +90,17 @@ async function testProviderDeadlines() {
   const paypalSource = fs.readFileSync(path.join(__dirname, '../src/payments/paypal.js'), 'utf8');
   const stripeSource = fs.readFileSync(path.join(__dirname, '../src/payments/stripe.js'), 'utf8');
   const billingControlSource = fs.readFileSync(path.join(__dirname, '../src/payments/billing-control.js'), 'utf8');
+  const providerAdapterSource = fs.readFileSync(path.join(__dirname, '../src/payments/provider-lifecycle-adapters.js'), 'utf8');
   const providerRecoverySource = fs.readFileSync(path.join(__dirname, '../src/payments/provider-operation-recovery.js'), 'utf8');
   const plisioSource = fs.readFileSync(path.join(__dirname, '../src/payments/plisio.js'), 'utf8');
   assert.match(paypalSource, /providerHttp\.fetchJson\('paypal'/, 'PayPal native HTTP must use the deadline transport');
   assert.doesNotMatch(paypalSource, /await fetch\(/, 'PayPal must not retain unbounded native fetch calls');
   assert.match(stripeSource, /timeout: providerHttp\.timeoutMs\('stripe'\)/, 'Stripe SDK client must have an application timeout');
-  assert.match(billingControlSource, /providerHttp\.fetchJson\('paypal'/, 'Billing-control PayPal HTTP must use the deadline transport');
-  assert.doesNotMatch(billingControlSource, /await fetch\(/, 'Billing-control must not retain unbounded PayPal fetch calls');
-  assert.match(billingControlSource, /timeout:\s*providerHttp\.timeoutMs\('stripe'\)/, 'Billing-control Stripe SDK client must have an application timeout');
+  assert.match(providerAdapterSource, /providerHttp\.fetchJson\('paypal'/, 'Recurring PayPal adapter HTTP must use the deadline transport');
+  assert.doesNotMatch(providerAdapterSource, /await fetch\(/, 'Recurring provider adapters must not retain unbounded native fetch calls');
+  assert.match(providerAdapterSource, /timeout:\s*providerHttp\.timeoutMs\('stripe'\)/, 'Recurring Stripe adapter SDK client must have an application timeout');
+  assert.match(billingControlSource, /providerAdapters\.forProvider\(provider\)/, 'Billing control must delegate recurring provider transport through the adapter contract');
+  assert.doesNotMatch(billingControlSource, /providerHttp\.fetchJson|require\('stripe'\)/, 'Billing policy must not reacquire provider transport mechanics');
   assert.match(providerRecoverySource, /timeout:\s*providerHttp\.timeoutMs\('stripe'\)/, 'Provider-operation recovery Stripe SDK client must have an application timeout');
   assert.match(plisioSource, /AbortController/, 'Plisio existing application deadline must remain intact');
   assert.match(plisioSource, /15000/, 'Plisio existing 15s deadline must remain intact');
@@ -125,10 +128,13 @@ async function testDeletionBillingControl() {
     'provider cancellation failure must propagate so deletion stays blocked'
   );
 
-  const source = fs.readFileSync(path.join(__dirname, '../src/payments/billing-control.js'), 'utf8');
-  assert.match(source, /subscriptions\.cancel\([\s\S]+invoice_now:\s*false[\s\S]+prorate:\s*false/, 'Stripe hard deletion must immediately cancel without creating an extra proration invoice');
-  assert.match(source, /billing\/subscriptions\/[\s\S]+\/cancel/, 'PayPal hard deletion must use the subscription cancellation endpoint');
-  assert.match(source, /paypalTerminalStatus\(remoteStatus\)/, 'PayPal cancellation must be verified from the remote terminal state');
+  const policySource = fs.readFileSync(path.join(__dirname, '../src/payments/billing-control.js'), 'utf8');
+  const adapterSource = fs.readFileSync(path.join(__dirname, '../src/payments/provider-lifecycle-adapters.js'), 'utf8');
+  assert.match(policySource, /providerAdapters\.forProvider\(provider\)/, 'Billing policy must obtain recurring provider mechanics through the adapter contract');
+  assert.doesNotMatch(policySource, /subscriptions\.cancel|billing\/subscriptions\//, 'Billing policy must not own remote cancellation transport');
+  assert.match(adapterSource, /subscriptions\.cancel\([\s\S]+invoice_now:\s*false[\s\S]+prorate:\s*false/, 'Stripe hard deletion must immediately cancel without creating an extra proration invoice');
+  assert.match(adapterSource, /billing\/subscriptions\/[\s\S]+\/cancel/, 'PayPal hard deletion must use the subscription cancellation endpoint');
+  assert.match(adapterSource, /providerLifecycleState\.isTerminal\('paypal', remoteStatus\)/, 'PayPal cancellation must be verified from the canonical remote terminal state');
 }
 
 function testProviderOwnedExpirySafety() {
