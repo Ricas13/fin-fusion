@@ -329,6 +329,43 @@ assert(planCommandService.includes('async function createPlan')
     && planCommandService.includes("'admin.plan.create'"),
   'catalog plan command service must own atomic plan creation, pricing and audit persistence');
 
+// Core Jellyfin plan editor persistence belongs to the catalog command service.
+// Provider-option verification is still handled separately, but product, availability,
+// delivery/pool, libraries and commerce writes must not return to the HTTP adapter.
+const jellyfinPlanEditor=read('src/platform/admin-jellyfin-plan-editor.js');
+assert(jellyfinPlanEditor.includes("require('../catalog/plan-command-service')")
+    && jellyfinPlanEditor.includes('planCommands.updateProduct({')
+    && jellyfinPlanEditor.includes('planCommands.updateAvailability({')
+    && jellyfinPlanEditor.includes('planCommands.updateDelivery({')
+    && jellyfinPlanEditor.includes('planCommands.updateLibraries({')
+    && jellyfinPlanEditor.includes('planCommands.updateCommerce({'),
+  'Jellyfin plan editor must delegate core persistence to catalog plan commands');
+for(const forbidden of [
+  'UPDATE plans SET name=',
+  'UPDATE plans SET capacity_limit=',
+  'DELETE FROM plan_server_eligibility',
+  'INSERT INTO plan_server_eligibility',
+  'UPDATE plans SET library_access_mode=',
+  'UPDATE plans SET billing_interval=',
+  "verification_error='Plan commercial schedule changed; re-verification required.'"
+]){
+  assert(!jellyfinPlanEditor.includes(forbidden),
+    `Jellyfin plan editor must not own catalog mutation SQL: ${forbidden}`);
+}
+for(const required of [
+  'async function updateProduct',
+  'async function updateAvailability',
+  'async function updateDelivery',
+  'async function updateLibraries',
+  'async function updateCommerce',
+  'DELETE FROM plan_server_eligibility',
+  'INSERT INTO plan_server_eligibility',
+  "verification_error='Plan commercial schedule changed; re-verification required.'"
+]){
+  assert(planCommandService.includes(required),
+    `catalog plan command service must own ${required}`);
+}
+
 console.log('canonical ownership smoke: ok');
 
 
