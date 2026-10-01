@@ -8,7 +8,7 @@ const providerHttp=require('../src/payments/provider-http');
 const providerCheckoutRecovery=require('../src/payments/provider-checkout-recovery');
 const lifecyclePolicy=require('../src/entitlements/jellyfin-lifecycle-policy');
 const automationRegistry=require('../src/automation/jobs');
-const criticalJobs=require('../src/automation/critical-jobs');
+const criticalJobs=automationRegistry;
 
 const root=path.resolve(__dirname,'..');
 const source=file=>fs.readFileSync(path.join(root,file),'utf8');
