@@ -95,6 +95,20 @@ assert(integrityOperator.includes("const current = await scan({ limit: 500 })")
   'operator service must match the exact current scanner finding before mutation');
 
 
+// Customer ban/unban, hold release and break-glass reconciliation are access-domain operations.
+const adminAccessHolds=read('src/platform/admin-customer-access-holds.js');
+const adminAccessControl=read('src/access/admin-customer-access-control.js');
+assert(adminAccessHolds.includes("require('../access/admin-customer-access-control')"),
+  'admin access-holds routes must delegate mutation ownership to access domain');
+assert(!adminAccessHolds.includes('UPDATE customer_bans')
+    && !adminAccessHolds.includes('UPDATE customer_access_holds')
+    && !adminAccessHolds.includes('UPDATE app_users SET active=FALSE'),
+  'platform access-holds router must not own ban/hold/session mutation SQL');
+assert(adminAccessControl.includes('UPDATE customer_bans')
+    && adminAccessControl.includes('UPDATE customer_access_holds')
+    && adminAccessControl.includes('reconcileCustomerForAdmin'),
+  'access domain must own serialized ban, hold and reconciliation mutations');
+
 // Manual-payment recording is a payments-domain operation. The platform route
 // owns HTTP/CSRF handling only; ledger mutation and its audit event are atomic.
 const adminCustomerBilling=read('src/platform/admin-customer-billing.js');
