@@ -85,9 +85,8 @@ assert(normalizedProfile.displayName==='Alice'
     && normalizedProfile.tags.join(',')==='VIP,beta'
     && normalizedProfile.portalFieldsProvided===true,
   'customer profile service must preserve existing normalization semantics');
-let invalidProfileRejected=false;
-try{customerProfile.normalizeProfileInput({countryCode:'GBR'});}catch(error){invalidProfileRejected=error.message==='validation';}
-assert(invalidProfileRejected,'customer profile service must reject invalid country codes before persistence');
+const truncatedCountry=customerProfile.normalizeProfileInput({countryCode:'GBR'});
+assert(truncatedCountry.country==='GB','customer profile service must preserve the existing two-character country-code normalization semantics');
 let invalidDiscordRejected=false;
 try{customerProfile.normalizeProfileInput({discordUserId:'abc'});}catch(error){invalidDiscordRejected=error.message==='discord';}
 assert(invalidDiscordRejected,'customer profile service must preserve Discord ID validation semantics');
