@@ -253,6 +253,10 @@ assert(admin.includes("AUTO_REPAIRABLE_ACCESS_FINDINGS")
     && admin.includes("/admin/automation/access-integrity/repair")
     && admin.includes("accessRepair.repairIntegrityFinding(finding)"),
     'Access Integrity automatic repair must be explicitly allow-listed and delegated to the canonical repair layer');
+assert(admin.includes("accessIntegrityRepairRateLimit")
+    && admin.includes("scope:'admin-access-integrity-repair'")
+    && admin.includes("router.post('/admin/automation/access-integrity/repair',accessIntegrityRepairRateLimit"),
+    'Access Integrity repair mutations must have an explicit route-level rate limit');
 assert(admin.includes("const current=await accessIntegrity.scan({limit:500})")
     && admin.includes("item.kind===kind")
     && admin.includes("String(item.id||'')===findingId")
