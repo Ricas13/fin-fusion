@@ -48,6 +48,24 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Production image content
+        run: |
+          docker build --build-arg CAPTAINFIN_BUILD_SHA="$GITHUB_SHA" -t captainfin:image-contract .
+          docker run --rm --entrypoint sh captainfin:image-contract -c '
+            test -f /app/src/application.js
+            test -f /app/scripts/automation-worker.js
+            test -f /app/scripts/activity-worker.js
+            test -f /app/scripts/backup-worker.js
+            test -f /app/scripts/migrate-db.js
+            test -f /app/scripts/verify-deployment.js
+            test ! -e /app/docs
+            test ! -e /app/scripts/customer-security-domain-smoke.js
+            test ! -e /app/scripts/check-js-syntax.js
+            test ! -e /app/scripts/dead-code-audit.js
+          '
+          docker image inspect captainfin:image-contract --format 'runtime_image_size_bytes={{.Size}}'
+
+
       - name: Provisioning recovery invariants
         run: node scripts/provisioning-recovery-invariants-smoke.js
 
