@@ -5,6 +5,8 @@ const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const jobHealth = require('../automation/job-health');
 const criticalJobs = require('../automation/critical-jobs');
+const accessIntegrity = require('../access/access-integrity');
+const accessRepair = require('../access/access-repair');
 const { layout, esc } = require('./admin-html');
 const runtimeSettings = require('./runtime-settings');
 const ui = require('./admin-ui');
@@ -41,6 +43,18 @@ const GROUPS=[
     ['Operations','Bulk work queues and stale-job recovery.',new Set(['bulk_jobs','stale_reclaim'])]
 ];
 const PRESETS=[60,300,900,1800,3600,10800,21600,43200,86400];
+const ACCESS_INTEGRITY_LABELS=Object.freeze({
+    free_plan_without_ready_server:'Free plan without ready server',
+    free_server_without_plan:'Free server account without plan',
+    unpaid_trial_without_ready_server:'Unpaid trial without ready server',
+    primary_server_without_plan:'Primary server account without plan',
+    paid_plan_without_recovery_state:'Paid plan missing recovery state'
+});
+const AUTO_REPAIRABLE_ACCESS_FINDINGS=new Set([
+    'free_plan_without_ready_server',
+    'free_server_without_plan',
+    'unpaid_trial_without_ready_server'
+]);
 
 function gate(req,res,next){ return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req,res,next){ res.setHeader('Cache-Control','no-store, private, max-age=0'); res.setHeader('Pragma','no-cache'); next(); }
@@ -93,20 +107,59 @@ function automationHero(jobs,worker,workerAlive){
     ],actionsHtml:first?`<a class="button" href="#automation-problems">Fix unhealthy jobs</a><a class="button secondary" href="#all-automation-jobs">All schedules</a>`:'<a class="button secondary" href="#all-automation-jobs">Review schedules</a>'});
 }
 
+function accessIntegritySection(req, findings) {
+    if (!findings.length) {
+        return `<section class="section" id="access-integrity">${ui.sectionHeader({title:'Access integrity',description:'Independent plan ↔ server invariant scan.'})}<div class="notice good"><strong>No access invariant failures detected.</strong> Free, trial and paid recovery states are internally consistent.</div></section>`;
+    }
+    const cards=findings.map(finding=>{
+        const repairable=AUTO_REPAIRABLE_ACCESS_FINDINGS.has(finding.kind);
+        const label=ACCESS_INTEGRITY_LABELS[finding.kind]||finding.kind;
+        const action=repairable
+            ?`<form method="post" action="/admin/automation/access-integrity/repair">${token(req)}<input type="hidden" name="kind" value="${esc(finding.kind)}"><input type="hidden" name="findingId" value="${esc(finding.id)}"><input type="hidden" name="customerId" value="${esc(finding.customerId||'')}"><button class="button btn-sm">Repair safely</button></form>`
+            :'<span class="pill warn">Manual review required</span>';
+        return `<article class="serverCard"><div class="serverTop"><div><strong>${esc(label)}</strong><div class="subText">Customer ${esc(finding.customerId||'unknown')} · ${esc(finding.id)}</div></div><span class="pill bad">Invariant failed</span></div><div class="notice error">${esc(finding.detail)}</div><div class="buttonRow">${action}</div></article>`;
+    }).join('');
+    return `<section class="section" id="access-integrity">${ui.sectionHeader({title:`Access integrity (${findings.length})`,description:'Independent scanner results. Automatic repair is offered only for unpaid/orphan states whose repair layer re-checks current authority before changing anything.'})}<div class="serverGrid">${cards}</div></section>`;
+}
+
 async function page(req) {
     await runtimeSettings.ensureLoaded();
-    const [jobs,worker] = await Promise.all([jobHealth.list(),workerState()]);
+    const [jobs,worker,accessFindings] = await Promise.all([
+        jobHealth.list(),
+        workerState(),
+        accessIntegrity.scan({limit:100})
+    ]);
     const workerAlive=Boolean(worker&&Number(worker.heartbeat_age_seconds)<=Math.max(60,Math.ceil(Number(worker?.metadata?.pollMs||15000)/1000)*4));
     const problemJobs=jobs.filter(job=>['degraded','failed','stale','missing'].includes(jobHealth.healthState(job)));
     const problems=problemJobs.length?`<section class="section" id="automation-problems">${ui.sectionHeader({title:'Fix these jobs first',description:'These jobs are degraded, failed, stale or missing. Run them for catch-up/diagnosis or correct the underlying worker/integration problem.'})}<div class="serverGrid">${problemJobs.map(job=>jobCard(req,job)).join('')}</div></section>`:'';
     const routine=ui.detailDisclosure({title:`All automation schedules (${jobs.length})`,summary:'Routine controls · open only when changing schedules or running a job manually',bodyHtml:`<div id="all-automation-jobs">${groupedJobs(req,jobs)}</div>`});
-    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${problems}${routine}`,pageClass:'page-automation'});
+    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${accessIntegritySection(req,accessFindings)}${problems}${routine}`,pageClass:'page-automation'});
 }
 
 function createAdminAutomationRouter(){
     const router=express.Router();
     router.use('/admin/automation',gate,noStore);
     router.get('/admin/automation',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){next(error);}});
+    router.post('/admin/automation/access-integrity/repair',async(req,res)=>{
+        if(!csrf.verify(req))return res.status(403).send('Invalid security token');
+        try{
+            const kind=String(req.body.kind||'');
+            const findingId=String(req.body.findingId||'');
+            const customerId=String(req.body.customerId||'');
+            if(!AUTO_REPAIRABLE_ACCESS_FINDINGS.has(kind))throw new Error('This access integrity finding requires manual review.');
+            const current=await accessIntegrity.scan({limit:500});
+            const finding=current.find(item=>
+                item.kind===kind
+                && String(item.id||'')===findingId
+                && String(item.customerId||'')===customerId
+            );
+            if(!finding)return res.redirect('/admin/automation?message='+encodeURIComponent('Access integrity finding is already resolved or changed; no repair was applied.'));
+            const result=await accessRepair.repairIntegrityFinding(finding);
+            return res.redirect('/admin/automation?message='+encodeURIComponent(`Access integrity repair completed: ${result.status||'ok'}.`));
+        }catch(error){
+            return res.redirect('/admin/automation?error='+encodeURIComponent(error.message));
+        }
+    });
     router.post('/admin/automation/:job',async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid security token');
         try{
@@ -126,4 +179,4 @@ function createAdminAutomationRouter(){
     return router;
 }
 
-module.exports={createAdminAutomationRouter,page,LABELS,CORE_JOBS,workerState,jobCard,groupedJobs,automationHero};
+module.exports={createAdminAutomationRouter,page,LABELS,CORE_JOBS,ACCESS_INTEGRITY_LABELS,AUTO_REPAIRABLE_ACCESS_FINDINGS,workerState,jobCard,groupedJobs,automationHero,accessIntegritySection};
