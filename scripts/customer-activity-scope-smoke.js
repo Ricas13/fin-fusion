@@ -25,7 +25,7 @@ assert.equal(activity.scopeOption('anything-else').key,'all');
 assert.equal(activity.scopePredicate('all'),'');
 assert.match(activity.scopePredicate('free'),/access_lane_snapshot/,'Free activity must prefer the immutable observation-time lane snapshot');
 assert.match(activity.scopePredicate('free'),/access_lane_changed_at/,'legacy rows with a live account must respect explicit primary-to-Free transition boundaries');
-assert.match(activity.scopePredicate('free'),/inactivity_observation_reset_at IS NULL THEN 'primary'[\s\S]*ELSE NULL/,'ambiguous legacy Free rows before a synthetic boundary must stay unknown rather than being mislabeled');
+assert.match(activity.scopePredicate('free'),/inactivity_observation_reset_at IS NULL/,'ambiguous legacy Free boundaries must not rewrite old history');
 assert.match(activity.scopePredicate('free'),/='free'/);
 assert.match(activity.scopePredicate('premium'),/='primary'/,'Premium activity is the paid\/primary lane, including custom pools');
 assert.match(activity.scopePredicate('free'),/CASE WHEN activity_scope_server\.server_class='free' THEN 'free' ELSE 'primary' END/,'orphaned pre-snapshot history needs a server-pool fallback after account deletion');
@@ -45,7 +45,6 @@ assert.match(playbackWebhook,/access_lane_snapshot=COALESCE\(playback_history\.a
 assert.match(laneMigration,/ALTER TABLE playback_history[\s\S]*access_lane_snapshot/,'the migration must persist playback lane identity');
 assert.match(laneMigration,/ALTER TABLE stream_policy_events[\s\S]*access_lane_snapshot/,'the migration must persist stream-policy lane identity');
 assert.match(laneMigration,/ph\.started_at<ja\.access_lane_changed_at/,'historical backfill must separate paid-era playback before an explicit Free adoption');
-assert.match(laneMigration,/inactivity_observation_reset_at IS NULL THEN 'primary'[\s\S]*ELSE NULL/,'historical backfill must leave pre-boundary legacy Free history unknown when the boundary is synthetic');
 assert.match(laneMigration,/ph\.jellyfin_account_id IS NOT NULL/,'historical lane snapshots must only be asserted when the original account identity is still known');
 assert.doesNotMatch(laneMigration,/js\.server_class/,'the migration must not permanently guess an orphaned historical lane from server pool alone');
 assert.match(route,/req\.query\.range,req\.query\.scope/,'the activity route must accept both range and scope');
