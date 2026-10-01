@@ -32,7 +32,7 @@ async function main(){
     const text=fs.readFileSync(file,'utf8');
     if(/\.refunds\.create\s*\(/.test(text)||/\/v2\/payments\/captures\/[^'"`]+\/refund/.test(text))directRefundCalls.push(path.relative(path.join(__dirname,'..'),file).split(path.sep).join('/'));
   }
-  assert.deepEqual(directRefundCalls,['src/payments/prorata-refunds.js'],'all direct provider-refund mutation must remain concentrated in the explicitly reviewed canonical pro-rata refund owner');
+  assert.deepEqual(directRefundCalls,['src/payments/provider-refund-adapters.js'],'all direct provider-refund mutation must remain concentrated in the canonical provider transport adapter while refund policy stays central');
 
   const suffix=crypto.randomBytes(8).toString('hex');
   const ok=await query(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,amount_minor,currency,access_action,metadata)

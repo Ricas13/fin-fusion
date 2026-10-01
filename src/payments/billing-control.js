@@ -4,8 +4,7 @@ const { query } = require('../db');
 const lifecycle = require('./lifecycle');
 const billingMode = require('./subscription-billing-mode');
 const providerOps = require('./provider-operations');
-const providerLifecycleState = require('./provider-lifecycle-state');
-const providerAdapters = require('./provider-lifecycle-adapters');
+const providerContract = require('./provider-contract');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -20,15 +19,15 @@ function validRecurringProviderReference(row) {
 }
 
 function providerMissing(error) {
-    return providerAdapters.providerMissing(error);
+    return providerContract.providerMissing(error);
 }
 
 function stripeTerminalStatus(status) {
-    return providerLifecycleState.isTerminal('stripe',status);
+    return providerContract.state('stripe',status).terminal;
 }
 
 function paypalTerminalStatus(status) {
-    return providerLifecycleState.isTerminal('paypal',status);
+    return providerContract.state('paypal',status).terminal;
 }
 
 function retryDelayMs(failures) {
@@ -37,15 +36,15 @@ function retryDelayMs(failures) {
 }
 
 function stripePeriod(subscription) {
-    return providerAdapters.stripePeriod(subscription);
+    return providerContract.stripePeriod(subscription);
 }
 
 function stripePriceId(subscription) {
-    return providerAdapters.stripePriceId(subscription);
+    return providerContract.stripePriceId(subscription);
 }
 
 async function defaultAdapter(provider) {
-    return providerAdapters.forProvider(provider);
+    return providerContract.recurring(provider);
 }
 
 async function terminateRecurringForDeletion(row, { adapter = null, idempotencyKey = null } = {}) {
@@ -77,7 +76,7 @@ function remoteStateForPolicy(row, remote, { now = new Date() } = {}) {
     if (!result.periodEnd && localEnd && Number.isFinite(localEnd.getTime())) result.periodEnd = localEnd;
 
     if (String(row?.source || '').toLowerCase() === 'paypal') {
-        const providerStatus = providerLifecycleState.normalizeStatus('paypal', result.remoteStatus || result.status);
+        const providerStatus = providerContract.normalizeState('paypal', result.remoteStatus || result.status);
         if (['CANCELLED','CANCELED'].includes(providerStatus)
             && localEnd && Number.isFinite(localEnd.getTime())
             && localEnd.getTime() > new Date(now).getTime()) {

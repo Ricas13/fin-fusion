@@ -63,9 +63,9 @@ assert.strictEqual(paypalEnded.status, 'CANCELLED',
   const billing = fs.readFileSync(path.join(root, 'src/payments/billing-control.js'), 'utf8');
   const provider = fs.readFileSync(path.join(root, 'src/payments/provider-lifecycle-adapters.js'), 'utf8');
 
-  assert(billing.includes("require('./provider-lifecycle-adapters')")
-    && billing.includes('providerAdapters.forProvider(provider)'),
-    'billing policy must obtain remote lifecycle mechanics through the adapter contract');
+  assert(billing.includes("require('./provider-contract')")
+    && billing.includes('providerContract.recurring(provider)'),
+    'billing policy must obtain remote lifecycle mechanics through the canonical provider contract');
   for (const transportDetail of [
     "require('stripe')",
     "require('./provider-settings')",
@@ -83,8 +83,8 @@ assert.strictEqual(paypalEnded.status, 'CANCELLED',
   assert(!provider.includes('new Date(row.current_period_end)'),
     'provider adapters must report provider facts rather than decide paid-period entitlement policy');
   assert(billing.includes('function remoteStateForPolicy')
-    && billing.includes("providerLifecycleState.normalizeStatus('paypal'"),
-    'billing control must centrally own PayPal paid-period interpretation');
+    && billing.includes("providerContract.normalizeState('paypal'"),
+    'billing control must centrally own PayPal paid-period interpretation while consuming normalized provider facts through the contract');
 
   console.log('provider lifecycle adapter smoke: ok');
 })().catch(error => {

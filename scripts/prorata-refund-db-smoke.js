@@ -65,13 +65,15 @@ async function main() {
 
   const implementation = source('src/payments/prorata-refunds.js');
   const lifecycle = source('src/payments/lifecycle-prepaid-refunds.js');
+  const providerRefunds = source('src/payments/provider-refund-adapters.js');
   assert(implementation.includes('FOR UPDATE OF s'), 'confirmation must recalculate under a subscription row lock');
   assert(implementation.includes('operation_type') && implementation.includes('prorata_refund'), 'provider/local refund divergence must have durable operation state');
   assert(lifecycle.includes("current_period_end=$2,status='expired'"), 'lifecycle owner must shorten the purchased entitlement');
   assert(lifecycle.includes("queued.starts_at-($4::bigint * INTERVAL '1 millisecond')"), 'lifecycle owner must compact later prepaid periods');
   assert(lifecycle.includes('observedEndMs - cutoffMs'), 'lifecycle application must converge idempotently from the currently observed local end');
   assert(lifecycle.includes('alreadyAppliedByIncident'), 'lifecycle recovery must detect webhook-first full-refund reconciliation');
-  assert(implementation.includes('/v2/payments/captures/') && implementation.includes('payment_intent:'), 'Stripe and PayPal one-time provider refunds must target exact stored payment references');
+  assert(providerRefunds.includes('/v2/payments/captures/') && providerRefunds.includes('payment_intent:'), 'Stripe and PayPal one-time provider refunds must target exact stored payment references through the provider transport adapter');
+  assert(implementation.includes('providerContract.refunds(request.provider).createOrObserve'), 'pro-rata refund policy must delegate provider mutation and observation to the canonical provider contract');
   assert(implementation.includes('provisioning.reconcileCustomer'), 'access must reconcile after local entitlement shortening');
 
   console.log('pro-rata refund DB smoke: ok — cash basis, prior refunds, recurring exclusion, lifecycle ownership, idempotent compaction and webhook-race recovery');
