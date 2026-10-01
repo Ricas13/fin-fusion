@@ -66,7 +66,10 @@ async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
   const state=await candidates(customerId);
   if(!state.entitlement)throw new Error('Give the customer an active Jellyfin plan before assigning a server.');
   if(!['jellyfin','bundle'].includes(serviceType(state.entitlement)))throw new Error('This plan does not include Jellyfin access.');
-  if(state.activeAccounts.length)throw new Error('This customer already has active Jellyfin access. Use Move server instead.');
+  const accessLane=provisioning.requestedAccessLane(state.entitlement);
+  if(state.activeAccounts.some(account=>String(account.access_lane||'primary')===accessLane)){
+    throw new Error('This customer already has active Jellyfin access in this lane. Use Move server instead.');
+  }
   const server=state.servers.find(s=>String(s.id)===String(targetServerId));
   if(!server)throw new Error('Choose an enabled Jellyfin server.');
 
@@ -77,12 +80,11 @@ async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
   const assignedUsersBefore=Number(server.assigned_users||0);
   const maxUsers=Number(server.max_users||0)||null;
 
-  const accessLane=provisioning.requestedAccessLane(state.entitlement);
   const effective=await provisioning.effectivePolicyForCustomer(customerId,state.entitlement,accessLane);
   const libraries=await provisioning.resolveLibraryAccessForServer(server.id,effective.unrestricted,effective.visibleNames,false);
   if(libraries.missing.length)throw new Error(`${server.name} is missing required libraries: ${libraries.missing.join(', ')}.`);
 
-  const previous=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND account_purpose='jellyfin' ORDER BY updated_at DESC LIMIT 1`,[customerId,server.id]);
+  const previous=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND account_purpose='jellyfin' AND COALESCE(access_lane,'primary')=$3 ORDER BY updated_at DESC LIMIT 1`,[customerId,server.id,accessLane]);
   let account,reused=false;
   if(previous.rowCount){
     account=previous.rows[0];
