@@ -111,23 +111,21 @@ function createAdminCustomerAccessHoldsRouter(){
       if(String(req.body.confirmation||'').trim().toUpperCase()!=='RELEASE')throw new Error('Type RELEASE to confirm this access change.');
       const resolutionReason=clean(req.body.reason,500);
       if(resolutionReason.length<5)throw new Error('Enter a release reason of at least 5 characters for the audit trail.');
-      let result;
-      try{
-        result=await accessControl.releaseCustomerHold(customerId,holdId,req.session.authUserId,resolutionReason);
-        if(result.restoredInactivity){
-          return res.redirect(accessPath(customerId,'message','Free Server inactivity removal was cleared and Free access was restored.'));
-        }
-        const remaining=Number(result.remainingBlockers||0);
-        const message=remaining
-          ? `Access hold released. ${remaining} other active hold${remaining===1?' remains':'s remain'}, so access is still restricted.`
-          : 'Access hold released and service access reconciled against the current entitlement.';
-        return res.redirect(accessPath(customerId,'message',message));
-      }catch(error){
-        console.error('Customer hold release reconciliation failed:',{customerId,holdId,holdType:result?.releasedType||'',sourceKey:result?.selectedSourceKey||'',error:error.message});
-        const prefix=result?.releasedType==='inactivity_policy'?'Free Server access was not restored':'The hold was released, but service reconciliation failed';
+      const result=await accessControl.releaseCustomerHold(customerId,holdId,req.session.authUserId,resolutionReason);
+      if(result.restoredInactivity){
+        return res.redirect(accessPath(customerId,'message','Free Server inactivity removal was cleared and Free access was restored.'));
+      }
+      const remaining=Number(result.remainingBlockers||0);
+      const message=remaining
+        ? `Access hold released. ${remaining} other active hold${remaining===1?' remains':'s remain'}, so access is still restricted.`
+        : 'Access hold released and service access reconciled against the current entitlement.';
+      return res.redirect(accessPath(customerId,'message',message));
+    }catch(error){
+      if(error?.holdReleaseCommitted||error?.inactivityRestoreFailed){
+        console.error('Customer hold release reconciliation failed:',{customerId,holdId,holdType:error.releasedType||'',sourceKey:error.selectedSourceKey||'',error:error.message});
+        const prefix=error.inactivityRestoreFailed?'Free Server access was not restored':'The hold was released, but service reconciliation failed';
         return res.redirect(accessPath(customerId,'error',`${prefix}: ${clean(error.message||error,300)}`));
       }
-    }catch(error){
       return res.redirect(accessPath(customerId,'error',clean(error.message||error,300)||'Could not release this access hold.'));
     }
   });
