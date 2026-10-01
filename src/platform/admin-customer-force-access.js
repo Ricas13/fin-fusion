@@ -85,7 +85,8 @@ async function forceAccess(customerId,serverId,{actorUserId=null}={}){
   await permanentAccess.enable(customerId,{actorUserId,reason:`Forced Jellyfin access to ${target.name} by administrator`});
 
   const current=await manualAssignment.candidates(customerId);
-  const active=current.activeAccounts||[];
+  const accessLane=provisioning.requestedAccessLane(current.entitlement);
+  const active=(current.activeAccounts||[]).filter(account=>String(account.access_lane||'primary')===accessLane);
   const onTarget=active.find(account=>String(account.server_id)===String(target.id));
   let result;
   if(onTarget){
