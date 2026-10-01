@@ -475,6 +475,38 @@ assert(configurationTransfer.includes('transaction(async client=>')
     && configurationTransfer.includes("'admin.configuration.import.atomic'"),
   'configuration transfer must preserve one outer atomic transaction and one import-level audit event');
 
+
+
+// Customer portal security mutations belong to the security domain. The platform
+// route may render forms, verify CSRF and persist the in-memory session update,
+// but password/TOTP/recovery/session database mutation must stay behind commands.
+const customerSecurityRoute=read('src/platform/customer-security.js');
+const customerSecurityCommands=read('src/security/customer-security-commands.js');
+assert(customerSecurityRoute.includes("require('../security/customer-security-commands')")
+    && customerSecurityRoute.includes('securityCommands.changePassword(')
+    && customerSecurityRoute.includes('securityCommands.revokeOtherSessions(')
+    && customerSecurityRoute.includes('securityCommands.disableTwoFactor(')
+    && customerSecurityRoute.includes('securityCommands.regenerateRecoveryCodes('),
+  'customer security routes must delegate password, session and 2FA mutations to the security domain');
+for(const forbidden of [
+  'customers.changePortalPassword(',
+  'customers.revokeOtherCustomerSessions(',
+  'UPDATE auth_sessions',
+  'UPDATE app_users SET password_hash',
+  'DELETE FROM auth_recovery_codes',
+  'DELETE FROM auth_totp_enrollments'
+]){
+  assert(!customerSecurityRoute.includes(forbidden),
+    `customer security platform route must not own security persistence: ${forbidden}`);
+}
+assert(customerSecurityCommands.includes('async function changePassword')
+    && customerSecurityCommands.includes('async function revokeOtherSessions')
+    && customerSecurityCommands.includes('async function disableTwoFactor')
+    && customerSecurityCommands.includes('async function regenerateRecoveryCodes')
+    && customerSecurityCommands.includes("'customer.password.change'")
+    && customerSecurityCommands.includes("'customer.2fa.disable'"),
+  'customer security command service must own password/session/2FA mutation and audit behavior');
+
 console.log('canonical ownership smoke: ok');
 
 
