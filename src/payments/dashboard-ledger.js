@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const { revenueFromEvent, bucketKey, fillSeries } = require('../platform/admin-dashboard-analytics');
 const classifier = require('./provider-transaction-classifier');
+const calendarDate = require('../finance/calendar-date');
 
 const EVENT_PAGE_SIZE = 5000;
 const HISTORY_PAGE_SIZE = 5000;
@@ -64,9 +65,7 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
 }
 
 function dateStart(value) {
-    const text = value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
-    const parsed = new Date(`${text}T00:00:00.000Z`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+    return calendarDate.startUtc(value);
 }
 
 function providersForScope(scope) {
