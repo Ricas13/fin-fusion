@@ -291,6 +291,44 @@ async function candidateWithGrace(customerId) {
     assert.strictEqual(Number(unknownFreeDisplay.rows[0].count), 0, 'an unsnapshotted orphan on a Premium-class server cannot be proven Free for historical display');
     assert.strictEqual(Number(unknownPremiumDisplay.rows[0].count), 1, 'historical display must use the physical server class only as the final fallback for an unknown orphan');
 
+    // Case 6: the fallback must work in the opposite direction too. If a
+    // pre-snapshot account is currently primary but has a trustworthy recent
+    // lane boundary, history before that boundary belonged to its prior Free
+    // lane while later history belongs to primary.
+    const reverseCustomerId = await makeCustomer('reverse-lane-boundary');
+    const reverseAccount = await query(`
+        INSERT INTO jellyfin_accounts(
+            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,
+            created_at,access_lane_changed_at
+        )
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','primary',TRUE,NOW()-INTERVAL '10 days',NOW()-INTERVAL '1 day')
+        RETURNING id
+    `, [reverseCustomerId, serverId, `lane-reverse-${suffix}`, `lane-reverse-${suffix}`]);
+    await query(`
+        INSERT INTO playback_history(
+            customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,
+            device_name,client_name,playback_method,started_at,last_seen_at,ended_at,access_lane_snapshot
+        )
+        VALUES
+          ($1,$2,$3,$4,$5,'Before primary transition','Movie','TV','Jellyfin Web','directplay',
+           NOW()-INTERVAL '2 days',NOW()-INTERVAL '47 hours',NOW()-INTERVAL '47 hours',NULL),
+          ($1,$2,$3,$6,$7,'After primary transition','Movie','TV','Jellyfin Web','directplay',
+           NOW()-INTERVAL '12 hours',NOW()-INTERVAL '11 hours',NOW()-INTERVAL '11 hours',NULL)
+    `, [reverseCustomerId, serverId, reverseAccount.rows[0].id,
+         `lane-reverse-free-${suffix}`, `lane-reverse-free-session-${suffix}`,
+         `lane-reverse-primary-${suffix}`, `lane-reverse-primary-session-${suffix}`]);
+
+    const reverseFree = await query(`
+        SELECT COUNT(*)::int count FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('free','ph')}
+    `, [reverseCustomerId]);
+    const reversePrimary = await query(`
+        SELECT COUNT(*)::int count FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('premium','ph')}
+    `, [reverseCustomerId]);
+    assert.strictEqual(Number(reverseFree.rows[0].count), 1, 'pre-boundary history of a currently-primary account must remain attributable to its prior Free lane');
+    assert.strictEqual(Number(reversePrimary.rows[0].count), 1, 'post-boundary history of a currently-primary account must remain primary');
+
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
     for (const customerId of created.customers.reverse()) {
