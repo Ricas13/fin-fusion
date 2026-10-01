@@ -18,6 +18,9 @@ const accessControlService=read('src/access/admin-customer-access-control.js');
 const customer360Route=read('src/platform/admin-customer-360.js');
 const customerProfileService=read('src/customers/admin-customer-profile-service.js');
 const customerProfile=require('../src/customers/admin-customer-profile-service');
+const customerIdentityService=read('src/customers/admin-customer-identity-service.js');
+const automationProtectionService=read('src/access/admin-customer-automation-protection.js');
+const individualActionService=read('src/access/admin-customer-individual-action-service.js');
 const deletion=read('src/customers/customer-deletion.js');
 const externalDeletion=read('src/customers/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -85,6 +88,29 @@ assert(invalidProfileRejected,'customer profile service must reject invalid coun
 let invalidDiscordRejected=false;
 try{customerProfile.normalizeProfileInput({discordUserId:'abc'});}catch(error){invalidDiscordRejected=error.message==='discord';}
 assert(invalidDiscordRejected,'customer profile service must preserve Discord ID validation semantics');
+
+assert(customer360Route.includes("customerIdentity.verifyEmail(")
+    && !customer360Route.includes('UPDATE app_users SET email_verified_at=COALESCE'),
+  'Customer 360 email verification must delegate identity persistence out of the router');
+assert(customerIdentityService.includes('FOR UPDATE')
+    && customerIdentityService.includes('UPDATE app_users')
+    && customerIdentityService.includes("'admin.customer.email.verify'"),
+  'customer identity service must own manual email verification and its audit event');
+assert(customer360Route.includes('automationProtection.setAutomationProtection(')
+    && !customer360Route.includes('UPDATE customers SET automation_protected='),
+  'Customer 360 automation protection must delegate cleanup-authority persistence');
+assert(automationProtectionService.includes("require('../entitlements/permanent-access')")
+    && automationProtectionService.includes('Remove permanent access before disabling automatic cleanup protection.')
+    && automationProtectionService.includes('UPDATE customers')
+    && automationProtectionService.includes("'admin.customer.automation_protection'"),
+  'access domain must own automation-protection policy, mutation and audit');
+assert(customer360Route.includes('individualActions.resetExpiryToPlan(')
+    && !customer360Route.includes('UPDATE subscriptions SET current_period_end='),
+  'Customer 360 reset-to-plan expiry must delegate subscription mutation out of the router');
+assert(individualActionService.includes('async function resetExpiryToPlan')
+    && individualActionService.includes('subscriptionState.effectiveSubscription(customerId,{includeBlocked:true})')
+    && individualActionService.includes("'admin.customer.expiry.reset_to_plan'"),
+  'access-domain individual action service must own reset-to-plan expiry selection, mutation and audit');
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
 assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
