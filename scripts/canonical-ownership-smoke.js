@@ -127,15 +127,42 @@ assert(!notificationDispatch.includes('emailSettings.send(')
     'notification dispatch must never bypass its durable outboxes');
 
 const sourceFiles=jsFiles(path.join(root,'src'));
-const directEmailSenders=sourceFiles.filter(file=>read(relative(file)).includes('emailSettings.send(')).map(relative).sort();
-assert.deepStrictEqual(directEmailSenders,['src/integrations/email-outbox.js'],
-    'only the email outbox worker may call the SMTP sender directly');
-const directDiscordSenders=sourceFiles.filter(file=>/\.sendDiscord(?:Channel)?\s*\(/.test(read(relative(file)))).map(relative).sort();
-assert.deepStrictEqual(directDiscordSenders,['src/integrations/notification-outbox.js'],
-    'only the notification outbox worker may call Discord delivery primitives directly');
-const directTelegramSenders=sourceFiles.filter(file=>/\.sendTelegram\s*\(/.test(read(relative(file)))).map(relative).sort();
-assert.deepStrictEqual(directTelegramSenders,['src/integrations/notification-outbox.js'],
-    'only the notification outbox worker may call Telegram delivery primitives directly');
+
+// Explicit administrator "send test" endpoints intentionally exercise the
+// transport itself and are not lifecycle/customer notifications. Keep that
+// diagnostic exception small and named; every non-test business notification
+// must still enter the durable outbox.
+const adminTransportTests=new Set([
+  'src/platform/admin-email.js',
+  'src/platform/admin-integrations-inline.js',
+  'src/platform/admin-personal-notification-tests.js'
+]);
+for(const file of adminTransportTests){
+  const source=read(file);
+  assert(/send-test|\/notifications\/test\//.test(source),
+    `${file} may bypass the outbox only as an explicit administrator transport test`);
+}
+
+const directEmailSenders=sourceFiles
+  .filter(file=>read(relative(file)).includes('emailSettings.send('))
+  .map(relative).sort();
+assert.deepStrictEqual(directEmailSenders,[
+  'src/platform/admin-email.js',
+  'src/platform/admin-integrations-inline.js',
+  'src/platform/admin-personal-notification-tests.js'
+], 'only explicit administrator SMTP transport tests may bypass the email outbox');
+
+const directDiscordSenders=sourceFiles
+  .filter(file=>/\.sendDiscord(?:Channel)?\s*\(/.test(read(relative(file))))
+  .map(relative).filter(file=>file!=='src/integrations/notification-outbox.js').sort();
+assert.deepStrictEqual(directDiscordSenders,['src/platform/admin-personal-notification-tests.js'],
+  'only the explicit administrator Discord transport test may bypass the notification outbox');
+
+const directTelegramSenders=sourceFiles
+  .filter(file=>/\.sendTelegram\s*\(/.test(read(relative(file))))
+  .map(relative).filter(file=>file!=='src/integrations/notification-outbox.js').sort();
+assert.deepStrictEqual(directTelegramSenders,['src/platform/admin-personal-notification-tests.js'],
+  'only the explicit administrator Telegram transport test may bypass the notification outbox');
 
 // Stremio ownership: household access remains a control-plane contract while
 // the stream resource hands Stremio an isolated media-server session's
