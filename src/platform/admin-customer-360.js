@@ -9,6 +9,7 @@ const customerIdentity=require('../customers/admin-customer-identity-service');
 const automationProtection=require('../access/admin-customer-automation-protection');
 const lifecycleService=require('../access/admin-customer-lifecycle-service');
 const accessSettings=require('../access/admin-customer-access-settings');
+const permanentAccess=require('../entitlements/permanent-access');
 const view=require('./customer-360-view');
 const {layout,esc}=require('./admin-html');
 const runtimeSettings=require('./runtime-settings');
