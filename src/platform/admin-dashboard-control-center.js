@@ -2,7 +2,7 @@
 
 const { query } = require('../db');
 const jobHealth = require('../automation/job-health');
-const criticalJobs = require('../automation/critical-jobs');
+const jobRegistry = require('../automation/jobs');
 const freeBackfill = require('../automation/free-capacity-backfill');
 const freeDigest = require('../automation/free-places-digest');
 const planCapacity = require('../entitlements/plan-capacity');
@@ -81,10 +81,10 @@ function jobLabel(key) {
 function automationSnapshot(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const byKey = new Map(list.map(row => [String(row.job_key), row]));
-  const critical = criticalJobs.names().map(key => {
+  const critical = jobRegistry.criticalNames().map(key => {
     const row = byKey.get(key) || { job_key: key };
     const state = row.job_key && byKey.has(key) ? jobHealth.healthState(row) : 'missing';
-    const intentionallyDisabled = state === 'disabled' && criticalJobs.mayBeDisabled(key);
+    const intentionallyDisabled = state === 'disabled' && jobRegistry.mayBeDisabled(key);
     return { ...row, job_key: key, state, intentionallyDisabled };
   });
 
