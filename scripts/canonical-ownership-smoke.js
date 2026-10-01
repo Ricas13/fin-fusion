@@ -445,6 +445,36 @@ assert(planCommandService.includes('async function upsertEmbyPlan')
     && planCommandService.includes("'admin.emby_plan.create'"),
   'catalog plan command service must own Emby plan create/update persistence and audit');
 
+// Portable configuration import stays an atomic orchestrator and delegates each
+// configuration class to its canonical write owner.
+const configurationTransfer=read('src/platform/configuration-transfer.js');
+assert(configurationTransfer.includes("require('../catalog/plan-command-service')")
+    && configurationTransfer.includes("require('../integrations/notification-preferences-command-service')")
+    && configurationTransfer.includes("require('../automation/job-health')")
+    && configurationTransfer.includes("require('../configuration/platform-settings-command-service')")
+    && configurationTransfer.includes('planCommands.applyImportedPlans(')
+    && configurationTransfer.includes('planCommands.applyImportedProviderMappings(')
+    && configurationTransfer.includes('notificationPreferenceCommands.applyImportedPreferences(')
+    && configurationTransfer.includes('jobHealth.applyImportedState(')
+    && configurationTransfer.includes('platformSettingsCommands.applyImportedSettings('),
+  'configuration transfer must orchestrate canonical domain commands');
+for(const forbidden of [
+  'INSERT INTO platform_settings(',
+  'INSERT INTO notification_preferences(',
+  'INSERT INTO plans(',
+  'UPDATE plans SET',
+  'DELETE FROM plan_server_eligibility',
+  'INSERT INTO plan_server_eligibility',
+  'INSERT INTO plan_provider_prices',
+  'UPDATE automation_job_state SET'
+]){
+  assert(!configurationTransfer.includes(forbidden),
+    `configuration transfer must not bypass canonical mutation owners: ${forbidden}`);
+}
+assert(configurationTransfer.includes('transaction(async client=>')
+    && configurationTransfer.includes("'admin.configuration.import.atomic'"),
+  'configuration transfer must preserve one outer atomic transaction and one import-level audit event');
+
 console.log('canonical ownership smoke: ok');
 
 
