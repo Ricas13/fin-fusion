@@ -162,3 +162,9 @@ docker compose exec -T app npm run verify:deployment
 ```
 
 The backup command is for an existing installation; a genuinely fresh database has nothing to back up. Never go directly from an older deployment to `docker compose up -d --build app` now that runtime DB isolation is part of the supported architecture.
+
+## Legacy runtime-name migration
+
+Current CAPTAiNFiN releases use the Docker container names `captainfin`, `captainfin-automation`, `captainfin-activity`, `captainfin-backup` and `captainfin-postgres`. The production deploy helper automatically adopts the historical `steam-fusion*` container names in place before migrations or service recreation. It refuses to continue if both the canonical and legacy name exist for the same service, because that state is ambiguous.
+
+The PostgreSQL database name/user and runtime-role family (`steamfusion*`), the named volume `steamfusion_pgdata`, and the default `steamfusion.sid` session cookie are intentionally frozen compatibility identifiers. They carry persistent data, credentials or active sessions and are not product-facing branding. Do not rename them during an ordinary upgrade.
