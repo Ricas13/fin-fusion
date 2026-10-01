@@ -6,6 +6,7 @@ const path = require('path');
 const paypal = require('../src/payments/paypal');
 const billingControl = require('../src/payments/billing-control');
 const provisioning = require('../src/jellyfin/resilient-provisioning');
+const automationRegistry = require('../src/automation/jobs');
 
 function source(relative) {
     return fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
@@ -71,7 +72,12 @@ function main() {
     const automationWorker = source('scripts/automation-worker.js');
     assert(automationJobs.includes('async revenue_integrity(){return revenueIntegritySafeRun()}'), 'Core revenue integrity must remain independent from provider reconciliation latency.');
     assert(automationJobs.includes('async paypal_history_reconciliation(){return paypalHistorySafeRun()}'), 'PayPal history reconciliation must remain a separate automation job.');
-    assert(automationWorker.includes('revenue_integrity:60') && automationWorker.includes('paypal_history_reconciliation:300'), 'Core integrity must stay at 60 seconds while PayPal history reconciliation stays on a bounded five-minute cadence.');
+    assert.strictEqual(automationRegistry.defaultIntervalSeconds('revenue_integrity'), 60,
+        'Core revenue integrity must stay at a 60-second cadence.');
+    assert.strictEqual(automationRegistry.defaultIntervalSeconds('paypal_history_reconciliation'), 300,
+        'PayPal history reconciliation must stay on a bounded five-minute cadence.');
+    assert(automationWorker.includes('jobRegistry.defaultIntervalSeconds(jobKey)'),
+        'automation worker must consume cadence from the canonical job registry.');
 
     assert.strictEqual(paypal.paypalHealthy('ACTIVE'), true);
     assert.strictEqual(paypal.paypalHealthy('SUSPENDED'), false);
