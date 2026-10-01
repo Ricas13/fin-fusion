@@ -225,14 +225,14 @@ Current state: the registry now exposes `run`, `defaultIntervalSeconds`, `critic
 
 Tasks:
 
-- [ ] Decide whether per-job timeout is required. If yes, enforce `timeoutMs`; if no, remove the unused field.
-- [ ] Define meaningful concurrency classes where jobs should not share the same scheduler capacity/DB pressure class.
-- [ ] Enforce `concurrencyClass` in the worker if retained.
-- [ ] Move remaining job metadata into one canonical registry module.
-- [ ] Retire `job-metadata.js` once definitions no longer need a separate metadata table.
-- [ ] Retire `critical-jobs.js` compatibility facade after importer checks prove no production callers require it.
-- [ ] Keep DB pool/control headroom and reconciliation/maintenance-lock budgets.
-- [ ] Add scheduler behavioural tests for timeout, class contention and shutdown/drain semantics.
+- [x] Decide whether per-job timeout is required. If yes, enforce `timeoutMs`; if no, remove the unused field.
+- [x] Define meaningful concurrency classes where jobs should not share the same scheduler capacity/DB pressure class.
+- [x] Enforce `concurrencyClass` in the worker if retained.
+- [x] Move remaining job metadata into one canonical registry module.
+- [x] Retire `job-metadata.js` once definitions no longer need a separate metadata table.
+- [x] Retire `critical-jobs.js` compatibility facade after importer checks prove no production callers require it.
+- [x] Keep DB pool/control headroom and reconciliation/maintenance-lock budgets.
+- [x] Add scheduler behavioural tests for timeout, class contention and shutdown/drain semantics.
 
 **Done when:** automation scheduling policy has one executable source of truth rather than metadata placeholders and compatibility layers.
 
@@ -469,3 +469,4 @@ Add dated entries here as implementation batches land.
 - 2026-10-01 — Closed remaining plan/import ownership work: `plan-contract.js` is now the shared command/import validation boundary, configuration transfer uses it for imported plans/provider mappings, and `canonical-ownership-smoke.js` forbids transfer-side direct writes.
 - 2026-10-01 — Runtime identity standardisation complete: watchdog, recovery and deployment resolve Compose services through `scripts/lib/compose-runtime.sh`; branded names remain only for explicit legacy-container adoption/display compatibility. Behavioural tests resolve mock service IDs independently of physical names.
 - 2026-10-01 — Single-image release model complete: deployment builds one `captainfin:<git-sha>` image, all Node runtime/migrate/recovery services consume it with service-specific commands, prior image IDs remain available for safe app-only rollback, and deployment verifies build SHA consistency before advancing `captainfin:current`.
+- 2026-10-01 — Automation registry cleanup completed: unused timeout/concurrency placeholders were removed instead of left declarative, metadata now lives with executable job definitions in `jobs.js`, retired `job-metadata.js`/`critical-jobs.js` facades are guarded against reintroduction, and existing worker tests retain bounded concurrency, DB headroom and drain behaviour.
