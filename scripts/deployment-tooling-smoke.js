@@ -18,6 +18,9 @@ const watchdogPath = path.join(root, 'scripts', 'availability-watchdog.sh');
 const watchdogInstallerPath = path.join(root, 'scripts', 'install-availability-watchdog.sh');
 const watchdog = fs.readFileSync(watchdogPath, 'utf8');
 const watchdogInstaller = fs.readFileSync(watchdogInstallerPath, 'utf8');
+const composeRuntimePath = path.join(root, 'scripts', 'lib', 'compose-runtime.sh');
+const composeRuntime = fs.readFileSync(composeRuntimePath, 'utf8');
+const recovery = fs.readFileSync(path.join(root, 'recovery.sh'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -41,7 +44,9 @@ function bashPath() {
 for (const scriptPath of [
   path.join(root, 'scripts', 'deploy-production.sh'),
   watchdogPath,
-  watchdogInstallerPath
+  watchdogInstallerPath,
+  composeRuntimePath,
+  path.join(root, 'recovery.sh')
 ]) {
   const syntax = spawnSync(bashPath(), ['-n', scriptPath], { encoding: 'utf8' });
   assert.strictEqual(syntax.status, 0, syntax.stderr || `${path.basename(scriptPath)} must pass bash -n`);
@@ -81,6 +86,20 @@ assert(!/container_name:\s*steam-fusion/.test(compose), 'legacy steam-fusion con
 assert(deployScript.includes('adopt_legacy_container captainfin steam-fusion')
   && deployScript.includes('adopt_legacy_container captainfin-postgres steam-fusion-postgres'),
   'deployment must adopt existing legacy containers before runtime recreation');
+assert(composeRuntime.includes('docker compose ps --all --quiet "$service"'), 'runtime resolver must derive physical containers from Compose service identity');
+for (const source of [deployScript, watchdog, recovery]) {
+  assert(source.includes('scripts/lib/compose-runtime.sh'), 'runtime shell tooling must source the canonical Compose service resolver');
+}
+for (const [name,source] of [['watchdog',watchdog],['recovery',recovery]]) {
+  assert(!/docker inspect[^\n]*(?:captainfin|steam-fusion)/.test(source), `${name} must not inspect branded physical container names`);
+}
+const deployWithoutAdoption=deployScript
+  .replace(/adopt_legacy_container captainfin steam-fusion[\s\S]*?adopt_legacy_container captainfin-postgres steam-fusion-postgres/,'');
+assert(!/docker inspect[^\n]*(?:captainfin|steam-fusion)/.test(deployWithoutAdoption), 'deployment health/rollback logic must resolve Compose services; branded names are allowed only in legacy adoption');
+assert(deployScript.includes('compose_service_image_id app') && deployScript.includes('compose_service_health postgres'), 'deployment must resolve release images and PostgreSQL health by Compose service');
+assert(watchdog.includes('compose_service_state app') && watchdog.includes('compose_service_health postgres'), 'watchdog must resolve app/PostgreSQL by Compose service');
+assert(recovery.includes('wait_service_health "$service"') && recovery.includes('compose_service_health postgres'), 'recovery must resolve service health by Compose service');
+
 assert(compose.includes('POSTGRES_DB: steamfusion')
   && compose.includes('POSTGRES_USER: steamfusion')
   && compose.includes('steamfusion_pgdata:/var/lib/postgresql/data')
