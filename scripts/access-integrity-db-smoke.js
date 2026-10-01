@@ -5,6 +5,8 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const accessIntegrity = require('../src/access/access-integrity');
+const accessHolds = require('../src/entitlements/access-holds');
+const serviceAdminControl = require('../src/entitlements/service-admin-control');
 
 const tag = `access-integrity-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 const created = { customers: [], plans: [], servers: [] };
@@ -115,6 +117,23 @@ function kindsFor(findings, customerId) {
     await makeSubscription(freeReady, freePlanId, { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" });
     await makeAccount(freeReady, freeServerId, 'free', 'free-ready');
 
+    const protectedFreeMissing = await makeCustomer('free-protected-missing');
+    const protectedFreeSubscription = await makeSubscription(
+      protectedFreeMissing,
+      freePlanId,
+      { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" }
+    );
+    await accessHolds.addHold({
+      customerId: protectedFreeMissing,
+      type: 'inactivity_policy',
+      sourceKey: `plan:${freePlanId}`,
+      reason: 'access integrity protected override smoke',
+      metadata: { subscriptionId: protectedFreeSubscription }
+    });
+    await serviceAdminControl.setPresent(protectedFreeMissing, 'jellyfin', {
+      reason: 'access integrity protected override smoke'
+    });
+
     const freeOrphan = await makeCustomer('free-orphan');
     await makeAccount(freeOrphan, freeServerId, 'free', 'free-orphan');
 
@@ -138,6 +157,8 @@ function kindsFor(findings, customerId) {
       'live Free plan without a ready Free account must be detected');
     assert(!kindsFor(findings, freeReady).has('free_plan_without_ready_server'),
       'ready Free plan+server must not be reported as inconsistent');
+    assert(kindsFor(findings, protectedFreeMissing).has('free_plan_without_ready_server'),
+      'explicit administrator-present access must remain visible to the integrity scanner even when an automatic hold exists');
     assert(kindsFor(findings, freeOrphan).has('free_server_without_plan'),
       'Free account without a Free plan must be detected');
     assert(kindsFor(findings, trialMissing).has('unpaid_trial_without_ready_server'),

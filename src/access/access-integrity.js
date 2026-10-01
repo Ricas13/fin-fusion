@@ -19,6 +19,13 @@ function finding(kind, row, detail) {
   };
 }
 
+function automaticAccessAllowedSql(alias = 's') {
+  return `(
+    public.subscription_admin_present(${alias}.customer_id,'jellyfin',${alias}.id)
+    OR NOT public.subscription_access_blocked(${alias}.customer_id,${alias}.source,${alias}.provider_subscription_id)
+  )`;
+}
+
 function liveEntitlementSql({ free = null, alias = 's', planAlias = 'p' } = {}) {
   const freeFilter = free === true
     ? `AND COALESCE(${planAlias}.is_free_tier,FALSE)=TRUE`
@@ -69,7 +76,7 @@ async function scan({ limit = 100 } = {}) {
       JOIN plans p ON p.id=s.plan_id
       WHERE TRUE ${freeLive}
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
-        AND NOT public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
+        AND ${automaticAccessAllowedSql('s')}
         AND NOT EXISTS(
           SELECT 1
           FROM jellyfin_accounts ja
@@ -108,7 +115,7 @@ async function scan({ limit = 100 } = {}) {
       WHERE TRUE ${primaryLive}
         AND COALESCE(NULLIF(s.billing_interval_snapshot,''),p.billing_interval)='trial'
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
-        AND NOT public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
+        AND ${automaticAccessAllowedSql('s')}
         AND NOT EXISTS(
           SELECT 1
           FROM jellyfin_accounts ja
@@ -149,7 +156,7 @@ async function scan({ limit = 100 } = {}) {
         AND COALESCE(NULLIF(s.billing_interval_snapshot,''),p.billing_interval)<>'trial'
         AND COALESCE(s.price_minor_snapshot,p.price_minor,0)>0
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
-        AND NOT public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
+        AND ${automaticAccessAllowedSql('s')}
         AND NOT EXISTS(
           SELECT 1
           FROM jellyfin_accounts ja
@@ -209,6 +216,7 @@ async function scan({ limit = 100 } = {}) {
 module.exports = {
   clean,
   finding,
+  automaticAccessAllowedSql,
   liveEntitlementSql,
   scan
 };
