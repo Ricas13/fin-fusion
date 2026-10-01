@@ -43,6 +43,7 @@ const customerPortalCss=read('public/css/customer-portal.css');
 const nowPlayingRoute=read('src/platform/customer-now-playing.js');
 const nowPlayingClient=read('public/js/customer-now-playing.js');
 const accessRoute=read('src/platform/customer-jellyfin.js');
+const customerMediaAccess=read('src/access/customer-media-access.js');
 const accessView=read('views/customer/jellyfin.ejs');
 const homeAccessClient=read('public/js/customer-home-access.js');
 const dashboardModule=require('../src/platform/customer-dashboard');
@@ -73,7 +74,7 @@ assert(accessRoute.includes("router.post('/account/access/media/:accountId/passw
 assert(accessView.includes('/account/access/media/<%= account.id %>/password')&&accessView.includes('/account/access/requests/password'),'My Access must render the service-password controls instead of Account security');
 assert(accessRoute.includes("router.get('/account/jellyfin'")&&accessRoute.includes("'/account/access'"),'legacy Jellyfin-hub links must redirect to My Access');
 assert(accessRoute.includes('.filter(customerNav.liveServiceSubscription)')&&accessRoute.includes('rawSubscriptions')&&accessView.includes('accessRows=Array.isArray(subscriptions)?subscriptions:[]')&&accessView.includes('activeSubscriptions'),'My Access must show every current streaming-service subscription rather than one selected Jellyfin lane');
-assert(accessRoute.includes('customerAccessState.freeJellyfin')&&accessRoute.includes('effectiveEmbySubscription'),'My Access must resolve canonical Free Jellyfin state and Emby entitlement independently');
+assert(accessRoute.includes("require('../access/customer-media-access')")&&customerMediaAccess.includes('customerAccessState.freeJellyfin')&&customerMediaAccess.includes('effectiveEmbySubscription'),'My Access must resolve canonical Free Jellyfin state and Emby entitlement independently through the access domain');
 assert(accessRoute.includes('disabled:Boolean(!entitlement')&&accessRoute.includes('if(!subscriptions.length&&!requestState.eligible)'),'stale media accounts must not keep My Access available or appear ready after service entitlement ends');
 assert(accessView.includes('/account/libraries/<%= account.id %>')&&accessView.includes('A Free Server and a 24-hour trial can therefore have different selections'),'library visibility controls must stay scoped to each Jellyfin account/server');
 assert(provisioningEngine.includes('async function renameJellyfinAccount')&&provisioningEngine.includes('ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username')&&provisioningEngine.includes('!account.can_rename_jellyfin_username')&&provisioningEngine.includes("method: 'POST'")&&provisioningEngine.includes('Name: username'),'Jellyfin username rename must enforce the legacy-account rule in SQL and update the existing remote user rather than recreating it.');
