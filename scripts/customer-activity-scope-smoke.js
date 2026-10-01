@@ -18,6 +18,7 @@ const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const forceAccess=read('src/platform/admin-customer-force-access.js');
 const durableCreation=read('src/jellyfin/durable-account-creation.js');
 const manualAssignment=read('src/jellyfin/manual-assignment.js');
+const forceMove=read('src/jellyfin/admin-force-move.js');
 
 assert.doesNotThrow(()=>ejs.compile(view,{filename:path.join(root,'views/customer/activity.ejs')}),'Activity EJS must remain syntactically compilable');
 
@@ -60,6 +61,9 @@ assert.match(durableCreation,/access_lane_changed_at=CASE[\s\S]*access_lane IS D
 assert.match(manualAssignment,/const accessLane=provisioning\.requestedAccessLane\(state\.entitlement\)/,'manual server assignment must derive the account lane from the entitlement rather than defaulting to paid\/primary');
 assert.match(manualAssignment,/access_lane_changed_at=CASE WHEN access_lane IS DISTINCT FROM \$2 THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE WHEN access_lane IS DISTINCT FROM \$2 THEN NULL[\s\S]*access_lane=\$2/,'reusing a manual-assignment account must record a trustworthy lane transition');
 assert.match(manualAssignment,/allowOverCapacity:true,accessLane/,'new manual assignments must pass the entitlement lane into account creation explicitly');
+assert.match(forceMove,/const accessLane=provisioning\.requestedAccessLane\(entitlement\)/,'forced server moves must derive the lane from the active entitlement');
+assert.match(forceMove,/same\(account\.server_id,target\.id\)&&account\.access_lane===accessLane/,'forced server moves must not repurpose an account belonging to the other access lane');
+assert.match(forceMove,/allowOverCapacity:true,[\s\S]*accessLane/,'forced server moves must create the destination account in the entitlement lane explicitly');
 assert.match(route,/req\.query\.range,req\.query\.scope/,'the activity route must accept both range and scope');
 
 assert.match(view,/name="scope"[^>]*data-activity-scope-select/,'the activity page must expose a server selector');
