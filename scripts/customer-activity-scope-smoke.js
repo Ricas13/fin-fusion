@@ -16,6 +16,7 @@ const playbackWebhook=read('src/jellyfin/playback-webhook.js');
 const laneMigration=read('db/migrations/20260930211500_activity_access_lane_snapshot.sql');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const forceAccess=read('src/platform/admin-customer-force-access.js');
+const durableCreation=read('src/jellyfin/durable-account-creation.js');
 
 assert.doesNotThrow(()=>ejs.compile(view,{filename:path.join(root,'views/customer/activity.ejs')}),'Activity EJS must remain syntactically compilable');
 
@@ -51,6 +52,7 @@ assert.match(laneMigration,/ph\.jellyfin_account_id IS NOT NULL/,'historical lan
 assert.doesNotMatch(laneMigration,/js\.server_class/,'the migration must not permanently guess an orphaned historical lane from server pool alone');
 assert.match(resilientProvisioning,/SET access_lane='free'[\s\S]*access_lane_changed_at=NOW\(\)[\s\S]*inactivity_observation_reset_at=NULL/,'an explicit primary-to-Free adoption must replace the legacy synthetic marker with a trustworthy lane boundary');
 assert.match(forceAccess,/access_lane_changed_at=CASE WHEN access_lane<>'primary' THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE WHEN access_lane<>'primary' THEN NULL/,'forced recovery must record a real boundary if it changes an existing account back to the primary lane');
+assert.match(durableCreation,/access_lane_changed_at=CASE[\s\S]*access_lane IS DISTINCT FROM EXCLUDED\.access_lane THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE[\s\S]*access_lane IS DISTINCT FROM EXCLUDED\.access_lane THEN NULL/,'durable account recovery must clear a synthetic legacy marker whenever it performs a real lane transition');
 assert.match(route,/req\.query\.range,req\.query\.scope/,'the activity route must accept both range and scope');
 
 assert.match(view,/name="scope"[^>]*data-activity-scope-select/,'the activity page must expose a server selector');
