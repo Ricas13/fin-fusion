@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const adapters = require('../src/payments/provider-lifecycle-adapters');
+const billingControl = require('../src/payments/billing-control');
 
 const noop = async () => {};
 const valid = {
@@ -35,6 +36,26 @@ assert.strictEqual(period.getTime(), 200000);
 assert.strictEqual(adapters.stripePriceId({ items: { data: [{ price: 'price_123' }] } }), 'price_123');
 assert.strictEqual(adapters.stripePriceId({ items: { data: [{ price: { id: 'price_obj' } }] } }), 'price_obj');
 
+const futureEnd = new Date('2026-11-01T00:00:00.000Z');
+const paypalCancelled = billingControl.remoteStateForPolicy(
+  { source: 'paypal', current_period_end: futureEnd },
+  { status: 'CANCELLED', remoteStatus: 'CANCELLED', periodEnd: null, cancelAtPeriodEnd: true },
+  { now: new Date('2026-10-01T00:00:00.000Z') }
+);
+assert.strictEqual(paypalCancelled.status, 'active',
+  'central billing policy must preserve already-paid PayPal access through the local period end');
+assert.strictEqual(paypalCancelled.remoteStatus, 'CANCELLED',
+  'commercial interpretation must retain the provider fact for diagnostics');
+assert.strictEqual(paypalCancelled.periodEnd.getTime(), futureEnd.getTime());
+
+const paypalEnded = billingControl.remoteStateForPolicy(
+  { source: 'paypal', current_period_end: new Date('2026-09-01T00:00:00.000Z') },
+  { status: 'CANCELLED', remoteStatus: 'CANCELLED', periodEnd: null, cancelAtPeriodEnd: true },
+  { now: new Date('2026-10-01T00:00:00.000Z') }
+);
+assert.strictEqual(paypalEnded.status, 'CANCELLED',
+  'central billing policy must not extend PayPal access beyond the paid local period');
+
 (async () => {
   await assert.rejects(adapters.forProvider('plisio'), /Unsupported recurring payment provider/);
 
@@ -59,6 +80,11 @@ assert.strictEqual(adapters.stripePriceId({ items: { data: [{ price: { id: 'pric
     && provider.includes('/v1/billing/subscriptions/')
     && provider.includes('/v1/oauth2/token'),
     'provider adapter module must own Stripe and PayPal remote lifecycle mechanics');
+  assert(!provider.includes('new Date(row.current_period_end)'),
+    'provider adapters must report provider facts rather than decide paid-period entitlement policy');
+  assert(billing.includes('function remoteStateForPolicy')
+    && billing.includes("providerLifecycleState.normalizeStatus('paypal'"),
+    'billing control must centrally own PayPal paid-period interpretation');
 
   console.log('provider lifecycle adapter smoke: ok');
 })().catch(error => {
