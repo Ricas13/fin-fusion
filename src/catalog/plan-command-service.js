@@ -373,6 +373,75 @@ async function updatePortalCurrencyPrice({
   });
 }
 
+async function planSubscriberCount(client, planId) {
+  const result = await client.query(
+    `SELECT COUNT(DISTINCT customer_id)::int count FROM subscriptions
+     WHERE plan_id=$1 AND superseded_by IS NULL
+       AND status IN ('active','trialing','past_due','paused')
+       AND starts_at<=NOW() AND current_period_end>NOW()`,
+    [planId]
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
+async function clearPlanLeases(client, planId) {
+  return client.query(
+    `DELETE FROM access_network_leases
+     WHERE subject_key IN (SELECT id::text FROM subscriptions WHERE plan_id=$1)
+       AND scope IN ('jellyfin','stremio')`,
+    [planId]
+  );
+}
+
+async function updateAccessPolicy({
+  planId,
+  input,
+  actorUserId = null
+}) {
+  if (!input || typeof input !== 'object') throw new Error('Plan access policy input is required.');
+
+  return transaction(async client => {
+    const activeSubscribers = await planSubscriberCount(client, planId);
+    const updated = await client.query(
+      `UPDATE plans SET
+         jellyfin_access_model=$2,jellyfin_household_network_limit=$3,jellyfin_household_lease_minutes=$4,
+         stremio_household_lease_minutes=$5,streams=$6,
+         allow_downloads=$7,allow_video_transcoding=$8,allow_audio_transcoding=$9,allow_remuxing=$10,
+         allow_live_tv=$11,allow_live_tv_management=$12,allow_remote_access=$13,allow_4k=$14,
+         allow_subtitle_editing=$15,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [
+        planId,
+        input.accessModel,
+        input.jellyfinHouseholdNetworkLimit,
+        input.jellyfinHouseholdLeaseMinutes,
+        input.stremioHouseholdLeaseMinutes,
+        input.streams,
+        input.allowDownloads,
+        input.allowVideoTranscoding,
+        input.allowAudioTranscoding,
+        input.allowRemuxing,
+        input.allowLiveTv,
+        input.allowLiveTvManagement,
+        input.allowRemoteAccess,
+        input.allow4k,
+        input.allowSubtitleEditing
+      ]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await clearPlanLeases(client, planId);
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.access_policy.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ ...input, activeSubscribers })]
+    );
+
+    return { plan: updated.rows[0], activeSubscribers };
+  });
+}
+
 module.exports = {
   createPlan,
   updateProduct,
@@ -382,5 +451,8 @@ module.exports = {
   updateCommerce,
   saveProviderOption,
   updatePaymentOptions,
-  updatePortalCurrencyPrice
+  updatePortalCurrencyPrice,
+  planSubscriberCount,
+  clearPlanLeases,
+  updateAccessPolicy
 };
