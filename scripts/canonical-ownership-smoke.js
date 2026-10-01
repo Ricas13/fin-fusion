@@ -286,3 +286,27 @@ assert(bulkDomain.includes('UPDATE subscriptions')
 assert(operatorBulkDomain.includes("require('../entitlements/admin-manual-entitlement-service')")
     && operatorBulkDomain.includes("require('../access/admin-force-access-service')"),
   'operator bulk orchestration must depend on domain services rather than platform routers');
+
+
+// Customer deletion is a customer-domain saga, not platform business logic.
+assert(!fs.existsSync(path.join(root,'src/platform/customer-deletion.js'))
+    && !fs.existsSync(path.join(root,'src/platform/customer-external-deletion.js')),
+  'customer deletion saga/state-machine owners must not live in src/platform');
+const customerDeletionDomain=read('src/customers/customer-deletion.js');
+const externalDeletionDomain=read('src/customers/customer-external-deletion.js');
+const subscriptionRevokeRoute=read('src/platform/admin-subscription-revoke.js');
+const subscriptionRevokeService=read('src/entitlements/admin-subscription-revoke-service.js');
+assert(customerDeletionDomain.includes("require('./customer-external-deletion')"),
+  'customer deletion saga must use the customer-domain external target state machine');
+assert(externalDeletionDomain.includes('customer_external_deletion_targets')
+    && externalDeletionDomain.includes('terminateRecurringForDeletion'),
+  'customer-domain external deletion must retain durable target and verified billing cancellation ownership');
+assert(subscriptionRevokeRoute.includes("require('../entitlements/admin-subscription-revoke-service')")
+    && !subscriptionRevokeRoute.includes('UPDATE subscriptions')
+    && !subscriptionRevokeRoute.includes('terminateRecurringForDeletion')
+    && !subscriptionRevokeRoute.includes('stremio.revoke('),
+  'subscription revoke route must remain an HTTP/rendering adapter');
+assert(subscriptionRevokeService.includes('UPDATE subscriptions')
+    && subscriptionRevokeService.includes('terminateRecurringForDeletion')
+    && subscriptionRevokeService.includes('stremio.revoke('),
+  'entitlement-domain revoke service must own targeted revocation policy and mutations');
