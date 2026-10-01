@@ -7,6 +7,8 @@ const paypal=require('../src/payments/paypal');
 const providerHttp=require('../src/payments/provider-http');
 const providerCheckoutRecovery=require('../src/payments/provider-checkout-recovery');
 const lifecyclePolicy=require('../src/entitlements/jellyfin-lifecycle-policy');
+const automationRegistry=require('../src/automation/jobs');
+const criticalJobs=require('../src/automation/critical-jobs');
 
 const root=path.resolve(__dirname,'..');
 const source=file=>fs.readFileSync(path.join(root,file),'utf8');
@@ -109,11 +111,9 @@ function deferredWebhookContract(){
 
 function discoveryAutomationContract(){
   const jobs=source('src/automation/jobs.js');
-  const critical=source('src/automation/critical-jobs.js');
-  const worker=source('scripts/automation-worker.js');
   assert.match(jobs,/subscriptionDiscovery\.apply\(null\)/,'safe provider subscription discovery must be runnable automatically');
-  assert.match(critical,/'subscription_discovery'/,'provider discovery must be lifecycle-critical');
-  assert.match(worker + jobs,/subscription_discovery:21600/,'provider discovery must have a bounded recurring cadence');
+  assert.strictEqual(criticalJobs.isCritical('subscription_discovery'),true,'provider discovery must be lifecycle-critical');
+  assert.strictEqual(automationRegistry.defaultIntervalSeconds('subscription_discovery'),21600,'provider discovery must have a bounded recurring cadence');
 }
 
 function independentServiceRecoveryContract(){

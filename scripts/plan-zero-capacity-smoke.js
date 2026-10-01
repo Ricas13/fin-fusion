@@ -7,6 +7,7 @@ const capacity=require('../src/entitlements/plan-capacity');
 const digest=require('../src/automation/free-places-digest');
 const storefrontRuntime=require('../src/platform/storefront');
 const notificationSettingsRuntime=require('../src/integrations/notification-settings');
+const automationRegistry=require('../src/automation/jobs');
 
 const read=file=>fs.readFileSync(file,'utf8');
 const create=read('src/platform/admin-plan-create-v2.js');
@@ -70,7 +71,7 @@ assert(notificationSettings.includes('async function sendDiscordChannel({channel
 assert(notificationSettings.includes("allowed_mentions:{parse:allowEveryone?['everyone']:[]}"),'Discord channel delivery must suppress @everyone unless explicitly enabled');
 assert(notificationOutbox.includes('enqueueDiscordChannel')&&notificationOutbox.includes('payload?.discordChannel')&&notificationOutbox.includes('settings.sendDiscord(payload?.text||row.message_type,{userId:row.destination})'),'durable channel delivery must coexist with the existing Discord DM outbox path');
 assert(adminNotifications.includes('discordInviteUrl')&&adminNotifications.includes('discordFreePlacesDigestEnabled')&&adminNotifications.includes('discordFreePlacesChannelId')&&adminNotifications.includes('discordFreePlacesTimezone')&&adminNotifications.includes('discordFreePlacesTime1')&&adminNotifications.includes('discordFreePlacesTime2')&&adminNotifications.includes('discordFreePlacesMinRemaining')&&adminNotifications.includes('discordFreePlacesMentionEveryone')&&adminNotifications.includes('stremioMetadataAddonUrl'),'Discord community and onboarding fields must live with the existing notification delivery settings');
-assert(jobs.includes('free_places_digest')&&jobs.includes('free_places_digest:30')&&automationWorker.includes('VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING')&&automationWorker.includes('jobRegistry.defaultIntervalSeconds(jobKey)'),'Free Server availability status must be inserted enabled at its 30-second canonical registry default instead of the generic five-minute interval');
+assert(jobs.includes('free_places_digest')&&automationRegistry.defaultIntervalSeconds('free_places_digest')===30&&automationWorker.includes('VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING')&&automationWorker.includes('jobRegistry.defaultIntervalSeconds(jobKey)'),'Free Server availability status must be inserted enabled at its 30-second canonical registry default instead of the generic five-minute interval');
 assert(notificationSettings.includes('communityForLoad')&&notificationSettings.includes('extras=communityForLoad'),'persisted incomplete community settings must load without throwing and leave the status updater disabled');
 assert(!inactivity.includes('free-places-digest')&&!inactivity.includes('free_places_digest'),'inactivity handling must never post Discord Free Server availability directly');
 

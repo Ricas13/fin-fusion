@@ -10,7 +10,6 @@ const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock'
 const reconciliationLock = require('../src/jellyfin/reconciliation-lock');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
-const criticalJobs = require('../src/automation/critical-jobs');
 const providerSettings = require('../src/payments/provider-settings');
 const requestSettings = require('../src/integrations/request-service-settings');
 const emailSettings = require('../src/integrations/email-settings');
@@ -24,7 +23,7 @@ const CONNECTION_BUDGET = automationConnectionBudget();
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS || 15000)));
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = buildInfo.gitSha;
-const CRITICAL_JOB_KEYS=Object.freeze(criticalJobs.names());
+const CRITICAL_JOB_KEYS=Object.freeze(jobRegistry.criticalNames());
 let stopping = false;
 let running = new Set();
 let runningJobs = new Set();
@@ -40,7 +39,7 @@ function safeLog(value, max = 500) {
 }
 
 function assertCriticalJobRegistry() {
-    const missing = CRITICAL_JOB_KEYS.filter(jobKey => typeof jobRegistry.jobs[jobKey] !== 'function');
+    const missing = CRITICAL_JOB_KEYS.filter(jobKey => typeof jobRegistry.definition(jobKey)?.run !== 'function');
     if (missing.length) {
         throw new Error(`Automation critical job registry incomplete: ${missing.join(', ')}`);
     }

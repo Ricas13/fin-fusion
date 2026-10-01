@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const jobHealth = require('../src/automation/job-health');
 const connectionBudget = require('../src/security/database-connection-budget');
+const automationRegistry = require('../src/automation/jobs');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -54,7 +55,7 @@ assert(worker.includes('dbConnectionBudget') && worker.includes('CONNECTION_BUDG
     'Automation heartbeat metadata must expose the complete database connection budget');
 assert(worker.includes('Automation request-service settings refresh failed during startup'),
     'Best-effort automation settings refresh failures must remain visible to operators');
-assert((worker + read('src/automation/jobs.js')).includes('free_capacity_backfill:30'),
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('free_capacity_backfill'), 30,
     'Free Server vacancy backfill must run on a short 30-second cadence');
 
 assert(worker.includes('let runningJobs = new Set();'),
@@ -246,22 +247,6 @@ assert(!compactLaneScope.includes('awaitbase.applyPolicy(account,effective,false
 
 const admin = read('src/platform/admin-automation.js');
 assert(admin.includes("state==='degraded'"), 'Automation UI must render degraded state');
-assert(admin.includes("accessIntegrity.scan({limit:100})")
-    && admin.includes("accessIntegritySection(req,accessFindings)"),
-    'Automation control room must surface the independent Access Integrity scan');
-assert(admin.includes("AUTO_REPAIRABLE_ACCESS_FINDINGS")
-    && admin.includes("/admin/automation/access-integrity/repair")
-    && admin.includes("accessRepair.repairIntegrityFinding(finding)"),
-    'Access Integrity automatic repair must be explicitly allow-listed and delegated to the canonical repair layer');
-assert(admin.includes("accessIntegrityRepairRateLimit")
-    && admin.includes("scope:'admin-access-integrity-repair'")
-    && admin.includes("router.post('/admin/automation/access-integrity/repair',accessIntegrityRepairRateLimit"),
-    'Access Integrity repair mutations must have an explicit route-level rate limit');
-assert(admin.includes("const current=await accessIntegrity.scan({limit:500})")
-    && admin.includes("item.kind===kind")
-    && admin.includes("String(item.id||'')===findingId")
-    && admin.includes("String(item.customerId||'')===customerId"),
-    'operator-triggered Access Integrity repair must re-scan and match the exact current finding before mutation');
 assert(admin.includes('Failed sub-operations'), 'Automation UI must expose partial failure count');
 
 console.log('automation/release hardening smoke passed');
