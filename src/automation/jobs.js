@@ -40,8 +40,8 @@ const stremioExternalTokens=require('../stremio/external-token-maintenance');
 const stremioManagedSweep=require('../stremio/managed-entitlement-sweep');
 const customerDeletion=require('../platform/customer-deletion');
 const winbackOffers=require('../marketing/winback-offers');
-require('../platform/bulk-operations');
-require('../platform/operator-bulk-operations');
+require('../customers/bulk-operations');
+require('../customers/operator-bulk-operations');
 
 // Lifecycle delivery failures are now captured per deterministic notification in
 // notification_lifecycle_retries before the discovery cursor advances. The

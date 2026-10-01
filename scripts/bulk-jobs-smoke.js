@@ -1,7 +1,7 @@
 'use strict';
 
 // DB-backed regression tests for the bulk-job framework and plan-change
-// reconciliation fanout (src/platform/bulk-jobs.js, src/jellyfin/provisioning.js
+// reconciliation fanout (src/platform/bulk-jobs.js, src/customers/bulk-operations.js, src/jellyfin/provisioning.js
 // reconciliation-status tracking). Requires a live Postgres instance --
 // matches the existing platform-smoke.js / auth-smoke.js convention and
 // only runs where DATABASE_URL is configured (this repo's CI), not in a
@@ -13,7 +13,7 @@ const { getPool, query } = require('../src/db');
 const bulkJobs = require('../src/platform/bulk-jobs');
 const provisioning = require('../src/jellyfin/provisioning');
 const bulkWorker = require('../src/jellyfin/bulk-worker');
-require('../src/platform/bulk-operations'); // registers the real job-type handlers, e.g. extend_entitlement
+require('../src/customers/bulk-operations'); // registers the real job-type handlers, e.g. extend_entitlement
 
 async function main() {
     const suffix = crypto.randomBytes(4).toString('hex');

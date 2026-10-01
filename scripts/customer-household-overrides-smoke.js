@@ -17,7 +17,7 @@ const householdOverridesSource = read('src/entitlements/household-overrides.js')
 const jellyfinHouseholdPolicy = read('src/jellyfin/household-network-policy.js');
 const stremioHouseholdAccess = read('src/stremio/household-access.js');
 const admin360 = read('src/platform/admin-customer-360.js');
-const bulkOperations = read('src/platform/bulk-operations.js');
+const bulkOperations = read('src/customers/bulk-operations.js');
 
 // allow_subtitle_editing: the one TECHNICAL_FIELDS entry with no storage
 // column anywhere before migration 106.

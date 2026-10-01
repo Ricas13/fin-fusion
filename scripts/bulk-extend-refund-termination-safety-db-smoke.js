@@ -1,7 +1,7 @@
 'use strict';
 
 // DB-backed regression test: the admin bulk "Extend" action
-// (src/platform/bulk-operations.js's extend_entitlement handler) must never
+// (src/customers/bulk-operations.js's extend_entitlement handler) must never
 // mutate an older primary subscription after the customer's newest contract
 // was terminated for a confirmed refund/chargeback. The terminal refund is a
 // boundary for the whole current-contract decision, not merely a row to filter
@@ -20,7 +20,7 @@ const { query, getPool } = require('../src/db');
 const bulkJobs = require('../src/platform/bulk-jobs');
 const bulkWorker = require('../src/jellyfin/bulk-worker');
 const subscriptionTermination = require('../src/payments/subscription-termination');
-require('../src/platform/bulk-operations'); // registers extend_entitlement
+require('../src/customers/bulk-operations'); // registers extend_entitlement
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [] };

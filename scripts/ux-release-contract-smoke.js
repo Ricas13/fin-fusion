@@ -3,7 +3,7 @@ const assert=require('assert');
 const fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
 const bulk=read('src/platform/admin-bulk-customers.js');
-const bulkOperations=read('src/platform/bulk-operations.js');
+const bulkOperations=read('src/customers/bulk-operations.js');
 const plans=read('src/platform/admin-plans.js');
 const customer=read('views/customer/dashboard.ejs');
 const customer360=read('src/platform/customer-360-view-v2.js');

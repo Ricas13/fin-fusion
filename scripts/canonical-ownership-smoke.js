@@ -271,3 +271,18 @@ assert(/router\.get\('\/stremio\/:token\/source\/:sourceId\/:itemId\/:mediaSourc
 assert((jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length>=2,'ordinary media concurrency monitoring must exclude hidden Stremio identities');
 
 console.log('canonical ownership smoke: ok');
+
+
+// Bulk customer operations are domain/worker orchestration, never platform-owned mutation logic.
+const bulkDomain=read('src/customers/bulk-operations.js');
+const operatorBulkDomain=read('src/customers/operator-bulk-operations.js');
+const automationJobs=read('src/automation/jobs.js');
+assert(automationJobs.includes("require('../customers/bulk-operations')")
+    && automationJobs.includes("require('../customers/operator-bulk-operations')"),
+  'automation worker must load bulk customer handlers from the customer domain');
+assert(bulkDomain.includes('UPDATE subscriptions')
+    && bulkDomain.includes('subscription_service_extension_events'),
+  'customer-domain bulk operations must own entitlement mutation implementation');
+assert(operatorBulkDomain.includes("require('../entitlements/admin-manual-entitlement-service')")
+    && operatorBulkDomain.includes("require('../access/admin-force-access-service')"),
+  'operator bulk orchestration must depend on domain services rather than platform routers');

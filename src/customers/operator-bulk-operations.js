@@ -8,10 +8,10 @@ const bulkWorker=require('../jellyfin/bulk-worker');
 const provisioning=require('../jellyfin/provisioning');
 const jellyfinAdminControl=require('../jellyfin/admin-control');
 const serverMigration=require('../jellyfin/server-migration');
-const deletion=require('./customer-deletion');
-const manualEntitlement=require('./admin-manual-entitlement');
-const subscriptionRevoke=require('./admin-subscription-revoke');
-const forceAccess=require('./admin-customer-force-access');
+const deletion=require('../platform/customer-deletion');
+const manualEntitlement=require('../entitlements/admin-manual-entitlement-service');
+const subscriptionRevoke=require('../platform/admin-subscription-revoke');
+const forceAccess=require('../access/admin-force-access-service');
 
 async function actorFor(item){
   const r=await query('SELECT created_by FROM background_jobs WHERE id=$1',[item.job_id]);
