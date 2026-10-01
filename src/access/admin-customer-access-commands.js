@@ -13,6 +13,10 @@ async function assignServer(customerId, serverId, { actorUserId = null } = {}) {
   return manualAssignment.assign(customerId, normalizedServerId, { actorUserId });
 }
 
+async function permanentAccessStatus(customerId) {
+  return permanentAccess.status(customerId);
+}
+
 async function setPermanentAccess(customerId, { action, reason = '', actorUserId = null } = {}) {
   const normalizedAction = clean(action, 20).toLowerCase();
   const normalizedReason = clean(reason, 500);
@@ -38,5 +42,6 @@ async function setPermanentAccess(customerId, { action, reason = '', actorUserId
 
 module.exports = {
   assignServer,
+  permanentAccessStatus,
   setPermanentAccess
 };
