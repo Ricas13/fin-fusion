@@ -167,7 +167,6 @@ async function upsertHistorySession(s, seenAt = new Date()) {
             last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
             playback_method=EXCLUDED.playback_method,
             transcode_reasons=EXCLUDED.transcode_reasons,
-            access_lane_snapshot=COALESCE(playback_history.access_lane_snapshot,EXCLUDED.access_lane_snapshot),
             ended_at=NULL,
             ended_reason=NULL
     `, [
