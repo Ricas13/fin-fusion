@@ -8,6 +8,7 @@ const operations=require('./operations-settings');
 const publicError=require('./public-error');
 const customerNav=require('./customer-nav-html');
 const notificationSettings=require('../integrations/notification-settings');
+const notificationOutbox=require('../integrations/notification-outbox');
 const links=require('../integrations/customer-channel-links');
 const adminLinks=require('../integrations/admin-channel-links');
 const discordRoleReconciliation=require('../integrations/discord-role-reconciliation');
@@ -48,5 +49,10 @@ function createCustomerCommunicationsRouter(){const r=express.Router();
  r.post('/account/communications/discord/unlink',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await links.unlink(req.session.customerId,'discord');return res.redirect('/account/communications?message='+encodeURIComponent('Discord disconnected.'))}catch(error){return errorRedirect(res,error,'Customer Discord unlink failed','Discord could not be disconnected right now. Please try again.')}});
  return r;}
 
-function createMessagingBotWebhookRouter(){const r=express.Router();r.post('/integrations/telegram/bot',async(req,res)=>{try{const ok=await notificationSettings.verifyTelegramWebhookSecret(req.get('x-telegram-bot-api-secret-token'));if(!ok)return res.status(403).send('Forbidden');const message=req.body?.message,text=String(message?.text||''),match=text.match(/^\/start(?:@\w+)?\s+([A-Za-z0-9_-]{20,64})$/);if(match&&message?.chat?.id){let linked=await links.linkTelegram(match[1],{chatId:message.chat.id,username:message.from?.username||null});if(!linked)linked=await adminLinks.linkTelegram(match[1],{chatId:message.chat.id,username:message.from?.username||null});if(linked)await notificationSettings.sendTelegram('CAPTAiNFiN connected. You can now receive the notifications you selected in your portal.',{chatId:String(message.chat.id)}).catch(()=>{});}return res.status(200).json({ok:true});}catch(error){console.warn('Telegram bot update rejected:',String(error?.message||error).replace(/[\r\n]/g,' ').slice(0,200));return res.status(200).json({ok:true});}});return r;}
+function createMessagingBotWebhookRouter(){const r=express.Router();r.post('/integrations/telegram/bot',async(req,res)=>{try{const ok=await notificationSettings.verifyTelegramWebhookSecret(req.get('x-telegram-bot-api-secret-token'));if(!ok)return res.status(403).send('Forbidden');const message=req.body?.message,text=String(message?.text||''),match=text.match(/^\/start(?:@\w+)?\s+([A-Za-z0-9_-]{20,64})$/);if(match&&message?.chat?.id){let linked=await links.linkTelegram(match[1],{chatId:message.chat.id,username:message.from?.username||null});if(!linked)linked=await adminLinks.linkTelegram(match[1],{chatId:message.chat.id,username:message.from?.username||null});if(linked)await notificationOutbox.enqueueTelegram({
+ eventType:'channel.telegram.connected',
+ text:'CAPTAiNFiN connected. You can now receive the notifications you selected in your portal.',
+ destination:String(message.chat.id),
+ dedupeKey:`telegram-link-confirmation:${linked.customerId||linked.adminUserId||'unknown'}:${String(message.chat.id)}`
+}).catch(error=>console.warn('Telegram link confirmation could not be queued:',String(error?.message||error).replace(/[\r\n]/g,' ').slice(0,200)));}return res.status(200).json({ok:true});}catch(error){console.warn('Telegram bot update rejected:',String(error?.message||error).replace(/[\r\n]/g,' ').slice(0,200));return res.status(200).json({ok:true});}});return r;}
 module.exports={SAFE_COMMUNICATION_ERRORS,errorRedirect,createCustomerCommunicationsRouter,createMessagingBotWebhookRouter,prefs,allowedEvents,customerEventPreferences,deliveryChannels};
