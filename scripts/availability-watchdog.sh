@@ -176,7 +176,7 @@ if http_ok "$BASE_URL/health/ready"; then
 fi
 
 ready_failures="$(increment "$STATE_DIR/ready-failures")"
-postgres_state="$(compose_service_state app-postgres)"
+postgres_state="$(compose_service_state postgres)"
 postgres_health="$(compose_service_health postgres)"
 log "Readiness probe failed (${ready_failures}/${FAILURE_THRESHOLD}); postgres=${postgres_state}/${postgres_health}."
 
