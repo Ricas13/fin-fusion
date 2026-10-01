@@ -22,6 +22,7 @@ const customerIdentityService=read('src/customers/admin-customer-identity-servic
 const automationProtectionService=read('src/access/admin-customer-automation-protection.js');
 const individualActionService=read('src/access/admin-customer-individual-action-service.js');
 const accessSettingsService=read('src/access/admin-customer-access-settings.js');
+const directLifecycleService=read('src/access/admin-customer-lifecycle-service.js');
 const deletion=read('src/customers/customer-deletion.js');
 const externalDeletion=read('src/customers/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -190,7 +191,6 @@ const compact360=read('src/platform/customer-360-compact.js');
 const primaryActions=read('src/platform/admin-customer-primary-actions.js');
 const directIndividual=read('src/platform/admin-customer-individual-actions.js');
 const directLifecycle=read('src/platform/admin-customer-direct-lifecycle.js');
-const directLifecycleService=read('src/access/admin-customer-lifecycle-service.js');
 const accessCards=read('src/platform/customer-360-access-cards.js');
 assert(view360.includes("compact=require('./customer-360-compact')")&&view360.includes('compact.render(safe,token,options)'),'the focused Customer 360 renderer must own the default operator page');
 for(const title of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone'])assert(compact360.includes(title),`action-first Customer 360 is missing ${title}`);
