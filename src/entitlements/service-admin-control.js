@@ -1,6 +1,7 @@
 'use strict';
 
 const { query, transaction } = require('../db');
+const reconciliationLock = require('../jellyfin/reconciliation-lock');
 
 const SERVICES = new Set(['jellyfin', 'stremio', 'overseerr']);
 const MODES = new Set(['admin_present', 'admin_removed', 'admin_server_pin']);
@@ -62,11 +63,15 @@ async function upsert(customerId, service, mode, { serverId = null, actorUserId 
 }
 
 async function setPresent(customerId, service, { actorUserId = null, reason = '' } = {}) {
-    return upsert(customerId, service, 'admin_present', { actorUserId, reason, auditAction: 'admin.customer.service_admin_control.set_present' });
+    return reconciliationLock.withCustomerReconciliationLock(customerId, () =>
+        upsert(customerId, service, 'admin_present', { actorUserId, reason, auditAction: 'admin.customer.service_admin_control.set_present' })
+    );
 }
 
 async function setRemoved(customerId, service, { actorUserId = null, reason = '' } = {}) {
-    return upsert(customerId, service, 'admin_removed', { actorUserId, reason, auditAction: 'admin.customer.service_admin_control.set_removed' });
+    return reconciliationLock.withCustomerReconciliationLock(customerId, () =>
+        upsert(customerId, service, 'admin_removed', { actorUserId, reason, auditAction: 'admin.customer.service_admin_control.set_removed' })
+    );
 }
 
 async function pinServer(customerId, serverId, { actorUserId = null, reason = '' } = {}) {
@@ -76,14 +81,14 @@ async function pinServer(customerId, serverId, { actorUserId = null, reason = ''
 async function clear(customerId, service, { actorUserId = null, reason = '' } = {}) {
     assertService(service);
     const why = note(reason, 'Returned to automatic management');
-    return transaction(async client => {
+    return reconciliationLock.withCustomerReconciliationLock(customerId, () => transaction(async client => {
         const previous = await client.query('SELECT * FROM customer_service_admin_control WHERE customer_id=$1 AND service=$2 FOR UPDATE', [customerId, service]);
         if (!previous.rowCount) return { changed: false };
         await client.query('DELETE FROM customer_service_admin_control WHERE customer_id=$1 AND service=$2', [customerId, service]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.service_admin_control.return_to_automatic','customer',$2,$3::jsonb)`,
             [actorUserId, customerId, JSON.stringify({ service, previousMode: previous.rows[0].mode, previousServerId: previous.rows[0].server_id || null, reason: why })]);
         return { changed: true, previous: previous.rows[0] };
-    });
+    }));
 }
 
 module.exports = { SERVICES, MODES, state, setPresent, setRemoved, pinServer, clear };
