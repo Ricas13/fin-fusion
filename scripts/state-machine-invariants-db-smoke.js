@@ -10,9 +10,11 @@ const subscriptionState = require('../src/entitlements/subscription-state');
 const accessHolds = require('../src/entitlements/access-holds');
 const cleanupReturn = require('../src/entitlements/jellyfin-cleanup-return');
 const discordRoles = require('../src/integrations/discord-roles');
+const lifecycle = require('../src/payments/lifecycle');
+const customerAccessState = require('../src/access/customer-access-state');
 
 const suffix = crypto.randomBytes(5).toString('hex');
-const created = { customers: [], plans: [], discordRoles: [] };
+const created = { customers: [], plans: [], servers: [], discordRoles: [] };
 
 async function customer(label) {
   const row = await query(
@@ -56,6 +58,68 @@ async function plan(label, options = {}) {
   ]);
   created.plans.push(row.rows[0].id);
   return row.rows[0].id;
+}
+
+async function server(label, serverClass = 'premium') {
+  const row = await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+      enabled,allow_new_users,trial_enabled,paid_enabled,priority,max_users,health_status
+    )
+    VALUES($1,$2,$3,'jellyfin',$4,$4,'jf1:state-machine',TRUE,TRUE,TRUE,TRUE,1,100,'healthy')
+    RETURNING id
+  `, [
+    `State machine ${label} ${suffix}`,
+    `state-machine-${label}-${suffix}`.slice(0, 180),
+    serverClass,
+    `https://${label}-${suffix}.invalid`
+  ]);
+  created.servers.push(row.rows[0].id);
+  return row.rows[0].id;
+}
+
+async function account({ customerId, serverId, lane, label }) {
+  return (await query(`
+    INSERT INTO jellyfin_accounts(
+      customer_id,server_id,jellyfin_user_id,jellyfin_username,
+      disabled,account_purpose,access_lane,is_primary
+    )
+    VALUES($1,$2,$3,$4,FALSE,'jellyfin',$5,TRUE)
+    RETURNING *
+  `, [
+    customerId,
+    serverId,
+    `${label}-remote-${suffix}`.slice(0, 180),
+    `${label}_${suffix}`.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 180),
+    lane
+  ])).rows[0];
+}
+
+async function insertSubscription(customerId, planId, {
+  status = 'active',
+  source = 'manual',
+  billingMode = 'manual',
+  periodEndSql = "NOW()+INTERVAL '30 days'"
+} = {}) {
+  return (await query(`
+    INSERT INTO subscriptions(
+      customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end
+    )
+    VALUES($1,$2,$3,$4,$5,NOW()-INTERVAL '1 day',${periodEndSql})
+    RETURNING *
+  `, [customerId, planId, status, source, billingMode])).rows[0];
+}
+
+async function canonicalFreePlan() {
+  const row = await query(`
+    SELECT * FROM plans
+    WHERE is_free_tier=TRUE
+      AND service_type='jellyfin'
+      AND COALESCE(is_addon,FALSE)=FALSE
+    ORDER BY created_at,id LIMIT 1
+  `);
+  assert.strictEqual(row.rowCount, 1, 'canonical Free Access plan must exist');
+  return row.rows[0];
 }
 
 async function fullRefundIncident(customerId, provider, providerRef, label, metadata = {}) {
