@@ -287,6 +287,31 @@ assert(individualActionService.includes('UPDATE subscriptions')
     && individualActionService.includes('serviceAdminControl.setRemoved('),
   'access-domain individual action service must own extension, expiry, suspension and Jellyfin-removal mutations');
 
+// Customer 360 access mutations must cross one access-domain command boundary.
+// The HTTP router can validate CSRF and map messages, but may not call the low-level
+// manual-assignment or permanent-access implementations directly.
+const customer360Route=read('src/platform/admin-customer-360.js');
+const customer360AccessCommands=read('src/access/admin-customer-access-commands.js');
+assert(customer360Route.includes("require('../access/admin-customer-access-commands')")
+    && customer360Route.includes('accessCommands.assignServer(')
+    && customer360Route.includes('accessCommands.setPermanentAccess('),
+  'Customer 360 access actions must delegate through the access-domain command service');
+for(const forbidden of [
+  "require('../jellyfin/manual-assignment')",
+  "require('../entitlements/permanent-access')",
+  'manualAssignment.assign(',
+  'permanentAccess.enable(',
+  'permanentAccess.revoke('
+]){
+  assert(!customer360Route.includes(forbidden),
+    `Customer 360 router must not bypass its access-domain command boundary: ${forbidden}`);
+}
+assert(customer360AccessCommands.includes("require('../jellyfin/manual-assignment')")
+    && customer360AccessCommands.includes("require('../entitlements/permanent-access')")
+    && customer360AccessCommands.includes('async function assignServer')
+    && customer360AccessCommands.includes('async function setPermanentAccess'),
+  'access-domain Customer 360 command service must own manual assignment and permanent-access dispatch');
+
 console.log('canonical ownership smoke: ok');
 
 
