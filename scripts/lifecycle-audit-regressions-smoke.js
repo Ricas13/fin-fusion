@@ -100,6 +100,11 @@ function adminAuthorityReconciliationRaceContract(){
     'administrator-removed authority must not race an in-flight reconciliation');
   assert.match(serviceControl,/clear\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
     'return-to-automatic authority changes must not race an in-flight reconciliation');
+  const inactivity=source('src/automation/customer-inactivity-scoped.js');
+  assert.match(inactivity,/finalizeDetachedRemovals[\s\S]*?reconciliationLock\.withCustomerReconciliationLock/,
+    'detached Free inactivity completion must serialize its authority re-check and terminal plan close');
+  assert.match(inactivity,/finalizeDetachedRemovalLocked[\s\S]*?subscriptionState\.liveFreeJellyfinSubscription/,
+    'detached Free inactivity completion must re-read current authority while holding the customer lock');
 }
 
 function freeInactivitySafetyContract(){
