@@ -105,6 +105,53 @@ const { activateOrRollback } = require('../src/payments/unpaid-access-activation
       'verification infrastructure failure must not trigger destructive unpaid rollback');
   }
 
+
+  {
+    const rollbackFailure = new Error('subscription close failed after remote cleanup');
+    let rollbackCalls = 0;
+    await assert.rejects(
+      activateOrRollback({
+        customerId: 'customer-rollback-failure',
+        subscriptionId: 'subscription-rollback-failure',
+        reconcile: async () => { throw new Error('provider timeout'); },
+        verify: async () => null,
+        rollback: async (customerId, subscriptionId) => {
+          rollbackCalls += 1;
+          assert.strictEqual(customerId, 'customer-rollback-failure');
+          assert.strictEqual(subscriptionId, 'subscription-rollback-failure');
+          throw rollbackFailure;
+        },
+        missingReason: 'missing',
+        failureMessage: 'clean rollback complete',
+        failureCode: 'FAILED'
+      }),
+      error => error === rollbackFailure,
+      'an uncertain/failed rollback must surface the rollback failure instead of falsely reporting clean access removal'
+    );
+    assert.strictEqual(rollbackCalls, 1, 'rollback failure path must still be attempted exactly once');
+  }
+
+  {
+    const rollbackCalls = [];
+    await assert.rejects(
+      activateOrRollback({
+        customerId: 'customer-exact',
+        subscriptionId: 'subscription-exact',
+        reconcile: async () => {},
+        verify: async () => null,
+        rollback: async (customerId, subscriptionId) => rollbackCalls.push({ customerId, subscriptionId }),
+        missingReason: 'missing account',
+        failureMessage: 'failed',
+        failureCode: 'FAILED'
+      }),
+      error => error.code === 'FAILED'
+    );
+    assert.deepStrictEqual(rollbackCalls, [{
+      customerId: 'customer-exact',
+      subscriptionId: 'subscription-exact'
+    }], 'activation rollback must remain exact-customer/exact-subscription scoped');
+  }
+
   console.log('unpaid access activation smoke: ok');
 })().catch(error => {
   console.error('unpaid access activation smoke failed:', error);
