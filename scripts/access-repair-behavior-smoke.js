@@ -155,6 +155,48 @@ function accessState({ free = [], primary = [] } = {}) {
     assert.strictEqual(result.status, 'removed');
   }
 
+  {
+    const rollbackCalls = [];
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [
+          { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'integrity-free' } },
+          { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'integrity-free' } }
+        ]
+      }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({
+        rollbackUnprovisionedFreeClaim: async (...args) => rollbackCalls.push(args)
+      })
+    });
+    const result = await repair.repairIntegrityFinding({
+      kind: 'free_plan_without_ready_server',
+      id: 'integrity-free',
+      customerId: 'integrity-customer'
+    });
+    assert.strictEqual(result.status, 'removed');
+    assert.strictEqual(rollbackCalls.length, 1,
+      'repairable Free integrity finding must delegate to exact-subscription Free repair');
+    assert.strictEqual(rollbackCalls[0][1], 'integrity-free');
+  }
+
+  {
+    const repair = createAccessRepair({
+      customerAccessState: accessState(),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({})
+    });
+    await assert.rejects(
+      repair.repairIntegrityFinding({
+        kind: 'paid_plan_without_recovery_state',
+        id: 'paid-subscription',
+        customerId: 'paid-customer'
+      }),
+      error => error.code === 'ACCESS_INTEGRITY_REPAIR_MANUAL_REVIEW',
+      'paid provisioning findings must never be routed through automatic destructive repair'
+    );
+  }
+
   console.log('access repair behavior smoke: ok');
 })().catch(error => {
   console.error('access repair behavior smoke failed:', error);
