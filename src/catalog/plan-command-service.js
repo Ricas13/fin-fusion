@@ -307,6 +307,7 @@ async function updatePaymentOptions({
   price,
   items = [],
   actorUserId = null,
+  auditAction = 'admin.plan.payment_options',
   auditMetadata = {}
 }) {
   if (!price?.id) throw new Error('A plan price is required before payment options can be saved.');
@@ -328,8 +329,8 @@ async function updatePaymentOptions({
 
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-       VALUES($1,'admin.plan.payment_options','plan',$2,$3::jsonb)`,
-      [actorUserId, planId, JSON.stringify(auditMetadata)]
+       VALUES($1,$2,'plan',$3,$4::jsonb)`,
+      [actorUserId, auditAction, planId, JSON.stringify(auditMetadata)]
     );
   });
 }
@@ -442,6 +443,175 @@ async function updateAccessPolicy({
   });
 }
 
+async function updateStremioCommerce({
+  planId,
+  name,
+  description,
+  features = [],
+  billingInterval,
+  durationDays,
+  discordRoleId = null,
+  currency,
+  priceMinor,
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans SET
+         name=$2,description=$3,marketing_features=$4::text[],
+         billing_interval=$5,duration_days=$6,discord_role_id=$7,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, name, description, features, billingInterval, durationDays, discordRoleId]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    const price = await planPricing.setPrice(client, planId, {
+      currency,
+      priceMinor,
+      active: true,
+      isDefault: true
+    });
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.stremio_commerce.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+
+    return { plan: updated.rows[0], price };
+  });
+}
+
+async function updateStremioStorefront({
+  planId,
+  description,
+  features = [],
+  actorUserId = null
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET description=$2,marketing_features=$3::text[],updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, description, features]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.stremio_storefront_compat.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ features: features.length })]
+    );
+
+    return updated.rows[0];
+  });
+}
+
+async function updateStremioTrackingSnapshots(client, {
+  planId,
+  householdLimit,
+  refresh
+}) {
+  if (!refresh) return 0;
+
+  const result = await client.query(
+    `UPDATE subscriptions
+     SET stremio_household_network_limit_snapshot=$2,
+         stremio_ip_replacement_policy_snapshot='auto_inactive'
+     WHERE plan_id=$1
+       AND superseded_by IS NULL
+       AND status IN ('active','trialing','past_due','paused')
+       AND starts_at<=NOW()
+       AND current_period_end>NOW()
+     RETURNING id`,
+    [planId, householdLimit]
+  );
+
+  const ids = result.rows.map(row => String(row.id));
+  if (ids.length) {
+    await client.query(
+      `UPDATE access_network_leases
+       SET expires_at=NOW()
+       WHERE scope='stremio'
+         AND subject_key=ANY($1::text[])
+         AND expires_at>NOW()`,
+      [ids]
+    );
+  }
+  return ids.length;
+}
+
+async function updateStremioAccess({
+  planId,
+  householdLimit,
+  leaseMinutes,
+  refreshTracking = false,
+  impact = {},
+  actorUserId = null
+}) {
+  return transaction(async client => {
+    const updatedSubscriptions = await updateStremioTrackingSnapshots(client, {
+      planId,
+      householdLimit,
+      refresh: refreshTracking
+    });
+
+    const updated = await client.query(
+      `UPDATE plans
+       SET stremio_household_network_limit=$2,
+           stremio_household_lease_minutes=$3,
+           stremio_ip_replacement_policy='auto_inactive',
+           updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, householdLimit, leaseMinutes]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.stremio_access.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({
+        householdImpact: impact,
+        replacementPolicy: 'auto_inactive',
+        updatedSubscriptions
+      })]
+    );
+
+    return { plan: updated.rows[0], updatedSubscriptions };
+  });
+}
+
+async function updateStremioAvailability({
+  planId,
+  capacityLimit,
+  active,
+  visible,
+  actorUserId = null
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET capacity_limit=$2,active=$3,visible=$4,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, capacityLimit, active, visible]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.stremio_availability.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ capacityLimit, active, visible })]
+    );
+
+    return updated.rows[0];
+  });
+}
+
 module.exports = {
   createPlan,
   updateProduct,
@@ -454,5 +624,10 @@ module.exports = {
   updatePortalCurrencyPrice,
   planSubscriberCount,
   clearPlanLeases,
-  updateAccessPolicy
+  updateAccessPolicy,
+  updateStremioCommerce,
+  updateStremioStorefront,
+  updateStremioTrackingSnapshots,
+  updateStremioAccess,
+  updateStremioAvailability
 };
