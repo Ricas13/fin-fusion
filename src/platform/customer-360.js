@@ -1,7 +1,6 @@
 'use strict';
 
 const {query}=require('../db');
-const provisioning=require('../jellyfin/resilient-provisioning');
 const accessHolds=require('../entitlements/access-holds');
 const customerAccessState=require('../access/customer-access-state');
 
@@ -12,6 +11,7 @@ function buildTimeline(parts){
     return parts.flat().filter(Boolean).sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,150);
 }
 function primaryFirst(rows,primaryEntitlement){const primaryId=String(primaryEntitlement?.subscription_id||'');return [...rows].sort((a,b)=>{const ap=String(a.id)===primaryId?0:1,bp=String(b.id)===primaryId?0:1;if(ap!==bp)return ap-bp;return new Date(b.created_at||0)-new Date(a.created_at||0);});}
+function primaryEntitlementFromAccessState(state){return state?.primary?.entitlement||state?.free?.entitlement||null;}
 function paymentIncidentForHold(hold,incidents){
     if(String(hold?.hold_type||'')!=='payment_risk')return null;
     const metadata=hold.metadata&&typeof hold.metadata==='object'?hold.metadata:{};
@@ -44,9 +44,8 @@ async function customer360(customerId){
     customer.discord_username=customer.linked_discord_username||null;
     const userId=customer.app_user_id;
 
-    const [subscriptions,primaryEntitlement,canonicalAccessState,holds,paymentIncidents,accounts,provisioningState,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
+    const [subscriptions,canonicalAccessState,holds,paymentIncidents,accounts,provisioningState,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
         query(`SELECT s.id,s.status,s.source,s.starts_at,CASE WHEN p.is_free_tier AND NOT ((s.source='stripe' AND COALESCE(s.provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\') OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') LIKE 'I-%')) THEN NULL ELSE s.current_period_end END AS current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.id plan_id,COALESCE(s.plan_code_snapshot,p.code) plan_code,COALESCE(s.plan_name_snapshot,p.name) plan_name,COALESCE(s.price_minor_snapshot,p.price_minor) price_minor,COALESCE(s.currency_snapshot,p.currency) currency,p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class,p.library_access_mode,p.library_names,COALESCE(s.service_type_snapshot,p.service_type) service_type,p.is_addon,p.is_free_tier,COALESCE(s.billing_interval_snapshot,p.billing_interval) billing_interval,COALESCE(s.duration_days_snapshot,p.duration_days) duration_days FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 ORDER BY s.created_at DESC LIMIT 50`,[customerId]),
-        provisioning.currentEntitlementTruth(customerId),
         customerAccessState.snapshot(customerId),
         accessHolds.activeHolds(customerId),
         query(`SELECT id,provider,provider_case_id,incident_type,incident_status,created_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50`,[customerId]),
@@ -66,6 +65,7 @@ async function customer360(customerId){
         query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id::text=$1::text) OR (entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)) ORDER BY created_at DESC LIMIT 100`,[customerId])
     ]);
 
+    const primaryEntitlement=primaryEntitlementFromAccessState(canonicalAccessState);
     const orderedSubscriptions=primaryFirst(subscriptions.rows,primaryEntitlement);
     const activeHolds=holds.map(hold=>{const incident=paymentIncidentForHold(hold,paymentIncidents.rows);return{...hold,payment_incident_id:incident?.id||null,payment_incident_type:incident?.incident_type||null,payment_incident_status:incident?.incident_status||null};});
     const timeline=buildTimeline([
@@ -99,4 +99,4 @@ async function customer360(customerId){
     };
 }
 
-module.exports={customer360,primaryFirst,paymentIncidentForHold};
+module.exports={customer360,primaryFirst,primaryEntitlementFromAccessState,paymentIncidentForHold};
