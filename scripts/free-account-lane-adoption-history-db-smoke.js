@@ -393,6 +393,7 @@ async function candidateWithGrace(customerId) {
     for (const customerId of created.customers.reverse()) {
         await query('DELETE FROM playback_history WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM jellyfin_accounts WHERE customer_id=$1', [customerId]).catch(() => {});
+        await query('DELETE FROM customer_entitlement_overrides WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM subscriptions WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
     }
