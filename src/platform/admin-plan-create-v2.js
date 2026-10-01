@@ -6,6 +6,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const reportingCurrency = require('./reporting-currency');
 const planCommands = require('../catalog/plan-command-service');
+const planInput = require('../catalog/plan-input');
 const { esc, layout } = require('./admin-html');
 
 const BILLING = { trial: { label: 'Trial', days: 1 }, month: { label: 'Monthly', days: 30 }, '6_months': { label: '6 months', days: 183 }, year: { label: 'Yearly', days: 365 }, custom: { label: 'Custom duration', days: null } };
@@ -18,11 +19,11 @@ const planCreateWriteLimit = routeRateLimit.middleware({ scope: 'admin-plan-crea
 
 function gate(req, res, next) { return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req, res, next) { res.setHeader('Cache-Control', 'no-store, private, max-age=0'); res.setHeader('Pragma', 'no-cache'); next(); }
-function b(v) { return v === true || ['on', 'true', '1', 'yes'].includes(String(v || '').toLowerCase()); }
-function text(v, max) { return String(v || '').trim().slice(0, max); }
-function int(v, min, max, label) { const raw = String(v ?? '').trim(), n = Number.parseInt(raw, 10); if (!Number.isInteger(n) || String(n) !== raw || n < min || n > max) throw new Error(`${label} must be a whole number from ${min} to ${max}.`); return n; }
-function money(v) { const raw = String(v ?? '').trim(); if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error('Enter a valid non-negative price with no more than two decimal places.'); const n = Number(raw); if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error('Price must be between 0 and 100,000.'); return Math.round(n * 100); }
-function libraryNames(v) { return [...new Set(String(v || '').split(/[\n,]/).map(x => x.trim()).filter(Boolean).map(x => x.slice(0, 200)))].slice(0, 500); }
+const b = planInput.bool;
+const text = planInput.text;
+const int = planInput.integer;
+const money = planInput.moneyMinor;
+function libraryNames(v) { return planInput.uniqueTextValues(v, { split: true }); }
 function selected(a, b) { return a === b ? 'selected' : ''; }
 function checked(v) { return v ? 'checked' : ''; }
 function notice(req) { return `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`; }
@@ -37,8 +38,7 @@ function kindFromLegacy(body = {}) {
 function serviceForKind(kind) { return kind === 'stremio' ? 'stremio' : 'jellyfin'; }
 
 function parse(body = {}, forcedCurrency = null) {
-  const code = text(body.code, 50).toLowerCase(), name = text(body.name, 80), description = text(body.description, 500);
-  if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code)) throw new Error('Code must be 2–50 characters using lowercase letters, numbers and hyphens.');
+  const code = planInput.planCode(body.code), name = text(body.name, 80), description = text(body.description, 500);
   if (!name) throw new Error('Enter a plan name.');
   const legacyServiceType = text(body.serviceType, 20).toLowerCase();
   if (!body.planKind && legacyServiceType && !SERVICE_TYPES.includes(legacyServiceType)) throw new Error('Choose Jellyfin or Stremio as the plan type.');
