@@ -397,6 +397,39 @@ for(const required of [
     `catalog plan command service must own ${required}`);
 }
 
+// Stremio plan editing uses the same catalog mutation owner as Jellyfin.
+const stremioPlanEditor=read('src/platform/admin-stremio-plan-editor.js');
+assert(stremioPlanEditor.includes("require('../catalog/plan-command-service')")
+    && stremioPlanEditor.includes('planCommands.updateStremioCommerce({')
+    && stremioPlanEditor.includes('planCommands.updateStremioStorefront({')
+    && stremioPlanEditor.includes('planCommands.updateStremioAccess({')
+    && stremioPlanEditor.includes('planCommands.updateStremioAvailability({')
+    && stremioPlanEditor.includes('planCommands.updatePaymentOptions({'),
+  'Stremio plan editor must delegate all catalogue mutations through catalog plan commands');
+for(const forbidden of [
+  'UPDATE plans SET name=',
+  'UPDATE plans SET description=',
+  'UPDATE plans SET stremio_household_network_limit=',
+  'UPDATE plans SET capacity_limit=',
+  'UPDATE subscriptions SET stremio_household_network_limit_snapshot=',
+  'INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)'
+]){
+  assert(!stremioPlanEditor.includes(forbidden),
+    `Stremio plan editor must not own catalogue mutation SQL: ${forbidden}`);
+}
+for(const required of [
+  'async function updateStremioCommerce',
+  'async function updateStremioStorefront',
+  'async function updateStremioAccess',
+  'async function updateStremioAvailability',
+  "'admin.plan.stremio_commerce.update'",
+  "'admin.plan.stremio_access.update'",
+  "'admin.plan.stremio_availability.update'"
+]){
+  assert(planCommandService.includes(required),
+    `catalog plan command service must own Stremio mutation ${required}`);
+}
+
 console.log('canonical ownership smoke: ok');
 
 
