@@ -23,6 +23,7 @@ const automationProtectionService=read('src/access/admin-customer-automation-pro
 const individualActionService=read('src/access/admin-customer-individual-action-service.js');
 const accessSettingsService=read('src/access/admin-customer-access-settings.js');
 const directLifecycleService=read('src/access/admin-customer-lifecycle-service.js');
+const billingControl=read('src/payments/billing-control.js');
 const deletion=read('src/customers/customer-deletion.js');
 const externalDeletion=read('src/customers/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -149,6 +150,23 @@ for(const action of [
 assert(accessSettingsService.includes("require('./customer-access-state')")
     && accessSettingsService.includes('customerAccessState.snapshot(customerId)'),
   'Customer 360 access settings must derive current lane entitlements from canonical customer access state');
+
+assert(customer360Route.includes('accessSettings.resetStremioHousehold(')
+    && !customer360Route.includes("require('../stremio/entitlements')")
+    && !customer360Route.includes("require('../stremio/household-access')"),
+  'Customer 360 Stremio household reset must delegate entitlement validation and lease release');
+assert(accessSettingsService.includes('async function resetStremioHousehold')
+    && accessSettingsService.includes('stremioEntitlements.current(customerId)')
+    && accessSettingsService.includes('stremioHouseholdAccess.release(entitlement'),
+  'access settings service must own Stremio household reset policy and mutation');
+assert(customer360Route.includes('billingControl.setCustomerRenewal(')
+    && !customer360Route.includes('function currentSubscription(')
+    && !customer360Route.includes('billingControl.setRenewal('),
+  'Customer 360 renewal must delegate canonical subscription selection to payments');
+assert(billingControl.includes('async function setCustomerRenewal')
+    && billingControl.includes("subscriptionState.effectiveSubscription(customerId, { includeBlocked: true })")
+    && billingControl.includes('return setRenewal(current.subscription_id || current.id, enabled, actorUserId, options)'),
+  'billing control must own Customer 360 renewal subscription selection before provider mutation');
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
 assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
