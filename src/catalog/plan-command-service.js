@@ -2,8 +2,10 @@
 
 const { transaction } = require('../db');
 const planPricing = require('../payments/plan-pricing');
+const planContract = require('./plan-contract');
 
 async function createPlan(plan, actorUserId = null) {
+  planContract.validateCreatePlan(plan);
   return transaction(async client => {
     const nextOrder = Number((await client.query(
       'SELECT COALESCE(MAX(sort_order),0)+10 AS n FROM plans'
@@ -89,6 +91,7 @@ async function updateProduct({
   actorUserId = null,
   auditMetadata = {}
 }) {
+  planContract.validateProduct({ name, description, features, visible, active });
   return transaction(async client => {
     const updated = await client.query(
       `UPDATE plans
@@ -108,6 +111,7 @@ async function updateProduct({
 }
 
 async function updateAvailability({ planId, capacityLimit, actorUserId = null }) {
+  planContract.validateAvailability({ capacityLimit });
   return transaction(async client => {
     const updated = await client.query(
       'UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
@@ -163,6 +167,7 @@ async function updateLibraries({
   actorUserId = null,
   auditMetadata = {}
 }) {
+  planContract.validateLibraries({ mode, names });
   return transaction(async client => {
     const updated = await client.query(
       'UPDATE plans SET library_access_mode=$2,library_names=$3::text[],updated_at=NOW() WHERE id=$1 RETURNING *',
@@ -187,6 +192,7 @@ async function updateCommerce({
   priceMinor,
   actorUserId = null
 }) {
+  planContract.validateCommerce({ billingInterval, durationDays, currency, priceMinor });
   const before = await planPricing.resolvePrice(planId, currency, { allowFallback: false });
   const pricingChanged = !before || Number(before.price_minor) !== Number(priceMinor);
   const intervalChanged = String(currentBillingInterval || '') !== String(billingInterval || '');
@@ -251,6 +257,8 @@ async function saveProviderOption(client, {
     );
     return;
   }
+
+  planContract.validateProviderMapping({ provider, mode, externalId });
 
   if (mode === 'subscription' && !externalId) {
     throw new Error(`${provider === 'stripe' ? 'Stripe' : 'PayPal'} subscription ID is required.`);
@@ -552,6 +560,7 @@ async function updateStremioAccess({
   impact = {},
   actorUserId = null
 }) {
+  planContract.validateStremioAccess({ householdLimit, leaseMinutes });
   return transaction(async client => {
     const updatedSubscriptions = await updateStremioTrackingSnapshots(client, {
       planId,
@@ -592,6 +601,7 @@ async function updateStremioAvailability({
   visible,
   actorUserId = null
 }) {
+  planContract.validateAvailability({ capacityLimit, active, visible });
   return transaction(async client => {
     const updated = await client.query(
       `UPDATE plans
@@ -743,6 +753,7 @@ async function upsertEmbyPlan({
 }
 
 async function saveImportedLegacyPlan(client, plan) {
+  planContract.validateImportedPlan(plan);
   const existing = await client.query('SELECT id FROM plans WHERE code=$1 FOR UPDATE', [plan.code]);
   if (existing.rowCount) {
     return client.query(
@@ -794,6 +805,7 @@ async function saveImportedLegacyPlan(client, plan) {
 }
 
 async function saveImportedV2Plan(client, plan) {
+  planContract.validateImportedPlan(plan);
   return client.query(
     `INSERT INTO plans(
        code,name,description,service_type,audience,billing_interval,duration_days,
@@ -947,6 +959,7 @@ async function updatePlanPlacement({
   actorUserId = null,
   auditMetadata = {}
 }) {
+  planContract.validateServerSelection({ poolMode, servers });
   return transaction(async client => {
     const updated = await client.query(
       'UPDATE plans SET placement_strategy=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
@@ -979,6 +992,7 @@ async function updatePlanInventory({
   actorUserId = null,
   auditMetadata = {}
 }) {
+  planContract.validateAvailability({ capacityLimit });
   return transaction(async client => {
     const updated = await client.query(
       `UPDATE plans
