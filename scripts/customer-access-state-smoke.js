@@ -16,6 +16,8 @@ const readiness = read('src/jellyfin/free-claim-readiness.js');
 const jobs = read('src/jellyfin/jobs.js');
 const backfill = read('src/automation/free-capacity-backfill.js');
 const accessRepair = read('src/access/access-repair.js');
+const customer360 = read('src/platform/customer-360.js');
+const customer360Truth = read('src/platform/customer-360-service-truth.js');
 
 for (const state of [
   'NONE',
@@ -23,7 +25,8 @@ for (const state of [
   'ACTIVE_BLOCKED',
   'PAID_PROVISIONING_FAILED',
   'INCONSISTENT_UNPAID',
-  'ORPHAN_ACCOUNT'
+  'ORPHAN_ACCOUNT',
+  'ACTIVE_ENTITLED'
 ]) {
   assert.strictEqual(accessState.ACCESS_STATES[state], state, `canonical access state must expose ${state}`);
 }
@@ -70,6 +73,12 @@ assert.strictEqual(accessState.operatorProtected({ admin_present: true, admin_je
   'a legacy/raw admin-present compatibility flag must not override an explicit placement-only server pin');
 assert.strictEqual(accessState.operatorProtected(null), false,
   'missing entitlements are never operator-protected');
+
+assert.strictEqual(
+  accessState.ACCESS_STATES.ACTIVE_ENTITLED,
+  'ACTIVE_ENTITLED',
+  'non-Jellyfin services must distinguish commercial entitlement from provider readiness'
+);
 
 const freeAccount = {
   id: 'free-ready',
@@ -173,6 +182,12 @@ assert(jobs.includes("require('../access/access-repair')"),
   'entitlement jobs must delegate repair decisions to the canonical access repair layer');
 assert(backfill.includes("require('../access/access-repair')"),
   'Free capacity repair must delegate repair decisions to the canonical access repair layer');
+assert(customer360.includes("require('../access/customer-access-state')")
+  && customer360.includes('customerAccessState.snapshot(customerId)'),
+  'Customer 360 must load one canonical cross-service access snapshot');
+assert(customer360Truth.includes('canonical?.emby?.entitlement')
+  && customer360Truth.includes('canonical?.stremio?.entitlement'),
+  'Customer 360 service truth must consume canonical Emby/Stremio entitlement selection instead of re-deciding it');
 
 assert(
   !dashboard.includes("SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free'"),
