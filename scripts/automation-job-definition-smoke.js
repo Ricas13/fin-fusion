@@ -5,6 +5,11 @@ const fs = require('fs');
 const path = require('path');
 const registry = require('../src/automation/jobs');
 
+assert(!fs.existsSync(path.join(__dirname, '..', 'src', 'automation', 'job-metadata.js')),
+  'retired automation metadata side-table must stay removed');
+assert(!fs.existsSync(path.join(__dirname, '..', 'src', 'automation', 'critical-jobs.js')),
+  'retired critical-jobs compatibility facade must stay removed');
+
 const names = registry.names();
 assert(names.length > 0, 'automation registry must expose jobs');
 
