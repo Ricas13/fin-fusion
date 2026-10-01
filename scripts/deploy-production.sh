@@ -124,6 +124,11 @@ if command -v git >/dev/null 2>&1 && [[ -d .git ]]; then
   log "Deploying commit $(git rev-parse --short HEAD)"
 fi
 
+# Every application/worker/operator service in this deployment uses one
+# immutable image tag. The stable captainfin:current alias is advanced only
+# after live verification succeeds.
+export CAPTAINFIN_IMAGE="${CAPTAINFIN_IMAGE:-captainfin:${CAPTAINFIN_BUILD_SHA}}"
+
 log 'Preparing isolated runtime database credentials'
 if command -v node >/dev/null 2>&1; then
   node scripts/prepare-production-env.js --write
@@ -204,11 +209,12 @@ fi
 # Compose/BuildKit may otherwise build identical service images concurrently.
 # Serialising those builds substantially lowers peak RAM/CPU on small VPS hosts.
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
-log "Building the release images conservatively (COMPOSE_PARALLEL_LIMIT=$COMPOSE_PARALLEL_LIMIT)"
-docker compose --profile recovery build \
+log "Building one immutable release image (COMPOSE_PARALLEL_LIMIT=$COMPOSE_PARALLEL_LIMIT)"
+docker compose build \
   --build-arg CAPTAINFIN_BUILD_SHA="$CAPTAINFIN_BUILD_SHA" \
   --build-arg CAPTAINFIN_BUILD_TIME="$CAPTAINFIN_BUILD_TIME" \
-  app automation-worker activity-worker backup-worker migrate recovery-tools
+  app
+docker image inspect "$CAPTAINFIN_IMAGE" >/dev/null 2>&1 || fail "release image was not created: $CAPTAINFIN_IMAGE"
 
 if [[ "$existing_database" == 1 ]]; then
   mkdir -p backups/predeploy
@@ -250,6 +256,9 @@ done
 
 log 'Running application-level deployment verification'
 docker compose exec -T app npm run verify:deployment
+
+log 'Publishing verified runtime alias'
+docker image tag "$CAPTAINFIN_IMAGE" captainfin:current
 
 services_stopped=0
 services_recreated=0
