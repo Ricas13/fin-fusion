@@ -99,7 +99,7 @@ async function testProviderDeadlines() {
   assert.match(providerAdapterSource, /providerHttp\.fetchJson\('paypal'/, 'Recurring PayPal adapter HTTP must use the deadline transport');
   assert.doesNotMatch(providerAdapterSource, /await fetch\(/, 'Recurring provider adapters must not retain unbounded native fetch calls');
   assert.match(providerAdapterSource, /timeout:\s*providerHttp\.timeoutMs\('stripe'\)/, 'Recurring Stripe adapter SDK client must have an application timeout');
-  assert.match(billingControlSource, /providerAdapters\.forProvider\(provider\)/, 'Billing control must delegate recurring provider transport through the adapter contract');
+  assert.match(billingControlSource, /providerContract\.recurring\(provider\)/, 'Billing control must delegate recurring provider transport through the canonical provider contract');
   assert.doesNotMatch(billingControlSource, /providerHttp\.fetchJson|require\('stripe'\)/, 'Billing policy must not reacquire provider transport mechanics');
   assert.match(providerRecoverySource, /timeout:\s*providerHttp\.timeoutMs\('stripe'\)/, 'Provider-operation recovery Stripe SDK client must have an application timeout');
   assert.match(plisioSource, /AbortController/, 'Plisio existing application deadline must remain intact');
@@ -130,7 +130,7 @@ async function testDeletionBillingControl() {
 
   const policySource = fs.readFileSync(path.join(__dirname, '../src/payments/billing-control.js'), 'utf8');
   const adapterSource = fs.readFileSync(path.join(__dirname, '../src/payments/provider-lifecycle-adapters.js'), 'utf8');
-  assert.match(policySource, /providerAdapters\.forProvider\(provider\)/, 'Billing policy must obtain recurring provider mechanics through the adapter contract');
+  assert.match(policySource, /providerContract\.recurring\(provider\)/, 'Billing policy must obtain recurring provider mechanics through the canonical provider contract');
   assert.doesNotMatch(policySource, /subscriptions\.cancel|billing\/subscriptions\//, 'Billing policy must not own remote cancellation transport');
   assert.match(adapterSource, /subscriptions\.cancel\([\s\S]+invoice_now:\s*false[\s\S]+prorate:\s*false/, 'Stripe hard deletion must immediately cancel without creating an extra proration invoice');
   assert.match(adapterSource, /billing\/subscriptions\/[\s\S]+\/cancel/, 'PayPal hard deletion must use the subscription cancellation endpoint');
