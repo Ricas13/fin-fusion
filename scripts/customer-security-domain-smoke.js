@@ -12,6 +12,7 @@ let directQueries=[];
 let txQueries=[];
 let otherSessions=['other-a','other-b'];
 let sessionVersion=7;
+let breachChecks=[];
 
 const client={
   async query(sql,params=[]){
@@ -21,11 +22,13 @@ const client={
     if(compact.includes('DELETE FROM auth_recovery_codes'))return{rows:[],rowCount:0};
     if(compact.includes('DELETE FROM auth_totp_enrollments'))return{rows:[],rowCount:0};
     if(compact.includes("'customer.2fa.disable'"))return{rows:[{id:'audit'}],rowCount:1};
+    if(compact.includes('SET password_hash=$2')&&compact.includes('session_version=session_version+1'))return{rows:[{session_version:sessionVersion}],rowCount:1};
     if(compact.includes('SET session_version=session_version+1'))return{rows:[{session_version:sessionVersion}],rowCount:1};
     if(compact.includes('SELECT session_id FROM auth_sessions'))return{rows:otherSessions.map(session_id=>({session_id})),rowCount:otherSessions.length};
     if(compact.includes('UPDATE auth_sessions')&&compact.includes('session_id<>$2'))return{rows:[],rowCount:otherSessions.length};
     if(compact.includes('UPDATE auth_sessions')&&compact.includes('session_version=$3'))return{rows:[],rowCount:1};
     if(compact.includes('DELETE FROM user_sessions'))return{rows:[],rowCount:otherSessions.length};
+    if(compact.includes("'customer.password.change'"))return{rows:[{id:'audit'}],rowCount:1};
     throw new Error('Unexpected security command transaction query: '+compact.slice(0,180));
   }
 };
@@ -33,10 +36,18 @@ const client={
 stub('src/db.js',{
   query:async(sql,params=[])=>{
     directQueries.push({sql:String(sql).replace(/\s+/g,' ').trim(),params});
+    if(String(sql).includes('SELECT password_hash FROM app_users'))return{rows:[{password_hash:'hash:current-password'}],rowCount:1};
     if(String(sql).includes('UPDATE auth_sessions')&&String(sql).includes('RETURNING session_id'))return{rows:[{session_id:params[0]}],rowCount:1};
     throw new Error('Unexpected direct security query: '+String(sql).replace(/\s+/g,' ').slice(0,180));
   },
   transaction:async fn=>fn(client)
+});
+require.cache[require.resolve('bcryptjs')]={id:require.resolve('bcryptjs'),filename:require.resolve('bcryptjs'),loaded:true,exports:{
+  compare:async(value,hash)=>hash===`hash:${value}`,
+  hash:async value=>`hash:${value}`
+}};
+stub('src/security/password-breach.js',{
+  assertNotBreached:async password=>{breachChecks.push(password);return true;}
 });
 stub('src/security/customer-email-change.js',{
   assertPassword:async(userId,password)=>{passwordChecks.push({userId,password});return true;}
@@ -75,6 +86,23 @@ const commands=require('../src/security/customer-security-commands');
   assert(txQueries.some(row=>row.sql.includes('session_id<>$2')&&row.sql.includes('revoked_at=NOW()')),'other authoritative auth sessions must be revoked');
   assert(txQueries.some(row=>row.sql.includes('SET session_version=$3')&&row.params[1]==='current'),'current auth session must be rebound to the new version');
   assert(txQueries.some(row=>row.sql.includes('DELETE FROM user_sessions')),'revoked browser sessions must be removed from the session store');
+
+  txQueries=[];
+  otherSessions=['other-a','other-b'];
+  const revokedOthers=await commands.revokeOtherSessions('user-1','current');
+  assert.strictEqual(revokedOthers,2,'other-session revocation must report exactly the revoked customer sessions');
+  assert(txQueries.some(row=>row.sql.includes('UPDATE auth_sessions')&&row.sql.includes('session_id<>$2')),'other-session revocation must update canonical auth session state');
+  assert(txQueries.some(row=>row.sql.includes('DELETE FROM user_sessions')),'other-session revocation must invalidate matching browser sessions atomically');
+
+  txQueries=[];
+  breachChecks=[];
+  otherSessions=['other-a'];
+  sessionVersion=11;
+  const changed=await commands.changePassword('user-1','current-password','new-password','current');
+  assert.deepStrictEqual(changed,{sessionVersion:11,revokedSessions:1},'password change must advance security version and report revoked sessions');
+  assert.deepStrictEqual(breachChecks,['new-password'],'password change must retain breached-password screening');
+  assert(txQueries.some(row=>row.sql.includes('SET password_hash=$2')&&row.sql.includes('session_version=session_version+1')),'password update and session-version bump must be atomic');
+  assert(txQueries.some(row=>row.sql.includes("'customer.password.change'")),'password change must retain its audit event inside the transaction');
 
   directQueries=[];
   const revoked=await commands.revokeSession('user-1','current');
