@@ -74,6 +74,26 @@ assert(!provisioning.includes('WITH expired AS')&&!resilientProvisioning.include
 assert(subscriptionExpiry.includes('WITH expired AS')&&subscriptionExpiry.includes("status IN('active','trialing','past_due','paused','cancelled')"),'canonical subscription expiry helper must own the expiry state transition');
 assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/jellyfin/provisioning.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry helper consumers must stay limited to provisioning surfaces');
 
+
+// Access Integrity operator decisions belong to the access domain. The admin
+// route renders findings and maps HTTP outcomes, but must not independently
+// decide repairability or reimplement stale-finding revalidation.
+const adminAutomation=read('src/platform/admin-automation.js');
+const integrityOperator=read('src/access/access-integrity-operator.js');
+assert(adminAutomation.includes("require('../access/access-integrity-operator')"),
+  'admin automation must consume the Access Integrity operator service');
+assert(!adminAutomation.includes("require('../access/access-integrity')")
+  && !adminAutomation.includes("require('../access/access-repair')"),
+  'platform adapter must not bypass the Access Integrity operator service');
+assert(integrityOperator.includes("require('./access-integrity')")
+  && integrityOperator.includes("require('./access-repair')")
+  && integrityOperator.includes('async function repairCurrent'),
+  'Access Integrity operator service must own scanner revalidation and safe repair dispatch');
+assert(integrityOperator.includes("const current = await scan({ limit: 500 })")
+  && integrityOperator.includes("String(item?.id || '') === normalized.id")
+  && integrityOperator.includes("String(item?.customerId || '') === normalized.customerId"),
+  'operator service must match the exact current scanner finding before mutation');
+
 // Activation cleanup must never own the right to delete a customer while a
 // provider checkout can still settle. Checkout creation takes the customer row
 // lock, and cleanup must re-check both open local checkouts and attached
