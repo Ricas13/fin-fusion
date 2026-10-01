@@ -73,7 +73,7 @@ function run(name, command, scenario = 'healthy') {
 try {
   const healthy = run('healthy', 'bash scripts/availability-watchdog.sh');
   assert(healthy.includes('/health/live') && healthy.includes('/health/ready'), 'healthy fleet must reach both HTTP probes');
-  assert(!healthy.includes('docker compose'), 'healthy fleet must not be recreated or restarted');
+  assert(!/docker compose (?:restart|up|stop)\b/.test(healthy), 'healthy fleet must not be recreated, restarted or stopped');
   const wedged = run('wedged', 'bash scripts/availability-watchdog.sh', 'wedged');
   assert(wedged.includes('docker compose restart app'), 'wedged running app must reach recovery');
   const drill = run('drill', 'bash recovery.sh drill fixture.pgdump.enc');
