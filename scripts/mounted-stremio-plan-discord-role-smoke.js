@@ -39,11 +39,11 @@ const db={
         plan.discord_role_id=savedRole;
         return rows([plan]);
       }
-      if(sql.includes('UPDATE subscriptions SET stremio_household_network_limit_snapshot=')){
+      if(sql.includes('UPDATE subscriptions')&&sql.includes('stremio_household_network_limit_snapshot=$2')){
         assert(sql.includes("stremio_ip_replacement_policy_snapshot='auto_inactive'"),'active Stremio subscriptions must use automatic lease expiry');
         return rows([{id:'subscription-live'}]);
       }
-      if(sql.includes('UPDATE access_network_leases SET expires_at=NOW()')){
+      if(sql.includes('UPDATE access_network_leases')&&sql.includes('SET expires_at=NOW()')){
         leaseReset=true;
         return rows([]);
       }
