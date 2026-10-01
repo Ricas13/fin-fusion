@@ -48,20 +48,21 @@ function resultRows(detail) {
   const state = detail?.provisioningState || {};
   const result = snapshot(detail);
   const live = currentSubscriptions(detail);
-  const loadedPrimary = detail?.primaryEntitlement || null;
-  const loadedFree = detail?.freeEntitlement || null;
+  const canonical = detail?.canonicalAccessState || null;
+  const loadedPrimary = canonical?.primary?.entitlement || detail?.primaryEntitlement || null;
+  const loadedFree = canonical?.free?.entitlement || detail?.freeEntitlement || null;
   const primaryEntitlement = loadedPrimary && supports(loadedPrimary, 'jellyfin') && !loadedPrimary.is_free_tier
     ? loadedPrimary
     : live.find(row => supports(row, 'jellyfin') && !row.is_free_tier) || null;
   const freeEntitlement = loadedFree && supports(loadedFree, 'jellyfin') && loadedFree.is_free_tier
     ? loadedFree
     : live.find(row => supports(row, 'jellyfin') && row.is_free_tier) || null;
-  const embyEntitlement = loadedPrimary && supports(loadedPrimary, 'emby')
-    ? loadedPrimary
-    : live.find(row => supports(row, 'emby')) || null;
-  const stremioEntitlement = loadedPrimary && supports(loadedPrimary, 'stremio')
-    ? loadedPrimary
-    : live.find(row => supports(row, 'stremio')) || null;
+  const embyEntitlement = canonical
+    ? canonical.emby?.entitlement || null
+    : (loadedPrimary && supports(loadedPrimary, 'emby') ? loadedPrimary : live.find(row => supports(row, 'emby')) || null);
+  const stremioEntitlement = canonical
+    ? canonical.stremio?.entitlement || null
+    : (loadedPrimary && supports(loadedPrimary, 'stremio') ? loadedPrimary : live.find(row => supports(row, 'stremio')) || null);
   const accounts = (detail?.accounts || []).filter(row => String(row?.account_purpose || 'jellyfin') !== 'stremio_internal');
   const primaryAccount = accounts.find(row => String(row?.access_lane || 'primary') === 'primary') || null;
   const freeAccount = accounts.find(row => String(row?.access_lane || '') === 'free') || null;

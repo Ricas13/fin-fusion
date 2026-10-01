@@ -1,7 +1,6 @@
 'use strict';
 
 const { query } = require('../db');
-const subscriptionState = require('../entitlements/subscription-state');
 const customerAccessState = require('./customer-access-state');
 
 function mediaType(account) {
@@ -25,17 +24,21 @@ async function mediaRows(customerId) {
 }
 
 async function accessContext(customerId) {
-  const [accounts, accessSnapshot, embyEntitlement] = await Promise.all([
+  const [accounts, accessSnapshot] = await Promise.all([
     mediaRows(customerId),
-    customerAccessState.snapshot(customerId).catch(() => null),
-    subscriptionState.effectiveEmbySubscription(customerId, { includeBlocked: true }).catch(() => null)
+    customerAccessState.snapshot(customerId).catch(() => null)
   ]);
-  return { customerId, accounts, accessSnapshot, embyEntitlement };
+  return {
+    customerId,
+    accounts,
+    accessSnapshot,
+    embyEntitlement: accessSnapshot?.emby?.entitlement || null
+  };
 }
 
 function entitlementForAccountFromContext(account, context = {}) {
   if (!account) return null;
-  if (mediaType(account) === 'emby') return context.embyEntitlement || null;
+  if (mediaType(account) === 'emby') return context.accessSnapshot?.emby?.entitlement || context.embyEntitlement || null;
   const access = context.accessSnapshot || null;
   if (String(account.access_lane || 'primary') === 'free') {
     return access?.free?.entitlement || null;
@@ -45,12 +48,8 @@ function entitlementForAccountFromContext(account, context = {}) {
 
 async function entitlementForAccount(customerId, account, { accessSnapshot = null, embyEntitlement } = {}) {
   if (!account) return null;
-  if (mediaType(account) === 'emby') {
-    if (embyEntitlement !== undefined) return embyEntitlement;
-    return subscriptionState.effectiveEmbySubscription(customerId, { includeBlocked: true }).catch(() => null);
-  }
   const access = accessSnapshot || await customerAccessState.snapshot(customerId).catch(() => null);
-  return entitlementForAccountFromContext(account, { accessSnapshot: access });
+  return entitlementForAccountFromContext(account, { accessSnapshot: access, embyEntitlement });
 }
 
 function evaluateCredentialAccess(account, entitlement) {

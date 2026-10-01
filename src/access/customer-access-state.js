@@ -9,7 +9,8 @@ const ACCESS_STATES = Object.freeze({
     ACTIVE_BLOCKED: 'ACTIVE_BLOCKED',
     PAID_PROVISIONING_FAILED: 'PAID_PROVISIONING_FAILED',
     INCONSISTENT_UNPAID: 'INCONSISTENT_UNPAID',
-    ORPHAN_ACCOUNT: 'ORPHAN_ACCOUNT'
+    ORPHAN_ACCOUNT: 'ORPHAN_ACCOUNT',
+    ACTIVE_ENTITLED: 'ACTIVE_ENTITLED'
 });
 
 function sameId(a, b) {
@@ -103,13 +104,38 @@ async function primaryJellyfin(customerId, { includeBlocked = true, accounts = n
     return classifyLane({ entitlement, accounts: rows, lane: 'primary', paidMissing: true });
 }
 
+async function serviceEntitlement(customerId, service, { includeBlocked = true } = {}) {
+    const normalized = String(service || '').trim().toLowerCase();
+    let entitlement = null;
+    if (normalized === 'emby') {
+        entitlement = await subscriptionState.effectiveEmbySubscription(customerId, { includeBlocked });
+    } else if (normalized === 'stremio') {
+        entitlement = await subscriptionState.effectiveStremioSubscription(customerId, { includeBlocked });
+    } else {
+        throw new Error(`Unsupported canonical service access state: ${normalized || '(empty)'}`);
+    }
+    if (!entitlement) return { state: ACCESS_STATES.NONE, entitlement: null };
+    if (entitlement.blocked) return { state: ACCESS_STATES.ACTIVE_BLOCKED, entitlement };
+    return { state: ACCESS_STATES.ACTIVE_ENTITLED, entitlement };
+}
+
+async function emby(customerId, options = {}) {
+    return serviceEntitlement(customerId, 'emby', options);
+}
+
+async function stremio(customerId, options = {}) {
+    return serviceEntitlement(customerId, 'stremio', options);
+}
+
 async function snapshot(customerId) {
     const accounts = await provisioning.normalAccounts(customerId);
-    const [primary, free] = await Promise.all([
+    const [primary, free, embyAccess, stremioAccess] = await Promise.all([
         primaryJellyfin(customerId, { includeBlocked: true, accounts }),
-        freeJellyfin(customerId, { includeBlocked: true, accounts })
+        freeJellyfin(customerId, { includeBlocked: true, accounts }),
+        emby(customerId, { includeBlocked: true }),
+        stremio(customerId, { includeBlocked: true })
     ]);
-    return { customerId, primary, free };
+    return { customerId, primary, free, emby: embyAccess, stremio: stremioAccess };
 }
 
 module.exports = {
@@ -124,5 +150,8 @@ module.exports = {
     classifyLane,
     freeJellyfin,
     primaryJellyfin,
+    serviceEntitlement,
+    emby,
+    stremio,
     snapshot
 };

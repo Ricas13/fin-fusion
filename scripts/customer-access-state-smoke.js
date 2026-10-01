@@ -17,6 +17,8 @@ const readiness = read('src/jellyfin/free-claim-readiness.js');
 const jobs = read('src/jellyfin/jobs.js');
 const backfill = read('src/automation/free-capacity-backfill.js');
 const accessRepair = read('src/access/access-repair.js');
+const customer360 = read('src/platform/customer-360.js');
+const customer360Truth = read('src/platform/customer-360-service-truth.js');
 
 for (const state of [
   'NONE',
@@ -24,7 +26,8 @@ for (const state of [
   'ACTIVE_BLOCKED',
   'PAID_PROVISIONING_FAILED',
   'INCONSISTENT_UNPAID',
-  'ORPHAN_ACCOUNT'
+  'ORPHAN_ACCOUNT',
+  'ACTIVE_ENTITLED'
 ]) {
   assert.strictEqual(accessState.ACCESS_STATES[state], state, `canonical access state must expose ${state}`);
 }
@@ -174,6 +177,16 @@ assert(jobs.includes("require('../access/access-repair')"),
   'entitlement jobs must delegate repair decisions to the canonical access repair layer');
 assert(backfill.includes("require('../access/access-repair')"),
   'Free capacity repair must delegate repair decisions to the canonical access repair layer');
+assert(customer360.includes("require('../access/customer-access-state')")
+  && customer360.includes('customerAccessState.snapshot(customerId)'),
+  'Customer 360 must load one canonical cross-service access snapshot');
+assert(customer360Truth.includes('canonical.emby?.entitlement')
+  && customer360Truth.includes('canonical.stremio?.entitlement'),
+  'Customer 360 service truth must consume canonical Emby/Stremio entitlement selection instead of re-deciding it');
+assert(!customerMediaAccess.includes("require('../entitlements/subscription-state')"),
+  'customer media access domain must not maintain a separate Emby entitlement lookup');
+assert(customerMediaAccess.includes('accessSnapshot?.emby?.entitlement'),
+  'customer media access must obtain Emby entitlement from the canonical access snapshot');
 
 assert(
   !dashboard.includes("SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free'"),
@@ -236,9 +249,9 @@ assert.strictEqual(
 const context = {
   accessSnapshot: {
     free: { entitlement: { subscription_id: 'free-sub', blocked: false } },
-    primary: { entitlement: { subscription_id: 'paid-sub', blocked: false } }
-  },
-  embyEntitlement: { subscription_id: 'emby-sub', blocked: false }
+    primary: { entitlement: { subscription_id: 'paid-sub', blocked: false } },
+    emby: { entitlement: { subscription_id: 'emby-sub', blocked: false } }
+  }
 };
 assert.strictEqual(
   mediaAccess.entitlementForAccountFromContext({ media_server_type: 'jellyfin', access_lane: 'free' }, context).subscription_id,
