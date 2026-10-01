@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 const manual = fs.readFileSync(path.join(root, 'src/platform/admin-manual-entitlement.js'), 'utf8');
 const manualOwner = fs.readFileSync(path.join(root, 'src/entitlements/manual-subscriptions.js'), 'utf8');
 const manualService = fs.readFileSync(path.join(root, 'src/entitlements/admin-manual-entitlement-service.js'), 'utf8');
+const subscriptionState = fs.readFileSync(path.join(root, 'src/entitlements/subscription-state.js'), 'utf8');
 const routes = fs.readFileSync(path.join(root, 'src/platform/admin-route-composition.js'), 'utf8');
 const customerActions = fs.readFileSync(path.join(root, 'src/platform/admin-actions.js'), 'utf8');
 const clientScript = fs.readFileSync(path.join(root, 'public/js/admin-manual-entitlement.js'), 'utf8');
@@ -34,7 +35,7 @@ assert(clientScript.includes("plan.addEventListener('change'") && clientScript.i
 assert(manual.includes("surface === 'access' || surface === 'billing'"), 'manual grant form must appear on both Customer 360 Billing and Access');
 assert(manual.includes("surface !== 'overview'") && manual.includes("'overview' : null"), 'Customer 360 overview must still participate in the empty-account guard without rendering a second grant form');
 assert(manual.includes('currentPrimarySubscription') && manual.includes('if (!existing)'), 'manual grant form must only appear when there is no effective primary subscription');
-assert(manualService.includes('o.permanent_access=TRUE') && manualService.includes('service_extension_days'), 'permanent and extension-backed effective access must block duplicate first-entitlement grants');
+assert(manualService.includes('subscriptionState.livePrimarySubscription') && subscriptionState.includes('async function livePrimarySubscription') && subscriptionState.includes('o.permanent_access=TRUE') && subscriptionState.includes('service_extension_days'), 'permanent and extension-backed effective access must block duplicate first-entitlement grants through canonical subscription state');
 assert(manualService.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect existing subscriptions to the normal manual edit flow');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
 assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
