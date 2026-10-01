@@ -25,6 +25,7 @@ const capabilityCss=read('public/css/admin-capability.css');
 const htmlCore=read('src/platform/admin-html-core.js');
 const tokenMaintenance=read('src/stremio/external-token-maintenance.js');
 const automationJobs=read('src/automation/jobs.js');
+const automationRegistry=require('../src/automation/jobs');
 const automationWorker=read('scripts/automation-worker.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
 const migration=read('db/migrations/000_database_baseline.sql');
@@ -97,7 +98,8 @@ assert(sourceIndex.includes('INCREMENTAL_HOURS=3')&&sourceIndex.includes('FULL_R
 assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'External indexing must remain incremental and low-footprint');
 assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(automationJobs.includes('stremio_external_tokens')&&automationJobs.includes('stremioExternalTokens.maintain'),'External token maintenance must remain a dedicated automation job');
-assert((automationWorker+automationJobs).includes('stremio_external_tokens:300')&&(automationWorker+automationJobs).includes('stremio_media_index:300'),'Automation defaults must retain five-minute token housekeeping and use a five-minute bounded external-index sweep cadence');
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_external_tokens'),300,'External token housekeeping must retain its five-minute cadence');
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_media_index'),300,'Bounded external-index sweeps must retain their five-minute cadence');
 assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(explicit)return mapped.rows'),'Explicit plan mappings must be strict external source allow-lists');
 assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own external source selection');
 
