@@ -4,6 +4,7 @@ const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
 const expenses=require('../src/platform/business-expenses');
+const calendarDate=require('../src/finance/calendar-date');
 const adminExpenses=require('../src/platform/admin-expenses');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
@@ -16,6 +17,10 @@ assert.deepStrictEqual(dates(row({recurrence:'quarterly',start_date:'2024-02-29'
 assert.deepStrictEqual(dates(row({recurrence:'yearly',start_date:'2024-02-29'}),'2024-01-01','2027-01-01'),['2024-02-29','2025-02-28','2026-02-28'],'yearly leap-day expenses must clamp safely');
 assert.deepStrictEqual(dates(row({recurrence:'one_time',start_date:'2024-06-15'}),'2024-01-01','2025-01-01'),['2024-06-15'],'one-off expenses must be booked exactly once');
 assert.deepStrictEqual(dates(row({end_date:'2024-03-31'}),'2024-01-01','2025-01-01'),['2024-01-31','2024-02-29','2024-03-31'],'recurring expenses must stop at their optional end date');
+assert.strictEqual(calendarDate.text('2024-02-29'),'2024-02-29','calendar date text must preserve a valid leap day');
+assert.strictEqual(calendarDate.text('2024-02-30'),null,'calendar date text must reject impossible dates');
+assert.strictEqual(calendarDate.startUtc('2024-03-31').toISOString(),'2024-03-31T00:00:00.000Z','calendar dates must become explicit UTC arithmetic boundaries');
+
 
 const summary=expenses.summarize([row(),row({start_date:'2024-02-15',recurrence:'one_time',amount_minor:2500,category:'Hardware',supplier:'Shop'})],'2024-01-01','2024-04-01',(minor)=>minor,'GBP');
 assert.equal(summary.totalMinor,5500,'summary must include three monthly occurrences plus one one-off cost');
@@ -33,10 +38,14 @@ assert.deepStrictEqual(adminExpenses.filteredLedger(sortableRows,adminExpenses.l
 
 const migration=read('db/migrations/041_business_expenses.sql');
 const admin=read('src/platform/admin-expenses.js');
+const expenseSource=read('src/platform/business-expenses.js');
+const ledgerSource=read('src/payments/dashboard-ledger.js');
 const nav=read('src/platform/admin-nav.js');
 const routes=read('src/platform/admin-route-composition.js');
 const widgets=read('src/platform/admin-commerce-expense-widgets.js');
 const profit=read('src/platform/business-profitability.js');
+assert(expenseSource.includes('start_date::text AS start_date')&&expenseSource.includes('end_date::text AS end_date'),'business expense DATE columns must cross the database boundary as calendar text');
+assert(expenseSource.includes("require('../finance/calendar-date')")&&ledgerSource.includes("require('../finance/calendar-date')"),'financial DATE consumers must share the canonical calendar-date helper');
 for(const term of ['business_expenses','one_time','monthly','quarterly','yearly','amount_minor','currency'])assert(migration.includes(term),`expense migration is missing ${term}`);
 for(const term of ['/admin/expenses','Add business expense','Annual profitability','Projected annual expenses','Export CSV'])assert(admin.includes(term),`expense admin workspace is missing ${term}`);
 assert(admin.includes('Gross provider receipts')&&admin.includes('Net provider receipts')&&admin.includes('d.revenue.basisText'),'Expenses annual profitability must use and explain canonical provider receipts');
