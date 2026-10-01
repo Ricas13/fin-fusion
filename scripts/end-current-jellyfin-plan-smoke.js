@@ -5,7 +5,7 @@ const fs=require('fs');
 const termination=require('../src/payments/subscription-termination');
 
 const ui=fs.readFileSync('src/platform/admin-bulk-customers.js','utf8');
-const bulk=fs.readFileSync('src/platform/bulk-operations.js','utf8');
+const bulk=fs.readFileSync('src/customers/bulk-operations.js','utf8');
 const providerRecovery=fs.readFileSync('src/payments/provider-operation-recovery.js','utf8');
 const permanent=fs.readFileSync('src/entitlements/permanent-access.js','utf8');
 const terminationSource=fs.readFileSync('src/payments/subscription-termination.js','utf8');
