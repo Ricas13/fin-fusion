@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const providerLifecycleState = require('../src/payments/provider-lifecycle-state');
 
 function read(relativePath) {
     return fs.readFileSync(path.resolve(__dirname, '..', relativePath), 'utf8');
@@ -18,6 +19,39 @@ assert(missing.includes('status === 404'), 'HTTP 404 may be treated as a genuine
 assert(missing.includes("code === 'resource_missing'"), 'Stripe resource_missing may be treated as a genuinely missing schedule');
 assert(!matching.includes('catch (_) {}'), 'recorded Stripe schedule lookup must never swallow all provider errors');
 assert.match(matching, /catch \(error\)[\s\S]*if \(!stripeResourceMissing\(error\)\) throw error;/, 'timeouts, 5xx, auth and network failures must propagate into provider-operation retry handling');
+
+
+assert.strictEqual(providerLifecycleState.normalizeStatus('stripe',' ACTIVE '),'active');
+assert.strictEqual(providerLifecycleState.normalizeStatus('paypal',' cancelled '),'CANCELLED');
+assert.strictEqual(providerLifecycleState.normalizeStatus('plisio',' Pending Internal '),'pending internal');
+assert.strictEqual(providerLifecycleState.isTerminal('stripe','incomplete_expired'),true);
+assert.strictEqual(providerLifecycleState.isTerminal('paypal','canceled'),true);
+assert.strictEqual(providerLifecycleState.isTerminal('plisio','mismatch'),true);
+assert.strictEqual(providerLifecycleState.isWaiting('plisio','pending'),true);
+assert.strictEqual(providerLifecycleState.isHealthy('paypal','active'),true);
+assert.throws(()=>providerLifecycleState.normalizeStatus('unknown','active'),/Unsupported payment provider/);
+
+const stripeSource=read('src/payments/stripe.js');
+const paypalSource=read('src/payments/paypal.js');
+const plisioSource=read('src/payments/plisio.js');
+const billingControlSource=read('src/payments/billing-control.js');
+const checkoutRecoverySource=read('src/payments/provider-checkout-recovery.js');
+for(const [name,source] of [
+    ['Stripe',stripeSource],
+    ['PayPal',paypalSource],
+    ['Plisio',plisioSource],
+    ['billing control',billingControlSource],
+    ['checkout recovery',checkoutRecoverySource]
+]){
+    assert(source.includes("provider-lifecycle-state"),`${name} must consume the canonical provider lifecycle state contract`);
+}
+assert(!billingControlSource.includes("['canceled', 'cancelled', 'incomplete_expired']")
+    && !billingControlSource.includes("['CANCELLED', 'CANCELED', 'EXPIRED']"),
+    'billing control must not duplicate provider terminal-state lists');
+assert(!stripeSource.includes("['canceled','cancelled','incomplete_expired']"),
+    'Stripe integration must not duplicate terminal-state classification');
+assert(!paypalSource.includes("['CANCELLED','CANCELED','EXPIRED'].includes(paypalStatus(status))"),
+    'PayPal integration must not duplicate terminal-state classification');
 
 // billing_mode remains the application-level authority. The database migration
 // repairs and rejects the one impossible Stripe tuple (subscription + pi_*), so
