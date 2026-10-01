@@ -43,7 +43,7 @@ assert(statusSource.includes('Type <strong>RELEASE</strong> to confirm')&&status
 assert(accessControlSource.includes("if(type==='payment_risk')throw new Error"),'server-side hold release must refuse payment-risk bypasses even if a crafted form is submitted');
 assert(accessControlSource.includes('FOR UPDATE'),'manual hold release must lock the exact active hold before resolving it');
 assert(holdRouteSource.includes('reconcileCustomerForAdmin')&&holdRouteSource.includes("router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute)")&&holdRouteSource.includes("router.post('/admin/users/:customerId/reconcile',reconcileRoute)"),'single-customer reconciliation routes must be thin wrappers over one canonical handler');
-assert(accessLoaderSource.includes('provisioning.currentEntitlementTruth(customerId)'),'Customer 360 must load commercial entitlement truth even while access is blocked');
+assert(accessLoaderSource.includes('customerAccessState.snapshot(customerId)')&&accessLoaderSource.includes('primaryEntitlementFromAccessState(canonicalAccessState)')&&!accessLoaderSource.includes('currentEntitlementTruth(customerId)'),'Customer 360 must derive blocked/current commercial entitlement truth from the canonical cross-service snapshot');
 assert(accessLoaderSource.includes('accessHolds.activeHolds(customerId)'),'Customer 360 must load active access holds explicitly');
 
 const manualAssignmentSource=read('src/jellyfin/manual-assignment.js');
