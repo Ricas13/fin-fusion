@@ -40,11 +40,12 @@ for(const [name,source] of [
     ['Stripe',stripeSource],
     ['PayPal',paypalSource],
     ['Plisio',plisioSource],
-    ['billing control',billingControlSource],
     ['checkout recovery',checkoutRecoverySource]
 ]){
     assert(source.includes("provider-lifecycle-state"),`${name} must consume the canonical provider lifecycle state contract`);
 }
+assert(billingControlSource.includes("provider-contract"),'billing control must consume provider lifecycle facts through the canonical provider contract');
+assert(!billingControlSource.includes("provider-lifecycle-adapters"),'billing policy must not bypass the canonical provider contract');
 assert(!billingControlSource.includes("['canceled', 'cancelled', 'incomplete_expired']")
     && !billingControlSource.includes("['CANCELLED', 'CANCELED', 'EXPIRED']"),
     'billing control must not duplicate provider terminal-state lists');
