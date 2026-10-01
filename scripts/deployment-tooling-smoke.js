@@ -110,6 +110,7 @@ assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
 assert((compose.match(/STREMIO_JELLYFIN_TOKEN_KEY: \$\{STREMIO_JELLYFIN_TOKEN_KEY:-\}/g) || []).length === 2, 'app and automation-worker must receive the same managed Stremio token key');
 assert((compose.match(/image: \$\{CAPTAINFIN_IMAGE:-captainfin:current\}/g) || []).length === 6, 'migrate/app/workers/recovery must share the canonical runtime image');
+assert.strictEqual((compose.match(/pull_policy:\s*never/g) || []).length, 6, 'internal runtime services must never pull the local verified runtime tag from a registry');
 assert.strictEqual((compose.match(/^\s+build:\s*\.\s*$/gm) || []).length, 1, 'only the app service may own the Docker build definition');
 assert(deployScript.includes('export CAPTAINFIN_IMAGE="captainfin:${CAPTAINFIN_BUILD_SHA}"'), 'production deployment must derive the release image tag only from build SHA');
 assert(deployScript.includes('docker compose build') && /docker compose build[\s\S]*?\n\s*app\b/.test(deployScript), 'deployment must build the shared application image once through app');
