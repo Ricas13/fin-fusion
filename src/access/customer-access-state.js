@@ -36,6 +36,11 @@ function isPaid(entitlement) {
     return !isTrial(entitlement) && Number.isFinite(price) && price > 0;
 }
 
+function operatorProtected(entitlement) {
+    const mode = String(entitlement?.admin_jellyfin_mode || '').toLowerCase();
+    return Boolean(entitlement?.permanent_access || entitlement?.admin_present || mode === 'present');
+}
+
 async function accountsForCustomer(customerId, supplied = null) {
     return Array.isArray(supplied) ? supplied : provisioning.normalAccounts(customerId);
 }
@@ -111,6 +116,7 @@ module.exports = {
     accountMatchesEntitlement,
     isTrial,
     isPaid,
+    operatorProtected,
     readyAccountForEntitlement,
     classifyLane,
     freeJellyfin,
