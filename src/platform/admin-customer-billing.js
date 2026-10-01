@@ -5,8 +5,7 @@ const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const manualPaymentLedger = require('../payments/manual-payment-ledger');
 
-const METHOD_LABELS = { cash: 'Cash', bank_transfer: 'Bank transfer', crypto: 'Crypto', other: 'Other' };
-const CURRENCIES = ['GBP', 'USD', 'EUR'];
+const { METHOD_LABELS, CURRENCIES } = manualPaymentLedger;
 const writeLimit = routeRateLimit.middleware({ scope: 'admin-customer-billing-write', max: 30, windowSeconds: 60, reason: 'admin_customer_billing_write' });
 
 function gate(req, res, next) {
