@@ -37,8 +37,11 @@ function isPaid(entitlement) {
 }
 
 function operatorProtected(entitlement) {
-    const mode = String(entitlement?.admin_jellyfin_mode || '').toLowerCase();
-    return Boolean(entitlement?.permanent_access || entitlement?.admin_present || mode === 'present');
+    if (!entitlement) return false;
+    if (entitlement.permanent_access) return true;
+    const mode = String(entitlement.admin_jellyfin_mode || '').toLowerCase();
+    if (mode) return mode === 'present';
+    return Boolean(entitlement.admin_present);
 }
 
 async function accountsForCustomer(customerId, supplied = null) {
