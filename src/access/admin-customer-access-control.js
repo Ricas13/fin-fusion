@@ -167,19 +167,33 @@ async function releaseCustomerHold(customerId,holdId,actorUserId,resolutionReaso
   });
 
   if(releasedType==='inactivity_policy'){
-    await inactivityRestore.restoreDisabledFreeAccess(customerId,{
-      actorUserId,
-      reconcile:id=>reconcileCustomerForAdmin(id,actorUserId)
-    });
-    return{releasedType,selectedSourceKey,restoredInactivity:true,remainingBlockers:0};
+    try{
+      await inactivityRestore.restoreDisabledFreeAccess(customerId,{
+        actorUserId,
+        reconcile:id=>reconcileCustomerForAdmin(id,actorUserId)
+      });
+      return{releasedType,selectedSourceKey,restoredInactivity:true,remainingBlockers:0};
+    }catch(error){
+      error.inactivityRestoreFailed=true;
+      error.releasedType=releasedType;
+      error.selectedSourceKey=selectedSourceKey;
+      throw error;
+    }
   }
-  const outcome=await reconcileCustomerForAdmin(customerId,actorUserId);
-  return{
-    releasedType,
-    selectedSourceKey,
-    restoredInactivity:false,
-    remainingBlockers:Array.isArray(outcome?.blockers)?outcome.blockers.length:0
-  };
+  try{
+    const outcome=await reconcileCustomerForAdmin(customerId,actorUserId);
+    return{
+      releasedType,
+      selectedSourceKey,
+      restoredInactivity:false,
+      remainingBlockers:Array.isArray(outcome?.blockers)?outcome.blockers.length:0
+    };
+  }catch(error){
+    error.holdReleaseCommitted=true;
+    error.releasedType=releasedType;
+    error.selectedSourceKey=selectedSourceKey;
+    throw error;
+  }
 }
 
 module.exports={
