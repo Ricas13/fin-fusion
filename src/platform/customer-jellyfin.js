@@ -4,8 +4,7 @@ const express=require('express');
 const {rateLimit}=require('express-rate-limit');
 const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
-const subscriptionState=require('../entitlements/subscription-state');
-const customerAccessState=require('../access/customer-access-state');
+const customerMediaAccess=require('../access/customer-media-access');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const inactivityStatus=require('../automation/customer-inactivity-status');
 const runtimeSettings=require('./runtime-settings');
@@ -178,25 +177,11 @@ async function inactiveAccessHistory(customerId,portal,returnStatus){
 }
 
 async function mediaRows(customerId){
-  const result=await query(`
-    SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,
-           COALESCE(js.media_server_type,'jellyfin') AS media_server_type
-    FROM jellyfin_accounts ja
-    JOIN jellyfin_servers js ON js.id=ja.server_id
-    WHERE ja.customer_id=$1 AND ja.account_purpose<>'stremio_internal'
-    ORDER BY CASE COALESCE(js.media_server_type,'jellyfin') WHEN 'jellyfin' THEN 0 ELSE 1 END,
-             CASE ja.access_lane WHEN 'free' THEN 0 ELSE 1 END,
-             ja.is_primary DESC,ja.disabled ASC,ja.created_at ASC
-  `,[customerId]);
-  return result.rows;
+  return customerMediaAccess.mediaRows(customerId);
 }
 
 async function entitlementForAccount(customerId,account,accessSnapshot=null){
-  if(!account)return null;
-  if(mediaType(account)==='emby')return subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}).catch(()=>null);
-  const access=accessSnapshot||await customerAccessState.snapshot(customerId).catch(()=>null);
-  if(String(account.access_lane||'primary')==='free')return access?.free?.entitlement||null;
-  return access?.primary?.entitlement||null;
+  return customerMediaAccess.entitlementForAccount(customerId,account,{accessSnapshot});
 }
 
 function mergeAccount(account,portalAccount,profile,entitlement,error=null){
@@ -229,18 +214,11 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
 
 async function accessAccountsForCustomer(customerId,portal){
   const portalAccounts=new Map((Array.isArray(portal?.accounts)?portal.accounts:[]).map(account=>[String(account.id),account]));
-  const [rows,accessSnapshot,embyEntitlement]=await Promise.all([
-    mediaRows(customerId),
-    customerAccessState.snapshot(customerId).catch(()=>null),
-    subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}).catch(()=>null)
-  ]);
+  const context=await customerMediaAccess.accessContext(customerId);
+  const rows=context.accounts;
   const result=[];
   for(const account of rows){
-    const entitlement=mediaType(account)==='emby'
-      ?embyEntitlement
-      :String(account.access_lane||'primary')==='free'
-        ?accessSnapshot?.free?.entitlement||null
-        :accessSnapshot?.primary?.entitlement||null;
+    const entitlement=customerMediaAccess.entitlementForAccountFromContext(account,context);
     if(mediaType(account)!=='jellyfin'){
       result.push(mergeAccount(account,portalAccounts.get(String(account.id)),null,entitlement));
       continue;
@@ -269,13 +247,12 @@ async function requestStateForCustomer(customerId){
 }
 
 async function assertMediaAccess(customerId,accountId){
-  const rows=await mediaRows(customerId);
-  const account=rows.find(row=>String(row.id)===String(accountId));
-  if(!account)throw new Error('Streaming account not found.');
-  if(account.disabled||!account.server_enabled)throw new Error(`${mediaLabel(account)} access is currently unavailable.`);
-  const entitlement=await entitlementForAccount(customerId,account);
-  if(!entitlement||entitlement.blocked)throw new Error(`${mediaLabel(account)} credential management requires current ${mediaLabel(account)} access.`);
-  return{account,entitlement};
+  const decision=await customerMediaAccess.credentialAccess(customerId,accountId);
+  if(decision.ok)return{account:decision.account,entitlement:decision.entitlement};
+  if(decision.reason==='not_found')throw new Error('Streaming account not found.');
+  const label=mediaLabel(decision.account);
+  if(decision.reason==='account_unavailable')throw new Error(`${label} access is currently unavailable.`);
+  throw new Error(`${label} credential management requires current ${label} access.`);
 }
 
 function createCustomerJellyfinRouter(){
@@ -294,12 +271,7 @@ function createCustomerJellyfinRouter(){
     try{
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
-      const freeAccess=await customerAccessState.freeJellyfin(customerId,{includeBlocked:true}).catch(()=>null);
-      const liveFree=freeAccess?.entitlement||null;
-      let incompleteFreeSubscriptionId=null;
-      if(liveFree&&!liveFree.blocked&&freeAccess?.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
-        incompleteFreeSubscriptionId=String(liveFree.subscription_id||'');
-      }
+      const incompleteFreeSubscriptionId=await customerMediaAccess.incompleteFreeSubscriptionId(customerId).catch(()=>null);
       const portal=await customers.getCustomerPortal(customerId);
       const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
         .filter(customerNav.liveServiceSubscription)

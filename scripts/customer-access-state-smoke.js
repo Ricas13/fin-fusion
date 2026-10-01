@@ -12,6 +12,7 @@ const accessState = require('../src/access/customer-access-state');
 const lifecycle = read('src/payments/lifecycle.js');
 const dashboard = read('src/platform/customer-dashboard.js');
 const myAccess = read('src/platform/customer-jellyfin.js');
+const customerMediaAccess = read('src/access/customer-media-access.js');
 const readiness = read('src/jellyfin/free-claim-readiness.js');
 const jobs = read('src/jellyfin/jobs.js');
 const backfill = read('src/automation/free-capacity-backfill.js');
@@ -160,7 +161,7 @@ assert.strictEqual(
 for (const [name, source] of [
   ['lifecycle', lifecycle],
   ['customer dashboard', dashboard],
-  ['My Access', myAccess],
+  ['customer media access domain', customerMediaAccess],
   ['Free claim readiness', readiness],
   ['access repair', accessRepair]
 ]) {
@@ -184,12 +185,100 @@ assert(
 );
 
 assert(
-  myAccess.includes("customerAccessState.freeJellyfin(customerId,{includeBlocked:true})"),
-  'My Access must use canonical Free access readiness instead of issuing its own Free account readiness query'
+  customerMediaAccess.includes("customerAccessState.freeJellyfin(customerId, { includeBlocked: true })"),
+  'customer media access domain must use canonical Free access readiness'
 );
 assert(
-  !myAccess.includes("AND ja.access_lane='free'\n            AND ja.disabled=FALSE\n            AND js.enabled=TRUE"),
-  'My Access must not rebuild canonical Free-ready SQL'
+  myAccess.includes("require('../access/customer-media-access')"),
+  'My Access route must consume the customer media access domain service'
+);
+assert(
+  !myAccess.includes("require('../access/customer-access-state')")
+    && !myAccess.includes("require('../entitlements/subscription-state')"),
+  'My Access route must not independently interpret canonical subscription/access state'
+);
+assert(
+  !myAccess.includes('FROM jellyfin_accounts'),
+  'My Access route must not own customer media account/server SQL'
+);
+assert(
+  myAccess.includes('customerMediaAccess.incompleteFreeSubscriptionId(customerId)'),
+  'My Access must delegate incomplete Free-state interpretation to the access domain'
+);
+
+const freeIncomplete = accessState.ACCESS_STATES.INCONSISTENT_UNPAID;
+const mediaAccess = require('../src/access/customer-media-access');
+assert.strictEqual(
+  mediaAccess.incompleteFreeSubscriptionIdFromState({
+    state: freeIncomplete,
+    entitlement: { subscription_id: 'free-incomplete', blocked: false }
+  }),
+  'free-incomplete',
+  'incomplete unblocked Free entitlement must remain identifiable for safe portal suppression'
+);
+assert.strictEqual(
+  mediaAccess.incompleteFreeSubscriptionIdFromState({
+    state: accessState.ACCESS_STATES.ACTIVE_READY,
+    entitlement: { subscription_id: 'free-ready', blocked: false }
+  }),
+  null,
+  'ready Free access must never be treated as incomplete'
+);
+assert.strictEqual(
+  mediaAccess.incompleteFreeSubscriptionIdFromState({
+    state: accessState.ACCESS_STATES.ACTIVE_BLOCKED,
+    entitlement: { subscription_id: 'free-blocked', blocked: true }
+  }),
+  null,
+  'blocked Free access must not be reinterpreted as incomplete provisioning'
+);
+
+const context = {
+  accessSnapshot: {
+    free: { entitlement: { subscription_id: 'free-sub', blocked: false } },
+    primary: { entitlement: { subscription_id: 'paid-sub', blocked: false } }
+  },
+  embyEntitlement: { subscription_id: 'emby-sub', blocked: false }
+};
+assert.strictEqual(
+  mediaAccess.entitlementForAccountFromContext({ media_server_type: 'jellyfin', access_lane: 'free' }, context).subscription_id,
+  'free-sub',
+  'Free account credential decisions must use only the Free entitlement lane'
+);
+assert.strictEqual(
+  mediaAccess.entitlementForAccountFromContext({ media_server_type: 'jellyfin', access_lane: 'primary' }, context).subscription_id,
+  'paid-sub',
+  'Premium account credential decisions must use only the primary entitlement lane'
+);
+assert.strictEqual(
+  mediaAccess.entitlementForAccountFromContext({ media_server_type: 'emby', access_lane: 'primary' }, context).subscription_id,
+  'emby-sub',
+  'Emby account credential decisions must remain isolated from Jellyfin lanes'
+);
+assert.strictEqual(
+  mediaAccess.evaluateCredentialAccess(null, null).reason,
+  'not_found',
+  'credential authorization must reject unknown accounts'
+);
+assert.strictEqual(
+  mediaAccess.evaluateCredentialAccess({ disabled: true, server_enabled: true }, context.accessSnapshot.primary.entitlement).reason,
+  'account_unavailable',
+  'disabled media accounts must not be authorized for credential changes'
+);
+assert.strictEqual(
+  mediaAccess.evaluateCredentialAccess({ disabled: false, server_enabled: false }, context.accessSnapshot.primary.entitlement).reason,
+  'account_unavailable',
+  'accounts on disabled servers must not be authorized for credential changes'
+);
+assert.strictEqual(
+  mediaAccess.evaluateCredentialAccess({ disabled: false, server_enabled: true }, { blocked: true }).reason,
+  'entitlement_unavailable',
+  'blocked entitlements must not authorize credential changes'
+);
+assert.strictEqual(
+  mediaAccess.evaluateCredentialAccess({ disabled: false, server_enabled: true }, context.accessSnapshot.primary.entitlement).ok,
+  true,
+  'enabled account plus current unblocked entitlement must authorize credential management'
 );
 
 console.log('customer access state smoke: ok');

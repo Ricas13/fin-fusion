@@ -94,6 +94,26 @@ assert(integrityOperator.includes("const current = await scan({ limit: 500 })")
   && integrityOperator.includes("String(item?.customerId || '') === normalized.customerId"),
   'operator service must match the exact current scanner finding before mutation');
 
+// Customer My Access is an HTTP/presentation adapter. Customer media-account
+// SQL, lane-to-entitlement selection and credential authorization belong to the
+// access domain so the route cannot invent a second access truth.
+const customerMyAccess=read('src/platform/customer-jellyfin.js');
+const customerMediaAccess=read('src/access/customer-media-access.js');
+assert(customerMyAccess.includes("require('../access/customer-media-access')"),
+  'customer My Access must consume the customer media access domain service');
+assert(!customerMyAccess.includes("require('../access/customer-access-state')")
+    && !customerMyAccess.includes("require('../entitlements/subscription-state')"),
+  'customer My Access must not bypass its media access domain service');
+assert(!customerMyAccess.includes('FROM jellyfin_accounts'),
+  'customer My Access must not own media account/server SQL');
+assert(customerMediaAccess.includes("require('./customer-access-state')")
+    && customerMediaAccess.includes("require('../entitlements/subscription-state')"),
+  'customer media access domain must compose canonical Jellyfin and Emby entitlement owners');
+assert(customerMediaAccess.includes('async function credentialAccess')
+    && customerMediaAccess.includes('function evaluateCredentialAccess')
+    && customerMediaAccess.includes('async function incompleteFreeSubscriptionId'),
+  'customer media access domain must own credential authorization and incomplete-Free interpretation');
+
 // Activation cleanup must never own the right to delete a customer while a
 // provider checkout can still settle. Checkout creation takes the customer row
 // lock, and cleanup must re-check both open local checkouts and attached
