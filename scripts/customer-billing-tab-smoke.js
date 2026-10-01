@@ -23,12 +23,13 @@ assert(customer360.includes("p.is_free_tier AND NOT ((s.source='stripe'")&&custo
 
 // Actions must call the existing billing-control/plan-change services
 // directly, not new SQL in the view layer.
-assert(admin360.includes("/admin/users/:customerId/renewal'") && admin360.includes('billingControl.setRenewal(sub.id,enabled,req.session.authUserId)'), 'the renewal action must call billingControl.setRenewal, not write subscriptions directly');
+assert(admin360.includes("/admin/users/:customerId/renewal'") && admin360.includes('billingControl.setCustomerRenewal(req.params.customerId,enabled,req.session.authUserId)'), 'the renewal route must delegate customer subscription selection and provider mutation to billing control');
 assert(admin360.includes("/admin/users/:customerId/plan-change/cancel'") && admin360.includes('planChange.cancelPendingChange(req.params.customerId,req.session.authUserId)'), 'the cancel action must call customer-plan-change.cancelPendingChange');
 assert(!/UPDATE\s+subscriptions/i.test(admin360.slice(admin360.indexOf("/admin/users/:customerId/renewal'"), admin360.indexOf("/admin/users/:customerId/renewal'") + 800)), 'the renewal route must not write to subscriptions with raw SQL');
 
 // Reused services, confirmed present (not reimplemented).
 assert(billingControl.includes('async function setRenewal(subscriptionId, enabled, actorUserId = null'), 'billing-control.js must still export setRenewal with the expected signature');
+assert(billingControl.includes('async function setCustomerRenewal(customerId, enabled, actorUserId = null') && billingControl.includes("subscriptionState.effectiveSubscription(customerId, { includeBlocked: true })") && billingControl.includes('return setRenewal(current.subscription_id || current.id, enabled, actorUserId, options)'), 'billing-control.js must own canonical customer renewal subscription selection and delegate the money mutation to setRenewal');
 assert(planChange.includes('async function cancelPendingChange(customerId,actorUserId=null)') && planChange.includes('async function pendingForCustomer(customerId)'), 'customer-plan-change.js must still export cancelPendingChange and pendingForCustomer');
 
 console.log('customer billing tab smoke: ok');
