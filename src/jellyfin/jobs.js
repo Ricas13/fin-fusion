@@ -3,7 +3,7 @@
 const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
-const customerAccessState = require('../access/customer-access-state');
+const accessRepair = require('../access/access-repair');
 const scanCursor = require('../automation/scan-cursor');
 
 const DEFAULT_RECONCILE_CONCURRENCY = 2;
@@ -213,20 +213,10 @@ async function dueActiveCustomers(limit = 250) {
 }
 
 async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
-    const access = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
-    const entitlement = access.entitlement;
-    if (!entitlement || access.state !== customerAccessState.ACCESS_STATES.INCONSISTENT_UNPAID) return false;
-    if (String(entitlement.contract_billing_interval || entitlement.billing_interval || '').toLowerCase() !== 'trial') return false;
-    if (!['jellyfin', 'bundle'].includes(String(entitlement.service_type_snapshot || entitlement.service_type || 'jellyfin').toLowerCase())) return false;
-
-    const lifecycle = require('../payments/lifecycle');
-    await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
+    const result = await accessRepair.repairUnpaidTrial(customerId, {
         reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account'
     });
-    // Converge the now no-plan state so customer_provisioning_state stops
-    // advertising a pending deployment for a trial that no longer exists.
-    await provisioning.reconcileCustomer(customerId);
-    return true;
+    return result.status === 'removed';
 }
 
 async function ensureFailureBackoff(customerId, error) {

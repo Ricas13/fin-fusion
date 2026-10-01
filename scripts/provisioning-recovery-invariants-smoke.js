@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const criticalJobs = require('../src/automation/critical-jobs');
 
 const root = path.resolve(__dirname, '..');
@@ -149,16 +150,9 @@ assert(!compact(freeBackfill).includes('c.access_paused_atISNULL'),
     'Free capacity backfill must not trust the denormalized legacy access_paused_at summary');
 assert(customerAccessState.includes('subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked })'),
     'canonical Free access state must re-read entitlement and hold authority before repair decisions');
-assert(
-    (
-        freeBackfill.includes('customerAccessState.freeJellyfin(row.customer_id, { includeBlocked: true })')
-        && freeBackfill.includes("String(entitlement.subscription_id || '') !== String(row.subscription_id || '')")
-    )
-    || (
-        accessRepair.includes('customerAccessState.freeJellyfin(customerId, { includeBlocked: true })')
-        && accessRepair.includes("String(access.entitlement.subscription_id || '') !== String(subscriptionId || '')")
-    ),
-    'Free lifecycle repair must re-read canonical authority and exact subscription identity before provisioning or rollback');
+assert(freeBackfill.includes('accessRepair.repairFreeEntitlement('),
+    'Free lifecycle repair must delegate exact-subscription repair to the canonical access repair layer');
+execFileSync(process.execPath, [path.join(root, 'scripts/access-repair-behavior-smoke.js')], { stdio: 'inherit' });
 
 const compactIntentRecovery = compact(creationIntentRecovery);
 const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");

@@ -15,6 +15,7 @@ const myAccess = read('src/platform/customer-jellyfin.js');
 const readiness = read('src/jellyfin/free-claim-readiness.js');
 const jobs = read('src/jellyfin/jobs.js');
 const backfill = read('src/automation/free-capacity-backfill.js');
+const accessRepair = read('src/access/access-repair.js');
 
 for (const state of [
   'NONE',
@@ -63,14 +64,17 @@ for (const [name, source] of [
   ['customer dashboard', dashboard],
   ['My Access', myAccess],
   ['Free claim readiness', readiness],
-  ['entitlement jobs', jobs],
-  ['Free capacity repair', backfill]
+  ['access repair', accessRepair]
 ]) {
   assert(
     source.includes("customer-access-state"),
     `${name} must consume canonical customer access state instead of rebuilding access truth`
   );
 }
+assert(jobs.includes("require('../access/access-repair')"),
+  'entitlement jobs must delegate repair decisions to the canonical access repair layer');
+assert(backfill.includes("require('../access/access-repair')"),
+  'Free capacity repair must delegate repair decisions to the canonical access repair layer');
 
 assert(
   !dashboard.includes("SELECT 1 FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free'"),
