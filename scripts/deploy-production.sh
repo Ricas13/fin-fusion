@@ -127,7 +127,7 @@ fi
 # Every application/worker/operator service in this deployment uses one
 # immutable image tag. The stable captainfin:current alias is advanced only
 # after live verification succeeds.
-export CAPTAINFIN_IMAGE="${CAPTAINFIN_IMAGE:-captainfin:${CAPTAINFIN_BUILD_SHA}}"
+export CAPTAINFIN_IMAGE="captainfin:${CAPTAINFIN_BUILD_SHA}"
 
 log 'Preparing isolated runtime database credentials'
 if command -v node >/dev/null 2>&1; then
