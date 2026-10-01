@@ -110,7 +110,8 @@ function main() {
     const billingSource = source('src/payments/billing-control.js');
     const renewal = section(billingSource, 'async function setRenewal', 'function recoveryManual');
     assert(renewal.includes('expectedCancelAtPeriodEnd:!enabled'), 'Renewal stop/resume can still reconcile without verifying the exact requested final provider state.');
-    assert(billingSource.includes('priceId: stripePriceId(subscription)'), 'Stripe provider sync cannot verify the recurring Price actually attached to the subscription.');
+    const adapterSource = source('src/payments/provider-lifecycle-adapters.js');
+    assert(adapterSource.includes('priceId: stripePriceId(subscription)'), 'Stripe provider sync cannot verify the recurring Price actually attached to the subscription.');
     assert(billingSource.includes('expectedProviderPriceId') && billingSource.includes('Stripe price verification mismatch'), 'Canonical provider sync cannot enforce an expected Stripe Price.');
 
     const planChange = source('src/payments/customer-plan-change.js');
