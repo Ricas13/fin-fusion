@@ -233,11 +233,154 @@ async function updateCommerce({
   });
 }
 
+async function saveProviderOption(client, {
+  planId,
+  priceId,
+  priceMinor,
+  currency,
+  provider,
+  mode,
+  enabled,
+  externalId = null,
+  verification = null
+}) {
+  if (!enabled) {
+    await client.query(
+      'DELETE FROM plan_provider_prices WHERE plan_price_id=$1 AND provider=$2 AND checkout_mode=$3',
+      [priceId, provider, mode]
+    );
+    return;
+  }
+
+  if (mode === 'subscription' && !externalId) {
+    throw new Error(`${provider === 'stripe' ? 'Stripe' : 'PayPal'} subscription ID is required.`);
+  }
+
+  const v = verification || {
+    verificationStatus: 'not_required',
+    verifiedAt: new Date(),
+    verificationError: null,
+    remoteAmountMinor: priceMinor,
+    remoteCurrency: currency,
+    remoteInterval: null,
+    remoteActive: true
+  };
+
+  await client.query(
+    `INSERT INTO plan_provider_prices(
+       plan_id,plan_price_id,provider,external_id,checkout_mode,active,
+       verified_at,verification_status,verification_error,
+       remote_amount_minor,remote_currency,remote_interval,remote_active
+     ) VALUES($1,$2,$3,$4,$5,TRUE,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT(plan_price_id,provider,checkout_mode)
+     DO UPDATE SET
+       plan_id=EXCLUDED.plan_id,
+       external_id=EXCLUDED.external_id,
+       active=TRUE,
+       verified_at=EXCLUDED.verified_at,
+       verification_status=EXCLUDED.verification_status,
+       verification_error=EXCLUDED.verification_error,
+       remote_amount_minor=EXCLUDED.remote_amount_minor,
+       remote_currency=EXCLUDED.remote_currency,
+       remote_interval=EXCLUDED.remote_interval,
+       remote_active=EXCLUDED.remote_active,
+       updated_at=NOW()`,
+    [
+      planId,
+      priceId,
+      provider,
+      externalId || null,
+      mode,
+      v.verifiedAt,
+      v.verificationStatus,
+      v.verificationError,
+      v.remoteAmountMinor,
+      v.remoteCurrency,
+      v.remoteInterval,
+      v.remoteActive
+    ]
+  );
+}
+
+async function updatePaymentOptions({
+  planId,
+  price,
+  items = [],
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  if (!price?.id) throw new Error('A plan price is required before payment options can be saved.');
+
+  return transaction(async client => {
+    for (const item of items) {
+      await saveProviderOption(client, {
+        planId,
+        priceId: price.id,
+        priceMinor: price.price_minor,
+        currency: price.currency,
+        provider: item.provider,
+        mode: item.mode,
+        enabled: item.enabled,
+        externalId: item.externalId,
+        verification: item.verification
+      });
+    }
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.payment_options','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+  });
+}
+
+async function updatePortalCurrencyPrice({
+  planId,
+  currency,
+  priceMinor,
+  freeTier = false,
+  actorUserId = null
+}) {
+  const before = await planPricing.resolvePrice(planId, currency, { allowFallback: false });
+  return transaction(async client => {
+    const changed = Boolean(before) && Number(before.price_minor) !== Number(priceMinor);
+    const price = await planPricing.setPrice(client, planId, {
+      currency,
+      priceMinor,
+      active: true,
+      isDefault: true
+    });
+
+    if (changed) {
+      await client.query(
+        `UPDATE plan_provider_prices
+         SET active=FALSE,
+             verification_status='unverified',
+             verification_error='Plan price changed; re-verification required.',
+             updated_at=NOW()
+         WHERE plan_price_id=$1`,
+        [price.id]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.portal_currency_price.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ currency, priceMinor, freeTier: Boolean(freeTier) })]
+    );
+
+    return { price, changed };
+  });
+}
+
 module.exports = {
   createPlan,
   updateProduct,
   updateAvailability,
   updateDelivery,
   updateLibraries,
-  updateCommerce
+  updateCommerce,
+  saveProviderOption,
+  updatePaymentOptions,
+  updatePortalCurrencyPrice
 };
