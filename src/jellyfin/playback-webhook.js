@@ -154,8 +154,7 @@ async function upsertStart(serverId, account, payload, at) {
             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
             ON CONFLICT(server_id,playback_key) DO UPDATE SET
                 last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
-                playback_method=EXCLUDED.playback_method,
-                access_lane_snapshot=COALESCE(playback_history.access_lane_snapshot,EXCLUDED.access_lane_snapshot)
+                playback_method=EXCLUDED.playback_method
         `, [serverId,account.customer_id,account.id,playbackKey,sessionId,payload?.ItemId || null,payload?.Name || payload?.ItemName || null,
             payload?.ItemType || null,payload?.ClientName || null,payload?.DeviceName || null,method,firstSeen,at,account.access_lane || 'primary']);
         await touchAccount(account, at, client);
