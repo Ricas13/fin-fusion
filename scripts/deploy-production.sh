@@ -133,12 +133,37 @@ fi
 log 'Validating Compose configuration'
 docker compose config >/dev/null
 
+# Runtime container names were historically captainfin*. Adopt those
+# containers in place before deployment so upgrades keep the same volumes,
+# networks and running state while exposing the CAPTAiNFiN runtime identity.
+adopt_legacy_container() {
+  local canonical="$1"
+  local legacy="$2"
+  local canonical_exists=0
+  local legacy_exists=0
+  docker inspect "$canonical" >/dev/null 2>&1 && canonical_exists=1 || true
+  docker inspect "$legacy" >/dev/null 2>&1 && legacy_exists=1 || true
+  if [[ "$canonical_exists" == 1 && "$legacy_exists" == 1 ]]; then
+    fail "both canonical container $canonical and legacy container $legacy exist; resolve the duplicate before deployment"
+  fi
+  if [[ "$canonical_exists" == 0 && "$legacy_exists" == 1 ]]; then
+    log "Adopting legacy runtime container $legacy as $canonical"
+    docker rename "$legacy" "$canonical"
+  fi
+}
+
+adopt_legacy_container captainfin steam-fusion
+adopt_legacy_container captainfin-automation steam-fusion-automation
+adopt_legacy_container captainfin-activity steam-fusion-activity
+adopt_legacy_container captainfin-backup steam-fusion-backup
+adopt_legacy_container captainfin-postgres steam-fusion-postgres
+
 existing_database=0
-if docker inspect steam-fusion-postgres >/dev/null 2>&1; then
+if docker inspect captainfin-postgres >/dev/null 2>&1; then
   existing_database=1
-  if [[ "$(docker inspect -f '{{.State.Running}}' steam-fusion-postgres)" != 'true' ]]; then
+  if [[ "$(docker inspect -f '{{.State.Running}}' captainfin-postgres)" != 'true' ]]; then
     log 'Starting existing PostgreSQL container'
-    docker start steam-fusion-postgres >/dev/null
+    docker start captainfin-postgres >/dev/null
   fi
 else
   log 'No existing PostgreSQL container found; treating this as a fresh installation'
@@ -147,21 +172,21 @@ fi
 
 log 'Waiting for PostgreSQL readiness'
 for _ in $(seq 1 60); do
-  status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' steam-fusion-postgres 2>/dev/null || true)"
+  status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' captainfin-postgres 2>/dev/null || true)"
   [[ "$status" == 'healthy' ]] && break
   sleep 2
 done
-[[ "$(docker inspect -f '{{.State.Health.Status}}' steam-fusion-postgres 2>/dev/null || true)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
+[[ "$(docker inspect -f '{{.State.Health.Status}}' captainfin-postgres 2>/dev/null || true)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
 
 # Capture the currently running release before builds retag Compose images. These
 # immutable image IDs make application-only rollback possible without touching
 # the database when a release has no migration changes.
-if [[ "$existing_database" == 1 ]] && docker inspect steam-fusion >/dev/null 2>&1; then
-  previous_app_image="$(docker inspect -f '{{.Image}}' steam-fusion 2>/dev/null || true)"
-  previous_automation_image="$(docker inspect -f '{{.Image}}' steam-fusion-automation 2>/dev/null || true)"
-  previous_activity_image="$(docker inspect -f '{{.Image}}' steam-fusion-activity 2>/dev/null || true)"
-  previous_backup_image="$(docker inspect -f '{{.Image}}' steam-fusion-backup 2>/dev/null || true)"
-  previous_deploy_sha="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' steam-fusion 2>/dev/null | sed -n 's/^CAPTAINFIN_BUILD_SHA=//p' | head -1 || true)"
+if [[ "$existing_database" == 1 ]] && docker inspect captainfin >/dev/null 2>&1; then
+  previous_app_image="$(docker inspect -f '{{.Image}}' captainfin 2>/dev/null || true)"
+  previous_automation_image="$(docker inspect -f '{{.Image}}' captainfin-automation 2>/dev/null || true)"
+  previous_activity_image="$(docker inspect -f '{{.Image}}' captainfin-activity 2>/dev/null || true)"
+  previous_backup_image="$(docker inspect -f '{{.Image}}' captainfin-backup 2>/dev/null || true)"
+  previous_deploy_sha="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' captainfin 2>/dev/null | sed -n 's/^CAPTAINFIN_BUILD_SHA=//p' | head -1 || true)"
 
   if command -v git >/dev/null 2>&1 \
      && [[ "$previous_deploy_sha" =~ ^[0-9a-fA-F]{40}$ ]] \
@@ -206,7 +231,7 @@ docker compose up -d --no-deps app automation-worker activity-worker backup-work
 services_recreated=1
 
 log 'Waiting for application and worker health checks'
-services=(steam-fusion steam-fusion-automation steam-fusion-activity steam-fusion-backup)
+services=(captainfin captainfin-automation captainfin-activity captainfin-backup)
 for container in "${services[@]}"; do
   ready=0
   for _ in $(seq 1 90); do
