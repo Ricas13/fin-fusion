@@ -1,11 +1,12 @@
 'use strict';
 
 const express=require('express');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const runtimeSettings=require('./runtime-settings');
 const capacity=require('../entitlements/plan-capacity');
+const planCommands=require('../catalog/plan-command-service');
 const ui=require('./admin-ui');
 const {esc,layout}=require('./admin-html');
 
@@ -55,7 +56,7 @@ function createAdminPlanInventoryRouter(){
       const p=await plan(req.params.id);if(!p)throw new Error('Plan not found.');
       if(capacity.capacityModel(p)==='fleet_users')throw new Error('Jellyfin availability is controlled by the configured capacity of its eligible servers.');
       const raw=String(req.body.capacityLimit||'').trim(),n=Number.parseInt(raw,10);if(!Number.isInteger(n)||String(n)!==raw||n<0||n>1000000)throw new Error('Availability limit must be a whole number from 0 to 1,000,000.');
-      await transaction(async client=>{const updated=await client.query('UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1 AND archived_at IS NULL RETURNING code,name',[req.params.id,n]);if(!updated.rowCount)throw new Error('Plan not found.');await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.inventory.update','plan',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({capacityLimit:n,capacityModel:capacity.capacityModel(p)})]);});
+       await planCommands.updatePlanInventory({planId:req.params.id,capacityLimit:n,actorUserId:req.session.authUserId,auditMetadata:{capacityLimit:n,capacityModel:capacity.capacityModel(p)}});
       return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/inventory?message=${encodeURIComponent(n===0?'Plan availability closed at 0 places.':'Plan availability saved.')}`);
     }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/inventory?error=${encodeURIComponent(error.message)}`)}
   });return r;
