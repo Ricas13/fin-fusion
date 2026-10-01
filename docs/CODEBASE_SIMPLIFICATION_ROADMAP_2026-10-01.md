@@ -70,7 +70,7 @@ Each completed item should add:
   - Security CodeQL
   - Stremio
 - [ ] Prefer merge queue / up-to-date branch enforcement so a PR proven green on an older base cannot bypass combined-main validation.
-- [ ] Add a repository-level regression/documentation check describing the required merge gates.
+- [x] Add a repository-level regression/documentation check describing the required merge gates.
 - [ ] Confirm emergency/owner override behaviour is explicit rather than accidental.
 
 **Done when:** a PR cannot normally merge into `main` without the intended green checks on a current base.
@@ -453,6 +453,7 @@ Add dated entries here as implementation batches land.
 
 - 2026-10-01 — Roadmap created from green baseline `413b366` after PR #828.
 - 2026-10-01 — P0 ruleset audit: active `Protect main` ruleset requires PRs and blocks deletion/non-fast-forward, but has no required-status-check rule. Current GitHub integration can read but cannot administer branch protection/rulesets; required-check enforcement remains an explicit repository-admin action.
+- 2026-10-01 — Added `docs/REPOSITORY_MERGE_GATES.md` plus `repository-merge-gates-smoke.js`: the six release-critical workflow names and PR triggers are now source-controlled and machine-checked, including exact-head/current-base and emergency-bypass expectations. Actual required-check/merge-queue enforcement still needs repository-admin configuration.
 - 2026-10-01 — Reconciled Customer 360 roadmap against baseline: mutation ownership and canonical current-state projection were already substantially complete. Fixed a live `permanentAccess.status()` missing-import regression and added coverage.
 - 2026-10-01 — Continued plan ownership cleanup: `admin-plans.js` overview/archive/unarchive mutations now delegate to `src/catalog/plan-command-service.js`; added a platform ownership regression guard. Plan validation/normalisation and transactional rollback coverage remain open.
 - 2026-10-01 — First CI cleanup pass: updated stale Stremio ownership assertions/stubs after catalog-command extraction, removed dead `configuration-transfer.lower()`, and updated the permanent-access UX smoke to follow the canonical access-command owner instead of expecting direct router mutation.
