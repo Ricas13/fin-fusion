@@ -90,6 +90,7 @@ async function moveLocked(customerId,targetServerId,{actorUserId=null}={}){
   const disabled=[];
   for(const account of accounts){
     if(same(account.id,targetAccount.id)||account.disabled)continue;
+    if(String(account.access_lane||'primary')!==accessLane)continue;
     await provisioning.disableJellyfinAccount(account);
     disabled.push(account.id);
   }
