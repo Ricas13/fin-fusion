@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const serviceTruth = require('../src/platform/customer-360-service-truth');
+const customer360Module = require('../src/platform/customer-360');
 
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360.js'), 'utf8');
@@ -17,6 +18,29 @@ const primaryActionsSource = fs.readFileSync(path.join(root, 'public', 'js', 'ad
 assert(source.includes("entity_type='customer' AND entity_id::text=$1::text"), 'Customer 360 audit lookup must compare audit entity UUIDs through a consistent text cast');
 assert(source.includes("entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)"), 'Customer 360 subscription audit lookup must cast the route parameter explicitly before comparing it with subscriptions.customer_id');
 assert(!source.includes("entity_id=$1::text"), '360 audit queries must not compare a UUID column directly to text');
+
+assert(source.includes("customerAccessState=require('../access/customer-access-state')")
+    && source.includes('customerAccessState.snapshot(customerId)')
+    && !source.includes("require('../jellyfin/resilient-provisioning')")
+    && !source.includes('currentEntitlementTruth(customerId)'),
+  'Customer 360 current access must come from the canonical customer-access-state snapshot only');
+const paidEntitlement={subscription_id:'paid-1',is_free_tier:false};
+const freeEntitlement={subscription_id:'free-1',is_free_tier:true};
+assert.strictEqual(
+  customer360Module.primaryEntitlementFromAccessState({primary:{entitlement:paidEntitlement},free:{entitlement:freeEntitlement}}),
+  paidEntitlement,
+  'Customer 360 compatibility primary entitlement must prefer the canonical primary lane'
+);
+assert.strictEqual(
+  customer360Module.primaryEntitlementFromAccessState({primary:{entitlement:null},free:{entitlement:freeEntitlement}}),
+  freeEntitlement,
+  'Customer 360 compatibility primary entitlement must fall back to the canonical Free lane when no paid primary exists'
+);
+assert.strictEqual(
+  customer360Module.primaryEntitlementFromAccessState({primary:{entitlement:null},free:{entitlement:null}}),
+  null,
+  'Customer 360 compatibility primary entitlement must not invent access outside the canonical snapshot'
+);
 
 // The compact operator page has three deliberately separate concepts:
 // playback activity, financial/provider history, and operational logs.
