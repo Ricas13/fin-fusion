@@ -95,7 +95,40 @@ function createAccessRepair(deps = {}) {
     return { status: 'removed' };
   }
 
-  return { repairFreeEntitlement, repairUnpaidTrial, removeOrphanFreeAccount };
+  async function repairIntegrityFinding(finding) {
+    const kind = String(finding?.kind || '');
+    const customerId = finding?.customerId || finding?.customer_id || null;
+    if (!customerId) {
+      const error = new Error('Access integrity finding is missing its customer identity.');
+      error.code = 'ACCESS_INTEGRITY_REPAIR_INVALID_FINDING';
+      throw error;
+    }
+
+    if (kind === 'free_plan_without_ready_server') {
+      return repairFreeEntitlement(customerId, finding.id, {
+        reason: 'Access Integrity repair: live Free plan had no ready Free Server account'
+      });
+    }
+    if (kind === 'free_server_without_plan') {
+      return removeOrphanFreeAccount(customerId);
+    }
+    if (kind === 'unpaid_trial_without_ready_server') {
+      return repairUnpaidTrial(customerId, {
+        reason: 'Access Integrity repair: unpaid Jellyfin trial had no ready primary account'
+      });
+    }
+
+    const error = new Error(`Access integrity finding ${kind || '(unknown)'} requires manual review and is not eligible for automatic repair.`);
+    error.code = 'ACCESS_INTEGRITY_REPAIR_MANUAL_REVIEW';
+    throw error;
+  }
+
+  return {
+    repairFreeEntitlement,
+    repairUnpaidTrial,
+    removeOrphanFreeAccount,
+    repairIntegrityFinding
+  };
 }
 
 const defaultRepair = createAccessRepair();
