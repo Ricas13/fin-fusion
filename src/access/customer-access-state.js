@@ -129,13 +129,20 @@ async function stremio(customerId, options = {}) {
 
 async function snapshot(customerId) {
     const accounts = await provisioning.normalAccounts(customerId);
-    const [primary, free, embyAccess, stremioAccess] = await Promise.all([
+    const [primary, free] = await Promise.all([
         primaryJellyfin(customerId, { includeBlocked: true, accounts }),
-        freeJellyfin(customerId, { includeBlocked: true, accounts }),
+        freeJellyfin(customerId, { includeBlocked: true, accounts })
+    ]);
+    return { customerId, primary, free };
+}
+
+async function fullSnapshot(customerId) {
+    const [jellyfin, embyAccess, stremioAccess] = await Promise.all([
+        snapshot(customerId),
         emby(customerId, { includeBlocked: true }),
         stremio(customerId, { includeBlocked: true })
     ]);
-    return { customerId, primary, free, emby: embyAccess, stremio: stremioAccess };
+    return { ...jellyfin, emby: embyAccess, stremio: stremioAccess };
 }
 
 module.exports = {
@@ -153,5 +160,6 @@ module.exports = {
     serviceEntitlement,
     emby,
     stremio,
-    snapshot
+    snapshot,
+    fullSnapshot
 };
