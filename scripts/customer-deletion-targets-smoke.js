@@ -3,7 +3,7 @@
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
-const externalDeletion=require('../src/platform/customer-external-deletion');
+const externalDeletion=require('../src/customers/customer-external-deletion');
 
 function target(provider,id='resource-1'){
   return{id:`${provider}-${id}`,deletion_job_id:'job-1',customer_id:'customer-1',provider,resource_type:provider==='request_service'?'permissions':provider==='discord'?'managed_role':provider==='stremio'?'install_credential':['stripe','paypal'].includes(provider)?'recurring_subscription':'user',external_identifier:id,desired_state:['stripe','paypal'].includes(provider)?'cancelled':'absent',state:'pending',blocking:true,attempt_count:0,next_attempt_at:new Date(),last_error:null,metadata:{identity:id},result:null};
@@ -61,7 +61,7 @@ async function scenarioE(){
   assert(calls>=2,'E: cleanup should be safely rechecked/retried');
 }
 async function scenarioF(){
-  const dbPath=require.resolve('../src/db'),registryPath=require.resolve('../src/jellyfin/registry'),provisioningPath=require.resolve('../src/jellyfin/provisioning'),externalPath=require.resolve('../src/platform/customer-external-deletion'),deletionPath=require.resolve('../src/platform/customer-deletion');
+  const dbPath=require.resolve('../src/db'),registryPath=require.resolve('../src/jellyfin/registry'),provisioningPath=require.resolve('../src/jellyfin/provisioning'),externalPath=require.resolve('../src/customers/customer-external-deletion'),deletionPath=require.resolve('../src/customers/customer-deletion');
   const saved=new Map([dbPath,registryPath,provisioningPath,externalPath,deletionPath].map(key=>[key,require.cache[key]]));
   const succeeded={id:'job-succeeded',customer_id:'customer-gone',status:'succeeded',result:{deleted:true,jobId:'job-succeeded'}};let queries=0;
   try{
@@ -70,7 +70,7 @@ async function scenarioF(){
     require.cache[provisioningPath]={id:provisioningPath,filename:provisioningPath,loaded:true,exports:{}};
     require.cache[externalPath]={id:externalPath,filename:externalPath,loaded:true,exports:{deletionStatus:async()=>null}};
     delete require.cache[deletionPath];
-    const deletion=require('../src/platform/customer-deletion');
+    const deletion=require('../src/customers/customer-deletion');
     const replay=await deletion.enqueueHardDelete('customer-gone');
     assert.strictEqual(replay.id,'job-succeeded','F: duplicate request after deletion should reuse durable succeeded job');
     assert.strictEqual(queries,1,'F: duplicate replay must not require the deleted customer row');
@@ -102,12 +102,12 @@ async function scenarioI(){
 }
 
 async function scenarioJ(){
-  const requestUserSyncPath=require.resolve('../src/integrations/request-user-sync'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const requestUserSyncPath=require.resolve('../src/integrations/request-user-sync'),externalPath=require.resolve('../src/customers/customer-external-deletion');
   const saved=new Map([requestUserSyncPath,externalPath].map(key=>[key,require.cache[key]]));
   try{
     require.cache[requestUserSyncPath]={id:requestUserSyncPath,filename:requestUserSyncPath,loaded:true,exports:{externalUsers:async()=>[{id:999,email:'someone-else@example.com',username:'someone-else'}],permissionState:async()=>0,setPermissions:async()=>{}}};
     delete require.cache[externalPath];
-    const fresh=require('../src/platform/customer-external-deletion');
+    const fresh=require('../src/customers/customer-external-deletion');
 
     const everProvisioned={id:'request_service-1',provider:'request_service',resource_type:'permissions',external_identifier:'identity:stale@example.com',metadata:{externalUserId:null,email:'stale@example.com',username:'stale',everProvisioned:true}};
     await assert.rejects(fresh.executeTarget(everProvisioned),/could not be located/,'J: a previously-provisioned request-service account that cannot be matched must escalate, not silently succeed');
@@ -121,13 +121,13 @@ async function scenarioJ(){
 }
 
 async function scenarioK(){
-  const billingPath=require.resolve('../src/payments/billing-control'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const billingPath=require.resolve('../src/payments/billing-control'),externalPath=require.resolve('../src/customers/customer-external-deletion');
   const saved=new Map([billingPath,externalPath].map(key=>[key,require.cache[key]]));
   const calls=[];
   try{
     require.cache[billingPath]={id:billingPath,filename:billingPath,loaded:true,exports:{terminateRecurringForDeletion:async(row,options)=>{calls.push({row,options});return{status:'cancelled',provider:row.source,providerSubscriptionId:row.provider_subscription_id};}}};
     delete require.cache[externalPath];
-    const fresh=require('../src/platform/customer-external-deletion');
+    const fresh=require('../src/customers/customer-external-deletion');
     const recurring={id:'stripe-sub-target',customer_id:'customer-1',provider:'stripe',resource_type:'recurring_subscription',external_identifier:'sub_critical123',metadata:{subscriptionId:'local-sub-1',providerSubscriptionId:'sub_critical123',localStatus:'active',currentPeriodEnd:new Date().toISOString(),cancelAtPeriodEnd:false}};
     const result=await fresh.executeTarget(recurring);
     assert.strictEqual(result.status,'cancelled','K: recurring provider cancellation must be proven before target success');
@@ -139,7 +139,7 @@ async function scenarioK(){
     for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
   }
 
-  const source=fs.readFileSync(path.join(__dirname,'../src/platform/customer-external-deletion.js'),'utf8');
+  const source=fs.readFileSync(path.join(__dirname,'../src/customers/customer-external-deletion.js'),'utf8');
   assert(source.includes("billing_mode='subscription'")&&source.includes("source IN ('stripe','paypal')"),'K: deletion inventory must snapshot every locally recurring Stripe/PayPal contract, including malformed historical provider references');
   assert(source.includes('rawProviderSubscriptionId===providerSubscriptionId')&&source.includes('providerIdValid?providerSubscriptionId'), 'K: deletion must not silently trim a malformed provider identity and send the guessed ID to a destructive provider API');
   assert(source.includes('invalid-local-subscription:')&&source.includes('invalidProviderIdentity'),'K: malformed recurring billing rows must become durable blocking deletion targets instead of being silently skipped');
@@ -148,13 +148,13 @@ async function scenarioK(){
 }
 
 async function scenarioK2(){
-  const billingPath=require.resolve('../src/payments/billing-control'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const billingPath=require.resolve('../src/payments/billing-control'),externalPath=require.resolve('../src/customers/customer-external-deletion');
   const saved=new Map([billingPath,externalPath].map(key=>[key,require.cache[key]]));
   let providerCalls=0;
   try{
     require.cache[billingPath]={id:billingPath,filename:billingPath,loaded:true,exports:{terminateRecurringForDeletion:async()=>{providerCalls++;return{status:'cancelled'};}}};
     delete require.cache[externalPath];
-    const fresh=require('../src/platform/customer-external-deletion');
+    const fresh=require('../src/customers/customer-external-deletion');
     const malformed={id:'stripe-malformed',customer_id:'customer-1',provider:'stripe',resource_type:'recurring_subscription',external_identifier:'invalid-local-subscription:sub-local',metadata:{subscriptionId:'sub-local',providerSubscriptionId:'pi_not_a_subscription',invalidProviderIdentity:true}};
     await assert.rejects(fresh.executeTarget(malformed),/repair the billing reference before customer deletion can finalize/i,'K2: malformed recurring billing identity must block customer deletion');
     assert.strictEqual(providerCalls,0,'K2: malformed recurring identity must never be sent to provider cancellation APIs');
@@ -164,7 +164,7 @@ async function scenarioK2(){
 }
 
 async function scenarioK3(){
-  const dbPath=require.resolve('../src/db'),settingsPath=require.resolve('../src/integrations/notification-settings'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const dbPath=require.resolve('../src/db'),settingsPath=require.resolve('../src/integrations/notification-settings'),externalPath=require.resolve('../src/customers/customer-external-deletion');
   const saved=new Map([dbPath,settingsPath,externalPath].map(key=>[key,require.cache[key]]));
   const calls=[];
   const job={id:'job-repaired',customer_id:'customer-repaired',customer_email:'repaired@example.invalid'};
@@ -180,7 +180,7 @@ async function scenarioK3(){
     require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{query:client.query,transaction:async callback=>callback(client)}};
     require.cache[settingsPath]={id:settingsPath,filename:settingsPath,loaded:true,exports:{status:async()=>({discordConfigured:false,discordGuildId:null})}};
     delete require.cache[externalPath];
-    const fresh=require('../src/platform/customer-external-deletion');
+    const fresh=require('../src/customers/customer-external-deletion');
     await fresh.persistTargets(job);
     const created=calls.findIndex(c=>c.sql.includes('INSERT INTO customer_external_deletion_targets')&&c.params.includes('sub_repaired'));
     const retired=calls.findIndex(c=>c.sql.includes("superseded_by_verified_billing_identity"));
@@ -195,7 +195,7 @@ async function scenarioK3(){
 }
 
 async function scenarioL(){
-  const externalPath=require.resolve('../src/platform/customer-external-deletion'),deletionPath=require.resolve('../src/platform/customer-deletion');
+  const externalPath=require.resolve('../src/customers/customer-external-deletion'),deletionPath=require.resolve('../src/customers/customer-deletion');
   const saved=new Map([externalPath,deletionPath].map(key=>[key,require.cache[key]]));
   try{
     require.cache[externalPath]={id:externalPath,filename:externalPath,loaded:true,exports:{
@@ -203,7 +203,7 @@ async function scenarioL(){
       jellyfinResultsFromTargets:rows=>rows
     }};
     delete require.cache[deletionPath];
-    const fresh=require('../src/platform/customer-deletion');
+    const fresh=require('../src/customers/customer-deletion');
     const originalWarn=console.warn;
     console.warn=()=>{};
     try{
@@ -213,7 +213,7 @@ async function scenarioL(){
   }finally{
     for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
   }
-  const deletionSource=fs.readFileSync(path.join(__dirname,'../src/platform/customer-deletion.js'),'utf8');
+  const deletionSource=fs.readFileSync(path.join(__dirname,'../src/customers/customer-deletion.js'),'utf8');
   assert(!deletionSource.includes('listTargets(job.id).catch(()=>[])'),'L: target reload failures must not silently become an empty durable result set');
   assert(!deletionSource.includes('markDeletionFailed(job,error).catch(()=>{})'),'L: failure-state persistence errors must be observable instead of silently extending a running lease');
   assert(deletionSource.includes('Unable to persist customer deletion failure state.'),'L: best-effort failure-state persistence must log its own failure without masking the provider error');
