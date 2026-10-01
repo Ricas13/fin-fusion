@@ -43,8 +43,10 @@ for (const jobKey of ['health','entitlements','free_capacity_backfill','customer
 
 assert(worker.includes("const buildInfo = require('../src/build-info')") && worker.includes('const COMMIT_SHA = buildInfo.gitSha'),
     'automation worker must report the same CAPTAINFIN_BUILD_SHA identity embedded in the release image');
-assert(worker.includes("require('../src/automation/critical-jobs')") && worker.includes('assertCriticalJobRegistry()'),
-    'automation worker must use the canonical critical-job registry and fail startup when registration is incomplete');
+assert(worker.includes('jobRegistry.criticalNames()')
+    && worker.includes('assertCriticalJobRegistry()')
+    && worker.includes('jobRegistry.definition(jobKey)?.run'),
+    'automation worker must use canonical job definitions for critical classification and fail startup when registration is incomplete');
 assert(worker.includes('registeredJobs: jobRegistry.names()') && worker.includes('criticalJobs: CRITICAL_JOB_KEYS'),
     'automation heartbeat must expose registered and critical job manifests for deployment diagnostics');
 assert(worker.includes('assigned=${assigned} waiting=${waiting} skipped=${skipped}'),
