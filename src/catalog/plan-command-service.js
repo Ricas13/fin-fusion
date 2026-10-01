@@ -1108,9 +1108,9 @@ async function updateDeliveryService({
     );
     const liveSubscriptions = Number(live.rows[0]?.n || 0);
 
-    if (typeof validate === 'function') {
-      await validate({ plan, liveSubscriptions, client });
-    }
+    const validation = typeof validate === 'function'
+      ? await validate({ plan, liveSubscriptions, client })
+      : null;
 
     const updated = await client.query(
       'UPDATE plans SET service_type=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
@@ -1121,7 +1121,7 @@ async function updateDeliveryService({
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
        VALUES($1,'admin.plan.delivery.update','plan',$2,$3::jsonb)`,
       [actorUserId, planId, JSON.stringify({
-        from: plan.service_type,
+        from: validation?.from || plan.service_type,
         to: nextType,
         liveSubscriptions,
         snapshotsPreserved: true
