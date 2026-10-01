@@ -6,14 +6,15 @@ const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
 const discordRoles=require('../integrations/discord-roles');
 const planCommands=require('../catalog/plan-command-service');
+const planInput=require('../catalog/plan-input');
 const {esc,layout}=require('./admin-html');
 const {sendCsv}=require('./export');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
-function b(v){return v==='on'||v==='true'||v===true}
+const b=planInput.bool;
 function n(v,min,max,f){const x=parseInt(v,10);return Number.isFinite(x)&&x>=min&&x<=max?x:f}
-function t(v,max){return String(v||'').trim().slice(0,max)}
+const t=planInput.text;
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
 function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
 function confirmField(plan,count,label='live customer entitlements'){return Number(count)>0?`<div class="notice warn"><strong>Impact preview:</strong> this plan currently affects ${esc(count)} ${esc(label)}. Type <strong>${esc(plan.code)}</strong> below to confirm this change.</div><div class="formGroup"><label>Impact confirmation</label><input class="input" name="impactConfirmation" autocomplete="off" required placeholder="${esc(plan.code)}"></div>`:''}
