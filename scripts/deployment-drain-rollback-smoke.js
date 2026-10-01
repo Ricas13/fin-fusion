@@ -6,11 +6,21 @@ const path = require('path');
 
 const deploy = fs.readFileSync(path.join(__dirname, 'deploy-production.sh'), 'utf8');
 
+for (const pair of [
+  'adopt_legacy_container captainfin steam-fusion',
+  'adopt_legacy_container captainfin-automation steam-fusion-automation',
+  'adopt_legacy_container captainfin-activity steam-fusion-activity',
+  'adopt_legacy_container captainfin-backup steam-fusion-backup',
+  'adopt_legacy_container captainfin-postgres steam-fusion-postgres'
+]) {
+  assert(deploy.includes(pair), `deployment must adopt legacy runtime identity: ${pair}`);
+}
+
 for (const token of [
-  "previous_app_image=\"$(docker inspect -f '{{.Image}}' steam-fusion",
-  "previous_automation_image=\"$(docker inspect -f '{{.Image}}' steam-fusion-automation",
-  "previous_activity_image=\"$(docker inspect -f '{{.Image}}' steam-fusion-activity",
-  "previous_backup_image=\"$(docker inspect -f '{{.Image}}' steam-fusion-backup",
+  "previous_app_image=\"$(docker inspect -f '{{.Image}}' captainfin",
+  "previous_automation_image=\"$(docker inspect -f '{{.Image}}' captainfin-automation",
+  "previous_activity_image=\"$(docker inspect -f '{{.Image}}' captainfin-activity",
+  "previous_backup_image=\"$(docker inspect -f '{{.Image}}' captainfin-backup",
   'git diff --quiet "$previous_deploy_sha"..HEAD -- db/migrations',
   "docker compose stop --timeout 45 app automation-worker activity-worker backup-worker",
   'migration_started=1',
