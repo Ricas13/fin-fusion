@@ -47,7 +47,7 @@ const db={
         leaseReset=true;
         return rows([]);
       }
-      if(sql.includes('UPDATE plans SET stremio_household_network_limit=')){
+      if(sql.includes('UPDATE plans')&&sql.includes('stremio_household_network_limit=$2')&&sql.includes('stremio_household_lease_minutes=$3')){
         savedLease=Number(params[2]);
         plan.stremio_household_network_limit=Number(params[1]);
         plan.stremio_household_lease_minutes=savedLease;
