@@ -3,7 +3,7 @@
 require('dotenv').config();
 const assert = require('assert');
 const crypto = require('crypto');
-const { query, getPool } = require('../src/db');
+const { query, transaction, getPool } = require('../src/db');
 const primitives = require('../src/payments/lifecycle-primitives');
 const termination = require('../src/payments/subscription-termination');
 const subscriptionState = require('../src/entitlements/subscription-state');
@@ -473,6 +473,41 @@ async function testStaleFreeRollbackCannotDeleteReplacementAccount() {
     'replacement Free access must remain ready after stale rollback cleanup');
 }
 
+
+async function testCanonicalLiveFreeClaimLockSelection() {
+  const customerId = await customer('free-claim-lock');
+  const freePlan = await canonicalFreePlan();
+  const current = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  const superseded = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  await query('UPDATE subscriptions SET superseded_by=$2 WHERE id=$1', [superseded.id, current.id]);
+  await insertSubscription(customerId, freePlan.id, {
+    status: 'cancelled',
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()-INTERVAL '1 day'"
+  });
+  await insertSubscription(customerId, freePlan.id, {
+    source: 'manual',
+    billingMode: 'manual',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+
+  const rows = await transaction(client =>
+    subscriptionState.lockLiveFreeClaimSubscriptions(client, customerId)
+  );
+  assert.deepStrictEqual(rows.map(row => String(row.id)), [String(current.id)],
+    'canonical locked Free-claim selection must include only current live free_claim rows');
+}
+
+
 async function cleanup() {
   for (const customerId of [...created.customers].reverse()) {
     await query('DELETE FROM payment_incidents WHERE customer_id=$1', [customerId]).catch(() => {});
@@ -503,6 +538,7 @@ async function cleanup() {
   await testTrialRollbackConvergesToNoPlanNoServer();
   await testPaidProvisioningFailureRetainsEntitlement();
   await testStaleFreeRollbackCannotDeleteReplacementAccount();
+  await testCanonicalLiveFreeClaimLockSelection();
   console.log('state-machine invariants DB smoke: ok');
 })().finally(async () => {
   await cleanup();

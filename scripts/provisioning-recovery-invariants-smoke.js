@@ -66,8 +66,10 @@ assert(entitlementJobs.includes(canonicalAdminPresent),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 assert(adminManualEntitlement.includes(canonicalAdminPresent),
     'manual grant conflict detection must not ignore administrator-present Jellyfin access');
-assert((lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jellyfin',s\.id\)/g)||[]).length >= 2,
-    'Free and trial acquisition transaction guards must both honor administrator-present Jellyfin access');
+assert(subscriptionState.includes('lockLiveFreeClaimSubscriptions')
+    && subscriptionState.includes(canonicalAdminPresent)
+    && (lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jellyfin',s\.id\)/g)||[]).length >= 1,
+    'Free and trial acquisition transaction guards must both honor administrator-present Jellyfin access through their canonical owners');
 assert(entitlementJobs.includes("cps.status IN ('pending','running','blocked','failed')"),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
 
