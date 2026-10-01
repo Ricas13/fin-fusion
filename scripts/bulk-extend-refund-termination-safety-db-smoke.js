@@ -1,7 +1,7 @@
 'use strict';
 
 // DB-backed regression test: the admin bulk "Extend" action
-// (src/platform/bulk-operations.js's extend_entitlement handler) must never
+// (src/customers/bulk-operations.js's extend_entitlement handler) must never
 // mutate an older primary subscription after the customer's newest contract
 // was terminated for a confirmed refund/chargeback. The terminal refund is a
 // boundary for the whole current-contract decision, not merely a row to filter
