@@ -7,6 +7,7 @@ const jobHealth = require('../automation/job-health');
 const criticalJobs = require('../automation/critical-jobs');
 const accessIntegrity = require('../access/access-integrity');
 const accessRepair = require('../access/access-repair');
+const routeRateLimit = require('../security/route-rate-limit');
 const { layout, esc } = require('./admin-html');
 const runtimeSettings = require('./runtime-settings');
 const ui = require('./admin-ui');
@@ -55,6 +56,12 @@ const AUTO_REPAIRABLE_ACCESS_FINDINGS=new Set([
     'free_server_without_plan',
     'unpaid_trial_without_ready_server'
 ]);
+const accessIntegrityRepairRateLimit=routeRateLimit.middleware({
+    scope:'admin-access-integrity-repair',
+    max:30,
+    windowSeconds:60,
+    reason:'admin_access_integrity_repair'
+});
 
 function gate(req,res,next){ return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req,res,next){ res.setHeader('Cache-Control','no-store, private, max-age=0'); res.setHeader('Pragma','no-cache'); next(); }
@@ -140,7 +147,7 @@ function createAdminAutomationRouter(){
     const router=express.Router();
     router.use('/admin/automation',gate,noStore);
     router.get('/admin/automation',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){next(error);}});
-    router.post('/admin/automation/access-integrity/repair',async(req,res)=>{
+    router.post('/admin/automation/access-integrity/repair',accessIntegrityRepairRateLimit,async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid security token');
         try{
             const kind=String(req.body.kind||'');
