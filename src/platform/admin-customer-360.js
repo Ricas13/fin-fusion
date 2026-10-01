@@ -9,7 +9,6 @@ const customerIdentity=require('../customers/admin-customer-identity-service');
 const automationProtection=require('../access/admin-customer-automation-protection');
 const lifecycleService=require('../access/admin-customer-lifecycle-service');
 const accessSettings=require('../access/admin-customer-access-settings');
-const permanentAccess=require('../entitlements/permanent-access');
 const view=require('./customer-360-view');
 const {layout,esc}=require('./admin-html');
 const runtimeSettings=require('./runtime-settings');
@@ -38,7 +37,7 @@ function createAdminCustomer360Router(){
    if(!detail)return res.status(404).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Customer not found',message:'This managed customer does not exist.',link:'/admin/users',linkText:'Back to Customers'});
    const token=csrf.token(req);
    const [permanent,stremioInfo,householdJellyfin,householdStremio,pendingChange]=await Promise.all([
-     permanentAccess.status(req.params.customerId),
+     accessCommands.permanentAccessStatus(req.params.customerId),
      manage.stremioState(req,detail),
      householdOverrides.get(req.params.customerId,'jellyfin'),
      householdOverrides.get(req.params.customerId,'stremio'),
