@@ -29,6 +29,7 @@ const { query, getPool } = require('../src/db');
 const inactivity = require('../src/automation/customer-inactivity');
 const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace');
 const customerActivity = require('../src/platform/customer-activity');
+const subscriptionTermination = require('../src/payments/subscription-termination');
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
@@ -329,11 +330,70 @@ async function candidateWithGrace(customerId) {
     assert.strictEqual(Number(reverseFree.rows[0].count), 1, 'pre-boundary history of a currently-primary account must remain attributable to its prior Free lane');
     assert.strictEqual(Number(reversePrimary.rows[0].count), 1, 'post-boundary history of a currently-primary account must remain primary');
 
+    // Case 7: Free inactivity may end the independent Free lane while a
+    // paid/primary subscription is protected by Permanent Access. The one
+    // customer-level Permanent Access row is intentionally pinned to the paid
+    // subscription and must neither block Free cleanup nor be revoked by it.
+    const permanentParallelCustomerId = await makeCustomer('parallel-paid-permanent');
+    const paidPlan = await query(`
+        INSERT INTO plans(
+            code,name,audience,billing_interval,duration_days,price_minor,currency,streams,
+            server_class,service_type,active,visible,is_free_tier
+        )
+        VALUES($1,$2,'direct','month',30,999,'GBP',2,'premium','jellyfin',TRUE,TRUE,FALSE)
+        RETURNING id
+    `, [`lane-paid-permanent-${suffix}`, `Lane paid permanent ${suffix}`]);
+    created.plans.push(paidPlan.rows[0].id);
+
+    const paidSubscription = await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '2 days',NOW()+INTERVAL '30 days')
+        RETURNING id
+    `, [permanentParallelCustomerId, paidPlan.rows[0].id]);
+    const freeSubscription = await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '2 days','9999-12-31T23:59:59Z'::timestamptz)
+        RETURNING id
+    `, [permanentParallelCustomerId, planId]);
+
+    await query(`
+        INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason)
+        VALUES($1,$2,TRUE,'parallel Free inactivity regression')
+    `, [permanentParallelCustomerId, paidSubscription.rows[0].id]);
+
+    const endedFree = await subscriptionTermination.terminateLocal(
+        freeSubscription.rows[0].id,
+        permanentParallelCustomerId,
+        { reason: 'Free Server inactivity regression smoke' }
+    );
+    assert.strictEqual(endedFree.status,'cancelled','Free lane must still terminate while paid Permanent Access exists');
+    assert.strictEqual(endedFree.permanentAccessRevoked,false,'Free termination must not revoke paid Permanent Access');
+    assert.strictEqual(endedFree.permanentAccessPreservedOnOtherSubscription,true,'Free termination must report that the independent paid override was preserved');
+
+    const parallelState = await query(`
+        SELECT
+          free.status AS free_status,
+          paid.status AS paid_status,
+          o.subscription_id AS permanent_subscription_id,
+          o.permanent_access,
+          o.revoked_at
+        FROM subscriptions free
+        JOIN subscriptions paid ON paid.id=$2
+        JOIN customer_entitlement_overrides o ON o.customer_id=free.customer_id
+        WHERE free.id=$1
+    `, [freeSubscription.rows[0].id, paidSubscription.rows[0].id]);
+    assert.strictEqual(parallelState.rows[0].free_status,'cancelled','only the Free subscription should be ended');
+    assert.strictEqual(parallelState.rows[0].paid_status,'active','paid/primary subscription must remain active');
+    assert.strictEqual(String(parallelState.rows[0].permanent_subscription_id),String(paidSubscription.rows[0].id),'Permanent Access must remain pinned to the paid subscription');
+    assert.strictEqual(parallelState.rows[0].permanent_access,true,'Permanent Access flag must be preserved');
+    assert.strictEqual(parallelState.rows[0].revoked_at,null,'Free cleanup must not revoke the paid Permanent Access override');
+
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
     for (const customerId of created.customers.reverse()) {
         await query('DELETE FROM playback_history WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM jellyfin_accounts WHERE customer_id=$1', [customerId]).catch(() => {});
+        await query('DELETE FROM customer_entitlement_overrides WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM subscriptions WHERE customer_id=$1', [customerId]).catch(() => {});
         await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
     }
