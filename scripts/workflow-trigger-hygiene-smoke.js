@@ -11,6 +11,7 @@ const expectedFiles = [
   'branch-hygiene.yml',
   'browser.yml',
   'ci.yml',
+  'dependency-audit.yml',
   'integration.yml',
   'release-integrity.yml',
   'security-codeql.yml',
@@ -49,6 +50,17 @@ if (JSON.stringify(fastSuiteOwners) !== JSON.stringify(['ci.yml'])) {
 }
 if (releaseSuiteOwners.length) {
   throw new Error(`Workflows must not rerun check:fast transitively through check:release: ${releaseSuiteOwners.join(', ')}`);
+}
+
+const dependencyAuditWorkflow = fs.readFileSync(path.join(workflowDir, 'dependency-audit.yml'), 'utf8');
+if (/(^|\n)\s*(pull_request|push)\s*:/m.test(dependencyAuditWorkflow)) {
+  throw new Error('Dependency audit must remain separated from ordinary feature push/PR validation.');
+}
+if (!/(^|\n)\s*schedule\s*:/m.test(dependencyAuditWorkflow) || !/(^|\n)\s*workflow_dispatch\s*:/m.test(dependencyAuditWorkflow)) {
+  throw new Error('Dependency audit must remain scheduled and manually runnable.');
+}
+if (!dependencyAuditWorkflow.includes('contents: read')) {
+  throw new Error('Dependency audit must retain read-only repository contents permission.');
 }
 
 const branchHygieneWorkflow = fs.readFileSync(path.join(workflowDir, 'branch-hygiene.yml'), 'utf8');
