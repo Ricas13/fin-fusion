@@ -407,6 +407,67 @@ async function testTrialRollbackConvergesToNoPlanNoServer() {
     'failed unpaid trial must converge to no plan and no primary account');
 }
 
+async function testAdminPresentBlocksFreeRollback() {
+  const customerId = await customer('free-admin-present-rollback');
+  const freePlan = await canonicalFreePlan();
+  const subscription = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  await query(`
+    INSERT INTO customer_service_admin_control(customer_id,service,mode,reason)
+    VALUES($1,'jellyfin','admin_present','state-machine rollback protection')
+  `, [customerId]);
+
+  await assert.rejects(
+    lifecycle.rollbackUnprovisionedFreeClaim(
+      customerId,
+      subscription.id,
+      { reason: 'automatic rollback must respect administrator-present authority' }
+    ),
+    error => error?.code === 'OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED',
+    'administrator-present authority must block destructive Free activation rollback'
+  );
+
+  const row = (await query('SELECT status,current_period_end FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'active',
+    'blocked Free rollback must retain the current entitlement');
+  assert(new Date(row.current_period_end).getTime() > Date.now(),
+    'blocked Free rollback must retain its future access window');
+}
+
+async function testPermanentAccessBlocksTrialRollback() {
+  const customerId = await customer('trial-permanent-rollback');
+  const planId = await plan('trial-permanent-rollback', { billingInterval: 'trial', priceMinor: 0 });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  await query(`
+    INSERT INTO customer_entitlement_overrides(
+      customer_id,subscription_id,permanent_access,reason
+    ) VALUES($1,$2,TRUE,'state-machine rollback protection')
+  `, [customerId, subscription.id]);
+
+  await assert.rejects(
+    lifecycle.rollbackUnprovisionedJellyfinTrial(
+      customerId,
+      subscription.id,
+      { reason: 'automatic rollback must respect Permanent Access' }
+    ),
+    error => error?.code === 'OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED',
+    'Permanent Access must block destructive unpaid-trial rollback'
+  );
+
+  const row = (await query('SELECT status,current_period_end FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing',
+    'blocked trial rollback must retain the current entitlement');
+  assert(new Date(row.current_period_end).getTime() > Date.now(),
+    'blocked trial rollback must retain its future access window');
+}
+
 async function testPaidProvisioningFailureRetainsEntitlement() {
   const customerId = await customer('paid-provisioning-failure');
   const planId = await plan('paid-provisioning-failure', { priceMinor: 999 });
@@ -512,6 +573,8 @@ async function cleanup() {
   for (const customerId of [...created.customers].reverse()) {
     await query('DELETE FROM payment_incidents WHERE customer_id=$1', [customerId]).catch(() => {});
     await query('DELETE FROM customer_access_holds WHERE customer_id=$1', [customerId]).catch(() => {});
+    await query('DELETE FROM customer_service_admin_control WHERE customer_id=$1', [customerId]).catch(() => {});
+    await query('DELETE FROM customer_entitlement_overrides WHERE customer_id=$1', [customerId]).catch(() => {});
     await query('DELETE FROM subscriptions WHERE customer_id=$1', [customerId]).catch(() => {});
     await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
   }
@@ -536,6 +599,8 @@ async function cleanup() {
   await testFreeInactivityIsNotCustomerRestorable();
   await testFreeRollbackConvergesToNoPlanNoServer();
   await testTrialRollbackConvergesToNoPlanNoServer();
+  await testAdminPresentBlocksFreeRollback();
+  await testPermanentAccessBlocksTrialRollback();
   await testPaidProvisioningFailureRetainsEntitlement();
   await testStaleFreeRollbackCannotDeleteReplacementAccount();
   await testCanonicalLiveFreeClaimLockSelection();
