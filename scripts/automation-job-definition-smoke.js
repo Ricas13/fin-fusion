@@ -4,7 +4,6 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const registry = require('../src/automation/jobs');
-const criticalJobs = require('../src/automation/critical-jobs');
 
 const names = registry.names();
 assert(names.length > 0, 'automation registry must expose jobs');
@@ -22,11 +21,11 @@ for (const jobKey of names) {
     `${jobKey} interval helper must derive from its definition`);
 }
 
-assert.deepStrictEqual(new Set(registry.criticalNames()), new Set(criticalJobs.names()),
-  'compatibility critical-job facade must derive from the canonical registry metadata');
 for (const jobKey of names) {
-  assert.strictEqual(criticalJobs.isCritical(jobKey), registry.definition(jobKey).critical,
+  assert.strictEqual(registry.isCritical(jobKey), registry.definition(jobKey).critical,
     `${jobKey} critical classification drifted`);
+  assert.strictEqual(registry.mayBeDisabled(jobKey), Boolean(registry.definition(jobKey).disableableCritical),
+    `${jobKey} disableable-critical classification drifted`);
 }
 
 const worker = fs.readFileSync(path.join(__dirname, 'automation-worker.js'), 'utf8');
