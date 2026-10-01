@@ -144,7 +144,7 @@ Tasks:
 - [x] Make `admin-jellyfin-plan-editor.js` delegate mutations.
 - [x] Make `admin-plan-create-v2.js` delegate mutations.
 - [x] Make any other plan editor use the same owner.
-- [ ] Add behavioural tests for create/update rollback on partial failure.
+- [x] Add behavioural tests for create/update rollback on partial failure.
 - [x] Add ownership checks preventing plan mutation SQL from reappearing in platform editors.
 
 **Done when:** every UI/import path uses the same transactional plan mutation service.
@@ -155,12 +155,12 @@ Current concern: `src/platform/configuration-transfer.js` is large and writes se
 
 Tasks:
 
-- [ ] Split parsing/validation of a transfer package from application of the package.
-- [ ] Reuse canonical settings/plan/automation command services.
+- [x] Split parsing/validation of a transfer package from application of the package.
+- [x] Reuse canonical settings/plan/automation command services.
 - [ ] Ensure imported plan/provider/server mappings pass the exact same validation as browser edits.
-- [ ] Keep all-or-safe-partial transaction semantics explicit.
-- [ ] Define which configuration classes are atomic together and which can be safely applied independently.
-- [ ] Add upgrade/import behavioural tests.
+- [x] Keep all-or-safe-partial transaction semantics explicit.
+- [x] Define which configuration classes are atomic together and which can be safely applied independently.
+- [x] Add upgrade/import behavioural tests.
 - [ ] Add an ownership check preventing transfer code from bypassing canonical domain mutation services.
 
 **Done when:** configuration transfer is a coordinator over canonical domain commands rather than a second administrative backend.
@@ -456,6 +456,8 @@ Add dated entries here as implementation batches land.
 - 2026-10-01 — Reconciled Customer 360 roadmap against baseline: mutation ownership and canonical current-state projection were already substantially complete. Fixed a live `permanentAccess.status()` missing-import regression and added coverage.
 - 2026-10-01 — Continued plan ownership cleanup: `admin-plans.js` overview/archive/unarchive mutations now delegate to `src/catalog/plan-command-service.js`; added a platform ownership regression guard. Plan validation/normalisation and transactional rollback coverage remain open.
 - 2026-10-01 — First CI cleanup pass: updated stale Stremio ownership assertions/stubs after catalog-command extraction, removed dead `configuration-transfer.lower()`, and updated the permanent-access UX smoke to follow the canonical access-command owner instead of expecting direct router mutation.
+- 2026-10-01 — Began shared plan validation standardisation with `src/catalog/plan-input.js`; creation plus Jellyfin/Stremio/Emby/overview editors now share primitive boolean/text/integer/money normalization. Added fast contract coverage and a DB regression proving a failed audit write rolls the entire plan overview mutation back. Higher-level product-specific validation remains intentionally open.
+- 2026-10-01 — Configuration-transfer audit confirmed parsing/application are separated and atomic application already delegates settings, notification preferences, plans/provider mappings and automation state to their canonical owners. Exact shared plan-validation parity and a static no-bypass ownership guard remain open.
 - 2026-10-01 — Began P1 implementation: Customer 360 manual server assignment and Permanent Access now cross `src/access/admin-customer-access-commands.js`; canonical ownership checks prevent platform bypass.
 - 2026-10-01 — Customer 360 service truth/control reads now prefer `customer-access-state.snapshot()` whenever present. Added regression coverage preventing stale subscription-history rows from being resurrected as current access.
 - 2026-10-01 — P0 audit confirmed the active `Protect main` ruleset enforces PR/thread rules but currently has no required Actions/status-check rule. Repository-administration write access is not available through the connected GitHub integration, so enforcement remains an owner/admin action.
