@@ -6,6 +6,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const errors = [];
+const INTERNAL_RUNTIME_IMAGE = '${CAPTAINFIN_IMAGE:-captainfin:current}';
 
 function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -70,12 +71,21 @@ dockerfileLines.forEach((line, index) => {
 });
 
 const composeLines = read('docker-compose.yml').split(/\r?\n/);
+let internalRuntimeImages = 0;
 composeLines.forEach((line, index) => {
   const image = line.match(/^\s*image:\s*([^\s#]+)/);
-  if (image && !/@sha256:[0-9a-f]{64}$/i.test(image[1])) {
-    fail(`docker-compose.yml:${index + 1} service image must be digest pinned: ${image[1]}`);
+  if (!image) return;
+  if (image[1] === INTERNAL_RUNTIME_IMAGE) {
+    internalRuntimeImages += 1;
+    return;
+  }
+  if (!/@sha256:[0-9a-f]{64}$/i.test(image[1])) {
+    fail(`docker-compose.yml:${index + 1} external service image must be digest pinned: ${image[1]}`);
   }
 });
+if (internalRuntimeImages && internalRuntimeImages !== 6) {
+  fail(`docker-compose.yml must use the shared internal runtime image consistently; found ${internalRuntimeImages} references`);
+}
 
 const dependabotPath = path.join(root, '.github', 'dependabot.yml');
 if (!fs.existsSync(dependabotPath)) {
