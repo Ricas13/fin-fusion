@@ -17,6 +17,7 @@ const router = read('src/platform/router.js');
 const accessState = read('src/access/customer-access-state.js');
 const accessRepair = readMaybe('src/access/access-repair.js');
 const unpaidActivation = readMaybe('src/payments/unpaid-access-activation.js');
+const automationRegistry = require('../src/automation/jobs');
 
 assert.match(readiness, /async function hasReadyFreeAccount/, 'Free claims must verify a real Jellyfin account');
 assert.match(readiness, /customerAccessState\.freeJellyfin\(customerId/, 'Free readiness must delegate to canonical customer access state');
@@ -33,7 +34,7 @@ assert.match(lifecycle, /replacement_reason=CASE WHEN source='free_claim' THEN '
 assert.match(reconciliation, /const definitivelyGone = !entitlement \|\| entitlement\.admin_jellyfin_removed === true/, 'no-entitlement Free lanes must delete their Jellyfin account rather than leave a disabled orphan');
 
 assert.match(jobs, /async free_capacity_backfill\(\)\{return freeCapacityBackfill\.run\(\{limit:100\}\)\}/, 'the single Free repair/backfill job must remain registered');
-assert.match(worker + jobs, /free_capacity_backfill:30/, 'Free lifecycle repair must remain on the 30-second cadence');
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('free_capacity_backfill'), 30, 'Free lifecycle repair must remain on the 30-second cadence');
 assert.match(backfill + accessRepair, /rollbackUnprovisionedFreeClaim/, 'legacy Free plan-without-server rows must be removed rather than left waiting');
 assert.match(backfill, /orphanAccountCandidates/, 'Free server-without-plan rows must be discovered for cleanup');
 assert.match(backfill, /waiting: 0/, 'the Free backfill result must not expose a deployment-waiting state');
