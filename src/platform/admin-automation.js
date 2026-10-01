@@ -5,8 +5,7 @@ const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const jobHealth = require('../automation/job-health');
 const criticalJobs = require('../automation/critical-jobs');
-const accessIntegrity = require('../access/access-integrity');
-const accessRepair = require('../access/access-repair');
+const accessIntegrityOperator = require('../access/access-integrity-operator');
 const routeRateLimit = require('../security/route-rate-limit');
 const { layout, esc } = require('./admin-html');
 const runtimeSettings = require('./runtime-settings');
@@ -44,18 +43,6 @@ const GROUPS=[
     ['Operations','Bulk work queues and stale-job recovery.',new Set(['bulk_jobs','stale_reclaim'])]
 ];
 const PRESETS=[60,300,900,1800,3600,10800,21600,43200,86400];
-const ACCESS_INTEGRITY_LABELS=Object.freeze({
-    free_plan_without_ready_server:'Free plan without ready server',
-    free_server_without_plan:'Free server account without plan',
-    unpaid_trial_without_ready_server:'Unpaid trial without ready server',
-    primary_server_without_plan:'Primary server account without plan',
-    paid_plan_without_recovery_state:'Paid plan missing recovery state'
-});
-const AUTO_REPAIRABLE_ACCESS_FINDINGS=new Set([
-    'free_plan_without_ready_server',
-    'free_server_without_plan',
-    'unpaid_trial_without_ready_server'
-]);
 const accessIntegrityRepairRateLimit=routeRateLimit.middleware({
     scope:'admin-access-integrity-repair',
     max:30,
@@ -119,8 +106,8 @@ function accessIntegritySection(req, findings) {
         return `<section class="section" id="access-integrity">${ui.sectionHeader({title:'Access integrity',description:'Independent plan ↔ server invariant scan.'})}<div class="notice good"><strong>No access invariant failures detected.</strong> Free, trial and paid recovery states are internally consistent.</div></section>`;
     }
     const cards=findings.map(finding=>{
-        const repairable=AUTO_REPAIRABLE_ACCESS_FINDINGS.has(finding.kind);
-        const label=ACCESS_INTEGRITY_LABELS[finding.kind]||finding.kind;
+        const repairable=accessIntegrityOperator.canRepair(finding.kind);
+        const label=accessIntegrityOperator.label(finding.kind);
         const action=repairable
             ?`<form method="post" action="/admin/automation/access-integrity/repair">${token(req)}<input type="hidden" name="kind" value="${esc(finding.kind)}"><input type="hidden" name="findingId" value="${esc(finding.id)}"><input type="hidden" name="customerId" value="${esc(finding.customerId||'')}"><button class="button btn-sm">Repair safely</button></form>`
             :'<span class="pill warn">Manual review required</span>';
@@ -134,7 +121,7 @@ async function page(req) {
     const [jobs,worker,accessFindings] = await Promise.all([
         jobHealth.list(),
         workerState(),
-        accessIntegrity.scan({limit:100})
+        accessIntegrityOperator.list({limit:100})
     ]);
     const workerAlive=Boolean(worker&&Number(worker.heartbeat_age_seconds)<=Math.max(60,Math.ceil(Number(worker?.metadata?.pollMs||15000)/1000)*4));
     const problemJobs=jobs.filter(job=>['degraded','failed','stale','missing'].includes(jobHealth.healthState(job)));
@@ -150,19 +137,13 @@ function createAdminAutomationRouter(){
     router.post('/admin/automation/access-integrity/repair',accessIntegrityRepairRateLimit,async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid security token');
         try{
-            const kind=String(req.body.kind||'');
-            const findingId=String(req.body.findingId||'');
-            const customerId=String(req.body.customerId||'');
-            if(!AUTO_REPAIRABLE_ACCESS_FINDINGS.has(kind))throw new Error('This access integrity finding requires manual review.');
-            const current=await accessIntegrity.scan({limit:500});
-            const finding=current.find(item=>
-                item.kind===kind
-                && String(item.id||'')===findingId
-                && String(item.customerId||'')===customerId
-            );
-            if(!finding)return res.redirect('/admin/automation?message='+encodeURIComponent('Access integrity finding is already resolved or changed; no repair was applied.'));
-            const result=await accessRepair.repairIntegrityFinding(finding);
-            return res.redirect('/admin/automation?message='+encodeURIComponent(`Access integrity repair completed: ${result.status||'ok'}.`));
+            const outcome=await accessIntegrityOperator.repairCurrent({
+                kind:req.body.kind,
+                id:req.body.findingId,
+                customerId:req.body.customerId
+            });
+            if(!outcome.applied)return res.redirect('/admin/automation?message='+encodeURIComponent('Access integrity finding is already resolved or changed; no repair was applied.'));
+            return res.redirect('/admin/automation?message='+encodeURIComponent(`Access integrity repair completed: ${outcome.status||'ok'}.`));
         }catch(error){
             return res.redirect('/admin/automation?error='+encodeURIComponent(error.message));
         }
@@ -186,4 +167,4 @@ function createAdminAutomationRouter(){
     return router;
 }
 
-module.exports={createAdminAutomationRouter,page,LABELS,CORE_JOBS,ACCESS_INTEGRITY_LABELS,AUTO_REPAIRABLE_ACCESS_FINDINGS,workerState,jobCard,groupedJobs,automationHero,accessIntegritySection};
+module.exports={createAdminAutomationRouter,page,LABELS,CORE_JOBS,workerState,jobCard,groupedJobs,automationHero,accessIntegritySection};
