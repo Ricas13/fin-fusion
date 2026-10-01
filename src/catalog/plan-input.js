@@ -45,7 +45,8 @@ function uniqueTextValues(value, { maxItemLength = 200, maxItems = 500, split = 
 }
 
 function enumValue(value, allowed, fallback) {
-  return allowed.includes(value) || allowed instanceof Set && allowed.has(value) ? value : fallback;
+  const accepted = allowed instanceof Set ? allowed.has(value) : Array.isArray(allowed) && allowed.includes(value);
+  return accepted ? value : fallback;
 }
 
 module.exports = {
