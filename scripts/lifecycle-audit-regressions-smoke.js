@@ -86,6 +86,29 @@ function operatorProtectedRollbackContract(){
     'Free inactivity must consume the same canonical operator-protection classification');
 }
 
+function adminAuthorityReconciliationRaceContract(){
+  const permanent=source('src/entitlements/permanent-access.js');
+  const serviceControl=source('src/entitlements/service-admin-control.js');
+
+  assert.match(permanent,/enable\(customerId[\s\S]*?reconciliationLock\.withCustomerReconciliationLock\(customerId/,
+    'Permanent Access grants must serialize with destructive customer reconciliation');
+  assert.match(permanent,/revoke\(customerId[\s\S]*?reconciliationLock\.withCustomerReconciliationLock/,
+    'Permanent Access revocation must serialize with customer reconciliation');
+  assert.match(serviceControl,/setPresent\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
+    'administrator-present authority must not race an in-flight reconciliation');
+  assert.match(serviceControl,/setRemoved\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
+    'administrator-removed authority must not race an in-flight reconciliation');
+  assert.match(serviceControl,/clear\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
+    'return-to-automatic authority changes must not race an in-flight reconciliation');
+  const inactivity=source('src/automation/customer-inactivity-scoped.js');
+  assert.match(inactivity,/finalizeDetachedRemovals[\s\S]*?reconciliationLock\.withCustomerReconciliationLock/,
+    'detached Free inactivity completion must serialize its authority re-check and terminal plan close');
+  assert.match(inactivity,/finalizeDetachedRemovalLocked[\s\S]*?subscriptionState\.liveFreeJellyfinSubscription/,
+    'detached Free inactivity completion must re-read current authority while holding the customer lock');
+  assert.match(inactivity,/OR public\.subscription_admin_present\(h\.customer_id,'jellyfin',s\.id\)/,
+    'a protected detached retry must remain discoverable if account restore succeeded before hold release failed');
+}
+
 function freeInactivitySafetyContract(){
   const inactivity=source('src/automation/customer-inactivity.js');
   const scoped=source('src/automation/customer-inactivity-scoped.js');
@@ -162,6 +185,7 @@ legacyPayPalProfileRecovery();
 providerCheckoutRecoveryDiagnostics();
 jellyfinDeletionScope();
 operatorProtectedRollbackContract();
+adminAuthorityReconciliationRaceContract();
 freeInactivitySafetyContract();
 deferredWebhookContract();
 discoveryAutomationContract();
