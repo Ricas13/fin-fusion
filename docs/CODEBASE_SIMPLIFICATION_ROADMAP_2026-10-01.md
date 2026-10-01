@@ -110,7 +110,7 @@ Tasks:
 - [x] Move renewal/plan-change cancellation decisions behind payments/access owners where not already delegated.
 - [x] Keep route validation, CSRF, rate limiting, rendering and redirects in platform.
 - [x] Add ownership tests preventing direct subscription/customer/user/audit mutation SQL from returning to the router.
-- [ ] Add behavioural tests for any extracted high-risk mutation.
+- [x] Add behavioural tests for any extracted high-risk mutation.
 
 **Done when:** the router contains no independent customer-access, subscription, identity or business-policy mutation logic.
 
@@ -212,9 +212,9 @@ Tasks:
   - `scripts/ops/`
   - `scripts/ci/`
 - [ ] Update npm scripts/workflows incrementally rather than in one risky rename.
-- [ ] Change Docker build COPY rules or stages so CI-only test scripts and non-runtime docs are omitted from the final production image.
-- [ ] Keep migration, backup, restore, environment preparation and deployment verification tools available where required.
-- [ ] Add an image-content smoke test for required runtime tools and forbidden CI-only content.
+- [x] Change Docker build COPY rules or stages so CI-only test scripts and non-runtime docs are omitted from the final production image.
+- [x] Keep migration, backup, restore, environment preparation and deployment verification tools available where required.
+- [x] Add an image-content smoke test for required runtime tools and forbidden CI-only content.
 - [ ] Compare image size before/after.
 
 **Done when:** the production image contains only the application and tools needed to operate/recover it.
@@ -303,12 +303,12 @@ Current concern: `src/platform/customer-security.js` still performs TOTP/recover
 
 Tasks:
 
-- [ ] Move TOTP enrollment/confirmation/disable state into auth/security domain services.
-- [ ] Move recovery-code generation/replacement into the same owner.
-- [ ] Move session revocation/password-security mutations behind auth ownership.
-- [ ] Keep routes, CSRF, rate limits and rendering in platform.
-- [ ] Preserve current security logging/auditing.
-- [ ] Add behavioural security tests and boundary assertions.
+- [x] Move TOTP enrollment/confirmation/disable state into auth/security domain services.
+- [x] Move recovery-code generation/replacement into the same owner.
+- [x] Move session revocation/password-security mutations behind auth ownership.
+- [x] Keep routes, CSRF, rate limits and rendering in platform.
+- [x] Preserve current security logging/auditing.
+- [x] Add behavioural security tests and boundary assertions.
 
 **Done when:** platform security routes no longer own authentication persistence rules.
 
@@ -448,6 +448,12 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-01 — Began production-image slimming: Docker build context now omits docs plus CI smoke/check runners while retaining runtime/backup/migration/recovery verification tools. Release Integrity builds the actual image and asserts required/forbidden paths. Current exclusions remove about 2.76 MB across 349 repository files before layer compression.
+
+- 2026-10-01 — Customer security mutation ownership completed: TOTP/recovery/password/session mutations live behind `customer-security-commands`; platform routes retain HTTP/CSRF/rendering only, `customers.js` keeps compatibility wrappers, and behavioral plus canonical-ownership checks prevent persistence from drifting back into platform.
+
+- 2026-10-01 — Closed the remaining high-risk Customer 360 extraction coverage: reset-to-plan expiry now has behavioral proof for subscription locking, customer scoping, extension clearing, atomic audit and reconciliation; automatic placement covers place/already/migrate/no-target paths through canonical migration/reconciliation owners.
 
 Add dated entries here as implementation batches land.
 
