@@ -72,6 +72,22 @@ async function main(){
     assert.deepStrictEqual(expectedShape(plan),expectedShape(expected),`${expected.code} modular fields were not exported exactly`);
   }
 
+  const oneTimeMapping=JSON.parse(JSON.stringify(exported));
+  oneTimeMapping.configuration.directPaymentMappings=[{
+    planCode:regressionPlans[0].code,
+    provider:'stripe',
+    checkoutMode:'payment',
+    externalId:null,
+    active:true,
+    metadata:{}
+  }];
+  const parsedOneTime=transfer.parseDocument(oneTimeMapping);
+  assert.strictEqual(parsedOneTime.configuration.directPaymentMappings[0].externalId,null,'one-time provider mappings must not require a remote recurring-price ID');
+
+  const badRecurring=JSON.parse(JSON.stringify(oneTimeMapping));
+  badRecurring.configuration.directPaymentMappings[0].checkoutMode='subscription';
+  assert.throws(()=>transfer.parseDocument(badRecurring),/external provider ID/,'recurring provider mappings must still require their external subscription price/plan ID');
+
   const preview=await transfer.previewImport(exported);
   assert(preview.digest,'preview must produce a digest');
   assert.strictEqual(Number(preview.summary.affiliateProgram||0),1,'preview must recognize affiliate settings');
