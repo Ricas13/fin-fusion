@@ -612,6 +612,136 @@ async function updateStremioAvailability({
   });
 }
 
+async function upsertEmbyPlan({
+  input,
+  plan = null,
+  selectedServers = [],
+  actorUserId = null,
+  currency
+}) {
+  if (!input || typeof input !== 'object') throw new Error('Emby plan input is required.');
+  const before = plan
+    ? await planPricing.resolvePrice(plan.id, currency, { allowFallback: false })
+    : null;
+  const commercialChanged = plan
+    ? !before || Number(before.price_minor) !== Number(input.priceMinor) || String(plan.billing_interval) !== String(input.billing)
+    : false;
+
+  return transaction(async client => {
+    let row;
+    if (plan) {
+      const result = await client.query(
+        `UPDATE plans SET
+           name=$2,description=$3,billing_interval=$4,duration_days=$5,capacity_limit=$6,
+           server_class=$7,visible=$8,active=$9,jellyfin_access_model=$10,streams=$11,
+           jellyfin_household_network_limit=$12,jellyfin_household_lease_minutes=$13,
+           allow_downloads=$14,allow_video_transcoding=$15,allow_audio_transcoding=$16,
+           allow_remuxing=$17,allow_live_tv=$18,allow_live_tv_management=$19,
+           allow_remote_access=$20,allow_4k=$21,allow_subtitle_editing=$22,
+           library_access_mode=$23,library_names=$24::text[],marketing_features=$25::text[],
+           placement_strategy=$26,updated_at=NOW()
+         WHERE id=$1 AND service_type='emby'
+         RETURNING *`,
+        [
+          plan.id, input.name, input.description, input.billing, input.duration,
+          input.capacityLimit, input.serverClass, input.visible, input.active,
+          input.accessModel, input.streams, input.networkLimit, input.leaseMinutes,
+          input.downloads, input.video, input.audio, input.remux, input.live,
+          input.liveManagement, input.remote, input.fourk, input.subtitles,
+          input.libraryMode, input.libraryMode === 'all' ? [] : input.libraries,
+          input.marketing, input.placementStrategy
+        ]
+      );
+      if (!result.rowCount) throw new Error('Emby Share plan not found.');
+      row = result.rows[0];
+
+      const price = await planPricing.setPrice(client, plan.id, {
+        currency,
+        priceMinor: input.priceMinor,
+        active: true,
+        isDefault: true
+      });
+      if (commercialChanged) {
+        await client.query(
+          `UPDATE plan_provider_prices
+           SET active=FALSE,
+               verification_status='unverified',
+               verification_error='Plan commercial schedule changed; re-verification required.',
+               updated_at=NOW()
+           WHERE plan_price_id=$1`,
+          [price.id]
+        );
+      }
+    } else {
+      const nextOrder = Number((await client.query(
+        'SELECT COALESCE(MAX(sort_order),0)+10 AS n FROM plans'
+      )).rows[0]?.n || 10);
+      const result = await client.query(
+        `INSERT INTO plans(
+           code,name,description,service_type,audience,billing_interval,duration_days,
+           price_minor,currency,capacity_limit,is_addon,server_class,visible,active,sort_order,
+           jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,
+           streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,
+           allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,allow_subtitle_editing,
+           library_access_mode,library_names,marketing_features,placement_strategy,is_free_tier
+         ) VALUES(
+           $1,$2,$3,'emby','direct',$4,$5,$6,$7,$8,FALSE,$9,$10,$11,$12,$13,$14,$15,
+           $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::text[],$28::text[],$29,FALSE
+         )
+         RETURNING *`,
+        [
+          input.code, input.name, input.description, input.billing, input.duration,
+          input.priceMinor, currency, input.capacityLimit, input.serverClass,
+          input.visible, input.active, nextOrder, input.accessModel, input.networkLimit,
+          input.leaseMinutes, input.streams, input.downloads, input.video, input.audio,
+          input.remux, input.live, input.liveManagement, input.remote, input.fourk,
+          input.subtitles, input.libraryMode, input.libraryMode === 'all' ? [] : input.libraries,
+          input.marketing, input.placementStrategy
+        ]
+      );
+      row = result.rows[0];
+      await planPricing.setPrice(client, row.id, {
+        currency,
+        priceMinor: input.priceMinor,
+        active: true,
+        isDefault: true
+      });
+    }
+
+    await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [row.id]);
+    if (input.poolMode === 'selected') {
+      for (const server of selectedServers) {
+        await client.query(
+          'INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,$3)',
+          [row.id, server.id, server.weight]
+        );
+      }
+    }
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,$2,'plan',$3,$4::jsonb)`,
+      [
+        actorUserId,
+        plan ? 'admin.emby_plan.update' : 'admin.emby_plan.create',
+        row.id,
+        JSON.stringify({
+          serviceType: 'emby',
+          currency,
+          priceMinor: input.priceMinor,
+          capacityLimit: input.capacityLimit,
+          serverClass: input.serverClass,
+          poolMode: input.poolMode,
+          servers: selectedServers,
+          streams: input.streams
+        })
+      ]
+    );
+
+    return row;
+  });
+}
+
 module.exports = {
   createPlan,
   updateProduct,
@@ -629,5 +759,6 @@ module.exports = {
   updateStremioStorefront,
   updateStremioTrackingSnapshots,
   updateStremioAccess,
-  updateStremioAvailability
+  updateStremioAvailability,
+  upsertEmbyPlan
 };
