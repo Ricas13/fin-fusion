@@ -8,6 +8,7 @@ const planChange=require('../payments/customer-plan-change');
 const planPricing=require('../payments/plan-pricing');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const forceMove=require('../jellyfin/admin-force-move');
+const serverMigration=require('../jellyfin/server-migration');
 
 function clean(value,max=500){return String(value==null?'':value).trim().slice(0,max);}
 function jellyfinCapable(row){return serviceScope.capabilities(row).has('jellyfin');}
@@ -143,6 +144,34 @@ async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=nu
   return{message:`Subscription moved to ${target.name||target.code}.${suffix}`,mode:'manual'};
 }
 
+
+async function resetAutomaticPlacement(customerId,{actorUserId=null}={}){
+  const entitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
+  if(!entitlement||!['jellyfin','bundle'].includes(String(entitlement.service_type_snapshot||entitlement.service_type||'jellyfin'))){
+    throw new Error('This customer has no active Jellyfin entitlement to place.');
+  }
+
+  const[current,target]=await Promise.all([
+    serverMigration.primaryAccount(customerId),
+    provisioning.selectServerForPlan(entitlement)
+  ]);
+  if(!target)throw new Error('No eligible server is currently available for this plan.');
+
+  if(!current){
+    const outcome=await provisioning.reconcileCustomer(customerId);
+    return{mode:'placed',targetName:outcome?.account?.server_name||target.name||null};
+  }
+
+  if(String(current.server_id)===String(target.id)){
+    await provisioning.reconcileCustomer(customerId);
+    return{mode:'already',targetName:target.name};
+  }
+
+  const migration=await serverMigration.createMigration(customerId,target.id,actorUserId);
+  const moved=await serverMigration.executeMigration(migration.id);
+  return{mode:'moved',targetName:moved?.target_server_name||target.name};
+}
+
 async function moveServer(customerId,serverId,{actorUserId=null}={}){
   return forceMove.move(customerId,serverId,{actorUserId});
 }
@@ -153,5 +182,6 @@ module.exports={
   lockSubscriptionForPlanChange,
   applyLocalPlanContract,
   changePlan,
+  resetAutomaticPlacement,
   moveServer
 };
