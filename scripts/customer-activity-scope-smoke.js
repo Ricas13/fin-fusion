@@ -30,6 +30,7 @@ assert.equal(activity.scopeOption('anything-else').key,'all');
 assert.equal(activity.scopePredicate('all'),'');
 assert.match(activity.scopePredicate('free'),/access_lane_snapshot/,'Free activity must prefer the immutable observation-time lane snapshot');
 assert.match(activity.scopePredicate('free'),/access_lane_changed_at/,'legacy rows with a live account must respect explicit primary-to-Free transition boundaries');
+assert.match(activity.scopePredicate('free'),/access_lane='primary'[\s\S]*THEN 'free'/,'legacy rows before a trustworthy Free-to-primary transition must remain visible as Free history');
 assert.match(activity.scopePredicate('free'),/inactivity_observation_reset_at IS NULL/,'ambiguous legacy Free boundaries must not rewrite old history');
 assert.match(activity.scopePredicate('free'),/='free'/);
 assert.match(activity.scopePredicate('premium'),/='primary'/,'Premium activity is the paid\/primary lane, including custom pools');
@@ -50,6 +51,7 @@ assert.doesNotMatch(playbackWebhook,/access_lane_snapshot=COALESCE\(playback_his
 assert.match(laneMigration,/ALTER TABLE playback_history[\s\S]*access_lane_snapshot/,'the migration must persist playback lane identity');
 assert.match(laneMigration,/ALTER TABLE stream_policy_events[\s\S]*access_lane_snapshot/,'the migration must persist stream-policy lane identity');
 assert.match(laneMigration,/ph\.started_at<ja\.access_lane_changed_at/,'historical backfill must separate paid-era playback before an explicit Free adoption');
+assert.match(laneMigration,/ja\.access_lane='primary'[\s\S]*ph\.started_at<ja\.access_lane_changed_at[\s\S]*THEN 'free'/,'historical backfill must also preserve Free-era playback before an explicit transition back to primary');
 assert.match(laneMigration,/UPDATE jellyfin_accounts[\s\S]*inactivity_observation_reset_at=NULL[\s\S]*access_lane_changed_at>inactivity_observation_reset_at/,'the migration must repair legacy safety markers that survived a later explicit lane transition');
 assert.match(activity.scopePredicate('free'),/access_lane_changed_at>activity_scope_account\.inactivity_observation_reset_at/,'runtime scope fallback must also trust a lane boundary newer than the legacy safety marker');
 assert.match(laneMigration,/ph\.jellyfin_account_id IS NOT NULL/,'historical lane snapshots must only be asserted when the original account identity is still known');
