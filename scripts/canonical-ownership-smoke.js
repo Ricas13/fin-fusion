@@ -112,6 +112,77 @@ assert(sessionMigration.includes('CREATE TABLE IF NOT EXISTS user_sessions'),'se
 assert(/createTableIfMissing:\s*false/.test(application),'web session store must rely on migrated user_sessions');
 assert(!/createTableIfMissing:\s*true/.test(application),'web runtime must never regain session-table DDL fallback');
 
+// Customer/admin outbound notification side effects: business/domain modules
+// may decide what to notify, but external delivery is durable-outbox owned.
+// This prevents SMTP/Discord/Telegram calls from creeping back into request,
+// billing or lifecycle code where a process crash could lose or duplicate them.
+const emailOutbox=read('src/integrations/email-outbox.js');
+const notificationOutbox=read('src/integrations/notification-outbox.js');
+const notificationDispatch=read('src/integrations/notification-dispatch.js');
+assert(emailOutbox.includes("INSERT INTO notification_outbox")
+    && emailOutbox.includes("channel='email'")
+    && emailOutbox.includes("status='sending'")
+    && emailOutbox.includes("status='sent'")
+    && emailOutbox.includes("status='dead'"),
+    'email delivery must remain a durable outbox state machine');
+assert(emailOutbox.includes('UNCERTAIN_DELIVERY_ERROR')
+    && emailOutbox.includes('recordUncertainDelivery'),
+    'SMTP success followed by persistence uncertainty must quarantine instead of blind-resending');
+assert(notificationOutbox.includes("INSERT INTO notification_outbox")
+    && notificationOutbox.includes("status='sending'")
+    && notificationOutbox.includes("status='sent'")
+    && notificationOutbox.includes("status='dead'"),
+    'Discord and Telegram delivery must remain a durable outbox state machine');
+assert(notificationOutbox.includes('UNCERTAIN_DELIVERY_ERROR')
+    && notificationOutbox.includes('quarantineStaleSending'),
+    'non-email notification delivery uncertainty must quarantine instead of blind-resending');
+assert(notificationDispatch.includes('emailOutbox.enqueue(')
+    && notificationDispatch.includes('notificationOutbox.enqueueTelegram(')
+    && notificationDispatch.includes('notificationOutbox.enqueueDiscord('),
+    'notification dispatch must enqueue external side effects instead of delivering them inline');
+assert(!notificationDispatch.includes('emailSettings.send(')
+    && !notificationDispatch.includes('notificationSettings.sendDiscord(')
+    && !notificationDispatch.includes('notificationSettings.sendTelegram('),
+    'notification dispatch must never bypass its durable outboxes');
+
+const sourceFiles=jsFiles(path.join(root,'src'));
+
+// Explicit administrator "send test" endpoints intentionally exercise the
+// transport itself and are not lifecycle/customer notifications. Keep that
+// diagnostic exception small and named; every non-test business notification
+// must still enter the durable outbox.
+const adminTransportTests=new Set([
+  'src/platform/admin-email.js',
+  'src/platform/admin-integrations-inline.js',
+  'src/platform/admin-personal-notification-tests.js'
+]);
+for(const file of adminTransportTests){
+  const source=read(file);
+  assert(/send-test|\/notifications\/test\//.test(source),
+    `${file} may bypass the outbox only as an explicit administrator transport test`);
+}
+
+const directEmailSenders=sourceFiles
+  .filter(file=>read(relative(file)).includes('emailSettings.send('))
+  .map(relative).sort();
+assert.deepStrictEqual(directEmailSenders,[
+  'src/platform/admin-email.js',
+  'src/platform/admin-integrations-inline.js',
+  'src/platform/admin-personal-notification-tests.js'
+], 'only explicit administrator SMTP transport tests may bypass the email outbox');
+
+const directDiscordSenders=sourceFiles
+  .filter(file=>/\.sendDiscord(?:Channel)?\s*\(/.test(read(relative(file))))
+  .map(relative).filter(file=>file!=='src/integrations/notification-outbox.js').sort();
+assert.deepStrictEqual(directDiscordSenders,['src/platform/admin-personal-notification-tests.js'],
+  'only the explicit administrator Discord transport test may bypass the notification outbox');
+
+const directTelegramSenders=sourceFiles
+  .filter(file=>/\.sendTelegram\s*\(/.test(read(relative(file))))
+  .map(relative).filter(file=>file!=='src/integrations/notification-outbox.js').sort();
+assert.deepStrictEqual(directTelegramSenders,['src/platform/admin-personal-notification-tests.js'],
+  'only the explicit administrator Telegram transport test may bypass the notification outbox');
+
 // Stremio ownership: household access remains a control-plane contract while
 // the stream resource hands Stremio an isolated media-server session's
 // static/original media URL directly. No CAPTAiNFiN media relay or provider
