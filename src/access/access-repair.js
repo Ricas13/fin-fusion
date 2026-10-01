@@ -1,0 +1,108 @@
+'use strict';
+
+const customerAccessState = require('./customer-access-state');
+const provisioning = require('../jellyfin/resilient-provisioning');
+
+function trialEntitlement(entitlement) {
+  return String(entitlement?.contract_billing_interval || entitlement?.billing_interval || '').toLowerCase() === 'trial';
+}
+
+function jellyfinEntitlement(entitlement) {
+  return ['jellyfin', 'bundle'].includes(
+    String(entitlement?.service_type_snapshot || entitlement?.service_type || 'jellyfin').toLowerCase()
+  );
+}
+
+function createAccessRepair(deps = {}) {
+  const accessState = deps.customerAccessState || customerAccessState;
+  const provisioningApi = deps.provisioning || provisioning;
+  const lifecycleApi = deps.lifecycle || (() => require('../payments/lifecycle'));
+
+  async function repairFreeEntitlement(customerId, subscriptionId, { reason = null } = {}) {
+    let access = await accessState.freeJellyfin(customerId, { includeBlocked: true });
+    if (!access.entitlement || String(access.entitlement.subscription_id || '') !== String(subscriptionId || '')) {
+      return { status: 'skipped', reason: 'subscription_changed' };
+    }
+    if (access.state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) {
+      return { status: 'skipped', reason: 'blocked' };
+    }
+    if (access.state === accessState.ACCESS_STATES.ACTIVE_READY) {
+      return { status: 'ready', account: access.account };
+    }
+
+    let reconcileError = null;
+    try {
+      await provisioningApi.reconcileCustomer(customerId);
+    } catch (error) {
+      reconcileError = error;
+    }
+
+    access = await accessState.freeJellyfin(customerId, { includeBlocked: true });
+    if (access.entitlement
+        && String(access.entitlement.subscription_id || '') === String(subscriptionId || '')
+        && access.state === accessState.ACCESS_STATES.ACTIVE_READY) {
+      return { status: 'repaired', account: access.account };
+    }
+
+    // Re-check exact ownership after reconciliation. A replacement subscription
+    // must never be rolled back while repairing an older Free access episode.
+    if (!access.entitlement || String(access.entitlement.subscription_id || '') !== String(subscriptionId || '')) {
+      return { status: 'skipped', reason: 'subscription_changed_after_reconcile' };
+    }
+    if (access.state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) {
+      return { status: 'skipped', reason: 'blocked_after_reconcile' };
+    }
+
+    const lifecycle = lifecycleApi();
+    await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
+      reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account'
+    });
+    return { status: 'removed', reconcileError };
+  }
+
+  async function repairUnpaidTrial(customerId, { reason = null } = {}) {
+    const access = await accessState.primaryJellyfin(customerId, { includeBlocked: true });
+    const entitlement = access.entitlement;
+    if (!entitlement
+        || access.state !== accessState.ACCESS_STATES.INCONSISTENT_UNPAID
+        || !trialEntitlement(entitlement)
+        || !jellyfinEntitlement(entitlement)) {
+      return { status: 'skipped' };
+    }
+
+    const lifecycle = lifecycleApi();
+    await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
+      reason: reason || 'Unpaid Jellyfin trial had no enabled server account'
+    });
+
+    // Converge the now no-plan state so stale provisioning metadata does not
+    // keep advertising a deployment for an entitlement that was rolled back.
+    await provisioningApi.reconcileCustomer(customerId);
+    return { status: 'removed', subscriptionId: entitlement.subscription_id };
+  }
+
+  async function removeOrphanFreeAccount(customerId) {
+    const before = await accessState.freeJellyfin(customerId, { includeBlocked: true });
+    if (before.state !== accessState.ACCESS_STATES.ORPHAN_ACCOUNT) {
+      return { status: 'skipped' };
+    }
+
+    await provisioningApi.reconcileCustomer(customerId);
+    const after = await accessState.freeJellyfin(customerId, { includeBlocked: true });
+    if (after.state === accessState.ACCESS_STATES.ORPHAN_ACCOUNT) {
+      throw new Error('Free Server account remained after no-plan reconciliation.');
+    }
+    return { status: 'removed' };
+  }
+
+  return { repairFreeEntitlement, repairUnpaidTrial, removeOrphanFreeAccount };
+}
+
+const defaultRepair = createAccessRepair();
+
+module.exports = {
+  trialEntitlement,
+  jellyfinEntitlement,
+  createAccessRepair,
+  ...defaultRepair
+};

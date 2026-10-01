@@ -129,8 +129,10 @@ assert(compactFreeBackfill.includes("p.is_free_tier=TRUE")
 assert(compactFreeBackfill.includes('ORDERBYcreated_atASC,customer_idASC'),
     'Free Server backfill must allocate waiting entitlements oldest-first');
 const compactFreeRepair = compact(freeBackfill + accessRepair);
-assert(compactFreeRepair.includes('provisioning.reconcileCustomer('),
-    'Free Server repair must reuse the canonical resilient customer reconciler');
+assert(freeBackfill.includes('accessRepair.repairFreeEntitlement(')
+    && accessRepair.includes("require('../jellyfin/resilient-provisioning')")
+    && compactFreeRepair.includes('.reconcileCustomer('),
+    'Free Server repair must delegate to the access repair layer backed by the canonical resilient customer reconciler');
 assert((compactFreeBackfill.includes('ACCESS_STATES.ACTIVE_BLOCKED') || compactFreeRepair.includes('ACCESS_STATES.ACTIVE_BLOCKED'))
     && customerAccessState.includes('ACTIVE_BLOCKED')
     && compactFreeRepair.includes('rollbackUnprovisionedFreeClaim')
