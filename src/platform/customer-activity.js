@@ -39,7 +39,10 @@ function scopePredicate(rawScope,alias='ph',observedAtColumn='started_at'){
     ${alias}.access_lane_snapshot,
     (SELECT CASE
               WHEN activity_scope_account.access_lane='free'
-               AND activity_scope_account.inactivity_observation_reset_at IS NULL
+               AND (
+                 activity_scope_account.inactivity_observation_reset_at IS NULL
+                 OR activity_scope_account.access_lane_changed_at>activity_scope_account.inactivity_observation_reset_at
+               )
                AND ${observedAt}<activity_scope_account.access_lane_changed_at
               THEN 'primary'
               ELSE activity_scope_account.access_lane
