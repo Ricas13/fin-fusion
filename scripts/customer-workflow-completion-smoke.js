@@ -64,7 +64,7 @@ assert(register.includes('claim link')&&register.includes('instead of creating a
 
 assert(!adminNav.groups.some(group=>group.key==='resellers'),'reserved reseller routes must not appear as a shipped module in the default admin sidebar');
 const bulkCustomersSource=fs.readFileSync(path.join(root,'src/platform/admin-bulk-customers.js'),'utf8');
-const bulkOperationsSource=fs.readFileSync(path.join(root,'src/platform/bulk-operations.js'),'utf8');
+const bulkOperationsSource=fs.readFileSync(path.join(root,'src/customers/bulk-operations.js'),'utf8');
 const requestUsersSource=fs.readFileSync(path.join(root,'src/platform/admin-request-users.js'),'utf8');
 const accessCardsSource=fs.readFileSync(path.join(root,'src/platform/customer-360-access-cards.js'),'utf8');
 assert(bulkCustomersSource.includes("['plan_change','Move Plan',"),'the customer-list bulk-action catalog must expose plan_change as Move Plan');
