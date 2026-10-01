@@ -20,7 +20,7 @@ const { query, getPool } = require('../src/db');
 const bulkJobs = require('../src/platform/bulk-jobs');
 const bulkWorker = require('../src/jellyfin/bulk-worker');
 const subscriptionTermination = require('../src/payments/subscription-termination');
-require('../src/platform/bulk-operations'); // registers extend_entitlement
+require('../src/customers/bulk-operations'); // registers extend_entitlement
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [] };
