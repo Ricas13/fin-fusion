@@ -9,6 +9,8 @@ const intents = require('../src/payments/checkout-intents');
 const lifecycle = require('../src/payments/lifecycle');
 const jellyfinRegistry = require('../src/jellyfin/registry');
 const providerOps = require('../src/payments/provider-operations');
+const reconciliationLock = require('../src/jellyfin/reconciliation-lock');
+const serviceAdminControl = require('../src/entitlements/service-admin-control');
 const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
 const suffix = crypto.randomBytes(6).toString('hex');
@@ -144,6 +146,40 @@ async function duplicateAndOutOfOrderProviderEvents() {
     assert.strictEqual(lateCancel.state,'completed','Late provider cancellation regressed a completed checkout');
 }
 
+async function administratorAuthorityWaitsForReconciliation() {
+    const c=await customer('admin-authority-lock');
+    let releaseLock;
+    let enteredResolve;
+    const entered=new Promise(resolve=>{enteredResolve=resolve;});
+    const release=new Promise(resolve=>{releaseLock=resolve;});
+
+    const held=reconciliationLock.withCustomerReconciliationLock(c.id,async()=>{
+        enteredResolve();
+        await release;
+    });
+    await entered;
+
+    let mutationCompleted=false;
+    const mutation=serviceAdminControl.setPresent(c.id,'jellyfin',{
+        reason:'adversarial reconciliation lock smoke'
+    }).then(value=>{mutationCompleted=true;return value;});
+
+    await new Promise(resolve=>setTimeout(resolve,200));
+    assert.strictEqual(
+        mutationCompleted,
+        false,
+        'Administrator access authority changed while an older reconciliation still held the customer correctness lock'
+    );
+
+    releaseLock();
+    await held;
+    await mutation;
+    assert.strictEqual(mutationCompleted,true,'Administrator authority did not resume after reconciliation released the lock');
+
+    const state=await serviceAdminControl.state(c.id,'jellyfin');
+    assert.strictEqual(state?.mode,'admin_present','Serialized administrator authority was not persisted after the lock released');
+}
+
 async function workerCrashRecovery() {
     const owner=(await customer('provider-op')).id,key=`op-race-${suffix}`;
     const first=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:owner,operationType:'cancel_subscription',localReference:`sub_local_${suffix}`,idempotencyKey:key,request:{reason:'race smoke'}});
@@ -169,6 +205,7 @@ async function main(){
         await freeClaimRace();
         await checkoutSurvivesCatalogueRetirement();
         await duplicateAndOutOfOrderProviderEvents();
+        await administratorAuthorityWaitsForReconciliation();
         await workerCrashRecovery();
         console.log('Adversarial concurrency smoke test passed.');
     } finally {
