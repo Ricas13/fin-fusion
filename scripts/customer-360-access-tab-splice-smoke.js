@@ -13,6 +13,7 @@ const compactSource=read('src/platform/customer-360-compact.js');
 const cardsSource=read('src/platform/customer-360-access-cards.js');
 const statusSource=read('src/platform/customer-360-access-status.js');
 const holdRouteSource=read('src/platform/admin-customer-access-holds.js');
+const accessControlSource=read('src/access/admin-customer-access-control.js');
 const v2Source=read('src/platform/customer-360-view-v2.js');
 const adminSource=read('src/platform/admin-customer-360.js');
 const accessLoaderSource=read('src/platform/customer-360.js');
@@ -39,7 +40,7 @@ assert(!cardsSource.includes('Premium Jellyfin policy')&&!cardsSource.includes('
 
 assert(statusSource.includes("type==='payment_risk'")&&statusSource.includes('Review payment incident'),'the canonical legacy hold renderer must retain the specialized payment-incident workflow');
 assert(statusSource.includes('Type <strong>RELEASE</strong> to confirm')&&statusSource.includes('Why is this hold safe to release?'),'manual hold release must require consequence-aware confirmation and an audit reason');
-assert(holdRouteSource.includes("if(type==='payment_risk')throw new Error"),'server-side hold release must refuse payment-risk bypasses even if a crafted form is submitted');
+assert(accessControlSource.includes("if(type==='payment_risk')throw new Error"),'server-side hold release must refuse payment-risk bypasses even if a crafted form is submitted');
 assert(holdRouteSource.includes('FOR UPDATE'),'manual hold release must lock the exact active hold before resolving it');
 assert(holdRouteSource.includes('reconcileCustomerForAdmin')&&holdRouteSource.includes("router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute)")&&holdRouteSource.includes("router.post('/admin/users/:customerId/reconcile',reconcileRoute)"),'single-customer reconciliation routes must be thin wrappers over one canonical handler');
 assert(accessLoaderSource.includes('provisioning.currentEntitlementTruth(customerId)'),'Customer 360 must load commercial entitlement truth even while access is blocked');
