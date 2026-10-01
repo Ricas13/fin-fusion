@@ -10,6 +10,7 @@ const checkoutIntents = require('./checkout-intents');
 const renewalCredits = require('./service-credit-renewals');
 const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
+const providerLifecycleState = require('./provider-lifecycle-state');
 const referrals = require('../referrals');
 const { query } = require('../db');
 
@@ -114,7 +115,7 @@ function extractInvoiceSubscriptionId(invoice) {
     const parent=invoice?.parent?.subscription_details?.subscription;return typeof parent==='string'?parent:parent?.id||null;
 }
 function terminalStripeStatus(status) {
-    return ['canceled','cancelled','incomplete_expired'].includes(String(status||'').toLowerCase());
+    return providerLifecycleState.isTerminal('stripe',status);
 }
 function effectiveSyncStatus(remoteStatus,statusOverride=null) {
     const remote=String(remoteStatus||'').toLowerCase(),override=String(statusOverride||'').toLowerCase();

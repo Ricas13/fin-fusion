@@ -5,10 +5,11 @@ const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
 const incidents = require('./incidents');
+const providerLifecycleState = require('./provider-lifecycle-state');
 
 const API_BASE = 'https://api.plisio.net';
-const WAITING_STATUSES = new Set(['new', 'pending', 'pending internal']);
-const TERMINAL_UNPAID_STATUSES = new Set(['expired', 'cancelled', 'cancelled duplicate', 'error', 'mismatch']);
+const WAITING_STATUSES = providerLifecycleState.PLISIO_WAITING;
+const TERMINAL_UNPAID_STATUSES = providerLifecycleState.PLISIO_TERMINAL_UNPAID;
 
 function enabled() {
     const cfg = providerSettings.peek('plisio');

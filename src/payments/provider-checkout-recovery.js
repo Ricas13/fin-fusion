@@ -5,6 +5,7 @@ const stripe = require('./stripe');
 const paypal = require('./paypal');
 const checkoutIntents = require('./checkout-intents');
 const providerPaymentReconciliation = require('./provider-payment-reconciliation');
+const providerLifecycleState = require('./provider-lifecycle-state');
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -134,7 +135,7 @@ async function recoverStripe(row, handlers) {
 async function recoverPayPalPayment(row, handlers) {
     if (!row?.paid_capture_id) throw new Error('PayPal one-time recovery requires an authoritative paid capture.');
     const order = await handlers.paypalPaymentOrder(row);
-    const status = paypal.paypalStatus(order?.status);
+    const status = providerLifecycleState.normalizeStatus('paypal',order?.status);
     if (status !== 'COMPLETED') {
         throw new Error(`PayPal checkout ${row.provider_checkout_id} has an authoritative capture locally but provider order is ${status || 'unknown'}.`);
     }
@@ -174,7 +175,7 @@ async function recoverPayPal(row, handlers) {
         throw error;
     }
 
-    const providerStatus = paypal.paypalStatus(synced?.providerStatus || synced?.subscription?.status);
+    const providerStatus = providerLifecycleState.normalizeStatus('paypal',synced?.providerStatus || synced?.subscription?.status);
 
     // If a local subscription already exists, the provider checkout did settle at
     // some point. Re-run canonical activation for a live provider so checkout

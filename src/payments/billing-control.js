@@ -7,6 +7,7 @@ const billingMode = require('./subscription-billing-mode');
 const providerSettings = require('./provider-settings');
 const providerOps = require('./provider-operations');
 const providerHttp = require('./provider-http');
+const providerLifecycleState = require('./provider-lifecycle-state');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -34,11 +35,11 @@ function providerMissing(error) {
 }
 
 function stripeTerminalStatus(status) {
-    return ['canceled', 'cancelled', 'incomplete_expired'].includes(String(status || '').toLowerCase());
+    return providerLifecycleState.isTerminal('stripe',status);
 }
 
 function paypalTerminalStatus(status) {
-    return ['CANCELLED', 'CANCELED', 'EXPIRED'].includes(String(status || '').toUpperCase());
+    return providerLifecycleState.isTerminal('paypal',status);
 }
 
 function retryDelayMs(failures) {
