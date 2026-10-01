@@ -53,14 +53,14 @@ assert(primaryActionsSource.includes('form[data-customer-portal-primary="1"]'), 
 
 assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban'"), 'single-customer ban route must exist');
 assert(holdsSource.includes("router.post('/admin/users/:customerId/access-ban/revoke'"), 'single-customer unban route must exist');
-assert(holdsSource.includes("type:'admin_hold',sourceKey:'admin'"), 'ban must use the canonical admin-hold normalization path that produces administrative_ban');
-assert(holdsSource.includes("UPDATE app_users SET active=FALSE"), 'ban must disable matching customer portal logins');
-assert(holdsSource.includes("UPDATE auth_sessions SET revoked_at=NOW()"), 'ban must revoke matching customer auth sessions');
-assert(holdsSource.includes("purpose='customer_activation'"), 'ban must revoke unused customer onboarding links');
-assert(holdsSource.includes('blocks_registration=TRUE,blocks_service_access=TRUE'), 'ban must block both registration and service access');
-assert(holdsSource.includes("type:'administrative_ban',sourceKey:'ban'"), 'unban must release only the canonical administrative ban hold');
-assert(holdsSource.includes('portalAccountsReenabled:false'), 'unban must not silently reactivate portal login accounts');
-assert(!/MANUAL_RELEASE_TYPES[^\n]*administrative_ban/.test(holdsSource), 'administrative bans must not be releasable through the generic hold-release path');
+assert(accessControlSource.includes("type:'admin_hold',sourceKey:'admin'"), 'ban must use the canonical admin-hold normalization path that produces administrative_ban');
+assert(accessControlSource.includes("UPDATE app_users SET active=FALSE"), 'ban must disable matching customer portal logins');
+assert(accessControlSource.includes("UPDATE auth_sessions SET revoked_at=NOW()"), 'ban must revoke matching customer auth sessions');
+assert(accessControlSource.includes("purpose='customer_activation'"), 'ban must revoke unused customer onboarding links');
+assert(accessControlSource.includes('blocks_registration=TRUE,blocks_service_access=TRUE'), 'ban must block both registration and service access');
+assert(accessControlSource.includes("type:'administrative_ban',sourceKey:'ban'"), 'unban must release only the canonical administrative ban hold');
+assert(accessControlSource.includes('portalAccountsReenabled:false'), 'unban must not silently reactivate portal login accounts');
+assert(!/MANUAL_RELEASE_TYPES[^\n]*administrative_ban/.test(accessControlSource), 'administrative bans must not be releasable through the generic hold-release path');
 
 assert(viewSource.includes("serviceTruth=require('./customer-360-service-truth')"), 'Customer 360 must derive per-service rows through one dedicated truth helper');
 assert(viewSource.includes('Service reconciliation truth'), 'Overview must expose per-service desired/observed reconciliation state');
