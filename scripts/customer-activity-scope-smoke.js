@@ -15,7 +15,8 @@ const activityCollector=read('src/jellyfin/activity.js');
 const playbackWebhook=read('src/jellyfin/playback-webhook.js');
 const laneMigration=read('db/migrations/20260930211500_activity_access_lane_snapshot.sql');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
-const forceAccess=read('src/platform/admin-customer-force-access.js');
+const forceAccess=read('src/access/admin-force-access-service.js');
+const forceAccessRouter=read('src/platform/admin-customer-force-access.js');
 const durableCreation=read('src/jellyfin/durable-account-creation.js');
 const manualAssignment=read('src/jellyfin/manual-assignment.js');
 const forceMove=read('src/jellyfin/admin-force-move.js');
@@ -58,6 +59,7 @@ assert.match(laneMigration,/ph\.jellyfin_account_id IS NOT NULL/,'historical lan
 assert.doesNotMatch(laneMigration,/js\.server_class/,'the migration must not permanently guess an orphaned historical lane from server pool alone');
 assert.match(resilientProvisioning,/SET access_lane='free'[\s\S]*access_lane_changed_at=NOW\(\)[\s\S]*inactivity_observation_reset_at=NULL/,'an explicit primary-to-Free adoption must replace the legacy synthetic marker with a trustworthy lane boundary');
 assert.match(forceAccess,/const accessLane=provisioning\.requestedAccessLane\(entitlement\)/,'forced recovery must derive the recovered lane from the actual entitlement');
+assert.match(forceAccessRouter,/admin-force-access-service/,'platform force-access router must delegate lifecycle orchestration to the access domain service');
 assert.match(forceAccess,/const accessLane=provisioning\.requestedAccessLane\(current\.entitlement\)[\s\S]*active=\(current\.activeAccounts\|\|\[\]\)\.filter\(account=>String\(account\.access_lane\|\|'primary'\)===accessLane\)/,'forced access must ignore an active account from the other lane when deciding whether the requested lane already exists');
 assert.match(forceAccess,/access_lane_changed_at=CASE WHEN access_lane IS DISTINCT FROM \$5 THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE WHEN access_lane IS DISTINCT FROM \$5 THEN NULL[\s\S]*access_lane=\$5/,'forced recovery must record a real boundary for either Free or primary lane recovery');
 assert.match(durableCreation,/access_lane_changed_at=CASE[\s\S]*access_lane IS DISTINCT FROM EXCLUDED\.access_lane THEN NOW\(\)[\s\S]*inactivity_observation_reset_at=CASE[\s\S]*access_lane IS DISTINCT FROM EXCLUDED\.access_lane THEN NULL/,'durable account recovery must clear a synthetic legacy marker whenever it performs a real lane transition');
