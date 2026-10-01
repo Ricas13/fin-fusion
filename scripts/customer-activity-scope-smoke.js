@@ -40,8 +40,8 @@ assert.match(route,/created_at>?=\$2::timestamptz/,'stream-policy rows must resp
 assert.match(route,/activity_scope_account\.access_lane/,'server scope must use the Jellyfin account lane when a snapshot is unavailable');
 assert.match(activityCollector,/access_lane_snapshot/,'poll-based playback and policy events must snapshot their access lane');
 assert.match(playbackWebhook,/access_lane_snapshot/,'webhook-based playback must snapshot its access lane');
-assert.match(activityCollector,/access_lane_snapshot=COALESCE\(playback_history\.access_lane_snapshot,EXCLUDED\.access_lane_snapshot\)/,'poll conflicts may fill a missing snapshot but must preserve an existing immutable lane');
-assert.match(playbackWebhook,/access_lane_snapshot=COALESCE\(playback_history\.access_lane_snapshot,EXCLUDED\.access_lane_snapshot\)/,'webhook conflicts may fill a missing snapshot but must preserve an existing immutable lane');
+assert.doesNotMatch(activityCollector,/access_lane_snapshot=COALESCE\(playback_history\.access_lane_snapshot,EXCLUDED\.access_lane_snapshot\)/,'poll conflicts must not relabel a legacy playback row after an account lane transition');
+assert.doesNotMatch(playbackWebhook,/access_lane_snapshot=COALESCE\(playback_history\.access_lane_snapshot,EXCLUDED\.access_lane_snapshot\)/,'webhook conflicts must not relabel a legacy playback row after an account lane transition');
 assert.match(laneMigration,/ALTER TABLE playback_history[\s\S]*access_lane_snapshot/,'the migration must persist playback lane identity');
 assert.match(laneMigration,/ALTER TABLE stream_policy_events[\s\S]*access_lane_snapshot/,'the migration must persist stream-policy lane identity');
 assert.match(laneMigration,/ph\.started_at<ja\.access_lane_changed_at/,'historical backfill must separate paid-era playback before an explicit Free adoption');
