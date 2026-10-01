@@ -8,6 +8,7 @@ const runtimeSettings=require('./runtime-settings');
 const reportingCurrency=require('./reporting-currency');
 const planPricing=require('../payments/plan-pricing');
 const planCommands=require('../catalog/plan-command-service');
+const planInput=require('../catalog/plan-input');
 const placement=require('../jellyfin/placement');
 const {esc,layout}=require('./admin-html');
 
@@ -17,14 +18,14 @@ const ACCESS_MODELS=new Set(['concurrent_streams','household_network']);
 const SERVER_CLASSES=new Set(['premium','free','custom']);
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
-function b(v){return v===true||['on','true','1','yes'].includes(String(v||'').toLowerCase());}
-function text(v,max){return String(v||'').trim().slice(0,max);}
-function int(v,min,max,label){const raw=String(v??'').trim(),n=Number.parseInt(raw,10);if(!Number.isInteger(n)||String(n)!==raw||n<min||n>max)throw new Error(`${label} must be a whole number from ${min} to ${max}.`);return n;}
-function money(v){const raw=String(v??'').trim();if(!/^\d+(?:\.\d{1,2})?$/.test(raw))throw new Error('Enter a valid non-negative price with no more than two decimal places.');const n=Number(raw);if(!Number.isFinite(n)||n<0||n>100000)throw new Error('Price must be between 0 and 100,000.');return Math.round(n*100);}
+const b=planInput.bool;
+const text=planInput.text;
+const int=planInput.integer;
+const money=planInput.moneyMinor;
 function checked(v){return v?'checked':'';}
 function selected(a,bv){return String(a)===String(bv)?'selected':'';}
 function toggle(name,label,value,help=''){return `<label class="toggleRow"><input type="checkbox" name="${esc(name)}" ${checked(value)}><span><strong>${esc(label)}</strong>${help?`<small>${esc(help)}</small>`:''}</span></label>`;}
-function names(v){return[...new Set(String(v||'').split(/[\n,]/).map(x=>x.trim()).filter(Boolean).map(x=>x.slice(0,200)))].slice(0,500);}
+function names(v){return planInput.uniqueTextValues(v,{split:true});}
 function features(body,plan=null){if(body)return[1,2,3,4].map(i=>text(body[`feature${i}`],90)).filter(Boolean);return Array.isArray(plan?.marketing_features)?plan.marketing_features.slice(0,4):[];}
 function isEmby(plan){return String(plan?.service_type||'').toLowerCase()==='emby';}
 async function loadPlan(id){const result=await query('SELECT * FROM plans WHERE id=$1',[id]);return result.rows[0]||null;}
