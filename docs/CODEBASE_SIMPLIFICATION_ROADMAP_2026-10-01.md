@@ -137,7 +137,7 @@ Current concern: plan creation/editing/configuration-transfer can directly mutat
 Tasks:
 
 - [x] Introduce a catalog/domain command owner for plan creation and update.
-- [ ] Centralize plan validation and normalisation.
+- [x] Centralize plan validation and normalisation.
 - [x] Centralize server eligibility persistence.
 - [x] Centralize provider-price mapping persistence.
 - [x] Centralize transactional audit persistence.
@@ -157,11 +157,11 @@ Tasks:
 
 - [x] Split parsing/validation of a transfer package from application of the package.
 - [x] Reuse canonical settings/plan/automation command services.
-- [ ] Ensure imported plan/provider/server mappings pass the exact same validation as browser edits.
+- [x] Ensure imported plan/provider/server mappings pass the exact same validation as browser edits.
 - [x] Keep all-or-safe-partial transaction semantics explicit.
 - [x] Define which configuration classes are atomic together and which can be safely applied independently.
 - [x] Add upgrade/import behavioural tests.
-- [ ] Add an ownership check preventing transfer code from bypassing canonical domain mutation services.
+- [x] Add an ownership check preventing transfer code from bypassing canonical domain mutation services.
 
 **Done when:** configuration transfer is a coordinator over canonical domain commands rather than a second administrative backend.
 
@@ -171,12 +171,12 @@ Current concern: recovery/watchdog bugs repeatedly came from branded container n
 
 Tasks:
 
-- [ ] Add one shell/runtime helper that resolves a Compose service via `docker compose ps -q <service>`.
-- [ ] Resolve `app`, `postgres`, `automation-worker`, `activity-worker`, `backup-worker` by service identity.
-- [ ] Remove hard-coded runtime container names from watchdog/recovery/deployment checks where not required by Compose itself.
-- [ ] Keep legacy-name adoption only in the explicit migration/adoption path.
-- [ ] Extend runtime recovery behavioural tests to prove service-name resolution works independently of physical container name.
-- [ ] Search for remaining `steam-fusion*` / `captainfin*` runtime-name coupling and classify each occurrence as compatibility, display, or bug.
+- [x] Add one shell/runtime helper that resolves a Compose service via `docker compose ps -q <service>`.
+- [x] Resolve `app`, `postgres`, `automation-worker`, `activity-worker`, `backup-worker` by service identity.
+- [x] Remove hard-coded runtime container names from watchdog/recovery/deployment checks where not required by Compose itself.
+- [x] Keep legacy-name adoption only in the explicit migration/adoption path.
+- [x] Extend runtime recovery behavioural tests to prove service-name resolution works independently of physical container name.
+- [x] Search for remaining `steam-fusion*` / `captainfin*` runtime-name coupling and classify each occurrence as compatibility, display, or bug.
 
 **Done when:** another product/container rename cannot break health/recovery scripts.
 
@@ -186,13 +186,13 @@ Current concern: the Compose services use the same repository/image contents but
 
 Tasks:
 
-- [ ] Define one canonical image tag using the Git commit/build SHA.
-- [ ] Build it once during deployment.
-- [ ] Run app/automation/activity/backup/migrate/recovery with service-specific commands from the same image.
-- [ ] Preserve migration and recovery profiles.
-- [ ] Preserve immutable previous image IDs required for safe runtime rollback.
-- [ ] Update deployment tests to verify all runtime services report the same intended build SHA.
-- [ ] Confirm resource limits, read-only roots, tmpfs and DB-role isolation remain service-specific.
+- [x] Define one canonical image tag using the Git commit/build SHA.
+- [x] Build it once during deployment.
+- [x] Run app/automation/activity/backup/migrate/recovery with service-specific commands from the same image.
+- [x] Preserve migration and recovery profiles.
+- [x] Preserve immutable previous image IDs required for safe runtime rollback.
+- [x] Update deployment tests to verify all runtime services report the same intended build SHA.
+- [x] Confirm resource limits, read-only roots, tmpfs and DB-role isolation remain service-specific.
 
 **Done when:** one release commit corresponds to one reusable runtime image rather than redundant builds of the same source tree.
 
@@ -466,3 +466,6 @@ Add dated entries here as implementation batches land.
 - 2026-10-01 — Moved Stremio plan commerce/storefront/access tracking/availability/payment persistence behind the same catalog command service and updated architectural tests to enforce the shared ownership boundary.
 - 2026-10-01 — P0 inspected: active repository ruleset `Protect main` requires PRs/thread resolution but currently has no required-status-check rule. The available GitHub connector exposes ruleset reads only, so the settings change remains an explicit repository-admin action rather than being falsely marked complete.
 - 2026-10-01 — P1 Customer 360 thinning in progress: profile/portal identity, email verification, automation protection, reset-to-plan expiry, automatic placement, policy/household/library/request overrides, Stremio household reset and renewal subscription selection moved behind domain owners. `admin-customer-360.js` no longer imports the DB module or contains direct mutation SQL. Behavioural coverage for the newly extracted high-risk placement/expiry paths remains to be completed before this item is closed.
+- 2026-10-01 — Closed remaining plan/import ownership work: `plan-contract.js` is now the shared command/import validation boundary, configuration transfer uses it for imported plans/provider mappings, and `canonical-ownership-smoke.js` forbids transfer-side direct writes.
+- 2026-10-01 — Runtime identity standardisation complete: watchdog, recovery and deployment resolve Compose services through `scripts/lib/compose-runtime.sh`; branded names remain only for explicit legacy-container adoption/display compatibility. Behavioural tests resolve mock service IDs independently of physical names.
+- 2026-10-01 — Single-image release model complete: deployment builds one `captainfin:<git-sha>` image, all Node runtime/migrate/recovery services consume it with service-specific commands, prior image IDs remain available for safe app-only rollback, and deployment verifies build SHA consistency before advancing `captainfin:current`.
