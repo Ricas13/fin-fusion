@@ -16,9 +16,8 @@ for (const jobKey of names) {
   assert(Number.isFinite(Number(definition.defaultIntervalSeconds)) && Number(definition.defaultIntervalSeconds) >= 30,
     `${jobKey} must expose a bounded default interval`);
   assert.strictEqual(typeof definition.critical, 'boolean', `${jobKey} must declare whether it is critical`);
-  assert(Object.prototype.hasOwnProperty.call(definition, 'timeoutMs'), `${jobKey} must declare timeout policy explicitly`);
-  assert.strictEqual(typeof definition.concurrencyClass, 'string', `${jobKey} must declare a concurrency class`);
-  assert(definition.concurrencyClass.length > 0, `${jobKey} concurrency class must not be empty`);
+  assert(!Object.prototype.hasOwnProperty.call(definition, 'timeoutMs'), `${jobKey} must not expose an unenforced timeout placeholder`);
+  assert(!Object.prototype.hasOwnProperty.call(definition, 'concurrencyClass'), `${jobKey} must not expose an unenforced concurrency-class placeholder`);
   assert.strictEqual(registry.defaultIntervalSeconds(jobKey), Number(definition.defaultIntervalSeconds),
     `${jobKey} interval helper must derive from its definition`);
 }
