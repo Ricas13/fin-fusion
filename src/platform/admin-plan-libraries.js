@@ -1,7 +1,7 @@
 'use strict';
 
 const express=require('express');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const provisioning=require('../jellyfin/provisioning');
 const planServers=require('../jellyfin/plan-servers');
@@ -72,9 +72,12 @@ function createAdminPlanLibrariesRouter(){
             const requested=selectedValues(req.body.libraryNames);
             const names=requested.map(name=>available.get(name.toLocaleLowerCase('en-GB'))).filter(Boolean);
             if(mode==='include'&&!names.length)throw new Error('empty_include');
-            await transaction(async client=>{
-                await client.query(`UPDATE plans SET library_access_mode=$2,library_names=$3::text[],updated_at=NOW() WHERE id=$1`,[plan.id,mode,mode==='all'?[]:names]);
-                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.library_access','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify({mode,names,serverClass:plan.server_class,liveEntitlements:live})]);
+            await planCommands.updateLibraries({
+                planId:plan.id,
+                mode,
+                names,
+                actorUserId:req.session.authUserId,
+                auditMetadata:{mode,names,serverClass:plan.server_class,liveEntitlements:live}
             });
             const {queuePlanReconciliation}=require('./bulk-jobs');
             const job=await queuePlanReconciliation(plan.id,req.session.authUserId);
