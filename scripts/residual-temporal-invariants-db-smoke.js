@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { query, transaction, getPool } = require('../src/db');
 const affiliateCredits = require('../src/affiliate-credits');
 const serviceCreditAccounting = require('../src/payments/service-credit-accounting');
-const customerDeletion = require('../src/platform/customer-deletion');
+const customerDeletion = require('../src/customers/customer-deletion');
 const checkoutIntents = require('../src/payments/checkout-intents');
 const lifecycle = require('../src/payments/lifecycle-primitives');
 
