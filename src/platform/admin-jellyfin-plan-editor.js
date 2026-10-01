@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
@@ -321,9 +321,12 @@ async function savePayments(req, plan, data) {
     const key = `${currency}_${provider}_${mode}`, enabled = bool(req.body[`${key}_enabled`]), externalId = text(req.body[`${key}_external_id`], 200);
     validated.push({ provider, mode, enabled, externalId, verification: await paymentOptions.verifyOption(plan, price, provider, mode, enabled, externalId) });
   }
-  await transaction(async client => {
-    for (const item of validated) await paymentOptions.saveOption(client, plan, price, item.provider, item.mode, item.enabled, item.externalId, item.verification);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.payment_options','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ currency, verified: true, unifiedEditor: true })]);
+  await planCommands.updatePaymentOptions({
+    planId: plan.id,
+    price,
+    items: validated,
+    actorUserId: req.session.authUserId,
+    auditMetadata: { currency, verified: true, unifiedEditor: true }
   });
 }
 
