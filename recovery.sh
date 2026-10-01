@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/compose-runtime.sh"
 
 BACKUP_ROOT="$ROOT/backups"
 CONFIRMATION="RESTORE_CAPTAINFIN_DATABASE"
@@ -86,7 +87,7 @@ wait_postgres() {
   docker compose up -d postgres >/dev/null
   for _ in $(seq 1 60); do
     local health
-    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' captainfin-postgres 2>/dev/null || true)"
+    health="$(compose_service_health postgres)"
     [[ "$health" == 'healthy' ]] && return 0
     [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
     sleep 2
@@ -127,9 +128,9 @@ create_pre_restore_safety_backup() {
 }
 
 wait_service_health() {
-  local container="$1" ready=0 health
+  local service="$1" ready=0 health
   for _ in $(seq 1 90); do
-    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+    health="$(compose_service_health "$service")"
     if [[ "$health" == 'healthy' || "$health" == 'running' ]]; then
       ready=1
       break
@@ -137,7 +138,7 @@ wait_service_health() {
     [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
     sleep 2
   done
-  [[ "$ready" == 1 ]] || fail "$container did not become healthy after recovery"
+  [[ "$ready" == 1 ]] || fail "$service did not become healthy after recovery"
 }
 
 restore_production() {
@@ -164,8 +165,8 @@ restore_production() {
   log 'Restarting CAPTAiNFiN services'
   docker compose up -d --no-deps app automation-worker activity-worker backup-worker
 
-  for container in captainfin captainfin-automation captainfin-activity captainfin-backup; do
-    wait_service_health "$container"
+  for service in app automation-worker activity-worker backup-worker; do
+    wait_service_health "$service"
   done
 
   log 'Running application-level deployment verification'
