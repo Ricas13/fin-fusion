@@ -124,7 +124,7 @@ async function main() {
   }
 }
 
-module.exports = { expand, expandedScript };
+module.exports = { expand, expandedScript, run };
 
 if (require.main === module) {
   main().catch(error => {
