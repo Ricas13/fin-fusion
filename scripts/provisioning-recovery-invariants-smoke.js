@@ -128,8 +128,8 @@ assert(deploymentVerify.includes("'automation worker release'")
 assert(deploymentVerify.includes('missingRegisteredJobs') && deploymentVerify.includes('requiredJobs = jobRegistry.criticalNames()'),
     'deployment verification must prove the running worker registered every access-critical job');
 
-assert(adminAutomation.includes("require('../automation/critical-jobs')")
-    && adminAutomation.includes('const CORE_JOBS=new Set(criticalJobs.names())'),
+assert(adminAutomation.includes("require('../automation/jobs')")
+    && adminAutomation.includes('const CORE_JOBS=new Set(jobRegistry.criticalNames())'),
     'operator controls must use the same canonical critical-job list as worker and deployment verification');
 assert(adminAutomation.includes("CORE_JOBS.has(req.params.job)") && adminAutomation.includes("Type DISABLE"),
     'core recovery jobs must require explicit confirmation before an operator can disable them');
