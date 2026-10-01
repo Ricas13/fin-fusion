@@ -13,7 +13,6 @@ function jellyfinEntitlement(entitlement) {
   );
 }
 
-
 function createAccessRepair(deps = {}) {
   const accessState = deps.customerAccessState || customerAccessState;
   const provisioningApi = deps.provisioning || provisioning;
