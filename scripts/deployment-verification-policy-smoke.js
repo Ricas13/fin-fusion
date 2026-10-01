@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const verifier = require('./verify-deployment');
-const criticalJobs = require('../src/automation/critical-jobs');
+const jobRegistry = require('../src/automation/jobs');
 
 const workerStartedAt = '2026-09-13T12:00:00.000Z';
 
@@ -36,11 +36,11 @@ for (const token of ['state=healthy', 'success=', 'completed=', 'started=', 'for
     assert(diagnostic.includes(token), `timeout diagnostics must include ${token}`);
 }
 
-assert.strictEqual(criticalJobs.isCritical('customer_inactivity'), true,
+assert.strictEqual(jobRegistry.isCritical('customer_inactivity'), true,
     'customer inactivity cleanup must remain registered as access-critical capability');
-assert.strictEqual(criticalJobs.mayBeDisabled('customer_inactivity'), true,
+assert.strictEqual(jobRegistry.mayBeDisabled('customer_inactivity'), true,
     'customer inactivity cleanup must support intentional operator disablement');
-assert.strictEqual(criticalJobs.mayBeDisabled('revenue_integrity'), false,
+assert.strictEqual(jobRegistry.mayBeDisabled('revenue_integrity'), false,
     'revenue integrity must remain required-enabled');
 
 const source = fs.readFileSync(path.join(__dirname, 'verify-deployment.js'), 'utf8');
