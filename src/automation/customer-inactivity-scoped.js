@@ -5,6 +5,7 @@ const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const legacyGrace = require('../entitlements/jellyfin-inactivity-grace');
 const subscriptionState = require('../entitlements/subscription-state');
+const customerAccessState = require('../access/customer-access-state');
 const subscriptionTermination = require('../payments/subscription-termination');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
@@ -54,12 +55,7 @@ function telemetrySummary(worker, serverTelemetry) {
 }
 
 function adminProtectedFreeEntitlement(entitlement) {
-    if (!entitlement) return false;
-    const mode = String(entitlement.admin_jellyfin_mode || '').toLowerCase();
-    return Boolean(
-        entitlement.permanent_access
-        || mode === 'present'
-    );
+    return customerAccessState.operatorProtected(entitlement);
 }
 
 function freePlanEndReference(subscriptionId) {
