@@ -10,9 +10,11 @@ const subscriptionState = require('../src/entitlements/subscription-state');
 const accessHolds = require('../src/entitlements/access-holds');
 const cleanupReturn = require('../src/entitlements/jellyfin-cleanup-return');
 const discordRoles = require('../src/integrations/discord-roles');
+const lifecycle = require('../src/payments/lifecycle');
+const customerAccessState = require('../src/access/customer-access-state');
 
 const suffix = crypto.randomBytes(5).toString('hex');
-const created = { customers: [], plans: [], discordRoles: [] };
+const created = { customers: [], plans: [], servers: [], discordRoles: [] };
 
 async function customer(label) {
   const row = await query(
@@ -56,6 +58,68 @@ async function plan(label, options = {}) {
   ]);
   created.plans.push(row.rows[0].id);
   return row.rows[0].id;
+}
+
+async function server(label, serverClass = 'premium') {
+  const row = await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+      enabled,allow_new_users,trial_enabled,paid_enabled,priority,max_users,health_status
+    )
+    VALUES($1,$2,$3,'jellyfin',$4,$4,'jf1:state-machine',TRUE,TRUE,TRUE,TRUE,1,100,'healthy')
+    RETURNING id
+  `, [
+    `State machine ${label} ${suffix}`,
+    `state-machine-${label}-${suffix}`.slice(0, 180),
+    serverClass,
+    `https://${label}-${suffix}.invalid`
+  ]);
+  created.servers.push(row.rows[0].id);
+  return row.rows[0].id;
+}
+
+async function account({ customerId, serverId, lane, label }) {
+  return (await query(`
+    INSERT INTO jellyfin_accounts(
+      customer_id,server_id,jellyfin_user_id,jellyfin_username,
+      disabled,account_purpose,access_lane,is_primary
+    )
+    VALUES($1,$2,$3,$4,FALSE,'jellyfin',$5,TRUE)
+    RETURNING *
+  `, [
+    customerId,
+    serverId,
+    `${label}-remote-${suffix}`.slice(0, 180),
+    `${label}_${suffix}`.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 180),
+    lane
+  ])).rows[0];
+}
+
+async function insertSubscription(customerId, planId, {
+  status = 'active',
+  source = 'manual',
+  billingMode = 'manual',
+  periodEndSql = "NOW()+INTERVAL '30 days'"
+} = {}) {
+  return (await query(`
+    INSERT INTO subscriptions(
+      customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end
+    )
+    VALUES($1,$2,$3,$4,$5,NOW()-INTERVAL '1 day',${periodEndSql})
+    RETURNING *
+  `, [customerId, planId, status, source, billingMode])).rows[0];
+}
+
+async function canonicalFreePlan() {
+  const row = await query(`
+    SELECT * FROM plans
+    WHERE is_free_tier=TRUE
+      AND service_type='jellyfin'
+      AND COALESCE(is_addon,FALSE)=FALSE
+    ORDER BY created_at,id LIMIT 1
+  `);
+  assert.strictEqual(row.rowCount, 1, 'canonical Free Access plan must exist');
+  return row.rows[0];
 }
 
 async function fullRefundIncident(customerId, provider, providerRef, label, metadata = {}) {
@@ -270,6 +334,145 @@ async function testFreeInactivityIsNotCustomerRestorable() {
   assert.strictEqual(status.eligible, false, 'an inactivity hold alone must not open the customer profile-restore flow');
 }
 
+
+async function testFreeRollbackConvergesToNoPlanNoServer() {
+  const customerId = await customer('free-rollback');
+  const freePlan = await canonicalFreePlan();
+  const subscription = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+
+  const ended = await lifecycle.rollbackUnprovisionedFreeClaim(
+    customerId,
+    subscription.id,
+    { reason: 'state-machine Free rollback fixture' }
+  );
+  assert.strictEqual(String(ended.id), String(subscription.id), 'Free rollback must close the exact subscription');
+
+  const row = (await query(
+    'SELECT status,current_period_end,replacement_reason,service_extension_days FROM subscriptions WHERE id=$1',
+    [subscription.id]
+  )).rows[0];
+  assert.strictEqual(row.status, 'cancelled', 'failed Free activation must be terminal');
+  assert.strictEqual(row.replacement_reason, 'free_claim_activation_failed',
+    'failed Free activation must remain distinguishable from a consumed historical Free claim');
+  assert.strictEqual(Number(row.service_extension_days || 0), 0, 'failed Free activation must retain no service extension');
+  assert(new Date(row.current_period_end).getTime() <= Date.now() + 1000,
+    'failed Free activation must retain no future access window');
+
+  const access = await customerAccessState.freeJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(access.state, customerAccessState.ACCESS_STATES.NONE,
+    'failed Free activation must converge to no plan and no Free account');
+
+  const historical = await query(`
+    SELECT 1 FROM subscriptions
+    WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'
+      AND COALESCE(replacement_reason,'')<>'free_claim_activation_failed'
+  `, [customerId, freePlan.id]);
+  assert.strictEqual(historical.rowCount, 0,
+    'an activation-failed Free row must not consume one-time historical claim eligibility');
+}
+
+async function testTrialRollbackConvergesToNoPlanNoServer() {
+  const customerId = await customer('trial-rollback');
+  const planId = await plan('trial-rollback', { billingInterval: 'trial', priceMinor: 0 });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+
+  const ended = await lifecycle.rollbackUnprovisionedJellyfinTrial(
+    customerId,
+    subscription.id,
+    { reason: 'state-machine trial rollback fixture' }
+  );
+  assert.strictEqual(String(ended.id), String(subscription.id), 'trial rollback must close the exact subscription');
+
+  const row = (await query(
+    'SELECT status,current_period_end,replacement_reason,service_extension_days FROM subscriptions WHERE id=$1',
+    [subscription.id]
+  )).rows[0];
+  assert.strictEqual(row.status, 'cancelled', 'failed unpaid trial must be terminal');
+  assert.strictEqual(row.replacement_reason, 'trial_activation_failed',
+    'failed unpaid trial must remain identifiable as an activation failure');
+  assert.strictEqual(Number(row.service_extension_days || 0), 0, 'failed unpaid trial must retain no extension');
+  assert(new Date(row.current_period_end).getTime() <= Date.now() + 1000,
+    'failed unpaid trial must retain no future access window');
+
+  const access = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(access.state, customerAccessState.ACCESS_STATES.NONE,
+    'failed unpaid trial must converge to no plan and no primary account');
+}
+
+async function testPaidProvisioningFailureRetainsEntitlement() {
+  const customerId = await customer('paid-provisioning-failure');
+  const planId = await plan('paid-provisioning-failure', { priceMinor: 999 });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'active',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+
+  const missing = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(missing.state, customerAccessState.ACCESS_STATES.PAID_PROVISIONING_FAILED,
+    'paid plan without a ready account must remain a committed paid entitlement');
+  assert.strictEqual(String(missing.entitlement.subscription_id), String(subscription.id),
+    'paid provisioning failure must retain the exact commercial subscription');
+
+  const serverId = await server('paid-ready', 'premium');
+  await account({ customerId, serverId, lane: 'primary', label: 'paid-ready' });
+  const ready = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(ready.state, customerAccessState.ACCESS_STATES.ACTIVE_READY,
+    'the retained paid entitlement must become ACTIVE_READY once its account exists');
+}
+
+async function testStaleFreeRollbackCannotDeleteReplacementAccount() {
+  const customerId = await customer('free-stale-rollback');
+  const freePlan = await canonicalFreePlan();
+  const old = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  await query(
+    "UPDATE subscriptions SET status='cancelled',current_period_end=NOW(),replacement_reason='free_plan_change' WHERE id=$1",
+    [old.id]
+  );
+  const replacement = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  await query('UPDATE subscriptions SET superseded_by=$2 WHERE id=$1', [old.id, replacement.id]);
+
+  const serverId = await server('free-replacement', 'free');
+  const replacementAccount = await account({
+    customerId,
+    serverId,
+    lane: 'free',
+    label: 'free-replacement'
+  });
+
+  await lifecycle.rollbackUnprovisionedFreeClaim(
+    customerId,
+    old.id,
+    { reason: 'stale Free rollback must not touch replacement' }
+  );
+
+  const stillThere = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [replacementAccount.id]);
+  assert.strictEqual(stillThere.rowCount, 1,
+    'rollback of an older Free episode must not delete the replacement Free account');
+
+  const current = await customerAccessState.freeJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(String(current.entitlement?.subscription_id || ''), String(replacement.id),
+    'rollback of an older Free episode must leave the newer Free entitlement authoritative');
+  assert.strictEqual(current.state, customerAccessState.ACCESS_STATES.ACTIVE_READY,
+    'replacement Free access must remain ready after stale rollback cleanup');
+}
+
 async function cleanup() {
   for (const customerId of [...created.customers].reverse()) {
     await query('DELETE FROM payment_incidents WHERE customer_id=$1', [customerId]).catch(() => {});
@@ -279,6 +482,9 @@ async function cleanup() {
   }
   for (const planId of [...created.plans].reverse()) {
     await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
+  }
+  for (const serverId of [...created.servers].reverse()) {
+    await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
   }
   if (created.discordRoles.length) {
     await query('DELETE FROM discord_managed_role_history WHERE role_id=ANY($1::text[])', [created.discordRoles]).catch(() => {});
@@ -293,6 +499,10 @@ async function cleanup() {
   await testEnableDoesNotUndoDestructiveAuthority();
   await testDiscordRoleHistory();
   await testFreeInactivityIsNotCustomerRestorable();
+  await testFreeRollbackConvergesToNoPlanNoServer();
+  await testTrialRollbackConvergesToNoPlanNoServer();
+  await testPaidProvisioningFailureRetainsEntitlement();
+  await testStaleFreeRollbackCannotDeleteReplacementAccount();
   console.log('state-machine invariants DB smoke: ok');
 })().finally(async () => {
   await cleanup();
