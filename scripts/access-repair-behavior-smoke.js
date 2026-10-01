@@ -133,6 +133,38 @@ function accessState({ free = [], primary = [] } = {}) {
   }
 
   {
+    let rollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [
+          {
+            state: STATES.INCONSISTENT_UNPAID,
+            entitlement: {
+              subscription_id: 'sub-pinned',
+              permanent_access: false,
+              admin_jellyfin_mode: 'forced_server'
+            }
+          },
+          {
+            state: STATES.INCONSISTENT_UNPAID,
+            entitlement: {
+              subscription_id: 'sub-pinned',
+              permanent_access: false,
+              admin_jellyfin_mode: 'forced_server'
+            }
+          }
+        ]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('no eligible server'); } },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'sub-pinned');
+    assert.strictEqual(result.status, 'removed');
+    assert.strictEqual(rollbacks, 1,
+      'server pin is placement-only and must not disable normal Free activation rollback');
+  }
+
+  {
     let trialRollbacks = 0;
     const repair = createAccessRepair({
       customerAccessState: accessState({
