@@ -8,7 +8,7 @@ const desiredState=require('../entitlements/customer-access-desired-state');
 const serviceTruth=require('./customer-360-service-truth');
 const moneyFormat=require('./money-format');
 
-function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
+function serviceType(detail){const canonical=detail?.canonicalAccessState;const entitlement=canonical?(canonical.primary?.entitlement||canonical.free?.entitlement||canonical.emby?.entitlement||canonical.stremio?.entitlement||null):(detail?.primaryEntitlement||null);return String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
 function liveSubscriptions(detail){return (detail.subscriptions||[]).filter(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()));}
 function activeSubscription(detail){return liveSubscriptions(detail)[0]||detail.subscriptions?.[0]||null;}
@@ -41,7 +41,7 @@ function movePlanRevokeIntoSubscriptions(main,detail){
 }
 
 function accessWorkspaceSection(detail,token,accessDetail){
-  const sub=activeSubscription(detail);
+  const sub=detail?.canonicalAccessState?(detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null):(detail.primaryEntitlement||activeSubscription(detail));
   const accounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
   const ctx=sub?{entitlement:{planName:sub.plan_name,serverClass:sub.server_class,isFreeTier:Boolean(sub.is_free_tier),serviceType:sub.service_type},accounts,activeAccounts:accounts.filter(account=>!account.disabled),servers:[],adminControl:null,serviceKind:sub.service_type||'jellyfin'}:null;
   return accessCards.controlGrid(detail,token,ctx,accessDetail?.permanent||null);
@@ -64,7 +64,7 @@ function serviceTruthPanel(detail){
 }
 
 function accessTruthPanel(detail){
-  const entitlement=detail.primaryEntitlement||activeSubscription(detail)||null;
+  const entitlement=detail?.canonicalAccessState?(detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null):(detail.primaryEntitlement||activeSubscription(detail)||null);
   const accessIntent=desiredAccessForDetail(detail,entitlement);
   const holds=accessIntent.blockers;
   const ordinaryAccounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
