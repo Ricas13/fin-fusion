@@ -41,7 +41,7 @@ assert(!cardsSource.includes('Premium Jellyfin policy')&&!cardsSource.includes('
 assert(statusSource.includes("type==='payment_risk'")&&statusSource.includes('Review payment incident'),'the canonical legacy hold renderer must retain the specialized payment-incident workflow');
 assert(statusSource.includes('Type <strong>RELEASE</strong> to confirm')&&statusSource.includes('Why is this hold safe to release?'),'manual hold release must require consequence-aware confirmation and an audit reason');
 assert(accessControlSource.includes("if(type==='payment_risk')throw new Error"),'server-side hold release must refuse payment-risk bypasses even if a crafted form is submitted');
-assert(holdRouteSource.includes('FOR UPDATE'),'manual hold release must lock the exact active hold before resolving it');
+assert(accessControlSource.includes('FOR UPDATE'),'manual hold release must lock the exact active hold before resolving it');
 assert(holdRouteSource.includes('reconcileCustomerForAdmin')&&holdRouteSource.includes("router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute)")&&holdRouteSource.includes("router.post('/admin/users/:customerId/reconcile',reconcileRoute)"),'single-customer reconciliation routes must be thin wrappers over one canonical handler');
 assert(accessLoaderSource.includes('provisioning.currentEntitlementTruth(customerId)'),'Customer 360 must load commercial entitlement truth even while access is blocked');
 assert(accessLoaderSource.includes('accessHolds.activeHolds(customerId)'),'Customer 360 must load active access holds explicitly');
