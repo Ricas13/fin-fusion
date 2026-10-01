@@ -18,27 +18,12 @@ function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${es
 function fmtDate(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 function initials(value){const parts=String(value||'U').trim().split(/\s+/).filter(Boolean);if(parts.length>1)return(parts[0][0]+parts[parts.length-1][0]).toUpperCase();return String(parts[0]||'U').slice(0,2).toUpperCase();}
 
-function removeLegacyPlanRevoke(html){
-  return String(html||'').replace(
-    /<form class="plainForm" method="post" action="\/admin\/customers\/bulk\/preview">(?:(?!<\/form>)[\s\S])*?<input type="hidden" name="action" value="end_jellyfin_plan">(?:(?!<\/form>)[\s\S])*?<\/form>/g,
-    ''
-  );
-}
-
-function addPlanRevokeAction(actions){
-  return String(actions||'');
-}
-
-function movePlanRevokeIntoSubscriptions(main,detail){
-  const cleaned=removeLegacyPlanRevoke(main);
-  if(!liveSubscriptions(detail).length)return cleaned;
-  const id=detail.customer.id;
-  const button=`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/subscriptions/revoke" aria-label="Choose a specific plan or add-on to revoke">Revoke a plan…</a>`;
-  return cleaned.replace(
-    /(<section class="opCard "><div class="opCardHead"><h2>Plans &amp; Subscriptions<\/h2>[\s\S]*?<div class="opActions">)([\s\S]*?)(<\/div><\/section>)/,
-    (_match,open,actions,close)=>`${open}${actions}${button}${close}`
-  );
-}
+// Compatibility exports retained temporarily for old internal callers. The
+// compact renderer now owns action placement explicitly; post-render HTML
+// mutation is deliberately forbidden.
+function removeLegacyPlanRevoke(html){return String(html||'');}
+function addPlanRevokeAction(actions){return String(actions||'');}
+function movePlanRevokeIntoSubscriptions(main){return String(main||'');}
 
 function accessWorkspaceSection(detail,token,accessDetail){
   const sub=detail?.canonicalAccessState?(detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null):(detail.primaryEntitlement||activeSubscription(detail));
@@ -118,8 +103,7 @@ async function body(detail,token,options={}){
   const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
   const actions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const main=await compact.render(safe,token,options);
-  const plansWithRevoke=movePlanRevokeIntoSubscriptions(main,safe);
-  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${plansWithRevoke}`;
+  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${main}`;
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,isBanned,removeLegacyPlanRevoke,addPlanRevokeAction,movePlanRevokeIntoSubscriptions,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,banAction,mockHero};
