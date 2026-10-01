@@ -58,6 +58,18 @@ assert.strictEqual(
 assert.strictEqual(accessState.isTrial({ billing_interval: 'trial', price_minor: 0 }), true);
 assert.strictEqual(accessState.isPaid({ billing_interval: 'month', price_minor: 999 }), true);
 assert.strictEqual(accessState.isPaid({ billing_interval: 'trial', price_minor: 999 }), false);
+assert.strictEqual(accessState.operatorProtected({ permanent_access: true }), true,
+  'Permanent Access must protect an entitlement from automatic destructive repair');
+assert.strictEqual(accessState.operatorProtected({ admin_jellyfin_mode: 'present' }), true,
+  'explicit administrator-present authority must protect an entitlement from automatic destructive repair');
+assert.strictEqual(accessState.operatorProtected({ admin_present: true }), true,
+  'raw administrator-present state must be recognized before decoration');
+assert.strictEqual(accessState.operatorProtected({ admin_jellyfin_mode: 'forced_server' }), false,
+  'server pin is placement-only and must not disable lifecycle enforcement');
+assert.strictEqual(accessState.operatorProtected({ admin_present: true, admin_jellyfin_mode: 'forced_server' }), false,
+  'a legacy/raw admin-present compatibility flag must not override an explicit placement-only server pin');
+assert.strictEqual(accessState.operatorProtected(null), false,
+  'missing entitlements are never operator-protected');
 
 const freeAccount = {
   id: 'free-ready',

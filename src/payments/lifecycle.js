@@ -150,6 +150,11 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
         return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
             const current=await state.effectiveSubscription(customerId,{includeBlocked:true});
             targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+            if(targetIsCurrent&&customerAccessState.operatorProtected(current)){
+                const error=new Error('Automatic Jellyfin trial rollback is blocked by Permanent Access or explicit administrator-present authority.');
+                error.code='OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED';
+                throw error;
+            }
             if(targetIsCurrent){
                 const accounts=(await provisioning.normalAccounts(customerId))
                     .filter(account=>String(account.access_lane||'primary')==='primary');
@@ -271,6 +276,11 @@ async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reserva
         return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
             const current=await state.liveFreeJellyfinSubscription(customerId,{includeBlocked:true});
             targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+            if(targetIsCurrent&&customerAccessState.operatorProtected(current)){
+                const error=new Error('Automatic Free claim rollback is blocked by Permanent Access or explicit administrator-present authority.');
+                error.code='OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED';
+                throw error;
+            }
 
             // Only the current failed Free episode owns the Free-lane account.
             // If a newer subscription already superseded it, do not delete that
