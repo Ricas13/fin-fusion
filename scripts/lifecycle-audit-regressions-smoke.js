@@ -69,6 +69,21 @@ function jellyfinDeletionScope(){
   assert.match(text,/deleteJellyfinAccounts\(item\.customer_id,\{[^}]*holdAccess:false/,'Jellyfin delete must not create a customer-wide access hold');
 }
 
+function operatorProtectedRollbackContract(){
+  const accessState=source('src/access/customer-access-state.js');
+  const lifecycle=source('src/payments/lifecycle.js');
+  const repair=source('src/access/access-repair.js');
+
+  assert.match(accessState,/function operatorProtected\(entitlement\)/,
+    'operator-protected Jellyfin access classification must have one access-domain owner');
+  assert.match(lifecycle,/rollbackUnprovisionedFreeClaim[\s\S]*?customerAccessState\.operatorProtected\(current\)/,
+    'direct Free activation rollback must refuse Permanent Access and administrator-present authority');
+  assert.match(lifecycle,/rollbackUnprovisionedJellyfinTrial[\s\S]*?customerAccessState\.operatorProtected\(current\)/,
+    'direct unpaid-trial rollback must refuse Permanent Access and administrator-present authority');
+  assert.match(repair,/customerAccessState\.operatorProtected/,
+    'access repair must consume the same canonical operator-protection classification');
+}
+
 function freeInactivitySafetyContract(){
   const inactivity=source('src/automation/customer-inactivity.js');
   const scoped=source('src/automation/customer-inactivity-scoped.js');
@@ -144,6 +159,7 @@ paypalPaidThroughCancellation();
 legacyPayPalProfileRecovery();
 providerCheckoutRecoveryDiagnostics();
 jellyfinDeletionScope();
+operatorProtectedRollbackContract();
 freeInactivitySafetyContract();
 deferredWebhookContract();
 discoveryAutomationContract();
