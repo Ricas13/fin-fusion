@@ -78,4 +78,166 @@ async function createPlan(plan, actorUserId = null) {
   });
 }
 
-module.exports = { createPlan };
+async function updateProduct({
+  planId,
+  name,
+  description,
+  features = [],
+  visible,
+  active,
+  discordRoleId = null,
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET name=$2,description=$3,marketing_features=$4::text[],visible=$5,active=$6,discord_role_id=$7,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, name, description, features, visible, active, discordRoleId]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.product.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updateAvailability({ planId, capacityLimit, actorUserId = null }) {
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, capacityLimit]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.inventory.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ capacityLimit })]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updateDelivery({
+  planId,
+  serverClass,
+  strategy,
+  poolMode,
+  servers = [],
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET server_class=$2,placement_strategy=$3,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, serverClass, strategy]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [planId]);
+    if (poolMode === 'selected') {
+      for (const server of servers) {
+        await client.query(
+          'INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,$3)',
+          [planId, server.id, server.weight]
+        );
+      }
+    }
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.server_placement','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updateLibraries({
+  planId,
+  mode,
+  names = [],
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET library_access_mode=$2,library_names=$3::text[],updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, mode, mode === 'all' ? [] : names]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.library_access','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updateCommerce({
+  planId,
+  currentBillingInterval,
+  billingInterval,
+  durationDays,
+  currency,
+  priceMinor,
+  actorUserId = null
+}) {
+  const before = await planPricing.resolvePrice(planId, currency, { allowFallback: false });
+  const pricingChanged = !before || Number(before.price_minor) !== Number(priceMinor);
+  const intervalChanged = String(currentBillingInterval || '') !== String(billingInterval || '');
+
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET billing_interval=$2,duration_days=$3,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, billingInterval, durationDays]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    const price = await planPricing.setPrice(client, planId, {
+      currency,
+      priceMinor,
+      active: true,
+      isDefault: true
+    });
+    if (pricingChanged || intervalChanged) {
+      await client.query(
+        `UPDATE plan_provider_prices
+         SET active=FALSE,
+             verification_status='unverified',
+             verification_error='Plan commercial schedule changed; re-verification required.',
+             updated_at=NOW()
+         WHERE plan_price_id=$1`,
+        [price.id]
+      );
+    }
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.commerce.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({
+        currency,
+        priceMinor,
+        billingInterval,
+        durationDays
+      })]
+    );
+    return {
+      plan: updated.rows[0],
+      price,
+      pricingChanged,
+      intervalChanged
+    };
+  });
+}
+
+module.exports = {
+  createPlan,
+  updateProduct,
+  updateAvailability,
+  updateDelivery,
+  updateLibraries,
+  updateCommerce
+};
