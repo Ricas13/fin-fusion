@@ -33,7 +33,7 @@ const serviceScope=require('../src/entitlements/service-scope');
 require('./customer-access-variants-smoke');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
-assert(/stremioEntitlements\.entitledSubscription\(customerId\)/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use the unified multi-access Home');
+assert(/customerAccessState\.stremio\(customerId,\{includeBlocked:false\}\)/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use canonical access state on the unified multi-access Home');
 assert(/sellablePlans/.test(customerDashboard)&&/productReadiness\.evaluatePlan/.test(customerDashboard),'customer acquisition catalogue must hide undeliverable products with plan-specific readiness');
 assert(/Create your private installation link/.test(customerAccessJs)&&/Keep this link private/.test(customerAccessJs)&&/Copy URL/.test(customerAccessJs)&&!/Installation manifest/.test(customerAccessJs),'My Access Stremio surface must keep the private-link warning and expose one Copy URL action without a duplicate manifest section');
 assert(!/id="stremio-access"/.test(customerDashboardView)&&!/Installation manifest/.test(customerDashboardView),'Account Home must remain Stremio summary/navigation only');
@@ -51,7 +51,7 @@ assert(/registerHandler\('retry_failed'.*provisioning\.reconcileCustomer\(item\.
 assert(/serviceScope\.overlaps/.test(lifecycle)&&/!serviceScope\.isFreeTier/.test(lifecycle),'trial eligibility must be scoped by overlapping service and ignore permanent Free Server fallback');
 assert(/effectiveStremioSubscription/.test(subscriptionState),'subscription state must expose a dedicated Stremio primary entitlement');
 assert(/effectiveStremioSubscription\(customerId\)/.test(stremioEntitlements),'Stremio entitlement resolution must not depend on the Jellyfin primary entitlement');
-assert(/stremioEntitlements\.entitledSubscription\(customerId\)/.test(customerDashboard),'unified Account Home must use the Stremio-specific entitlement lane');
+assert(/customerAccessState\.stremio\(customerId,\{includeBlocked:false\}\)/.test(customerDashboard),'unified Account Home must use the canonical Stremio entitlement lane');
 assert(/overlappingRecurring/.test(checkout)&&/serviceScope\.overlaps/.test(checkout),'recurring checkout must only treat overlapping services as plan changes');
 assert(/effective_stremio_entitlements/.test(migration),'database must expose an independent Stremio primary entitlement view');
 assert(/COALESCE\(p\.is_free_tier,FALSE\) ASC/.test(migration),'paid or trial Jellyfin access must overlay the permanent Free Server fallback');
@@ -68,7 +68,7 @@ assert(/Emby Shares/.test(plansList)&&/Add Emby Share plan/.test(plansList)&&/gr
 assert(/INSERT INTO plans\([\s\S]*service_type[\s\S]*VALUES\([\s\S]*'emby'/.test(embyEditor)&&/COALESCE\(js\.media_server_type,'jellyfin'\)='emby'/.test(embyEditor)&&/\/admin\/plans\/emby/.test(embyEditor),'Emby plan editor must create an Emby product and restrict placement to Emby servers');
 assert(routeComposition.indexOf('createAdminEmbyPlanEditorRouter')<routeComposition.indexOf('createAdminPlanCreateV2Router'),'Emby plan routes must be mounted before the shared Jellyfin/Stremio create workflow');
 assert(/effectiveEmbySubscription/.test(subscriptionState)&&/effective_emby_entitlements/.test(subscriptionState),'subscription state must expose an independent Emby primary entitlement');
-assert(/effectiveEmbySubscription\(customerId/.test(customerDashboard)&&/embyPlan/.test(customerDashboard)&&/hasEmby/.test(customerDashboard),'Emby-only customers must use the unified account dashboard instead of onboarding');
+assert(/customerAccessState\.emby\(customerId,\{includeBlocked:true\}\)/.test(customerDashboard)&&/embyPlan/.test(customerDashboard)&&/hasEmby/.test(customerDashboard),'Emby-only customers must use canonical access state on the unified account dashboard instead of onboarding');
 assert(/id="emby-access"/.test(customerDashboardView)&&/Open Emby/.test(customerDashboardView)&&/Emby Shares/.test(customerDashboardView)&&/\['jellyfin','stremio','emby','bundle'\]/.test(customerDashboardView),'customer Account Home must render Emby as Emby instead of falling back to Jellyfin');
 assert(/planServers\.eligibleServersForPlan/.test(mediaReconciliation)&&/media_server_type/.test(mediaReconciliation)&&/password_setup_required=TRUE/.test(mediaReconciliation),'Emby provisioning must use media-type-scoped placement and surface bootstrap password setup');
 assert(/effectiveEmbySubscription/.test(planChange),'recurring plan changes must resolve the Emby service lane');
