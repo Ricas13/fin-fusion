@@ -254,6 +254,12 @@ for service in "${services[@]}"; do
   [[ "$ready" == 1 ]] || fail "$service did not become healthy"
 done
 
+log 'Verifying runtime build identity'
+for service in app automation-worker activity-worker backup-worker; do
+  runtime_sha="$(compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA)"
+  [[ "$runtime_sha" == "$CAPTAINFIN_BUILD_SHA" ]] || fail "$service is running build ${runtime_sha:-unknown}, expected $CAPTAINFIN_BUILD_SHA"
+done
+
 log 'Running application-level deployment verification'
 docker compose exec -T app npm run verify:deployment
 
