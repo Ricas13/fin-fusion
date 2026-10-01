@@ -95,6 +95,20 @@ assert(integrityOperator.includes("const current = await scan({ limit: 500 })")
   'operator service must match the exact current scanner finding before mutation');
 
 
+// Manual entitlement grant policy/SQL is an entitlement-domain operation.
+const adminManualEntitlement=read('src/platform/admin-manual-entitlement.js');
+const manualEntitlementService=read('src/entitlements/admin-manual-entitlement-service.js');
+assert(adminManualEntitlement.includes("require('../entitlements/admin-manual-entitlement-service')"),
+  'admin manual entitlement route must delegate grant ownership to entitlement domain');
+assert(!adminManualEntitlement.includes('INSERT INTO subscriptions')
+    && !adminManualEntitlement.includes('FROM subscriptions s')
+    && !adminManualEntitlement.includes('createManualSubscriptionTx'),
+  'platform manual entitlement route must not own subscription eligibility or mutation SQL');
+assert(manualEntitlementService.includes('createManualSubscriptionTx')
+    && manualEntitlementService.includes('FOR UPDATE')
+    && manualEntitlementService.includes("source: 'admin_grant'"),
+  'manual entitlement domain service must own serialized eligibility and subscription creation');
+
 // Manual-payment recording is a payments-domain operation. The platform route
 // owns HTTP/CSRF handling only; ledger mutation and its audit event are atomic.
 const adminCustomerBilling=read('src/platform/admin-customer-billing.js');
