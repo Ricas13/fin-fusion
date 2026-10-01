@@ -102,7 +102,7 @@ container_health() {
 wait_for_postgres() {
   local health
   for _ in $(seq 1 30); do
-    health="$(container_health steam-fusion-postgres)"
+    health="$(container_health captainfin-postgres)"
     [[ "$health" == 'healthy' ]] && return 0
     sleep 2
   done
@@ -144,7 +144,7 @@ recover_app() {
 # If the web container is absent/exited/dead, do not wait for an HTTP failure
 # threshold: Compose/Docker restart policy should normally recover it, but the
 # watchdog provides a second independent path.
-app_state="$(container_state steam-fusion)"
+app_state="$(container_state captainfin)"
 if [[ "$app_state" != 'running' ]]; then
   failures="$(increment "$STATE_DIR/live-failures")"
   log "Web container state=${app_state}; recovery count=${failures}."
@@ -183,8 +183,8 @@ if http_ok "$BASE_URL/health/ready"; then
 fi
 
 ready_failures="$(increment "$STATE_DIR/ready-failures")"
-postgres_state="$(container_state steam-fusion-postgres)"
-postgres_health="$(container_health steam-fusion-postgres)"
+postgres_state="$(container_state captainfin-postgres)"
+postgres_health="$(container_health captainfin-postgres)"
 log "Readiness probe failed (${ready_failures}/${FAILURE_THRESHOLD}); postgres=${postgres_state}/${postgres_health}."
 
 if [[ "$postgres_state" != 'running' ]]; then
@@ -211,7 +211,7 @@ fi
 # Non-critical maintenance is allowed to lose before storefront availability.
 # If backup itself is unhealthy while the web app cannot become ready, stop it
 # first and give PostgreSQL/storage pressure a chance to clear.
-backup_health="$(container_health steam-fusion-backup)"
+backup_health="$(container_health captainfin-backup)"
 if [[ "$backup_health" == 'unhealthy' ]]; then
   if deployment_active; then
     log 'Production deployment became active; watchdog will not mutate worker state.'

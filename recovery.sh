@@ -86,7 +86,7 @@ wait_postgres() {
   docker compose up -d postgres >/dev/null
   for _ in $(seq 1 60); do
     local health
-    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' steam-fusion-postgres 2>/dev/null || true)"
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' captainfin-postgres 2>/dev/null || true)"
     [[ "$health" == 'healthy' ]] && return 0
     [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
     sleep 2
@@ -164,7 +164,7 @@ restore_production() {
   log 'Restarting CAPTAiNFiN services'
   docker compose up -d --no-deps app automation-worker activity-worker backup-worker
 
-  for container in steam-fusion steam-fusion-automation steam-fusion-activity steam-fusion-backup; do
+  for container in captainfin captainfin-automation captainfin-activity captainfin-backup; do
     wait_service_health "$container"
   done
 

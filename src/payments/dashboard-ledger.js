@@ -162,7 +162,9 @@ function eventRecords(row, refundState = new Map(), warnings = []) {
 
 async function coverageRunsInRange(range, queryFn = query) {
     return queryFn(`
-        SELECT provider_scope,range_start,range_end,completed_at
+        -- DATE values are provider calendar days, not local-midnight instants.
+        -- Return text so pg cannot shift them through the Node process timezone.
+        SELECT provider_scope,range_start::text AS range_start,range_end::text AS range_end,completed_at
         FROM payment_history_import_runs
         WHERE status='completed'
           AND range_end >= ($1::timestamptz AT TIME ZONE 'UTC')::date

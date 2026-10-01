@@ -56,7 +56,9 @@ async function seed() {
     `, [customer.id]);
     await query(`INSERT INTO request_user_sync(customer_id,status,last_error) VALUES($1,'failed','smoke')`, [customer.id]);
     const referral = (await query(`INSERT INTO referral_codes(customer_id,code) VALUES($1,$2) RETURNING id`, [customer.id, `REF${suffix}`])).rows[0];
-    await query(`INSERT INTO referral_redemptions(referral_code_id,referred_customer_id,status,rewarded_at) VALUES($1,$2,'rewarded',NOW())`, [referral.id, referred.id]);
+    // Keep the fixture inside the period: PostgreSQL has microsecond precision,
+    // while the immediately following JS range end is rounded to milliseconds.
+    await query(`INSERT INTO referral_redemptions(referral_code_id,referred_customer_id,status,rewarded_at,created_at) VALUES($1,$2,'rewarded',NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute')`, [referral.id, referred.id]);
     return { suffix, plan, customer, referred, server };
 }
 
