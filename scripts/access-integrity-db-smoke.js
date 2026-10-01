@@ -134,6 +134,32 @@ function kindsFor(findings, customerId) {
       reason: 'access integrity protected override smoke'
     });
 
+    const permanentFreeMissing = await makeCustomer('free-permanent-missing');
+    const permanentFreeSubscription = await makeSubscription(
+      permanentFreeMissing,
+      freePlanId,
+      { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" }
+    );
+    await query(`
+      INSERT INTO customer_entitlement_overrides(
+        customer_id,subscription_id,permanent_access,reason,revoked_at
+      )
+      VALUES($1,$2,TRUE,'access integrity permanent override smoke',NULL)
+      ON CONFLICT(customer_id) DO UPDATE SET
+        subscription_id=EXCLUDED.subscription_id,
+        permanent_access=TRUE,
+        reason=EXCLUDED.reason,
+        revoked_at=NULL,
+        updated_at=NOW()
+    `, [permanentFreeMissing, permanentFreeSubscription]);
+    await accessHolds.addHold({
+      customerId: permanentFreeMissing,
+      type: 'inactivity_policy',
+      sourceKey: `plan:${freePlanId}`,
+      reason: 'access integrity permanent override smoke',
+      metadata: { subscriptionId: permanentFreeSubscription }
+    });
+
     const freeOrphan = await makeCustomer('free-orphan');
     await makeAccount(freeOrphan, freeServerId, 'free', 'free-orphan');
 
@@ -159,6 +185,8 @@ function kindsFor(findings, customerId) {
       'ready Free plan+server must not be reported as inconsistent');
     assert(kindsFor(findings, protectedFreeMissing).has('free_plan_without_ready_server'),
       'explicit administrator-present access must remain visible to the integrity scanner even when an automatic hold exists');
+    assert(kindsFor(findings, permanentFreeMissing).has('free_plan_without_ready_server'),
+      'Permanent Access must remain visible to the integrity scanner even when an automatic hold exists');
     assert(kindsFor(findings, freeOrphan).has('free_server_without_plan'),
       'Free account without a Free plan must be detected');
     assert(kindsFor(findings, trialMissing).has('unpaid_trial_without_ready_server'),

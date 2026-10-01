@@ -21,7 +21,15 @@ function finding(kind, row, detail) {
 
 function automaticAccessAllowedSql(alias = 's') {
   return `(
-    public.subscription_admin_present(${alias}.customer_id,'jellyfin',${alias}.id)
+    EXISTS(
+      SELECT 1
+      FROM customer_entitlement_overrides integrity_override
+      WHERE integrity_override.customer_id=${alias}.customer_id
+        AND integrity_override.subscription_id=${alias}.id
+        AND integrity_override.permanent_access=TRUE
+        AND integrity_override.revoked_at IS NULL
+    )
+    OR public.subscription_admin_present(${alias}.customer_id,'jellyfin',${alias}.id)
     OR NOT public.subscription_access_blocked(${alias}.customer_id,${alias}.source,${alias}.provider_subscription_id)
   )`;
 }
