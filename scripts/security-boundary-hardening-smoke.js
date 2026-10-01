@@ -264,6 +264,18 @@ async function main() {
     assert(notificationSettings.includes('function communityForLoad'), 'notification settings must have a tolerant load-normalization path');
     assert(notificationSettings.includes('const safe=(parse,fallback)=>{try{return parse()}catch{return fallback}}'), 'malformed saved community settings must fall back safely on load');
 
+    const dependabot = read('.github/dependabot.yml');
+    const dependencyAudit = read('.github/workflows/dependency-audit.yml');
+    assert(/package-ecosystem:\s*npm/.test(dependabot)
+        && /interval:\s*weekly/.test(dependabot),
+        'npm dependency updates must remain scheduled through Dependabot');
+    assert(/schedule:[\s\S]*cron:/.test(dependencyAudit)
+        && /workflow_dispatch:/.test(dependencyAudit),
+        'dependency security audit must run on a schedule and remain manually runnable');
+    assert(dependencyAudit.includes('npm ci --ignore-scripts')
+        && dependencyAudit.includes('npm audit --omit=dev --audit-level=high'),
+        'dependency audit must use the lockfile and fail on high-severity production dependency findings');
+
     console.log('security boundary hardening smoke: ok');
 }
 
