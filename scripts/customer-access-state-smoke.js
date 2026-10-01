@@ -66,6 +66,8 @@ assert.strictEqual(accessState.operatorProtected({ admin_present: true }), true,
   'raw administrator-present state must be recognized before decoration');
 assert.strictEqual(accessState.operatorProtected({ admin_jellyfin_mode: 'forced_server' }), false,
   'server pin is placement-only and must not disable lifecycle enforcement');
+assert.strictEqual(accessState.operatorProtected({ admin_present: true, admin_jellyfin_mode: 'forced_server' }), false,
+  'a legacy/raw admin-present compatibility flag must not override an explicit placement-only server pin');
 assert.strictEqual(accessState.operatorProtected(null), false,
   'missing entitlements are never operator-protected');
 
