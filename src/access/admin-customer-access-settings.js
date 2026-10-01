@@ -8,6 +8,8 @@ const householdOverrides = require('../entitlements/household-overrides');
 const requestPolicy = require('../integrations/request-plan-policy');
 const requestOverrides = require('../integrations/request-permission-overrides');
 const requestUserSync = require('../integrations/request-user-sync');
+const stremioEntitlements = require('../stremio/entitlements');
+const stremioHouseholdAccess = require('../stremio/household-access');
 
 function lane(value) {
   return String(value || 'primary') === 'free' ? 'free' : 'primary';
@@ -23,6 +25,18 @@ async function audit(actorUserId, action, customerId, metadata = {}) {
 
 async function accessSnapshot(customerId) {
   return customerAccessState.snapshot(customerId);
+}
+
+async function resetStremioHousehold(customerId, { actorUserId = null } = {}) {
+  const entitlement = await stremioEntitlements.current(customerId);
+  if (!entitlement || !['active','pending','suspended'].includes(String(entitlement.status || ''))) {
+    throw new Error('This customer has no Stremio household entitlement to reset.');
+  }
+  const released = await stremioHouseholdAccess.release(entitlement, {
+    actorUserId,
+    reason: 'admin_reset'
+  });
+  return { released };
 }
 
 async function savePolicyOverrides(customerId, body = {}, { actorUserId = null } = {}) {
@@ -187,6 +201,7 @@ async function resetRequestPermissionOverrides(customerId, { actorUserId = null 
 
 module.exports = {
   lane,
+  resetStremioHousehold,
   savePolicyOverrides,
   resetPolicyOverrides,
   saveHouseholdOverrides,
