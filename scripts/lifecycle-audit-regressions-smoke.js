@@ -86,6 +86,22 @@ function operatorProtectedRollbackContract(){
     'Free inactivity must consume the same canonical operator-protection classification');
 }
 
+function adminAuthorityReconciliationRaceContract(){
+  const permanent=source('src/entitlements/permanent-access.js');
+  const serviceControl=source('src/entitlements/service-admin-control.js');
+
+  assert.match(permanent,/enable\(customerId[\s\S]*?reconciliationLock\.withCustomerReconciliationLock\(customerId/,
+    'Permanent Access grants must serialize with destructive customer reconciliation');
+  assert.match(permanent,/revoke\(customerId[\s\S]*?reconciliationLock\.withCustomerReconciliationLock/,
+    'Permanent Access revocation must serialize with customer reconciliation');
+  assert.match(serviceControl,/setPresent\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
+    'administrator-present authority must not race an in-flight reconciliation');
+  assert.match(serviceControl,/setRemoved\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
+    'administrator-removed authority must not race an in-flight reconciliation');
+  assert.match(serviceControl,/clear\(customerId[\s\S]*?withCustomerReconciliationLock\(customerId/,
+    'return-to-automatic authority changes must not race an in-flight reconciliation');
+}
+
 function freeInactivitySafetyContract(){
   const inactivity=source('src/automation/customer-inactivity.js');
   const scoped=source('src/automation/customer-inactivity-scoped.js');
@@ -162,6 +178,7 @@ legacyPayPalProfileRecovery();
 providerCheckoutRecoveryDiagnostics();
 jellyfinDeletionScope();
 operatorProtectedRollbackContract();
+adminAuthorityReconciliationRaceContract();
 freeInactivitySafetyContract();
 deferredWebhookContract();
 discoveryAutomationContract();
