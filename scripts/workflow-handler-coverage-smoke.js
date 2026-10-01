@@ -11,8 +11,8 @@ const bulk=require('../src/platform/admin-bulk-customers');
 const bulkJobs=read('src/platform/bulk-jobs.js');
 const bulkUi=read('src/platform/admin-bulk-customers.js');
 const bulkSources=[
-  read('src/platform/bulk-operations.js'),
-  read('src/platform/operator-bulk-operations.js'),
+  read('src/customers/bulk-operations.js'),
+  read('src/customers/operator-bulk-operations.js'),
   read('src/jellyfin/bulk-worker.js')
 ].join('\n');
 
