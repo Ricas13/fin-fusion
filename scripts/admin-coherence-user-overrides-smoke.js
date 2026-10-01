@@ -28,7 +28,8 @@ assert(/Customer control/.test(accessCards)&&/plan_change/.test(accessCards)&&/s
 // again -- Customer 360 no longer duplicates that action for Jellyfin/bundle
 // customers.
 const customerOperator=read('src/platform/admin-customer-operator.js');
-assert(/operator\/move/.test(customerOperator)&&/forceMove\.move/.test(customerOperator),'Customer operator console must own the direct server-move control');
+const customerOperatorService=read('src/access/admin-customer-operator-service.js');
+assert(/operator\/move/.test(customerOperator)&&/operatorService\.move/.test(customerOperator)&&/forceMove\.move/.test(customerOperatorService),'Customer operator route must expose direct server move while the access domain owns its orchestration');
 assert(!/marketing\/withdraw|Marketing consent|marketingConsentChanged|name=\"marketingOptIn\"/.test(customer+view),'Customer administration must not retain retired Marketing consent controls');
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
 assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');
