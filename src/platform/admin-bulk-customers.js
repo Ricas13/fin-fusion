@@ -6,7 +6,7 @@ const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 const customerFilters=require('./customer-filters');
 const bulkJobs=require('./bulk-jobs');
-const deletion=require('./customer-deletion');
+const deletion=require('../customers/customer-deletion');
 const {ownerStatus}=require('../auth/owner-guard');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}

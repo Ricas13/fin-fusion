@@ -16,7 +16,7 @@ const connectionsWorkflow=require('../src/platform/integration-workflow-tabs');
 const notificationWorkflow=require('../src/platform/notification-workflow-tabs');
 const provisioningTabs=fs.readFileSync(path.join(platformDir,'provisioning-workflow-tabs.js'),'utf8');
 const html=fs.readFileSync(path.join(platformDir,'admin-html.js'),'utf8');
-const customerDeletion=fs.readFileSync(path.join(platformDir,'customer-deletion.js'),'utf8');
+const customerDeletion=fs.readFileSync(path.join(root,'src','customers','customer-deletion.js'),'utf8');
 const customerDeletionFinalizer=fs.readFileSync(path.join(root,'db','migrations','100_customer_deletion_saga.sql'),'utf8');
 
 function jsFiles(dir){
