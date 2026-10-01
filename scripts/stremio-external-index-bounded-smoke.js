@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const automationRegistry = require('../src/automation/jobs');
 
 const source = read('src/stremio/source-index.js');
 const worker = read('scripts/automation-worker.js');
@@ -17,7 +18,7 @@ assert.match(source, /LIMIT \$1`,\[safeLimit\]/, 'due-source SQL must apply its 
 assert.match(source, /Math\.min\(4,Number\(value\)\|\|SOURCE_BATCH_LIMIT\)/, 'callers must not be able to turn a bounded pass into an unbounded sweep');
 assert.match(source, /remainingDue=await dueSourceCount\(\)/, 'bounded indexing must report backlog after the selected source finishes');
 assert.match(source, /waiting:remainingDue/, 'remaining due sources must be visible as worker backlog telemetry');
-assert.match(worker + jobs, /stremio_media_index:300/, 'new installs must revisit bounded Stremio indexing every five minutes');
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_media_index'), 300, 'new installs must revisit bounded Stremio indexing every five minutes');
 assert.match(worker, /jobKey === 'stremio_media_index'/, 'automation logs must surface remaining external-index backlog');
 assert.match(migration, /interval_seconds=300/, 'existing default Stremio index schedules must move to the bounded five-minute cadence');
 assert.match(migration, /interval_seconds=10800/, 'migration must only rewrite the historical default rather than operator-customised schedules');
