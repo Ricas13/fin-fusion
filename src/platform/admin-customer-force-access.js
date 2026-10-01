@@ -45,7 +45,10 @@ async function recoverCreatedAccount(customerId,target,entitlement,{actorUserId=
         UPDATE jellyfin_accounts
         SET customer_id=$1,jellyfin_user_id=$2,jellyfin_username=$3,disabled=FALSE,
             last_policy_sync=NOW(),password_setup_required=TRUE,password_reset_required=FALSE,
-            account_purpose='jellyfin',access_lane='primary',updated_at=NOW()
+            account_purpose='jellyfin',
+            access_lane_changed_at=CASE WHEN access_lane<>'primary' THEN NOW() ELSE access_lane_changed_at END,
+            inactivity_observation_reset_at=CASE WHEN access_lane<>'primary' THEN NULL ELSE inactivity_observation_reset_at END,
+            access_lane='primary',updated_at=NOW()
         WHERE id=$4
         RETURNING *
       `,[customerId,String(remote.Id),intent.username,existing.id]);
