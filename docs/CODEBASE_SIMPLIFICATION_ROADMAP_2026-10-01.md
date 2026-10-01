@@ -60,7 +60,7 @@ Each completed item should add:
 
 ## Required status checks on main
 
-- [ ] Inspect the current branch/ruleset configuration for `main`.
+- [x] Inspect the current branch/ruleset configuration for `main`.
 - [ ] Require the release-critical workflows before merge rather than relying on manual discipline.
 - [ ] Require, where supported by the repository/ruleset:
   - CI
@@ -99,17 +99,17 @@ src/auth/admin-customer-identity-service.js
 
 Tasks:
 
-- [ ] Inventory every route and mutation currently owned by `admin-customer-360.js`.
-- [ ] Move profile + portal identity mutation into a customer/auth domain service.
-- [ ] Move non-recurring expiry reset into the entitlement/access domain.
-- [ ] Move automatic server placement/reset orchestration behind an access-domain owner.
-- [ ] Move policy override mutation behind the canonical access/provisioning owner.
-- [ ] Move household/library/request-permission override mutation behind their domain owners.
-- [ ] Move email verification/admin identity mutation behind auth/customer identity ownership.
-- [ ] Move automation-protection mutation behind the relevant lifecycle/access owner.
-- [ ] Move renewal/plan-change cancellation decisions behind payments/access owners where not already delegated.
-- [ ] Keep route validation, CSRF, rate limiting, rendering and redirects in platform.
-- [ ] Add ownership tests preventing direct subscription/customer/user/audit mutation SQL from returning to the router.
+- [x] Inventory every route and mutation currently owned by `admin-customer-360.js`.
+- [x] Move profile + portal identity mutation into a customer/auth domain service.
+- [x] Move non-recurring expiry reset into the entitlement/access domain.
+- [x] Move automatic server placement/reset orchestration behind an access-domain owner.
+- [x] Move policy override mutation behind the canonical access/provisioning owner.
+- [x] Move household/library/request-permission override mutation behind their domain owners.
+- [x] Move email verification/admin identity mutation behind auth/customer identity ownership.
+- [x] Move automation-protection mutation behind the relevant lifecycle/access owner.
+- [x] Move renewal/plan-change cancellation decisions behind payments/access owners where not already delegated.
+- [x] Keep route validation, CSRF, rate limiting, rendering and redirects in platform.
+- [x] Add ownership tests preventing direct subscription/customer/user/audit mutation SQL from returning to the router.
 - [ ] Add behavioural tests for any extracted high-risk mutation.
 
 **Done when:** the router contains no independent customer-access, subscription, identity or business-policy mutation logic.
@@ -452,3 +452,5 @@ Before final merge/deployment of the completed roadmap:
 Add dated entries here as implementation batches land.
 
 - 2026-10-01 — Roadmap created from green baseline `413b366` after PR #828.
+- 2026-10-01 — P0 inspected: active repository ruleset `Protect main` requires PRs/thread resolution but currently has no required-status-check rule. The available GitHub connector exposes ruleset reads only, so the settings change remains an explicit repository-admin action rather than being falsely marked complete.
+- 2026-10-01 — P1 Customer 360 thinning in progress: profile/portal identity, email verification, automation protection, reset-to-plan expiry, automatic placement, policy/household/library/request overrides, Stremio household reset and renewal subscription selection moved behind domain owners. `admin-customer-360.js` no longer imports the DB module or contains direct mutation SQL. Behavioural coverage for the newly extracted high-risk placement/expiry paths remains to be completed before this item is closed.
