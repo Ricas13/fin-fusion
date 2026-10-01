@@ -22,6 +22,9 @@ const accessLoaderSource=read('src/platform/customer-360.js');
 // heading strings. The old dense access renderer remains available as a
 // secondary disclosure inside the Jellyfin/Emby service card.
 assert(!/indexOf\(marker\)|const marker=|skipAccessSections/.test(wrapperSource),'Customer 360 must not splice HTML into a legacy Access tab any more');
+assert(!/\.replace\(\s*\/\(<section class=/.test(wrapperSource)&&!wrapperSource.includes('end_jellyfin_plan'),'Customer 360 wrapper must not rewrite rendered HTML to relocate plan actions');
+assert(compactSource.includes("customerLink(id,'subscriptions/revoke','Revoke a plan'"),'compact plan card must own the revoke-plan action explicitly');
+
 assert(!/skipAccessSections/.test(v2Source),'the retired tab-splice contract must not linger in v2 either');
 assert(v2Source.includes("nav(id,token,appUserId)")||/function nav\(/.test(v2Source),'v2 must expose the single-page nav (Customer record + Portal view)');
 assert(wrapperSource.includes("compact=require('./customer-360-compact')"),'Customer 360 must use the focused action-first renderer');
