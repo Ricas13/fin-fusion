@@ -46,6 +46,6 @@ assert.deepEqual(missingSeedCode,[],'Every seeded automation job must have imple
 if(missingCodeSeed.length){
   assert(/for\s*\(\s*const\s+jobKey\s+of\s+jobRegistry\.names\(\)\s*\)/.test(workerSource),'Automation worker must register coded jobs that are not present in migrations');
 }
-assert(jobSource.includes("require('../platform/bulk-operations')")&&jobSource.includes("require('../platform/operator-bulk-operations')"),'Automation worker must register both standard and high-impact bulk operation handlers');
+assert(jobSource.includes("require('../customers/bulk-operations')")&&jobSource.includes("require('../customers/operator-bulk-operations')"),'Automation worker must register both standard and high-impact bulk operation handlers from the customer domain');
 
 console.log(`workflow handler coverage smoke: ok (${bulk.BULK_ACTIONS.length} bulk actions, ${coded.length} automation jobs, ${missingCodeSeed.length} runtime-registered)`);
