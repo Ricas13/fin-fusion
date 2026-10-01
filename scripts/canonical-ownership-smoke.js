@@ -107,8 +107,8 @@ assert(!customerMyAccess.includes("require('../access/customer-access-state')")
 assert(!customerMyAccess.includes('FROM jellyfin_accounts'),
   'customer My Access must not own media account/server SQL');
 assert(customerMediaAccess.includes("require('./customer-access-state')")
-    && customerMediaAccess.includes("require('../entitlements/subscription-state')"),
-  'customer media access domain must compose canonical Jellyfin and Emby entitlement owners');
+    && !customerMediaAccess.includes("require('../entitlements/subscription-state')"),
+  'customer media access domain must consume the single canonical cross-service access-state owner');
 assert(customerMediaAccess.includes('async function credentialAccess')
     && customerMediaAccess.includes('function evaluateCredentialAccess')
     && customerMediaAccess.includes('async function incompleteFreeSubscriptionId'),
