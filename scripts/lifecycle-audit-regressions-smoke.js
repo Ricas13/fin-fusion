@@ -64,7 +64,7 @@ function providerCheckoutRecoveryDiagnostics(){
 }
 
 function jellyfinDeletionScope(){
-  const text=source('src/platform/operator-bulk-operations.js');
+  const text=source('src/customers/operator-bulk-operations.js');
   assert.match(text,/jellyfinAdminControl\.remove\(item\.customer_id,null,/,'Jellyfin delete must persist service-scoped removal authority');
   assert.match(text,/deleteJellyfinAccounts\(item\.customer_id,\{[^}]*holdAccess:false/,'Jellyfin delete must not create a customer-wide access hold');
 }
