@@ -9,6 +9,7 @@ const capacity = require('../entitlements/plan-capacity');
 const accessEditor = require('./admin-plan-access');
 const libraryEditor = require('./admin-plan-libraries');
 const planPricing = require('../payments/plan-pricing');
+const planCommands = require('../catalog/plan-command-service');
 const paymentOptions = require('./admin-plan-payment-options');
 const requestPlanPolicy = require('./admin-request-plan-policy');
 const placement = require('../jellyfin/placement');
@@ -224,9 +225,16 @@ async function saveProduct(req, plan, data) {
     const value = setting.rows[0]?.setting_value || {};
     if (value.downgradeToFree === true && String(value.downgradeFreePlanCode || '') === String(plan.code)) throw new Error('This plan is the configured automatic free-downgrade target. Choose another target under Plans → Access rules before disabling it.');
   }
-  await transaction(async client => {
-    await client.query(`UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],visible=$5,active=$6,discord_role_id=$7,updated_at=NOW() WHERE id=$1`, [plan.id, name, description, features, visible, active, discordRoleId]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.product.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ name, visible, active, freeTier: data.free, discordRoleId, previousDiscordRoleId, discordRoleChanged })]);
+  await planCommands.updateProduct({
+    planId: plan.id,
+    name,
+    description,
+    features,
+    visible,
+    active,
+    discordRoleId,
+    actorUserId: req.session.authUserId,
+    auditMetadata: { name, visible, active, freeTier: data.free, discordRoleId, previousDiscordRoleId, discordRoleChanged }
   });
   if (discordRoleChanged && data.affected) await queuePlanDiscordReconciliation(plan.id, req.session.authUserId, { discordExtraManagedRoleIds: previousDiscordRoleId ? [previousDiscordRoleId] : [] });
 }
@@ -239,9 +247,10 @@ async function saveAccess(req, plan, data) {
 async function saveAvailability(req, plan) {
   if (capacity.capacityModel(plan) === 'fleet_users') throw new Error('Jellyfin plan availability is controlled by the eligible server\'s customer capacity, not a plan-level slot count. Change it under Servers -> Customer capacity.');
   const limit = int(req.body.capacityLimit, 0, 1000000, 'Availability limit');
-  await transaction(async client => {
-    await client.query('UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1', [plan.id, limit]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.inventory.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ capacityLimit: limit })]);
+  await planCommands.updateAvailability({
+    planId: plan.id,
+    capacityLimit: limit,
+    actorUserId: req.session.authUserId
   });
 }
 async function saveDelivery(req, plan, data) {
@@ -258,11 +267,14 @@ async function saveDelivery(req, plan, data) {
   if (chosen.some(row => !row.enabled || !row.allow_new_users)) throw new Error('Disabled servers or servers closed to new users cannot be selected.');
   if (strategy === 'manual' && (poolMode !== 'selected' || chosen.length !== 1)) throw new Error('Pinned server placement requires exactly one selected server.');
   const configured = chosen.map(row => ({ id: row.id, weight: int(req.body[`weight_${row.id}`] || '100', 1, 10000, `${row.name} weight`) }));
-  await transaction(async client => {
-    await client.query('UPDATE plans SET server_class=$2,placement_strategy=$3,updated_at=NOW() WHERE id=$1', [plan.id, serverClass, strategy]);
-    await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [plan.id]);
-    if (poolMode === 'selected') for (const row of configured) await client.query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,$3)', [plan.id, row.id, row.weight]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.server_placement','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ serverClass, strategy, poolMode, servers: configured, freeTier: data.free })]);
+  await planCommands.updateDelivery({
+    planId: plan.id,
+    serverClass,
+    strategy,
+    poolMode,
+    servers: configured,
+    actorUserId: req.session.authUserId,
+    auditMetadata: { serverClass, strategy, poolMode, servers: configured, freeTier: data.free }
   });
 }
 async function saveLibraries(req, plan, data) {
@@ -273,9 +285,12 @@ async function saveLibraries(req, plan, data) {
   const available = new Map(discovery.catalog.map(item => [String(item.name).toLocaleLowerCase('en-GB'), item.name]));
   const names = values(req.body.libraryNames).map(name => available.get(name.toLocaleLowerCase('en-GB'))).filter(Boolean);
   if (mode === 'include' && !names.length) throw new Error('Choose at least one library for selected-only access.');
-  await transaction(async client => {
-    await client.query('UPDATE plans SET library_access_mode=$2,library_names=$3::text[],updated_at=NOW() WHERE id=$1', [plan.id, mode, mode === 'all' ? [] : names]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.library_access','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ mode, names, liveEntitlements: data.affected })]);
+  await planCommands.updateLibraries({
+    planId: plan.id,
+    mode,
+    names,
+    actorUserId: req.session.authUserId,
+    auditMetadata: { mode, names, liveEntitlements: data.affected }
   });
   if (data.affected) await queuePlanReconciliation(plan.id, req.session.authUserId);
 }
@@ -286,14 +301,14 @@ async function saveCommerce(req, plan, data) {
   const duration = int(req.body.durationDays, 1, 3650, 'Access duration');
   const priceMinor = money(req.body.price);
   const currency = await planPricing.platformDefaultCurrency();
-  const before = await planPricing.resolvePrice(plan.id, currency, { allowFallback: false });
-  const pricingChanged = !before || Number(before.price_minor) !== priceMinor;
-  const intervalChanged = String(plan.billing_interval) !== billing;
-  await transaction(async client => {
-    await client.query('UPDATE plans SET billing_interval=$2,duration_days=$3,updated_at=NOW() WHERE id=$1', [plan.id, billing, duration]);
-    const price = await planPricing.setPrice(client, plan.id, { currency, priceMinor, active: true, isDefault: true });
-    if (pricingChanged || intervalChanged) await client.query(`UPDATE plan_provider_prices SET active=FALSE,verification_status='unverified',verification_error='Plan commercial schedule changed; re-verification required.',updated_at=NOW() WHERE plan_price_id=$1`, [price.id]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.commerce.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ currency, priceMinor, billingInterval: billing, durationDays: duration })]);
+  await planCommands.updateCommerce({
+    planId: plan.id,
+    currentBillingInterval: plan.billing_interval,
+    billingInterval: billing,
+    durationDays: duration,
+    currency,
+    priceMinor,
+    actorUserId: req.session.authUserId
   });
 }
 async function savePayments(req, plan, data) {
