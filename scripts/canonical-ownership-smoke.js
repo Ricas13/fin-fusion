@@ -270,6 +270,23 @@ assert(stremioRuntime.includes("'/stremio/:token/external-play/:sourceId/:itemId
 assert(/router\.get\('\/stremio\/:token\/source\/:sourceId\/:itemId\/:mediaSourceId'\s*,[\s\S]{0,120}\bretiredPlayback\s*\)/.test(stremioRuntime)&&stremioRuntime.includes("const retiredPlayback = (_req, res) => res.status(410).end()"),'legacy external proxy URLs must remain retired with 410 semantics regardless of optional route middleware');
 assert((jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length>=2,'ordinary media concurrency monitoring must exclude hidden Stremio identities');
 
+
+// Individual customer access mutations belong to the access domain; the platform module
+// may render forms and validate HTTP inputs but must not own entitlement/account mutation SQL.
+const individualActionRoute=read('src/platform/admin-customer-individual-actions.js');
+const individualActionService=read('src/access/admin-customer-individual-action-service.js');
+assert(individualActionRoute.includes("require('../access/admin-customer-individual-action-service')")
+    && !individualActionRoute.includes('UPDATE subscriptions')
+    && !individualActionRoute.includes('INSERT INTO subscription_service_extension_events')
+    && !individualActionRoute.includes('accessHolds.addHold(')
+    && !individualActionRoute.includes('serviceAdminControl.setRemoved('),
+  'individual customer action router must remain an HTTP/view adapter');
+assert(individualActionService.includes('UPDATE subscriptions')
+    && individualActionService.includes('INSERT INTO subscription_service_extension_events')
+    && individualActionService.includes('accessHolds.addHold(')
+    && individualActionService.includes('serviceAdminControl.setRemoved('),
+  'access-domain individual action service must own extension, expiry, suspension and Jellyfin-removal mutations');
+
 console.log('canonical ownership smoke: ok');
 
 
