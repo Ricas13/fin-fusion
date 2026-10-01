@@ -63,7 +63,7 @@ for (const token of [
   'prepare-production-env.js --write',
   '--user "$(id -u):$(id -g)"',
   'docker compose config',
-  'docker compose --profile recovery build',
+  'docker compose build',
   'BACKUP_DIR=/backups/predeploy',
   'recovery-tools npm run db:backup',
   'docker compose run --rm --no-deps migrate',
@@ -109,6 +109,14 @@ assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'b
 assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
 assert((compose.match(/STREMIO_JELLYFIN_TOKEN_KEY: \$\{STREMIO_JELLYFIN_TOKEN_KEY:-\}/g) || []).length === 2, 'app and automation-worker must receive the same managed Stremio token key');
+assert((compose.match(/image: \$\{CAPTAINFIN_IMAGE:-captainfin:current\}/g) || []).length === 6, 'migrate/app/workers/recovery must share the canonical runtime image');
+assert.strictEqual((compose.match(/^\s+build:\s*\.\s*$/gm) || []).length, 1, 'only the app service may own the Docker build definition');
+assert(deployScript.includes('export CAPTAINFIN_IMAGE="${CAPTAINFIN_IMAGE:-captainfin:${CAPTAINFIN_BUILD_SHA}}"'), 'deployment must tag the release image by build SHA');
+assert(deployScript.includes('docker compose build') && /docker compose build[\s\S]*?\n\s*app\b/.test(deployScript), 'deployment must build the shared application image once through app');
+assert(deployScript.includes('for service in app automation-worker activity-worker backup-worker'), 'deployment must verify every long-running runtime service build identity');
+assert(deployScript.includes('compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA'), 'runtime build verification must read the image-provided build SHA');
+assert(deployScript.indexOf('npm run verify:deployment') < deployScript.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'), 'known-good current image alias must advance only after deployment verification succeeds');
+
 assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must prove worker liveness');
 assert(verifyDeployment.includes("add('backup worker', backupWorkerAlive"), 'deployment verification must require backup worker liveness');
 assert(verifyDeployment.includes('degraded_error=${backupWorker.last_error}'), 'deployment verification must surface backup operation errors diagnostically');
@@ -165,7 +173,7 @@ assert(!customerRateLimit.includes('[String(bucketKey).slice(0,300), seconds]'),
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
   deployScript.indexOf('docker compose config'),
-  deployScript.indexOf('docker compose --profile recovery build'),
+  deployScript.indexOf('docker compose build'),
   deployScript.indexOf('recovery-tools npm run db:backup'),
   deployScript.indexOf('docker compose run --rm --no-deps migrate'),
   deployScript.indexOf('docker compose up -d --no-deps app automation-worker activity-worker backup-worker'),
