@@ -74,6 +74,18 @@ assert(gitignore.includes('.runtime/'), 'watchdog runtime counters/locks must ne
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
 assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
 assert(/another CAPTAiNFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
+for (const name of ['captainfin','captainfin-automation','captainfin-activity','captainfin-backup','captainfin-postgres']) {
+  assert(compose.includes(`container_name: ${name}`), `Compose runtime identity missing ${name}`);
+}
+assert(!/container_name:\s*steam-fusion/.test(compose), 'legacy steam-fusion container names must not remain in Compose');
+assert(deployScript.includes('adopt_legacy_container captainfin steam-fusion')
+  && deployScript.includes('adopt_legacy_container captainfin-postgres steam-fusion-postgres'),
+  'deployment must adopt existing legacy containers before runtime recreation');
+assert(compose.includes('POSTGRES_DB: steamfusion')
+  && compose.includes('POSTGRES_USER: steamfusion')
+  && compose.includes('steamfusion_pgdata:/var/lib/postgresql/data')
+  && compose.includes('SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-steamfusion.sid}'),
+  'state-bearing legacy database/volume/cookie identities must remain frozen for upgrade compatibility');
 assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'backup and recovery containers must support the host backup owner identity');
 assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
