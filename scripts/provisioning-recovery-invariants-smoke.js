@@ -119,13 +119,13 @@ assert(reconciliationControl.includes('reconcile_requested_at=NULL')
     && (reconciliationControl.match(/await requeueIfRequestedDuringRun\(customerId\)/g) || []).length >= 2,
     'reconciliation completion must requeue an entitlement change that arrived during an in-flight run');
 
-assert(deploymentVerify.includes("require('../src/automation/critical-jobs')")
+assert(deploymentVerify.includes("require('../src/automation/jobs')")
     && deploymentVerify.includes("'Free Server recovery job'"),
-    'deployment verification must consume the canonical critical registry and explicitly verify Free Server recovery');
+    'deployment verification must consume the canonical automation registry and explicitly verify Free Server recovery');
 assert(deploymentVerify.includes("'automation worker release'")
     && deploymentVerify.includes('automationWorker?.commit_sha'),
     'deployment verification must compare the running automation release to the application release');
-assert(deploymentVerify.includes('missingRegisteredJobs') && deploymentVerify.includes('requiredJobs = criticalJobs.names()'),
+assert(deploymentVerify.includes('missingRegisteredJobs') && deploymentVerify.includes('requiredJobs = jobRegistry.criticalNames()'),
     'deployment verification must prove the running worker registered every access-critical job');
 
 assert(adminAutomation.includes("require('../automation/critical-jobs')")
