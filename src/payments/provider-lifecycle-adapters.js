@@ -185,19 +185,11 @@ async function paypalAdapter() {
       const nextBilling = subscription.billing_info?.next_billing_time
         ? new Date(subscription.billing_info.next_billing_time)
         : null;
-      if (status === 'CANCELLED' && new Date(row.current_period_end) > new Date()) {
-        return {
-          status: 'active',
-          remoteStatus: 'CANCELLED',
-          periodEnd: new Date(row.current_period_end),
-          cancelAtPeriodEnd: true
-        };
-      }
       return {
         status,
         remoteStatus: status,
-        periodEnd: nextBilling || (row.current_period_end ? new Date(row.current_period_end) : null),
-        cancelAtPeriodEnd: status === 'CANCELLED'
+        periodEnd: nextBilling,
+        cancelAtPeriodEnd: ['CANCELLED','CANCELED'].includes(status)
       };
     },
     async stopRenewal(row, { idempotencyKey = null } = {}) {
