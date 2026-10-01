@@ -100,6 +100,65 @@ function accessState({ free = [], primary = [] } = {}) {
   }
 
   {
+    let rollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [
+          {
+            state: STATES.INCONSISTENT_UNPAID,
+            entitlement: {
+              subscription_id: 'sub-protected',
+              permanent_access: true,
+              admin_jellyfin_mode: null
+            }
+          },
+          {
+            state: STATES.INCONSISTENT_UNPAID,
+            entitlement: {
+              subscription_id: 'sub-protected',
+              permanent_access: true,
+              admin_jellyfin_mode: null
+            }
+          }
+        ]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('no eligible server'); } },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'sub-protected');
+    assert.strictEqual(result.status, 'protected');
+    assert.strictEqual(result.reason, 'admin_protected');
+    assert.strictEqual(rollbacks, 0,
+      'Permanent Access must never be cancelled by automatic Free entitlement repair');
+  }
+
+  {
+    let trialRollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: {
+            subscription_id: 'trial-protected',
+            billing_interval: 'trial',
+            service_type: 'jellyfin',
+            admin_jellyfin_mode: 'present'
+          }
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({
+        rollbackUnprovisionedJellyfinTrial: async () => { trialRollbacks += 1; }
+      })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.strictEqual(result.status, 'protected');
+    assert.strictEqual(result.reason, 'admin_protected');
+    assert.strictEqual(trialRollbacks, 0,
+      'explicit administrator-present access must never be cancelled by unpaid-trial repair');
+  }
+
+  {
     let trialRollbacks = 0;
     const repair = createAccessRepair({
       customerAccessState: accessState({
