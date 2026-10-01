@@ -1,8 +1,7 @@
 'use strict';
 
 const { query } = require('../db');
-const provisioning = require('../jellyfin/resilient-provisioning');
-const customerAccessState = require('../access/customer-access-state');
+const accessRepair = require('../access/access-repair');
 const planCapacity = require('../entitlements/plan-capacity');
 const freeReadiness = require('../jellyfin/free-claim-readiness');
 
@@ -189,32 +188,14 @@ async function run({ limit = 100 } = {}) {
   const failures = [...claimRetries.failures];
 
   for (const row of rows) {
-    const access = await customerAccessState.freeJellyfin(row.customer_id, { includeBlocked: true });
-    const entitlement = access.entitlement;
-    if (!entitlement || access.state === customerAccessState.ACCESS_STATES.ACTIVE_BLOCKED || String(entitlement.subscription_id || '') !== String(row.subscription_id || '')) {
-      skipped += 1;
-      continue;
-    }
-
     attempted += 1;
-    let reconcileError = null;
     try {
-      await provisioning.reconcileCustomer(row.customer_id);
-    } catch (error) {
-      reconcileError = error;
-    }
-
-    if (await freeReadiness.hasReadyFreeAccount(row.customer_id)) {
-      assigned += 1;
-      continue;
-    }
-
-    try {
-      const lifecycle = require('../payments/lifecycle');
-      await lifecycle.rollbackUnprovisionedFreeClaim(row.customer_id, row.subscription_id, {
-        reason: reconcileError?.message || 'Legacy Free entitlement had no enabled Free Server account'
+      const result = await accessRepair.repairFreeEntitlement(row.customer_id, row.subscription_id, {
+        reason: 'Legacy Free entitlement had no enabled Free Server account'
       });
-      removed += 1;
+      if (result.status === 'ready' || result.status === 'repaired') assigned += 1;
+      else if (result.status === 'removed') removed += 1;
+      else skipped += 1;
     } catch (error) {
       failed += 1;
       failures.push(String(error?.message || error || 'Unknown Free Server orphan cleanup failure').slice(0, 300));
@@ -229,11 +210,9 @@ async function run({ limit = 100 } = {}) {
 
   for (const row of orphanAccounts) {
     try {
-      await provisioning.reconcileCustomer(row.customer_id);
-      const remaining = (await provisioning.normalAccounts(row.customer_id))
-        .filter(account => String(account.access_lane || '') === 'free');
-      if (remaining.length) throw new Error('Free Server account remained after no-plan reconciliation.');
-      orphanAccountsRemoved += 1;
+      const result = await accessRepair.removeOrphanFreeAccount(row.customer_id);
+      if (result.status === 'removed') orphanAccountsRemoved += 1;
+      else skipped += 1;
     } catch (error) {
       failed += 1;
       failures.push(String(error?.message || error || 'Unknown orphan Free account cleanup failure').slice(0, 300));
