@@ -13,7 +13,6 @@ const accessVariants=require('../payments/stream-variants');
 const variantCapacity=require('../payments/access-variant-capacity');
 const billingMode=require('../payments/subscription-billing-mode');
 const provisioning=require('../jellyfin/resilient-provisioning');
-const subscriptionState=require('../entitlements/subscription-state');
 const customerAccessState=require('../access/customer-access-state');
 const stremioEntitlements=require('../stremio/entitlements');
 const householdAccess=require('../stremio/household-access');
@@ -146,10 +145,10 @@ function createCustomerDashboardRouter(){
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
       const portalRaw=await customers.getCustomerPortal(customerId),currency=await planPricing.platformDefaultCurrency();
-      const [currentPlan,freeAccess,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
-        provisioning.currentEntitlement(customerId),customerAccessState.freeJellyfin(customerId,{includeBlocked:false}),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
+      const [primaryAccess,freeAccess,stremioAccess,embyAccess,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+        customerAccessState.primaryJellyfin(customerId,{includeBlocked:false}),customerAccessState.freeJellyfin(customerId,{includeBlocked:false}),customerAccessState.stremio(customerId,{includeBlocked:false}),customerAccessState.emby(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
-      const freePlan=freeAccess.entitlement;
+      const currentPlan=primaryAccess.entitlement,freePlan=freeAccess.entitlement,stremioPlan=stremioAccess.entitlement,embyPlan=embyAccess.entitlement;
       let effectiveFreePlan=freePlan,incompleteFreePlan=false,incompleteFreeSubscriptionId=null;
       if(effectiveFreePlan&&!effectiveFreePlan.blocked&&freeAccess.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
         incompleteFreePlan=true;
