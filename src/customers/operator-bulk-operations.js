@@ -10,7 +10,7 @@ const jellyfinAdminControl=require('../jellyfin/admin-control');
 const serverMigration=require('../jellyfin/server-migration');
 const deletion=require('./customer-deletion');
 const manualEntitlement=require('../entitlements/admin-manual-entitlement-service');
-const subscriptionRevoke=require('../platform/admin-subscription-revoke');
+const subscriptionRevoke=require('../entitlements/admin-subscription-revoke-service');
 const forceAccess=require('../access/admin-force-access-service');
 
 async function actorFor(item){
