@@ -254,7 +254,6 @@ async function previewCoreImport(input){const document=parseCoreDocument(input);
 function requestedProviderMappings(document){return(document.configuration.directPaymentMappings||[]).filter(x=>x.active).length;}
 async function previewImport(input){const document=parseDocument(input),result=await previewCoreImport(document),settings=document.configuration.settings,providerMappings=requestedProviderMappings(document),warnings=[...(result.warnings||[])];if(providerMappings)warnings.push(`${providerMappings} imported payment-provider mapping(s) requested active state. They will be imported inactive and must pass remote verification before sales use them.`);if(document.version!==2)return{...result,document,warnings};return{...result,document,digest:digestDocument(document),warnings:[...new Set(warnings)],summary:{...result.summary,driftPolicy:Object.prototype.hasOwnProperty.call(settings,DRIFT_KEY)?1:0,paymentRiskPolicy:Object.prototype.hasOwnProperty.call(settings,RISK_KEY)?1:0,affiliateProgram:Object.prototype.hasOwnProperty.call(settings,AFFILIATE_KEY)?1:0,providerMappingsPendingVerification:providerMappings}};}
 
-function lower(value){return String(value||'').toLowerCase();}
 async function applySettings(client,settings,actorUserId){
     return platformSettingsCommands.applyImportedSettings(client,settings,{
         allowedKeys:[...V1_SETTINGS,...V2_SETTINGS],
