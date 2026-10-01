@@ -178,8 +178,16 @@ assert(jobs.includes("require('../access/access-repair')"),
 assert(backfill.includes("require('../access/access-repair')"),
   'Free capacity repair must delegate repair decisions to the canonical access repair layer');
 assert(customer360.includes("require('../access/customer-access-state')")
-  && customer360.includes('customerAccessState.snapshot(customerId)'),
-  'Customer 360 must load one canonical cross-service access snapshot');
+  && customer360.includes('customerAccessState.snapshot(customerId)')
+  && !customer360.includes("require('../jellyfin/resilient-provisioning')")
+  && !customer360.includes('currentEntitlementTruth(customerId)'),
+  'Customer 360 must load one canonical cross-service access snapshot without a parallel current-entitlement reader');
+assert(dashboard.includes("customerAccessState.snapshot(customerId,{includeBlocked:{primary:false,free:false,stremio:false,emby:true}})")
+  && dashboard.includes('primaryAccess=accessSnapshot.primary')
+  && dashboard.includes('freeAccess=accessSnapshot.free')
+  && dashboard.includes('stremioAccess=accessSnapshot.stremio')
+  && dashboard.includes('embyAccess=accessSnapshot.emby'),
+  'Account Home must derive all current service lanes from one canonical snapshot while preserving its blocked-state policy');
 assert(customer360Truth.includes('canonical.emby?.entitlement')
   && customer360Truth.includes('canonical.stremio?.entitlement'),
   'Customer 360 service truth must consume canonical Emby/Stremio entitlement selection instead of re-deciding it');
