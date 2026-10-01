@@ -111,7 +111,7 @@ assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup a
 assert((compose.match(/STREMIO_JELLYFIN_TOKEN_KEY: \$\{STREMIO_JELLYFIN_TOKEN_KEY:-\}/g) || []).length === 2, 'app and automation-worker must receive the same managed Stremio token key');
 assert((compose.match(/image: \$\{CAPTAINFIN_IMAGE:-captainfin:current\}/g) || []).length === 6, 'migrate/app/workers/recovery must share the canonical runtime image');
 assert.strictEqual((compose.match(/^\s+build:\s*\.\s*$/gm) || []).length, 1, 'only the app service may own the Docker build definition');
-assert(deployScript.includes('export CAPTAINFIN_IMAGE="${CAPTAINFIN_IMAGE:-captainfin:${CAPTAINFIN_BUILD_SHA}}"'), 'deployment must tag the release image by build SHA');
+assert(deployScript.includes('export CAPTAINFIN_IMAGE="captainfin:${CAPTAINFIN_BUILD_SHA}"'), 'production deployment must derive the release image tag only from build SHA');
 assert(deployScript.includes('docker compose build') && /docker compose build[\s\S]*?\n\s*app\b/.test(deployScript), 'deployment must build the shared application image once through app');
 assert(deployScript.includes('for service in app automation-worker activity-worker backup-worker'), 'deployment must verify every long-running runtime service build identity');
 assert(deployScript.includes('compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA'), 'runtime build verification must read the image-provided build SHA');
