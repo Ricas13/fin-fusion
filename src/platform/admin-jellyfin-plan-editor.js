@@ -10,6 +10,7 @@ const accessEditor = require('./admin-plan-access');
 const libraryEditor = require('./admin-plan-libraries');
 const planPricing = require('../payments/plan-pricing');
 const planCommands = require('../catalog/plan-command-service');
+const planInput=require('../catalog/plan-input');
 const paymentOptions = require('./admin-plan-payment-options');
 const requestPlanPolicy = require('./admin-request-plan-policy');
 const placement = require('../jellyfin/placement');
@@ -29,21 +30,10 @@ function noStore(_req, res, next) {
   res.setHeader('Pragma', 'no-cache');
   next();
 }
-function bool(value) { return value === true || ['1', 'true', 'on', 'yes'].includes(String(value || '').toLowerCase()); }
-function text(value, max) { return String(value || '').trim().slice(0, max); }
-function int(value, min, max, label) {
-  const raw = String(value ?? '').trim();
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || String(parsed) !== raw || parsed < min || parsed > max) throw new Error(`${label} must be a whole number from ${min} to ${max}.`);
-  return parsed;
-}
-function money(value) {
-  const raw = String(value ?? '').trim();
-  if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error('Enter a valid non-negative price with no more than two decimal places.');
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100000) throw new Error('Price must be between 0 and 100,000.');
-  return Math.round(parsed * 100);
-}
+const bool=planInput.bool;
+const text=planInput.text;
+const int=planInput.integer;
+const money=planInput.moneyMinor;
 function selected(a, b) { return String(a) === String(b) ? 'selected' : ''; }
 function checked(value) { return value ? 'checked' : ''; }
 function token(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
