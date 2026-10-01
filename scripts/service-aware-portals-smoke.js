@@ -27,6 +27,7 @@ const serviceCatalog=read('src/catalog/service-catalog.js');
 const publicShell=read('src/platform/public-shell.js');
 const storefront=read('src/platform/storefront.js');
 const embyEditor=read('src/platform/admin-emby-plan-editor.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 const routeComposition=read('src/platform/admin-route-composition.js');
 const mediaReconciliation=read('src/jellyfin/media-service-reconciliation.js');
 const serviceScope=require('../src/entitlements/service-scope');
@@ -65,7 +66,7 @@ assert(/\.filter\(section => section\.plans\.length > 0\)/.test(serviceCatalog),
 assert(/nav\.emby&&\['emby','Emby Shares','\/#emby'\]/.test(publicShell),'public navigation must expose Emby Shares only through the plan-driven nav state');
 assert(/productReadiness\.evaluatePlan/.test(storefront)&&/serviceCatalog\.storefrontSections/.test(storefront),'storefront must be both readiness-gated and catalogue-driven');
 assert(/Emby Shares/.test(plansList)&&/Add Emby Share plan/.test(plansList)&&/groups\.emby/.test(plansList),'Commerce Plans must keep the Emby Shares admin section and add action even before the first plan exists');
-assert(/INSERT INTO plans\([\s\S]*service_type[\s\S]*VALUES\([\s\S]*'emby'/.test(embyEditor)&&/COALESCE\(js\.media_server_type,'jellyfin'\)='emby'/.test(embyEditor)&&/\/admin\/plans\/emby/.test(embyEditor),'Emby plan editor must create an Emby product and restrict placement to Emby servers');
+assert(embyEditor.includes('planCommands.upsertEmbyPlan({')&&/INSERT INTO plans\([\s\S]*service_type[\s\S]*'emby'/.test(planCommands)&&/COALESCE\(js\.media_server_type,'jellyfin'\)='emby'/.test(embyEditor)&&/\/admin\/plans\/emby/.test(embyEditor),'Emby plan editor must delegate Emby product persistence while restricting placement choices to Emby servers');
 assert(routeComposition.indexOf('createAdminEmbyPlanEditorRouter')<routeComposition.indexOf('createAdminPlanCreateV2Router'),'Emby plan routes must be mounted before the shared Jellyfin/Stremio create workflow');
 assert(/effectiveEmbySubscription/.test(subscriptionState)&&/effective_emby_entitlements/.test(subscriptionState),'subscription state must expose an independent Emby primary entitlement');
 assert(/embyAccess=accessSnapshot\.emby/.test(customerDashboard)&&/embyPlan/.test(customerDashboard)&&/hasEmby/.test(customerDashboard),'Emby-only customers must use the canonical cross-service snapshot on the unified account dashboard instead of onboarding');
