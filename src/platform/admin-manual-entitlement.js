@@ -20,7 +20,6 @@ function noStore(_req, res, next) {
 }
 const recognizedProviderReference = manualEntitlement.recognizedProviderReference;
 const normalizedGrantInput = manualEntitlement.normalizedGrantInput;
-const effectivePrimarySql = manualEntitlement.effectivePrimarySql;
 const currentPrimarySubscription = manualEntitlement.currentPrimarySubscription;
 const grantPlans = manualEntitlement.grantPlans;
 const createManualGrant = manualEntitlement.createManualGrant;
@@ -122,7 +121,6 @@ module.exports = {
     CURRENCIES,
     recognizedProviderReference,
     normalizedGrantInput,
-    effectivePrimarySql,
     currentPrimarySubscription,
     grantForm,
     hideEmptyManualEdit,
