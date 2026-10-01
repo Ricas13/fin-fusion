@@ -21,6 +21,7 @@ const customerProfile=require('../src/customers/admin-customer-profile-service')
 const customerIdentityService=read('src/customers/admin-customer-identity-service.js');
 const automationProtectionService=read('src/access/admin-customer-automation-protection.js');
 const individualActionService=read('src/access/admin-customer-individual-action-service.js');
+const accessSettingsService=read('src/access/admin-customer-access-settings.js');
 const deletion=read('src/customers/customer-deletion.js');
 const externalDeletion=read('src/customers/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -111,6 +112,42 @@ assert(individualActionService.includes('async function resetExpiryToPlan')
     && individualActionService.includes('subscriptionState.effectiveSubscription(customerId,{includeBlocked:true})')
     && individualActionService.includes("'admin.customer.expiry.reset_to_plan'"),
   'access-domain individual action service must own reset-to-plan expiry selection, mutation and audit');
+
+assert(customer360Route.includes('lifecycleService.resetAutomaticPlacement(')
+    && !customer360Route.includes("require('../jellyfin/server-migration')"),
+  'Customer 360 automatic placement must delegate migration orchestration to the access lifecycle service');
+assert(directLifecycleService.includes('async function resetAutomaticPlacement')
+    && directLifecycleService.includes("require('../jellyfin/server-migration')")
+    && directLifecycleService.includes('serverMigration.createMigration(')
+    && directLifecycleService.includes('serverMigration.executeMigration('),
+  'access lifecycle service must own automatic placement and migration orchestration');
+assert(customer360Route.includes("require('../access/admin-customer-access-settings')")
+    && !customer360Route.includes("require('../db')")
+    && !/\b(?:INSERT INTO|UPDATE|DELETE FROM)\b/.test(customer360Route),
+  'Customer 360 router must remain free of direct database mutation ownership');
+for(const delegated of [
+  'accessSettings.savePolicyOverrides(',
+  'accessSettings.resetPolicyOverrides(',
+  'accessSettings.saveHouseholdOverrides(',
+  'accessSettings.resetHouseholdOverrides(',
+  'accessSettings.saveLibraryOverrides(',
+  'accessSettings.resetLibraryOverrides(',
+  'accessSettings.saveRequestPermissionOverrides(',
+  'accessSettings.resetRequestPermissionOverrides('
+]) assert(customer360Route.includes(delegated),`Customer 360 must delegate ${delegated}`);
+for(const action of [
+  'admin.customer.policy_override',
+  'admin.customer.policy_override_reset_all',
+  'admin.customer.household_override',
+  'admin.customer.household_override_reset_all',
+  'admin.customer.library_override',
+  'admin.customer.library_override_reset_all',
+  'admin.customer.request_permission_override',
+  'admin.customer.request_permission_override_reset_all'
+]) assert(accessSettingsService.includes(action),`access settings service must own audit action ${action}`);
+assert(accessSettingsService.includes("require('./customer-access-state')")
+    && accessSettingsService.includes('customerAccessState.snapshot(customerId)'),
+  'Customer 360 access settings must derive current lane entitlements from canonical customer access state');
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
 assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
