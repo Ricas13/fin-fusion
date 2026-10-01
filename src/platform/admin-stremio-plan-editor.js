@@ -7,6 +7,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const planPricing = require('../payments/plan-pricing');
 const planCommands = require('../catalog/plan-command-service');
+const planInput=require('../catalog/plan-input');
 const paymentOptions = require('./admin-plan-payment-options');
 const requestPlanPolicy = require('./admin-request-plan-policy');
 const sourcePool = require('../stremio/source-pool');
@@ -21,10 +22,10 @@ const BILLING = new Set(['trial', 'month', '6_months', 'year', 'custom']);
 
 function gate(req, res, next) { return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req, res, next) { res.setHeader('Cache-Control', 'no-store, private, max-age=0'); res.setHeader('Pragma', 'no-cache'); next(); }
-function text(value, max = 500) { return String(value || '').trim().slice(0, max); }
-function bool(value) { return value === true || ['1', 'true', 'on', 'yes'].includes(String(value || '').toLowerCase()); }
-function int(value, min, max, label) { const raw = String(value ?? '').trim(), parsed = Number.parseInt(raw, 10); if (!Number.isInteger(parsed) || String(parsed) !== raw || parsed < min || parsed > max) throw new Error(`${label} must be a whole number from ${min} to ${max}.`); return parsed; }
-function money(value) { const raw = String(value ?? '').trim(); if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error('Enter a valid non-negative price with no more than two decimal places.'); const amount = Number(raw); if (!Number.isFinite(amount) || amount < 0 || amount > 100000) throw new Error('Price must be between 0 and 100,000.'); return Math.round(amount * 100); }
+const text=planInput.text;
+const bool=planInput.bool;
+const int=planInput.integer;
+const money=planInput.moneyMinor;
 function checked(value) { return value ? 'checked' : ''; }
 function selected(a, b) { return String(a) === String(b) ? 'selected' : ''; }
 function token(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
