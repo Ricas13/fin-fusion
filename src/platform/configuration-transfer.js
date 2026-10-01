@@ -5,6 +5,7 @@ const {query,transaction}=require('../db');
 const planCommands=require('../catalog/plan-command-service');
 const notificationPreferenceCommands=require('../integrations/notification-preferences-command-service');
 const jobHealth=require('../automation/job-health');
+const platformSettingsCommands=require('../configuration/platform-settings-command-service');
 
 const FORMAT='steam-fusion-portable-configuration';
 const VERSION=2;
@@ -254,7 +255,14 @@ function requestedProviderMappings(document){return(document.configuration.direc
 async function previewImport(input){const document=parseDocument(input),result=await previewCoreImport(document),settings=document.configuration.settings,providerMappings=requestedProviderMappings(document),warnings=[...(result.warnings||[])];if(providerMappings)warnings.push(`${providerMappings} imported payment-provider mapping(s) requested active state. They will be imported inactive and must pass remote verification before sales use them.`);if(document.version!==2)return{...result,document,warnings};return{...result,document,digest:digestDocument(document),warnings:[...new Set(warnings)],summary:{...result.summary,driftPolicy:Object.prototype.hasOwnProperty.call(settings,DRIFT_KEY)?1:0,paymentRiskPolicy:Object.prototype.hasOwnProperty.call(settings,RISK_KEY)?1:0,affiliateProgram:Object.prototype.hasOwnProperty.call(settings,AFFILIATE_KEY)?1:0,providerMappingsPendingVerification:providerMappings}};}
 
 function lower(value){return String(value||'').toLowerCase();}
-async function applySettings(client,settings,actorUserId){let count=0;for(const[key,value]of Object.entries(settings||{})){if(!V1_SETTINGS.has(key)&&!V2_SETTINGS.has(key))continue;await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=CASE WHEN $1='storefront_features' THEN EXCLUDED.setting_value ELSE CASE WHEN jsonb_typeof(platform_settings.setting_value)='object' AND jsonb_typeof(EXCLUDED.setting_value)='object' THEN platform_settings.setting_value||EXCLUDED.setting_value ELSE EXCLUDED.setting_value END END,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[key,JSON.stringify(value),actorUserId||null]);count++;}return count;}
+async function applySettings(client,settings,actorUserId){
+    return platformSettingsCommands.applyImportedSettings(client,settings,{
+        allowedKeys:[...V1_SETTINGS,...V2_SETTINGS],
+        actorUserId,
+        replaceKeys:['storefront_features']
+    });
+}
+
 async function applyNotifications(client,items,actorUserId){
     return notificationPreferenceCommands.applyImportedPreferences(client,items,actorUserId);
 }
