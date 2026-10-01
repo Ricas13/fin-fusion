@@ -45,16 +45,25 @@ async function moveLocked(customerId,targetServerId,{actorUserId=null}={}){
   const target=await targetServer(targetServerId);
   if(!target)throw new Error('Choose an enabled Jellyfin server.');
 
+  const accessLane=provisioning.requestedAccessLane(entitlement);
   const accounts=await customerAccounts(customerId);
-  const current=accounts.find(account=>!account.disabled&&account.is_primary)||accounts.find(account=>!account.disabled)||accounts[0]||null;
+  const current=accounts.find(account=>!account.disabled&&account.access_lane===accessLane&&account.is_primary)
+    ||accounts.find(account=>!account.disabled&&account.access_lane===accessLane)
+    ||accounts.find(account=>!account.disabled&&account.is_primary)
+    ||accounts.find(account=>!account.disabled)
+    ||accounts[0]
+    ||null;
   if(!current)throw new Error('This customer has no Jellyfin account to move. Use Add to server instead.');
   if(same(current.server_id,target.id)&&!current.disabled)throw new Error(`This customer is already on ${target.name}.`);
 
-  const effective=await provisioning.effectivePolicyForCustomer(customerId,entitlement);
+  const effective=await provisioning.effectivePolicyForCustomer(customerId,entitlement,accessLane);
   const targetLibraries=await provisioning.resolveLibraryAccessForServer(target.id,effective.unrestricted,effective.visibleNames,false);
   if(targetLibraries.missing.length)throw new Error(`${target.name} is missing required libraries: ${targetLibraries.missing.join(', ')}.`);
 
-  let targetAccount=accounts.find(account=>same(account.server_id,target.id))||null;
+  // Never repurpose the customer's other access lane. Free and paid access are
+  // independent identities even when an administrator points them at the same
+  // physical Jellyfin server.
+  let targetAccount=accounts.find(account=>same(account.server_id,target.id)&&account.access_lane===accessLane)||null;
   let created=false;
   if(targetAccount){
     await provisioning.applyPolicy(targetAccount,effective,false);
@@ -67,7 +76,8 @@ async function moveLocked(customerId,targetServerId,{actorUserId=null}={}){
       makePrimary:false,
       // Moving from the admin force control is an imperative operator command.
       // Do not let automatic placement capacity veto the selected destination.
-      allowOverCapacity:true
+      allowOverCapacity:true,
+      accessLane
     });
     created=true;
   }
@@ -90,8 +100,8 @@ async function moveLocked(customerId,targetServerId,{actorUserId=null}={}){
     INSERT INTO customer_provisioning_state(customer_id,status,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at)
     VALUES($1,'healthy',0,NULL,NOW(),NOW(),NULL,$2,$3,$4,$5,$6::jsonb,NOW())
     ON CONFLICT(customer_id) DO UPDATE SET status='healthy',consecutive_failures=0,last_error=NULL,last_attempt_at=NOW(),last_success_at=NOW(),next_attempt_at=NULL,subscription_id=EXCLUDED.subscription_id,plan_id=EXCLUDED.plan_id,jellyfin_account_id=EXCLUDED.jellyfin_account_id,server_id=EXCLUDED.server_id,last_result=EXCLUDED.last_result,updated_at=NOW()
-  `,[customerId,entitlement.subscription_id,entitlement.plan_id,targetAccount.id,target.id,JSON.stringify({adminForcedMove:true,targetServerId:target.id,targetServerName:target.name,createdTargetAccount:created,disabledSourceAccountIds:disabled,activeUsers,maxUsers,overCapacityBy:maxUsers?Math.max(0,activeUsers-maxUsers):0})]);
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.server_move.force','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:entitlement.subscription_id,fromServerId:current.server_id,toServerId:target.id,targetServerName:target.name,createdTargetAccount:created,disabledSourceAccountIds:disabled,activeUsers,maxUsers,capacityOverridden:Boolean(maxUsers&&activeUsers>maxUsers),planServerClass:entitlement.server_class,targetServerClass:target.server_class})]);
+  `,[customerId,entitlement.subscription_id,entitlement.plan_id,targetAccount.id,target.id,JSON.stringify({adminForcedMove:true,accessLane,targetServerId:target.id,targetServerName:target.name,createdTargetAccount:created,disabledSourceAccountIds:disabled,activeUsers,maxUsers,overCapacityBy:maxUsers?Math.max(0,activeUsers-maxUsers):0})]);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.server_move.force','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:entitlement.subscription_id,accessLane,fromServerId:current.server_id,toServerId:target.id,targetServerName:target.name,createdTargetAccount:created,disabledSourceAccountIds:disabled,activeUsers,maxUsers,capacityOverridden:Boolean(maxUsers&&activeUsers>maxUsers),planServerClass:entitlement.server_class,targetServerClass:target.server_class})]);
   return{target,targetAccount,created,disabledSourceAccountIds:disabled,activeUsers,maxUsers};
 }
 
