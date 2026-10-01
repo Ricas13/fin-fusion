@@ -45,6 +45,10 @@ function scopePredicate(rawScope,alias='ph',observedAtColumn='started_at'){
                )
                AND ${observedAt}<activity_scope_account.access_lane_changed_at
               THEN 'primary'
+              WHEN activity_scope_account.access_lane='primary'
+               AND activity_scope_account.inactivity_observation_reset_at IS NULL
+               AND ${observedAt}<activity_scope_account.access_lane_changed_at
+              THEN 'free'
               ELSE activity_scope_account.access_lane
             END
        FROM jellyfin_accounts activity_scope_account
