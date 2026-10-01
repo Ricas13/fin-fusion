@@ -1,17 +1,13 @@
 'use strict';
 
 const { query } = require('../db');
+const calendarDate = require('../finance/calendar-date');
 
 const RECURRENCES = new Set(['one_time','monthly','quarterly','yearly']);
+const EXPENSE_COLUMNS=`id,name,supplier,category,amount_minor,currency,recurrence,start_date::text AS start_date,end_date::text AS end_date,active,reference,notes,created_by,created_at,updated_at`;
 
-function asDate(value){
-  if(value instanceof Date)return new Date(Date.UTC(value.getUTCFullYear(),value.getUTCMonth(),value.getUTCDate()));
-  const text=String(value||'').slice(0,10);
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(text))return null;
-  const d=new Date(`${text}T00:00:00Z`);
-  return Number.isNaN(d.getTime())?null:d;
-}
-function isoDate(value){const d=asDate(value);return d?d.toISOString().slice(0,10):null;}
+function asDate(value){return calendarDate.startUtc(value);}
+function isoDate(value){return calendarDate.text(value);}
 function clampDay(year,month,day){return Math.min(day,new Date(Date.UTC(year,month+1,0)).getUTCDate());}
 function addMonths(date,months,anchorDay){const total=date.getUTCFullYear()*12+date.getUTCMonth()+months,year=Math.floor(total/12),month=((total%12)+12)%12,day=clampDay(year,month,anchorDay);return new Date(Date.UTC(year,month,day));}
 function nextOccurrence(date,recurrence,anchorDay){
@@ -32,17 +28,17 @@ function occurrences(row,rangeStart,rangeEnd){
   return out;
 }
 async function list({includeInactive=true}={}){
-  const result=await query(`SELECT * FROM business_expenses ${includeInactive?'':'WHERE active=TRUE'} ORDER BY active DESC,start_date DESC,created_at DESC`);
+  const result=await query(`SELECT ${EXPENSE_COLUMNS} FROM business_expenses ${includeInactive?'':'WHERE active=TRUE'} ORDER BY active DESC,start_date DESC,created_at DESC`);
   return result.rows;
 }
 async function create(input,createdBy){
   const result=await query(`INSERT INTO business_expenses(name,supplier,category,amount_minor,currency,recurrence,start_date,end_date,active,reference,notes,created_by)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id,name,supplier,category,amount_minor,currency,recurrence,start_date::text AS start_date,end_date::text AS end_date,active,reference,notes,created_by,created_at,updated_at`,[
     input.name,input.supplier||null,input.category,input.amountMinor,input.currency,input.recurrence,input.startDate,input.endDate||null,input.active!==false,input.reference||null,input.notes||null,createdBy||null
   ]);return result.rows[0];
 }
 async function update(id,input){
-  const result=await query(`UPDATE business_expenses SET name=$2,supplier=$3,category=$4,amount_minor=$5,currency=$6,recurrence=$7,start_date=$8,end_date=$9,active=$10,reference=$11,notes=$12,updated_at=NOW() WHERE id=$1 RETURNING *`,[
+  const result=await query(`UPDATE business_expenses SET name=$2,supplier=$3,category=$4,amount_minor=$5,currency=$6,recurrence=$7,start_date=$8,end_date=$9,active=$10,reference=$11,notes=$12,updated_at=NOW() WHERE id=$1 RETURNING id,name,supplier,category,amount_minor,currency,recurrence,start_date::text AS start_date,end_date::text AS end_date,active,reference,notes,created_by,created_at,updated_at`,[
     id,input.name,input.supplier||null,input.category,input.amountMinor,input.currency,input.recurrence,input.startDate,input.endDate||null,input.active!==false,input.reference||null,input.notes||null
   ]);return result.rows[0]||null;
 }
