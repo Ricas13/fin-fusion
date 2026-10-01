@@ -5,9 +5,8 @@ const {rateLimit}=require('express-rate-limit');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
-const provisioning=require('../jellyfin/resilient-provisioning');
-const manualAssignment=require('../jellyfin/manual-assignment');
-const forceMove=require('../jellyfin/admin-force-move');
+const customerAccessState=require('../access/customer-access-state');
+const operatorService=require('../access/admin-customer-operator-service');
 const adminControl=require('../jellyfin/admin-control');
 const userCapacity=require('../jellyfin/user-capacity');
 const permanentAccess=require('../entitlements/permanent-access');
@@ -64,13 +63,10 @@ async function metricsFor(ids){
 }
 
 async function context(customerId,req){
-  const entitlement=await provisioning.currentEntitlementTruth(customerId);
-  // currentEntitlementTruth only sees the jellyfin/bundle lane, so a
-  // Stremio-only customer always has entitlement=null here even though they
-  // have a live plan. Without this, the client can't tell "no plan at all"
-  // apart from "has a Stremio plan" and wrongly shows the Jellyfin-server
-  // picker for Stremio customers.
-  const stremioEntitlement=entitlement?null:await require('../stremio/entitlements').entitledSubscription(customerId).catch(()=>null);
+  const access=await customerAccessState.snapshot(customerId);
+  const jellyfinAccess=access.primary?.entitlement?access.primary:(access.free?.entitlement?access.free:null);
+  const entitlement=jellyfinAccess?.entitlement||null;
+  const stremioEntitlement=entitlement?null:(access.stremio?.entitlement||null);
   const [customer,accounts,permanent,control,rawServers]=await Promise.all([
     query(`SELECT c.id,COALESCE(NULLIF(c.display_name,''),u.username,c.email,'Customer') AS name,c.email,u.username AS portal_username FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE c.id=$1`,[customerId]),
     query(`SELECT ja.id,ja.server_id,ja.jellyfin_username,ja.disabled,ja.is_primary,js.name AS server_name,js.server_class FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.updated_at DESC`,[customerId]),
@@ -113,27 +109,27 @@ function createAdminCustomerOperatorRouter(){
 
   router.post('/admin/users/:customerId/operator/assign',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a Jellyfin server.');const result=await manualAssignment.assign(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`${result.account.jellyfin_username} was added to ${result.server.name}${result.capacityOverride?' even though the configured user capacity is full':''}.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not add this customer to Jellyfin. ${clean(error.message,300)}`);}
+    try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a Jellyfin server.');const result=await operatorService.assign(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`${result.account.jellyfin_username} was added to ${result.server.name}${result.capacityOverride?' even though the configured user capacity is full':''}.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not add this customer to Jellyfin. ${clean(error.message,300)}`);}
   });
 
   router.post('/admin/users/:customerId/operator/move',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a destination server.');const result=await forceMove.move(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`Jellyfin access moved to ${result.target.name}. Automatic placement will keep this administrator-selected server.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not move this customer. ${clean(error.message,300)}`);}
+    try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a destination server.');const result=await operatorService.move(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`Jellyfin access moved to ${result.target.name}. Automatic placement will keep this administrator-selected server.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not move this customer. ${clean(error.message,300)}`);}
   });
 
   router.post('/admin/users/:customerId/operator/remove',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const entitlement=await provisioning.currentEntitlementTruth(req.params.customerId);if(!entitlement)throw new Error('This customer has no Jellyfin entitlement to control.');await adminControl.remove(req.params.customerId,entitlement.subscription_id,{actorUserId:req.session.authUserId,reason:clean(req.body.reason,500)||'Removed from Jellyfin by administrator'});await provisioning.reconcileCustomer(req.params.customerId);return redirect(res,req.params.customerId,'message','Jellyfin access removed by administrator. Background automation will not re-add this entitlement until you return it to automatic management.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not remove Jellyfin access. ${clean(error.message,300)}`);}
+    try{await operatorService.remove(req.params.customerId,{actorUserId:req.session.authUserId,reason:clean(req.body.reason,500)});return redirect(res,req.params.customerId,'message','Jellyfin access removed by administrator. Background automation will not re-add this entitlement until you return it to automatic management.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not remove Jellyfin access. ${clean(error.message,300)}`);}
   });
 
   router.post('/admin/users/:customerId/operator/automatic',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const entitlement=await provisioning.currentEntitlementTruth(req.params.customerId);if(!entitlement)throw new Error('This customer has no current Jellyfin entitlement.');await adminControl.clear(req.params.customerId,entitlement.subscription_id,{actorUserId:req.session.authUserId});let warning='';try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){warning=` Automatic setup still needs attention: ${clean(error.message,220)}`;}return redirect(res,req.params.customerId,warning?'error':'message',warning?`Returned to automatic management.${warning}`:'Returned to automatic Jellyfin management. Normal plan, user-capacity and lifecycle rules apply again.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not return this customer to automatic management. ${clean(error.message,300)}`);}
+    try{const result=await operatorService.automatic(req.params.customerId,{actorUserId:req.session.authUserId});const warning=result.reconcileError?` Automatic setup still needs attention: ${clean(result.reconcileError.message||result.reconcileError,220)}`:'';return redirect(res,req.params.customerId,warning?'error':'message',warning?`Returned to automatic management.${warning}`:'Returned to automatic Jellyfin management. Normal plan, user-capacity and lifecycle rules apply again.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not return this customer to automatic management. ${clean(error.message,300)}`);}
   });
 
   router.post('/admin/users/:customerId/operator/fix',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{await provisioning.reconcileCustomer(req.params.customerId);return redirect(res,req.params.customerId,'message','Jellyfin access checked and updated to match the current customer settings.');}catch(error){return redirect(res,req.params.customerId,'error',`Jellyfin access still needs attention. ${clean(error.message,300)}`);}
+    try{await operatorService.fix(req.params.customerId);return redirect(res,req.params.customerId,'message','Jellyfin access checked and updated to match the current customer settings.');}catch(error){return redirect(res,req.params.customerId,'error',`Jellyfin access still needs attention. ${clean(error.message,300)}`);}
   });
 
   return router;
