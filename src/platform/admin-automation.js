@@ -4,7 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const jobHealth = require('../automation/job-health');
-const criticalJobs = require('../automation/critical-jobs');
+const jobRegistry = require('../automation/jobs');
 const accessIntegrityOperator = require('../access/access-integrity-operator');
 const routeRateLimit = require('../security/route-rate-limit');
 const { layout, esc } = require('./admin-html');
@@ -35,7 +35,7 @@ const LABELS = {
     stremio_media_index: ['Stremio media index', 'Refreshes managed and external Stremio catalogue indexes.'],
     notification_lifecycle: ['Admin notification scanner', 'Scans subscription, payment and operational events to raise admin-facing notifications.']
 };
-const CORE_JOBS=new Set(criticalJobs.names());
+const CORE_JOBS=new Set(jobRegistry.criticalNames());
 const GROUPS=[
     ['Access & servers','Core jobs that keep customer access, Jellyfin health and policy reconciliation moving.',new Set(['health','entitlements','free_capacity_backfill','policy_drift','customer_inactivity','stremio_managed_accounts','stremio_external_tokens','stremio_media_index'])],
     ['Commerce','Billing, payment recovery, plan transitions and affiliate-credit background work.',new Set(['billing','provider_operation_recovery','payment_events','plan_changes','referral_rewards','marketing_campaigns'])],
