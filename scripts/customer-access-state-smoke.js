@@ -59,6 +59,92 @@ assert.strictEqual(accessState.isTrial({ billing_interval: 'trial', price_minor:
 assert.strictEqual(accessState.isPaid({ billing_interval: 'month', price_minor: 999 }), true);
 assert.strictEqual(accessState.isPaid({ billing_interval: 'trial', price_minor: 999 }), false);
 
+const freeAccount = {
+  id: 'free-ready',
+  access_lane: 'free',
+  disabled: false,
+  server_enabled: true,
+  server_class: 'free',
+  server_id: 'free-a'
+};
+const primaryAccount = {
+  id: 'primary-ready',
+  access_lane: 'primary',
+  disabled: false,
+  server_enabled: true,
+  server_class: 'premium',
+  server_id: 'premium-a'
+};
+
+assert.strictEqual(
+  accessState.classifyLane({ entitlement: null, accounts: [], lane: 'free' }).state,
+  accessState.ACCESS_STATES.NONE,
+  'no entitlement and no lane account must be NONE'
+);
+assert.strictEqual(
+  accessState.classifyLane({ entitlement: null, accounts: [freeAccount], lane: 'free' }).state,
+  accessState.ACCESS_STATES.ORPHAN_ACCOUNT,
+  'a lane account without entitlement must be ORPHAN_ACCOUNT'
+);
+assert.strictEqual(
+  accessState.classifyLane({
+    entitlement: { blocked: true, server_class: 'free' },
+    accounts: [freeAccount],
+    lane: 'free'
+  }).state,
+  accessState.ACCESS_STATES.ACTIVE_BLOCKED,
+  'blocked entitlement must remain ACTIVE_BLOCKED even when an account exists'
+);
+assert.strictEqual(
+  accessState.classifyLane({
+    entitlement: { server_class: 'free', price_minor: 0, billing_interval: 'month' },
+    accounts: [],
+    lane: 'free'
+  }).state,
+  accessState.ACCESS_STATES.INCONSISTENT_UNPAID,
+  'Free entitlement without a ready account must be INCONSISTENT_UNPAID'
+);
+assert.strictEqual(
+  accessState.classifyLane({
+    entitlement: { server_class: 'premium', price_minor: 0, billing_interval: 'trial' },
+    accounts: [],
+    lane: 'primary',
+    paidMissing: true
+  }).state,
+  accessState.ACCESS_STATES.INCONSISTENT_UNPAID,
+  'unpaid trial without a ready account must be INCONSISTENT_UNPAID'
+);
+assert.strictEqual(
+  accessState.classifyLane({
+    entitlement: { server_class: 'premium', price_minor: 999, billing_interval: 'month' },
+    accounts: [],
+    lane: 'primary',
+    paidMissing: true
+  }).state,
+  accessState.ACCESS_STATES.PAID_PROVISIONING_FAILED,
+  'committed paid access without a ready account must retain entitlement as PAID_PROVISIONING_FAILED'
+);
+assert.strictEqual(
+  accessState.classifyLane({
+    entitlement: { server_class: 'premium', price_minor: 999, billing_interval: 'month' },
+    accounts: [primaryAccount],
+    lane: 'primary',
+    paidMissing: true
+  }).state,
+  accessState.ACCESS_STATES.ACTIVE_READY,
+  'matching enabled account must classify as ACTIVE_READY'
+);
+assert.strictEqual(
+  accessState.classifyLane({
+    entitlement: { server_class: 'premium', price_minor: 999, billing_interval: 'month' },
+    accounts: [freeAccount],
+    lane: 'primary',
+    paidMissing: true
+  }).state,
+  accessState.ACCESS_STATES.PAID_PROVISIONING_FAILED,
+  'an account from the wrong access lane must not satisfy paid readiness'
+);
+
 for (const [name, source] of [
   ['lifecycle', lifecycle],
   ['customer dashboard', dashboard],

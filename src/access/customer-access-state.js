@@ -46,12 +46,8 @@ async function readyAccountForEntitlement(customerId, entitlement, lane, { accou
     return rows.find(account => accountMatchesEntitlement(account, entitlement, lane)) || null;
 }
 
-async function freeJellyfin(customerId, { includeBlocked = true, accounts = null } = {}) {
-    const [entitlement, rows] = await Promise.all([
-        subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked }),
-        accountsForCustomer(customerId, accounts)
-    ]);
-    const laneAccounts = rows.filter(account => laneOf(account) === 'free');
+function classifyLane({ entitlement = null, accounts = [], lane, paidMissing = false } = {}) {
+    const laneAccounts = (Array.isArray(accounts) ? accounts : []).filter(account => laneOf(account) === lane);
     if (!entitlement) {
         return {
             state: laneAccounts.length ? ACCESS_STATES.ORPHAN_ACCOUNT : ACCESS_STATES.NONE,
@@ -68,13 +64,26 @@ async function freeJellyfin(customerId, { includeBlocked = true, accounts = null
             accounts: laneAccounts
         };
     }
-    const account = laneAccounts.find(row => accountMatchesEntitlement(row, entitlement, 'free')) || null;
+    const account = laneAccounts.find(row => accountMatchesEntitlement(row, entitlement, lane)) || null;
+    if (account) {
+        return { state: ACCESS_STATES.ACTIVE_READY, entitlement, account, accounts: laneAccounts };
+    }
     return {
-        state: account ? ACCESS_STATES.ACTIVE_READY : ACCESS_STATES.INCONSISTENT_UNPAID,
+        state: paidMissing && isPaid(entitlement)
+            ? ACCESS_STATES.PAID_PROVISIONING_FAILED
+            : ACCESS_STATES.INCONSISTENT_UNPAID,
         entitlement,
-        account,
+        account: null,
         accounts: laneAccounts
     };
+}
+
+async function freeJellyfin(customerId, { includeBlocked = true, accounts = null } = {}) {
+    const [entitlement, rows] = await Promise.all([
+        subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked }),
+        accountsForCustomer(customerId, accounts)
+    ]);
+    return classifyLane({ entitlement, accounts: rows, lane: 'free', paidMissing: false });
 }
 
 async function primaryJellyfin(customerId, { includeBlocked = true, accounts = null } = {}) {
@@ -83,33 +92,7 @@ async function primaryJellyfin(customerId, { includeBlocked = true, accounts = n
         accountsForCustomer(customerId, accounts)
     ]);
     const entitlement = rawEntitlement?.is_free_tier ? null : rawEntitlement;
-    const laneAccounts = rows.filter(account => laneOf(account) === 'primary');
-    if (!entitlement) {
-        return {
-            state: laneAccounts.length ? ACCESS_STATES.ORPHAN_ACCOUNT : ACCESS_STATES.NONE,
-            entitlement: null,
-            account: null,
-            accounts: laneAccounts
-        };
-    }
-    if (entitlement.blocked) {
-        return {
-            state: ACCESS_STATES.ACTIVE_BLOCKED,
-            entitlement,
-            account: null,
-            accounts: laneAccounts
-        };
-    }
-    const account = laneAccounts.find(row => accountMatchesEntitlement(row, entitlement, 'primary')) || null;
-    if (account) {
-        return { state: ACCESS_STATES.ACTIVE_READY, entitlement, account, accounts: laneAccounts };
-    }
-    return {
-        state: isPaid(entitlement) ? ACCESS_STATES.PAID_PROVISIONING_FAILED : ACCESS_STATES.INCONSISTENT_UNPAID,
-        entitlement,
-        account: null,
-        accounts: laneAccounts
-    };
+    return classifyLane({ entitlement, accounts: rows, lane: 'primary', paidMissing: true });
 }
 
 async function snapshot(customerId) {
@@ -129,6 +112,7 @@ module.exports = {
     isTrial,
     isPaid,
     readyAccountForEntitlement,
+    classifyLane,
     freeJellyfin,
     primaryJellyfin,
     snapshot
