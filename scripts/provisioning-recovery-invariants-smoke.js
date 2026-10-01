@@ -24,6 +24,7 @@ const paymentEventRetry = read('src/payments/payment-event-retry.js');
 const planChange = read('src/payments/customer-plan-change.js');
 const adminAutomation = read('src/platform/admin-automation.js');
 const adminManualEntitlement = read('src/platform/admin-manual-entitlement.js');
+const adminManualEntitlementService = read('src/entitlements/admin-manual-entitlement-service.js');
 const entitlementWakeup = read('db/migrations/20260908073500_entitlement_reconciliation_wakeup.sql');
 const freeObservationReset = read('db/migrations/20260912090000_free_inactivity_observation_safety_reset.sql');
 const serviceRecovery = read('src/automation/customer-service-recovery.js');
@@ -66,8 +67,11 @@ assert(subscriptionState.includes(canonicalAdminPresent),
     'canonical Jellyfin entitlement truth must include administrator-present access');
 assert(entitlementJobs.includes(canonicalAdminPresent),
     'generic entitlement recovery population must include every administrator-present Jellyfin entitlement');
-assert(adminManualEntitlement.includes(canonicalAdminPresent),
-    'manual grant conflict detection must not ignore administrator-present Jellyfin access');
+assert(subscriptionState.includes('async function livePrimarySubscription') && subscriptionState.includes(canonicalAdminPresent)
+    && adminManualEntitlementService.includes('subscriptionState.livePrimarySubscription'),
+    'manual grant conflict detection must consume canonical primary subscription truth including administrator-present Jellyfin access');
+assert(adminManualEntitlement.includes("require('../entitlements/admin-manual-entitlement-service')"),
+    'manual entitlement platform route must delegate conflict detection to the entitlement domain');
 assert(subscriptionState.includes('lockLiveFreeClaimSubscriptions')
     && subscriptionState.includes(canonicalAdminPresent)
     && (lifecycle.match(/public\.subscription_admin_present\(s\.customer_id,'jellyfin',s\.id\)/g)||[]).length >= 1,

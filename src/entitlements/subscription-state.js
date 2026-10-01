@@ -66,6 +66,32 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
           s.created_at DESC
  LIMIT 1
  `,[customerId,Boolean(includeBlocked)]);return applyOperatorSemantics(db,result.rows[0]||null,{includeBlocked})}
+async function livePrimarySubscription(customerId,{client=null}={}){
+ const db=client||{query};const result=await db.query(`
+ SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
+        COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
+        COALESCE(s.plan_code_snapshot,p.code) AS contract_plan_code,
+        COALESCE(s.price_minor_snapshot,p.price_minor) AS contract_price_minor,
+        COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
+        COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
+        COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days
+ FROM subscriptions s
+ JOIN plans p ON p.id=s.plan_id
+ LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+ WHERE s.customer_id=$1
+   AND COALESCE(p.is_addon,FALSE)=FALSE
+   AND s.superseded_by IS NULL
+   AND s.starts_at<=NOW()
+   AND (
+      (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+      OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+      OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+      OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
+   )
+ ORDER BY s.created_at DESC
+ LIMIT 1
+ `,[customerId]);return result.rows[0]||null
+}
 async function effectiveStremioSubscription(customerId,{client=null,includeBlocked=false}={}){
  const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
@@ -228,4 +254,4 @@ async function assertNoOtherLiveRecurring(client,customerId,excludeId=null,targe
 }
 function assertSafeSourceRewrite(existing,targetSource){if(recurringProvider(existing)&&!['stripe','paypal'].includes(String(targetSource||'')))throw new Error('A provider-managed recurring subscription cannot be converted into a manual subscription. Cancel/change provider billing through the billing workflow first.')}
 async function markSuperseded(client,{subscriptionId,replacementId,reason='plan_change'}){await client.query(`UPDATE subscriptions SET superseded_by=$2,replaced_at=NOW(),replacement_reason=$3,updated_at=NOW() WHERE id=$1 AND superseded_by IS NULL`,[subscriptionId,replacementId,String(reason||'').slice(0,200)])}
-module.exports={LIVE_STATUSES,recurringProvider,audienceAllows,assertAudience,effectiveSubscription,effectiveStremioSubscription,effectiveEmbySubscription,liveFreeJellyfinSubscription,lockLiveFreeClaimSubscriptions,effectiveAddons,assertNoOtherLiveRecurring,assertSafeSourceRewrite,markSuperseded};
+module.exports={LIVE_STATUSES,recurringProvider,audienceAllows,assertAudience,effectiveSubscription,livePrimarySubscription,effectiveStremioSubscription,effectiveEmbySubscription,liveFreeJellyfinSubscription,lockLiveFreeClaimSubscriptions,effectiveAddons,assertNoOtherLiveRecurring,assertSafeSourceRewrite,markSuperseded};
