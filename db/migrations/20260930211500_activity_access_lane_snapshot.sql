@@ -61,6 +61,10 @@ SET access_lane_snapshot=(
               )
               AND ph.started_at<ja.access_lane_changed_at
              THEN 'primary'
+             WHEN ja.access_lane='primary'
+              AND ja.inactivity_observation_reset_at IS NULL
+              AND ph.started_at<ja.access_lane_changed_at
+             THEN 'free'
              ELSE ja.access_lane
            END
     FROM jellyfin_accounts ja
@@ -79,6 +83,10 @@ SET access_lane_snapshot=(
               )
               AND spe.created_at<ja.access_lane_changed_at
              THEN 'primary'
+             WHEN ja.access_lane='primary'
+              AND ja.inactivity_observation_reset_at IS NULL
+              AND spe.created_at<ja.access_lane_changed_at
+             THEN 'free'
              ELSE ja.access_lane
            END
     FROM jellyfin_accounts ja
