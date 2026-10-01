@@ -38,7 +38,7 @@ const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
 const stremioExternalTokens=require('../stremio/external-token-maintenance');
 const stremioManagedSweep=require('../stremio/managed-entitlement-sweep');
-const customerDeletion=require('../platform/customer-deletion');
+const customerDeletion=require('../customers/customer-deletion');
 const winbackOffers=require('../marketing/winback-offers');
 require('../customers/bulk-operations');
 require('../customers/operator-bulk-operations');
