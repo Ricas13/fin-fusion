@@ -23,6 +23,7 @@ function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${es
 function breakGlassControls(customerId,token){return `<div class="breakGlassControls"><form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/manage/force/reconcile" data-native-submit="true">${csrfHidden(token)}<button class="button secondary sm" type="submit">FORCE RECONCILE NOW</button></form><form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/manage/force/clear-blockers" data-native-submit="true">${csrfHidden(token)}<button class="button danger sm" type="submit">CLEAR ALL BLOCKERS</button></form></div>`;}
 
 async function recoverCreatedAccount(customerId,target,entitlement,{actorUserId=null}={}){
+  const accessLane=provisioning.requestedAccessLane(entitlement);
   const intent=await durableCreation.loadIntent(customerId,target.id);
   if(!intent?.remote_user_id)throw new Error('The remote Jellyfin user was created, but its recovery record is missing.');
   const remote=await durableCreation.findRemoteByName(target.id,intent.username);
@@ -45,29 +46,32 @@ async function recoverCreatedAccount(customerId,target,entitlement,{actorUserId=
         UPDATE jellyfin_accounts
         SET customer_id=$1,jellyfin_user_id=$2,jellyfin_username=$3,disabled=FALSE,
             last_policy_sync=NOW(),password_setup_required=TRUE,password_reset_required=FALSE,
-            account_purpose='jellyfin',access_lane='primary',updated_at=NOW()
+            account_purpose='jellyfin',
+            access_lane_changed_at=CASE WHEN access_lane IS DISTINCT FROM $5 THEN NOW() ELSE access_lane_changed_at END,
+            inactivity_observation_reset_at=CASE WHEN access_lane IS DISTINCT FROM $5 THEN NULL ELSE inactivity_observation_reset_at END,
+            access_lane=$5,updated_at=NOW()
         WHERE id=$4
         RETURNING *
-      `,[customerId,String(remote.Id),intent.username,existing.id]);
+      `,[customerId,String(remote.Id),intent.username,existing.id,accessLane]);
       stored=updated.rows[0];
     }else{
       const inserted=await client.query(`
         INSERT INTO jellyfin_accounts(
           customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync,
           is_primary,password_setup_required,password_reset_required,account_purpose,access_lane
-        ) VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE,TRUE,FALSE,'jellyfin','primary')
+        ) VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE,TRUE,FALSE,'jellyfin',$5)
         RETURNING *
-      `,[customerId,target.id,String(remote.Id),intent.username]);
+      `,[customerId,target.id,String(remote.Id),intent.username,accessLane]);
       stored=inserted.rows[0];
     }
-    await client.query(`UPDATE jellyfin_accounts SET is_primary=FALSE,updated_at=NOW() WHERE customer_id=$1 AND account_purpose='jellyfin' AND access_lane='primary' AND id<>$2`,[customerId,stored.id]);
+    await client.query(`UPDATE jellyfin_accounts SET is_primary=FALSE,updated_at=NOW() WHERE customer_id=$1 AND account_purpose='jellyfin' AND id<>$2`,[customerId,stored.id]);
     const primary=await client.query(`UPDATE jellyfin_accounts SET is_primary=TRUE,updated_at=NOW() WHERE id=$1 RETURNING *`,[stored.id]);
     await client.query('DELETE FROM jellyfin_account_creation_intents WHERE id=$1',[intent.id]);
     return primary.rows[0];
   });
 
   await adminControl.forceServer(customerId,entitlement.subscription_id,target.id,{actorUserId,reason:'Recovered forced Jellyfin access after local persistence failure'});
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.jellyfin.force_recover','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({serverId:target.id,serverName:target.name,accountId:account.id,remoteUserId:remote.Id,username:intent.username})]);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.jellyfin.force_recover','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({serverId:target.id,serverName:target.name,accountId:account.id,remoteUserId:remote.Id,username:intent.username,accessLane})]);
   return account;
 }
 
@@ -81,7 +85,8 @@ async function forceAccess(customerId,serverId,{actorUserId=null}={}){
   await permanentAccess.enable(customerId,{actorUserId,reason:`Forced Jellyfin access to ${target.name} by administrator`});
 
   const current=await manualAssignment.candidates(customerId);
-  const active=current.activeAccounts||[];
+  const accessLane=provisioning.requestedAccessLane(current.entitlement);
+  const active=(current.activeAccounts||[]).filter(account=>String(account.access_lane||'primary')===accessLane);
   const onTarget=active.find(account=>String(account.server_id)===String(target.id));
   let result;
   if(onTarget){

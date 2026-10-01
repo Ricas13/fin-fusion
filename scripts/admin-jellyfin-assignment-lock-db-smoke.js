@@ -142,7 +142,61 @@ async function main() {
     assert.strictEqual(String(after.rows[0]?.server_id), String(otherServer), 'move() must actually move the account once the lock clears');
   }
 
-  console.log('admin jellyfin assignment/move reconciliation lock + force capacity db smoke: ok');
+  // --- parallel lanes: an active Free account must not block or be repurposed by paid manual assignment ---
+  {
+    const customerId = await customerWithActivePlan(`${tag}-parallel-assign`);
+    const paidTarget = await addServer('parallel-paid-target');
+    await query(`
+      INSERT INTO jellyfin_accounts(
+        customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,account_purpose,access_lane
+      ) VALUES($1,$2,$3,$3,FALSE,TRUE,'jellyfin','free')
+    `, [customerId, server, `${tag}-parallel-free-existing`]);
+
+    const outcome = await manualAssignment.assign(customerId, paidTarget, {});
+    assert.strictEqual(outcome.account.access_lane, 'primary', 'paid manual assignment must create/reuse the primary lane, not the existing Free lane');
+
+    const lanes = await query(`
+      SELECT access_lane,server_id,disabled FROM jellyfin_accounts
+      WHERE customer_id=$1 AND account_purpose='jellyfin'
+      ORDER BY access_lane
+    `, [customerId]);
+    const free = lanes.rows.find(row => row.access_lane === 'free');
+    const primary = lanes.rows.find(row => row.access_lane === 'primary');
+    assert(free && free.disabled === false, 'paid manual assignment must preserve the independent active Free account');
+    assert(primary && primary.disabled === false, 'paid manual assignment must create an active primary account');
+    assert.strictEqual(String(primary.server_id), String(paidTarget), 'paid manual assignment must place the primary lane on the requested server');
+  }
+
+  // --- parallel lanes: moving paid/primary access must not delete the independent Free lane ---
+  {
+    const customerId = await customerWithActivePlan(`${tag}-parallel-move`);
+    const freeServer = await addServer('parallel-free');
+    const paidTarget = await addServer('parallel-move-target');
+    await query(`
+      INSERT INTO jellyfin_accounts(
+        customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,account_purpose,access_lane
+      ) VALUES
+        ($1,$2,$4,$4,FALSE,TRUE,'jellyfin','primary'),
+        ($1,$3,$5,$5,FALSE,FALSE,'jellyfin','free')
+    `, [customerId, server, freeServer, `${tag}-parallel-paid-source`, `${tag}-parallel-free-source`]);
+
+    const outcome = await adminForceMove.move(customerId, paidTarget, {});
+    assert.strictEqual(outcome.targetAccount.access_lane, 'primary', 'paid server move must keep the destination account in the primary lane');
+
+    const lanes = await query(`
+      SELECT access_lane,server_id,disabled FROM jellyfin_accounts
+      WHERE customer_id=$1 AND account_purpose='jellyfin'
+      ORDER BY access_lane
+    `, [customerId]);
+    const free = lanes.rows.find(row => row.access_lane === 'free');
+    const primary = lanes.rows.find(row => row.access_lane === 'primary' && row.disabled === false);
+    assert(free && free.disabled === false, 'moving paid access must preserve the independent active Free account');
+    assert.strictEqual(String(free.server_id), String(freeServer), 'moving paid access must not move the Free account');
+    assert(primary, 'moving paid access must leave one active primary account');
+    assert.strictEqual(String(primary.server_id), String(paidTarget), 'paid move must place the primary lane on the requested target');
+  }
+
+  console.log('admin jellyfin assignment/move reconciliation lock + force capacity + parallel lane db smoke: ok');
 }
 
 main().catch(error => {

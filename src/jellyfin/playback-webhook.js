@@ -43,7 +43,7 @@ function sameText(a, b) {
 async function accountFor(serverId, userId) {
     if (!userId) return null;
     const result = await query(`
-        SELECT ja.id,ja.customer_id,ja.server_id,ja.jellyfin_user_id
+        SELECT ja.id,ja.customer_id,ja.server_id,ja.jellyfin_user_id,ja.access_lane
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
         WHERE ja.server_id=$1 AND lower(ja.jellyfin_user_id)=lower($2)
@@ -150,13 +150,13 @@ async function upsertStart(serverId, account, payload, at) {
         await client.query(`
             INSERT INTO playback_history(
                 server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-                client_name,device_name,playback_method,started_at,last_seen_at
-            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                client_name,device_name,playback_method,started_at,last_seen_at,access_lane_snapshot
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
             ON CONFLICT(server_id,playback_key) DO UPDATE SET
                 last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
                 playback_method=EXCLUDED.playback_method
         `, [serverId,account.customer_id,account.id,playbackKey,sessionId,payload?.ItemId || null,payload?.Name || payload?.ItemName || null,
-            payload?.ItemType || null,payload?.ClientName || null,payload?.DeviceName || null,method,firstSeen,at]);
+            payload?.ItemType || null,payload?.ClientName || null,payload?.DeviceName || null,method,firstSeen,at,account.access_lane || 'primary']);
         await touchAccount(account, at, client);
     });
     return { recorded: true, playbackKey, sessionId, source: live ? 'webhook+session' : 'webhook' };

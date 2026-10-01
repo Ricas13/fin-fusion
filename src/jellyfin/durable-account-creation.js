@@ -307,6 +307,10 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
             WHEN jellyfin_accounts.access_lane IS DISTINCT FROM EXCLUDED.access_lane THEN NOW()
             ELSE jellyfin_accounts.access_lane_changed_at
           END,
+          inactivity_observation_reset_at=CASE
+            WHEN jellyfin_accounts.access_lane IS DISTINCT FROM EXCLUDED.access_lane THEN NULL
+            ELSE jellyfin_accounts.inactivity_observation_reset_at
+          END,
           access_lane=EXCLUDED.access_lane,
           updated_at=NOW()
         WHERE jellyfin_accounts.customer_id=EXCLUDED.customer_id

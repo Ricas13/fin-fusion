@@ -91,6 +91,7 @@ function normalizeSession(serverId, account, entitlement, session) {
         playbackKey: playbackKey(serverId, session),
         customerId: account.customer_id,
         accountId: account.id,
+        accessLane: account.access_lane||'primary',
         jellyfinUserId: account.jellyfin_user_id,
         playSessionId: state.PlaySessionId || null,
         itemId: session?.NowPlayingItem?.Id || null,
@@ -138,7 +139,7 @@ async function activeEntitlements() {
 
 async function managedAccountsByServer() {
     const result = await query(`
-        SELECT ja.id,ja.customer_id,ja.server_id,ja.jellyfin_user_id,ja.disabled,
+        SELECT ja.id,ja.customer_id,ja.server_id,ja.jellyfin_user_id,ja.disabled,ja.access_lane,
                js.name AS server_name,js.enabled,js.health_status
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
@@ -158,8 +159,8 @@ async function upsertHistorySession(s, seenAt = new Date()) {
     await query(`
         INSERT INTO playback_history(
             server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13)
+            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,access_lane_snapshot
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13,$14)
         ON CONFLICT(server_id,playback_key) DO UPDATE SET
             customer_id=EXCLUDED.customer_id,
             jellyfin_account_id=EXCLUDED.jellyfin_account_id,
@@ -170,7 +171,7 @@ async function upsertHistorySession(s, seenAt = new Date()) {
             ended_reason=NULL
     `, [
         s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
-        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt
+        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null
     ]);
 }
 
@@ -325,11 +326,11 @@ async function pollServer(serverId, accounts, entitlements, cfg) {
 async function policyEvent({ session, mode, decision, streamCount, streamLimit, reason, detail = {} }) {
     await query(`
         INSERT INTO stream_policy_events(
-            customer_id,server_id,jellyfin_account_id,jellyfin_session_id,mode,decision,stream_count,stream_limit,reason,detail
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+            customer_id,server_id,jellyfin_account_id,jellyfin_session_id,mode,decision,stream_count,stream_limit,reason,detail,access_lane_snapshot
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)
     `, [
         session?.customerId || null, session?.serverId || null, session?.accountId || null, session?.sessionId || null,
-        mode, decision, streamCount ?? null, streamLimit ?? null, reason, JSON.stringify(detail)
+        mode, decision, streamCount ?? null, streamLimit ?? null, reason, JSON.stringify(detail), session?.accessLane || null
     ]);
 }
 

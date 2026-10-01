@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const inactivity = require('../src/automation/customer-inactivity');
 const inactivityGrace = require('../src/entitlements/jellyfin-inactivity-grace');
+const customerActivity = require('../src/platform/customer-activity');
 
 const suffix = crypto.randomBytes(4).toString('hex');
 const created = { customers: [], plans: [], servers: [] };
@@ -181,6 +182,152 @@ async function candidateWithGrace(customerId) {
     assert.strictEqual(legacyProtected.legacy_safety_source, 'legacy_lane_backfill', 'legacy safety must remain explicitly migration-only');
     const remainingMs = new Date(legacyProtected.legacy_safety_until).getTime() - Date.now();
     assert(remainingMs > 6 * 86400000, `legacy safety must use the full retention window, not the 3-day first-play window; remaining=${remainingMs}`);
+
+
+    // Case 4: once lane snapshots exist, orphaned playback on the same physical
+    // server must not let paid/primary activity satisfy the current Free
+    // allocation. A known Free orphan row must still count.
+    const orphanCustomerId = await makeCustomer('orphan-lane-snapshot');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '2 days',NOW()+INTERVAL '3650 days')
+    `, [orphanCustomerId, planId]);
+    await query(`
+        INSERT INTO jellyfin_accounts(
+            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,
+            created_at,access_lane_changed_at
+        )
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE,NOW()-INTERVAL '2 days',NOW()-INTERVAL '2 days')
+    `, [orphanCustomerId, serverId, `lane-orphan-free-${suffix}`, `lane-orphan-free-${suffix}`]);
+
+    await query(`
+        INSERT INTO playback_history(
+            customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,
+            device_name,client_name,playback_method,started_at,last_seen_at,ended_at,access_lane_snapshot
+        )
+        VALUES(
+            $1,$2,NULL,$3,$4,'Paid Orphan Movie','Movie','Living Room TV','Jellyfin Web','directplay',
+            NOW()-INTERVAL '1 day',NOW()-INTERVAL '23 hours 40 minutes',NOW()-INTERVAL '23 hours 40 minutes','primary'
+        )
+    `, [orphanCustomerId, serverId, `lane-orphan-paid-${suffix}`, `lane-orphan-paid-session-${suffix}`]);
+
+    const paidOrphanOnly = await candidateFor(orphanCustomerId);
+    assert(paidOrphanOnly, 'Free customer with same-server paid orphan history must remain a scan candidate');
+    assert.strictEqual(paidOrphanOnly.has_playback, false, 'known paid/primary orphan playback must not activate the Free allocation');
+    assert.strictEqual(Number(paidOrphanOnly.playback_seconds||0), 0, 'known paid/primary orphan playback must contribute zero Free minutes');
+    assert.strictEqual(paidOrphanOnly.eligible, false, 'a two-day-old Free allocation must remain inside first-play grace when only paid orphan activity exists');
+
+    await query(`
+        INSERT INTO playback_history(
+            customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,
+            device_name,client_name,playback_method,started_at,last_seen_at,ended_at,access_lane_snapshot
+        )
+        VALUES(
+            $1,$2,NULL,$3,$4,'Free Orphan Movie','Movie','Living Room TV','Jellyfin Web','directplay',
+            NOW()-INTERVAL '12 hours',NOW()-INTERVAL '11 hours 40 minutes',NOW()-INTERVAL '11 hours 40 minutes','free'
+        )
+    `, [orphanCustomerId, serverId, `lane-orphan-free-play-${suffix}`, `lane-orphan-free-session-${suffix}`]);
+
+    const knownFreeOrphan = await candidateFor(orphanCustomerId);
+    assert.strictEqual(knownFreeOrphan.has_playback, true, 'known Free orphan playback must activate the current Free allocation');
+    assert(
+        Number(knownFreeOrphan.playback_seconds||0)>=19*60&&Number(knownFreeOrphan.playback_seconds||0)<=21*60,
+        `known Free orphan playback should contribute only its own ~20 minutes; seconds=${knownFreeOrphan.playback_seconds}`
+    );
+
+    const freeScopedCount = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('free','ph')}
+    `, [orphanCustomerId]);
+    const premiumScopedCount = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('premium','ph')}
+    `, [orphanCustomerId]);
+    assert.strictEqual(Number(freeScopedCount.rows[0].count), 1, 'Free Activity scope must include the known Free orphan and exclude the known paid orphan');
+    assert.strictEqual(Number(premiumScopedCount.rows[0].count), 1, 'Premium Activity scope must include the known paid orphan and exclude the known Free orphan');
+
+    // Case 5: pre-snapshot orphan history remains deliberately conservative.
+    // Unknown orphan rows continue to count so this migration cannot create a
+    // new false-removal path for legacy users.
+    const unknownCustomerId = await makeCustomer('orphan-unknown');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '2 days',NOW()+INTERVAL '3650 days')
+    `, [unknownCustomerId, planId]);
+    await query(`
+        INSERT INTO jellyfin_accounts(
+            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,
+            created_at,access_lane_changed_at
+        )
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE,NOW()-INTERVAL '2 days',NOW()-INTERVAL '2 days')
+    `, [unknownCustomerId, serverId, `lane-unknown-free-${suffix}`, `lane-unknown-free-${suffix}`]);
+    await query(`
+        INSERT INTO playback_history(
+            customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,
+            device_name,client_name,playback_method,started_at,last_seen_at,ended_at,access_lane_snapshot
+        )
+        VALUES(
+            $1,$2,NULL,$3,$4,'Legacy Unknown Movie','Movie','Living Room TV','Jellyfin Web','directplay',
+            NOW()-INTERVAL '10 hours',NOW()-INTERVAL '9 hours 55 minutes',NOW()-INTERVAL '9 hours 55 minutes',NULL
+        )
+    `, [unknownCustomerId, serverId, `lane-orphan-unknown-${suffix}`, `lane-orphan-unknown-session-${suffix}`]);
+
+    const unknownOrphan = await candidateFor(unknownCustomerId);
+    assert.strictEqual(unknownOrphan.has_playback, true, 'unknown legacy orphan playback must retain the pre-migration conservative Free continuity behavior');
+    assert(Number(unknownOrphan.playback_seconds||0)>=4*60, 'unknown legacy orphan playback must continue to contribute its observed minutes');
+
+    const unknownFreeDisplay = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('free','ph')}
+    `, [unknownCustomerId]);
+    const unknownPremiumDisplay = await query(`
+        SELECT COUNT(*)::int count
+        FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('premium','ph')}
+    `, [unknownCustomerId]);
+    assert.strictEqual(Number(unknownFreeDisplay.rows[0].count), 0, 'an unsnapshotted orphan on a Premium-class server cannot be proven Free for historical display');
+    assert.strictEqual(Number(unknownPremiumDisplay.rows[0].count), 1, 'historical display must use the physical server class only as the final fallback for an unknown orphan');
+
+    // Case 6: the fallback must work in the opposite direction too. If a
+    // pre-snapshot account is currently primary but has a trustworthy recent
+    // lane boundary, history before that boundary belonged to its prior Free
+    // lane while later history belongs to primary.
+    const reverseCustomerId = await makeCustomer('reverse-lane-boundary');
+    const reverseAccount = await query(`
+        INSERT INTO jellyfin_accounts(
+            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary,
+            created_at,access_lane_changed_at
+        )
+        VALUES($1,$2,$3,$4,FALSE,'jellyfin','primary',TRUE,NOW()-INTERVAL '10 days',NOW()-INTERVAL '1 day')
+        RETURNING id
+    `, [reverseCustomerId, serverId, `lane-reverse-${suffix}`, `lane-reverse-${suffix}`]);
+    await query(`
+        INSERT INTO playback_history(
+            customer_id,server_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_name,item_type,
+            device_name,client_name,playback_method,started_at,last_seen_at,ended_at,access_lane_snapshot
+        )
+        VALUES
+          ($1,$2,$3,$4,$5,'Before primary transition','Movie','TV','Jellyfin Web','directplay',
+           NOW()-INTERVAL '2 days',NOW()-INTERVAL '47 hours',NOW()-INTERVAL '47 hours',NULL),
+          ($1,$2,$3,$6,$7,'After primary transition','Movie','TV','Jellyfin Web','directplay',
+           NOW()-INTERVAL '12 hours',NOW()-INTERVAL '11 hours',NOW()-INTERVAL '11 hours',NULL)
+    `, [reverseCustomerId, serverId, reverseAccount.rows[0].id,
+         `lane-reverse-free-${suffix}`, `lane-reverse-free-session-${suffix}`,
+         `lane-reverse-primary-${suffix}`, `lane-reverse-primary-session-${suffix}`]);
+
+    const reverseFree = await query(`
+        SELECT COUNT(*)::int count FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('free','ph')}
+    `, [reverseCustomerId]);
+    const reversePrimary = await query(`
+        SELECT COUNT(*)::int count FROM playback_history ph
+        WHERE ph.customer_id=$1${customerActivity.scopePredicate('premium','ph')}
+    `, [reverseCustomerId]);
+    assert.strictEqual(Number(reverseFree.rows[0].count), 1, 'pre-boundary history of a currently-primary account must remain attributable to its prior Free lane');
+    assert.strictEqual(Number(reversePrimary.rows[0].count), 1, 'post-boundary history of a currently-primary account must remain primary');
 
     console.log('free account lane-adoption history DB smoke: ok');
 })().finally(async () => {
