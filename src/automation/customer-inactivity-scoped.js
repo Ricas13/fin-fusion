@@ -128,16 +128,24 @@ async function detachedRemovalRows(limit = MAX_ENFORCEMENTS_PER_RUN) {
               FROM jellyfin_accounts removed
               WHERE removed.id::text=h.metadata->>'accountId'
           )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM jellyfin_accounts present
-              JOIN jellyfin_servers js ON js.id=present.server_id
-              WHERE present.customer_id=h.customer_id
-                AND present.account_purpose='jellyfin'
-                AND present.access_lane='free'
-                AND present.disabled=FALSE
-                AND js.enabled=TRUE
-                AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+          AND (
+              NOT EXISTS (
+                  SELECT 1
+                  FROM jellyfin_accounts present
+                  JOIN jellyfin_servers js ON js.id=present.server_id
+                  WHERE present.customer_id=h.customer_id
+                    AND present.account_purpose='jellyfin'
+                    AND present.access_lane='free'
+                    AND present.disabled=FALSE
+                    AND js.enabled=TRUE
+                    AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+              )
+              -- If a protected retry already recreated the Free account but
+              -- the subsequent hold release failed, keep surfacing this row so
+              -- the finalizer can retry the release. Server pin is not access
+              -- authority because subscription_admin_present() deliberately
+              -- excludes admin_server_pin.
+              OR public.subscription_admin_present(h.customer_id,'jellyfin',s.id)
           )
         ORDER BY h.created_at,h.id
         LIMIT $2
