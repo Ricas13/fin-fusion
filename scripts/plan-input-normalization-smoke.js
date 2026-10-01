@@ -2,6 +2,7 @@
 
 const assert=require('assert');
 const planInput=require('../src/catalog/plan-input');
+const planContract=require('../src/catalog/plan-contract');
 
 assert.strictEqual(planInput.bool(true),true);
 assert.strictEqual(planInput.bool('on'),true);
@@ -45,4 +46,44 @@ assert.strictEqual(planInput.enumValue('week',['month','year'],'year'),'year');
 assert.strictEqual(planInput.enumValue('premium',new Set(['premium','free']),'free'),'premium');
 assert.strictEqual(planInput.enumValue('custom',new Set(['premium','free']),'free'),'free');
 
-console.log('shared plan input normalization smoke: ok');
+planContract.validateCreatePlan({
+  code:'paid-jellyfin',
+  name:'Paid Jellyfin',
+  description:'',
+  serviceType:'jellyfin',
+  audience:'direct',
+  billing:'month',
+  duration:30,
+  priceMinor:600,
+  currency:'GBP',
+  capacityLimit:50,
+  serverClass:'premium',
+  visible:true,
+  active:true,
+  jellyfinAccessModel:'concurrent_streams',
+  jellyfinHouseholdNetworkLimit:1,
+  jellyfinHouseholdLeaseMinutes:240,
+  stremioHouseholdNetworkLimit:1,
+  stremioHouseholdLeaseMinutes:240,
+  streams:1,
+  libraryMode:'all',
+  libraries:[]
+});
+assert.throws(()=>planContract.validateCreatePlan({
+  code:'paid-jellyfin',name:'Paid Jellyfin',description:'',serviceType:'jellyfin',audience:'direct',
+  billing:'month',duration:30,priceMinor:600,currency:'GBP',capacityLimit:50,serverClass:'premium',
+  visible:true,active:true,jellyfinAccessModel:'concurrent_streams',jellyfinHouseholdNetworkLimit:1,
+  jellyfinHouseholdLeaseMinutes:240,stremioHouseholdNetworkLimit:1,stremioHouseholdLeaseMinutes:240,
+  streams:99,libraryMode:'all',libraries:[]
+}),/Concurrent streams/);
+
+assert.deepStrictEqual(
+  planContract.validateProviderMapping({provider:'stripe',mode:'payment',externalId:''}),
+  {provider:'stripe',mode:'payment',externalId:null}
+);
+assert.throws(
+  ()=>planContract.validateProviderMapping({provider:'stripe',mode:'subscription',externalId:''}),
+  /require an external provider ID/
+);
+
+console.log('shared plan input and catalog contract smoke: ok');
