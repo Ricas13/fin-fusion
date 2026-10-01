@@ -121,12 +121,12 @@ Current concern: `customer-360.js` loads both raw/current subscription interpret
 Tasks:
 
 - [ ] Define one Customer 360 read projection contract.
-- [ ] Source primary/free/Emby/Stremio **current access state** from `customer-access-state.snapshot()`.
-- [ ] Use raw subscription SQL for history/listing only.
-- [ ] Remove or narrow duplicate calls such as `currentEntitlementTruth()` where the canonical access snapshot already supplies the answer.
+- [x] Source primary/free/Emby/Stremio **current access state** from `customer-access-state.snapshot()`.
+- [x] Use raw subscription SQL for history/listing only.
+- [x] Remove or narrow duplicate calls such as `currentEntitlementTruth()` where the canonical access snapshot already supplies the answer.
 - [ ] Make current lane naming/blocked semantics consistent with Account Home / My Access / Customer 360.
 - [ ] Add tests proving the same fixture produces the same current state across the three surfaces.
-- [ ] Preserve historical subscriptions, incidents, playback, audit and timeline reporting.
+- [x] Preserve historical subscriptions, incidents, playback, audit and timeline reporting.
 
 **Done when:** one canonical access snapshot drives all “what access does this customer have now?” UI decisions.
 
@@ -452,5 +452,8 @@ Before final merge/deployment of the completed roadmap:
 Add dated entries here as implementation batches land.
 
 - 2026-10-01 — Roadmap created from green baseline `413b366` after PR #828.
+- 2026-10-01 — Began P1 implementation: Customer 360 manual server assignment and Permanent Access now cross `src/access/admin-customer-access-commands.js`; canonical ownership checks prevent platform bypass.
+- 2026-10-01 — Customer 360 service truth/control reads now prefer `customer-access-state.snapshot()` whenever present. Added regression coverage preventing stale subscription-history rows from being resurrected as current access.
+- 2026-10-01 — P0 audit confirmed the active `Protect main` ruleset enforces PR/thread rules but currently has no required Actions/status-check rule. Repository-administration write access is not available through the connected GitHub integration, so enforcement remains an owner/admin action.
 - 2026-10-01 — P0 inspected: active repository ruleset `Protect main` requires PRs/thread resolution but currently has no required-status-check rule. The available GitHub connector exposes ruleset reads only, so the settings change remains an explicit repository-admin action rather than being falsely marked complete.
 - 2026-10-01 — P1 Customer 360 thinning in progress: profile/portal identity, email verification, automation protection, reset-to-plan expiry, automatic placement, policy/household/library/request overrides, Stremio household reset and renewal subscription selection moved behind domain owners. `admin-customer-360.js` no longer imports the DB module or contains direct mutation SQL. Behavioural coverage for the newly extracted high-risk placement/expiry paths remains to be completed before this item is closed.
