@@ -17,10 +17,10 @@ for (const pair of [
 }
 
 for (const token of [
-  "previous_app_image=\"$(docker inspect -f '{{.Image}}' captainfin",
-  "previous_automation_image=\"$(docker inspect -f '{{.Image}}' captainfin-automation",
-  "previous_activity_image=\"$(docker inspect -f '{{.Image}}' captainfin-activity",
-  "previous_backup_image=\"$(docker inspect -f '{{.Image}}' captainfin-backup",
+  'previous_app_image="$(compose_service_image_id app)"',
+  'previous_automation_image="$(compose_service_image_id automation-worker)"',
+  'previous_activity_image="$(compose_service_image_id activity-worker)"',
+  'previous_backup_image="$(compose_service_image_id backup-worker)"',
   'git diff --quiet "$previous_deploy_sha"..HEAD -- db/migrations',
   "docker compose stop --timeout 45 app automation-worker activity-worker backup-worker",
   'migration_started=1',
