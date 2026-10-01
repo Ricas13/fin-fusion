@@ -939,6 +939,199 @@ async function applyImportedProviderMappings(client, mappings = []) {
   return { directMappingsApplied, skippedReferences, mappingsPendingVerification };
 }
 
+async function updatePlanPlacement({
+  planId,
+  strategy,
+  poolMode,
+  servers = [],
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET placement_strategy=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, strategy]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [planId]);
+    if (poolMode === 'selected') {
+      for (const server of servers) {
+        await client.query(
+          'INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,$3)',
+          [planId, server.id, server.weight]
+        );
+      }
+    }
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.server_placement','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updatePlanInventory({
+  planId,
+  capacityLimit,
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET capacity_limit=$2,updated_at=NOW()
+       WHERE id=$1 AND archived_at IS NULL
+       RETURNING code,name`,
+      [planId, capacityLimit]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.inventory.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updatePlanOverview({
+  planId,
+  input,
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const before = await client.query(
+      'SELECT server_class FROM plans WHERE id=$1 FOR UPDATE',
+      [planId]
+    );
+    if (!before.rowCount) throw new Error('Plan not found.');
+    const classChanged = before.rows[0].server_class !== input.serverClass;
+
+    const updated = await client.query(
+      `UPDATE plans SET
+         name=$2,description=$3,audience=$4,billing_interval=$5,duration_days=$6,
+         server_class=$7,visible=$8,active=$9,sort_order=$10,
+         marketing_features=$11::text[],discord_role_id=$12,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [
+        planId, input.name, input.description, input.audience, input.billing,
+        input.duration, input.serverClass, input.visible, input.active,
+        input.sort, input.features, input.discordRoleId
+      ]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    if (classChanged) {
+      await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [planId]);
+    }
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ ...auditMetadata, classChanged })]
+    );
+
+    return { plan: updated.rows[0], classChanged };
+  });
+}
+
+async function archivePlan({
+  planId,
+  actorUserId = null,
+  auditMetadata = {}
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET active=FALSE,visible=FALSE,archived_at=NOW(),archived_by=$2,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, actorUserId]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.archive','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(auditMetadata)]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function unarchivePlan({ planId, actorUserId = null }) {
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET archived_at=NULL,archived_by=NULL,active=TRUE,visible=FALSE,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.unarchive','plan',$2,'{}'::jsonb)`,
+      [actorUserId, planId]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updateDeliveryService({
+  planId,
+  nextType,
+  actorUserId = null,
+  validate = null
+}) {
+  return transaction(async client => {
+    const found = await client.query('SELECT * FROM plans WHERE id=$1 FOR UPDATE', [planId]);
+    if (!found.rowCount) throw new Error('Plan not found.');
+    const plan = found.rows[0];
+
+    const live = await client.query(
+      `SELECT COUNT(DISTINCT customer_id)::int n
+       FROM subscriptions
+       WHERE plan_id=$1
+         AND superseded_by IS NULL
+         AND status IN ('active','trialing','past_due','paused')
+         AND starts_at<=NOW()
+         AND current_period_end>NOW()`,
+      [planId]
+    );
+    const liveSubscriptions = Number(live.rows[0]?.n || 0);
+
+    if (typeof validate === 'function') {
+      await validate({ plan, liveSubscriptions, client });
+    }
+
+    const updated = await client.query(
+      'UPDATE plans SET service_type=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, nextType]
+    );
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.delivery.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({
+        from: plan.service_type,
+        to: nextType,
+        liveSubscriptions,
+        snapshotsPreserved: true
+      })]
+    );
+
+    return { plan: updated.rows[0], previousPlan: plan, liveSubscriptions };
+  });
+}
+
 module.exports = {
   createPlan,
   updateProduct,
@@ -961,5 +1154,11 @@ module.exports = {
   saveImportedLegacyPlan,
   saveImportedV2Plan,
   applyImportedPlans,
-  applyImportedProviderMappings
+  applyImportedProviderMappings,
+  updatePlanPlacement,
+  updatePlanInventory,
+  updatePlanOverview,
+  archivePlan,
+  unarchivePlan,
+  updateDeliveryService
 };
