@@ -33,6 +33,16 @@ BEGIN
 END
 $$;
 
+-- A September legacy-safety marker is only meaningful while it still describes
+-- the synthetic boundary that existed when the marker was created. Older code
+-- could later perform an explicit lane transition (which advances
+-- access_lane_changed_at) without clearing the marker. Repair those rows before
+-- classifying history so a real post-marker transition wins.
+UPDATE jellyfin_accounts
+SET inactivity_observation_reset_at=NULL
+WHERE inactivity_observation_reset_at IS NOT NULL
+  AND access_lane_changed_at>inactivity_observation_reset_at;
+
 -- Existing rows that still retain an account reference can be classified from
 -- the account. For explicit primary->Free adoptions, access_lane_changed_at is
 -- authoritative; playback before that boundary remains primary. Legacy Free
@@ -45,7 +55,10 @@ UPDATE playback_history ph
 SET access_lane_snapshot=(
     SELECT CASE
              WHEN ja.access_lane='free'
-              AND ja.inactivity_observation_reset_at IS NULL
+              AND (
+                ja.inactivity_observation_reset_at IS NULL
+                OR ja.access_lane_changed_at>ja.inactivity_observation_reset_at
+              )
               AND ph.started_at<ja.access_lane_changed_at
              THEN 'primary'
              ELSE ja.access_lane
@@ -60,7 +73,10 @@ UPDATE stream_policy_events spe
 SET access_lane_snapshot=(
     SELECT CASE
              WHEN ja.access_lane='free'
-              AND ja.inactivity_observation_reset_at IS NULL
+              AND (
+                ja.inactivity_observation_reset_at IS NULL
+                OR ja.access_lane_changed_at>ja.inactivity_observation_reset_at
+              )
               AND spe.created_at<ja.access_lane_changed_at
              THEN 'primary'
              ELSE ja.access_lane
