@@ -122,6 +122,8 @@ assert(directLifecycleService.includes('async function resetAutomaticPlacement')
     && directLifecycleService.includes('serverMigration.createMigration(')
     && directLifecycleService.includes('serverMigration.executeMigration('),
   'access lifecycle service must own automatic placement and migration orchestration');
+assert(customer360Route.includes("require('../entitlements/permanent-access')") && customer360Route.includes('permanentAccess.status('),
+  'Customer 360 must import and use the permanent-access status owner before rendering the customer workspace');
 assert(customer360Route.includes("require('../access/admin-customer-access-settings')")
     && !customer360Route.includes("require('../db')")
     && !/\b(?:INSERT INTO|UPDATE|DELETE FROM)\b/.test(customer360Route),
