@@ -94,6 +94,21 @@ assert(integrityOperator.includes("const current = await scan({ limit: 500 })")
   && integrityOperator.includes("String(item?.customerId || '') === normalized.customerId"),
   'operator service must match the exact current scanner finding before mutation');
 
+
+// Manual-payment recording is a payments-domain operation. The platform route
+// owns HTTP/CSRF handling only; ledger mutation and its audit event are atomic.
+const adminCustomerBilling=read('src/platform/admin-customer-billing.js');
+const manualPaymentLedger=read('src/payments/manual-payment-ledger.js');
+assert(adminCustomerBilling.includes("require('../payments/manual-payment-ledger')"),
+  'admin customer billing route must delegate manual ledger ownership to payments domain');
+assert(!adminCustomerBilling.includes('INSERT INTO manual_payment_events')
+    && !adminCustomerBilling.includes('INSERT INTO audit_log'),
+  'platform billing route must not own manual-payment or audit SQL');
+assert(manualPaymentLedger.includes('transaction(async client =>')
+    && manualPaymentLedger.includes('INSERT INTO manual_payment_events')
+    && manualPaymentLedger.includes("'admin.customer.manual_payment.recorded'"),
+  'manual payment ledger must commit the ledger event and audit event atomically');
+
 // Customer My Access is an HTTP/presentation adapter. Customer media-account
 // SQL, lane-to-entitlement selection and credential authorization belong to the
 // access domain so the route cannot invent a second access truth.
