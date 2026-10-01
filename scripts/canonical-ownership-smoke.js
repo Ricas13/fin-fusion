@@ -366,6 +366,37 @@ for(const required of [
     `catalog plan command service must own ${required}`);
 }
 
+// Plan access and payment-option persistence belong to the catalog domain.
+// Platform routes may validate/render/verify providers, but must not own the writes.
+const planAccessRoute=read('src/platform/admin-plan-access.js');
+const planPaymentOptionsRoute=read('src/platform/admin-plan-payment-options.js');
+assert(planAccessRoute.includes("require('../catalog/plan-command-service')")
+    && planAccessRoute.includes('planCommands.updateAccessPolicy({')
+    && !planAccessRoute.includes('UPDATE plans SET')
+    && !planAccessRoute.includes('DELETE FROM access_network_leases')
+    && !planAccessRoute.includes("'admin.plan.access_policy.update'"),
+  'plan access route must delegate access-policy mutation to the catalog command service');
+assert(planPaymentOptionsRoute.includes("require('../catalog/plan-command-service')")
+    && planPaymentOptionsRoute.includes('planCommands.updatePortalCurrencyPrice({')
+    && planPaymentOptionsRoute.includes('planCommands.updatePaymentOptions({')
+    && !planPaymentOptionsRoute.includes('UPDATE plan_provider_prices SET active=FALSE')
+    && !planPaymentOptionsRoute.includes("'admin.plan.portal_currency_price.update'")
+    && !planPaymentOptionsRoute.includes("'admin.plan.payment_options'"),
+  'plan payment-options route must delegate price/mapping persistence to the catalog command service');
+for(const required of [
+  'async function updateAccessPolicy',
+  'DELETE FROM access_network_leases',
+  "'admin.plan.access_policy.update'",
+  'async function saveProviderOption',
+  'async function updatePaymentOptions',
+  'async function updatePortalCurrencyPrice',
+  "'admin.plan.portal_currency_price.update'",
+  "'admin.plan.payment_options'"
+]){
+  assert(planCommandService.includes(required),
+    `catalog plan command service must own ${required}`);
+}
+
 console.log('canonical ownership smoke: ok');
 
 
