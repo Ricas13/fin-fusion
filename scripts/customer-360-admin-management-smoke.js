@@ -15,6 +15,9 @@ const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
 const accessHoldsAdmin=read('src/platform/admin-customer-access-holds.js');
 const accessControlService=read('src/access/admin-customer-access-control.js');
+const customer360Route=read('src/platform/admin-customer-360.js');
+const customerProfileService=read('src/customers/admin-customer-profile-service.js');
+const customerProfile=require('../src/customers/admin-customer-profile-service');
 const deletion=read('src/customers/customer-deletion.js');
 const externalDeletion=read('src/customers/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -50,6 +53,38 @@ for(const route of [
 ])assert(management.includes(route),`customer management route missing: ${route}`);
 assert(accessHoldsAdmin.includes("router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute)")&&accessHoldsAdmin.includes("router.post('/admin/users/:customerId/reconcile',reconcileRoute)"),'canonical Customer 360 reconciliation routes must share one blocker-aware owner');
 assert(!management.includes("r.post('/admin/users/:customerId/manage/reconcile'"),'legacy customer-management router must not re-own reconciliation');
+
+assert(customer360Route.includes("require('../customers/admin-customer-profile-service')"),
+  'Customer 360 profile route must delegate profile/portal identity mutation to the customer domain');
+assert(!customer360Route.includes('UPDATE customers SET display_name')
+    && !customer360Route.includes('UPDATE app_users SET username=$2,email=$3'),
+  'Customer 360 router must not own profile or portal-identity persistence');
+assert(customerProfileService.includes('transaction(async client =>')
+    && customerProfileService.includes('SELECT user_id FROM customers WHERE id=$1 FOR UPDATE')
+    && customerProfileService.includes('UPDATE app_users')
+    && customerProfileService.includes('UPDATE customers')
+    && customerProfileService.includes("'admin.customer.profile.update'"),
+  'customer profile domain service must own the atomic profile/portal update and audit event');
+const normalizedProfile=customerProfile.normalizeProfileInput({
+  displayName:'  Alice  ',
+  countryCode:'gb',
+  discordUserId:'12345',
+  tags:' VIP, beta,VIP ',
+  username:'alice.user',
+  email:'ALICE@EXAMPLE.COM'
+});
+assert(normalizedProfile.displayName==='Alice'
+    && normalizedProfile.country==='GB'
+    && normalizedProfile.email==='alice@example.com'
+    && normalizedProfile.tags.join(',')==='VIP,beta'
+    && normalizedProfile.portalFieldsProvided===true,
+  'customer profile service must preserve existing normalization semantics');
+let invalidProfileRejected=false;
+try{customerProfile.normalizeProfileInput({countryCode:'GBR'});}catch(error){invalidProfileRejected=error.message==='validation';}
+assert(invalidProfileRejected,'customer profile service must reject invalid country codes before persistence');
+let invalidDiscordRejected=false;
+try{customerProfile.normalizeProfileInput({discordUserId:'abc'});}catch(error){invalidDiscordRejected=error.message==='discord';}
+assert(invalidDiscordRejected,'customer profile service must preserve Discord ID validation semantics');
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
 assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
