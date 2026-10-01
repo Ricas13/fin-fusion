@@ -28,7 +28,7 @@ async function status(customerId,{client=null}={}){
 
 async function enable(customerId,{actorUserId=null,reason=''}={}){
     const note=reasonText(reason);
-    const saved=await transaction(async client=>{
+    const saved=await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,()=>transaction(async client=>{
         const customer=await client.query(`SELECT id,automation_protected,automation_protected_reason,automation_protected_at,automation_protected_by FROM customers WHERE id=$1 FOR UPDATE`,[customerId]);
         if(!customer.rowCount)throw new Error('Customer not found.');
         // Permanent access must pin the same primary Jellyfin/bundle contract
@@ -53,7 +53,7 @@ async function enable(customerId,{actorUserId=null,reason=''}={}){
         await client.query(`UPDATE customers SET automation_protected=TRUE,automation_protected_reason=$2,automation_protected_at=NOW(),automation_protected_by=$3,updated_at=NOW() WHERE id=$1`,[customerId,`Permanent access: ${note}`.slice(0,500),actorUserId]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.enable','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:subId,reason:note,providerBillingChanged:false,previousAutomationProtected:previousProtected,previousAutomationProtectedAt:previousAt,previousAutomationProtectedBy:previousBy})]);
         return{subscriptionId:subId,reused:false,repinned:false};
-    });
+    }));
     await provisioning.reconcileCustomer(customerId).catch(error=>console.warn('Permanent access reconciliation deferred:',error.message));
     return{...saved,status:await status(customerId)};
 }
@@ -100,7 +100,10 @@ async function revokeInTransaction(client,customerId,{actorUserId=null,reason=''
 }
 
 async function revoke(customerId,{actorUserId=null,reason=''}={}){
-    const result=await transaction(client=>revokeInTransaction(client,customerId,{actorUserId,reason}));
+    const result=await provisioning.reconciliationLock.withCustomerReconciliationLock(
+        customerId,
+        ()=>transaction(client=>revokeInTransaction(client,customerId,{actorUserId,reason}))
+    );
     await provisioning.reconcileCustomer(customerId).catch(error=>console.warn('Permanent access revoke reconciliation deferred:',error.message));
     return{...result,status:await status(customerId)};
 }
