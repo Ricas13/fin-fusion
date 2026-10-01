@@ -312,6 +312,23 @@ assert(customer360AccessCommands.includes("require('../jellyfin/manual-assignmen
     && customer360AccessCommands.includes('async function setPermanentAccess'),
   'access-domain Customer 360 command service must own manual assignment and permanent-access dispatch');
 
+// Plan creation persistence belongs to the catalog domain. The adaptive plan
+// route may parse/render HTTP input, but must not own plan, price or audit writes.
+const planCreateRoute=read('src/platform/admin-plan-create-v2.js');
+const planCommandService=read('src/catalog/plan-command-service.js');
+assert(planCreateRoute.includes("require('../catalog/plan-command-service')")
+    && planCreateRoute.includes('planCommands.createPlan(plan, actorUserId)')
+    && !planCreateRoute.includes("require('../db')")
+    && !planCreateRoute.includes("require('../payments/plan-pricing')")
+    && !planCreateRoute.includes('INSERT INTO plans')
+    && !planCreateRoute.includes('INSERT INTO audit_log'),
+  'adaptive plan creation must delegate persistence to the catalog command service');
+assert(planCommandService.includes('async function createPlan')
+    && planCommandService.includes('INSERT INTO plans')
+    && planCommandService.includes('planPricing.setPrice(')
+    && planCommandService.includes("'admin.plan.create'"),
+  'catalog plan command service must own atomic plan creation, pricing and audit persistence');
+
 console.log('canonical ownership smoke: ok');
 
 
