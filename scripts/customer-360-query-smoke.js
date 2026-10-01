@@ -124,6 +124,30 @@ assert.strictEqual(rows[3].actual, 'active');
 assert.strictEqual(rows[4].actual, 'synced');
 assert.strictEqual(rows[0].reconciledAt, reconciledAt);
 
+const canonicalNoAccessRows = serviceTruth.resultRows({
+  subscriptions: [
+    { id: 'stale-paid', status: 'active', current_period_end: '2099-10-03T00:00:00.000Z', service_type: 'jellyfin', plan_code: 'stale-premium' }
+  ],
+  canonicalAccessState: {
+    primary: { entitlement: null },
+    free: { entitlement: null },
+    emby: { entitlement: null },
+    stremio: { entitlement: null }
+  },
+  accounts: [],
+  provisioningState: null
+});
+assert.strictEqual(canonicalNoAccessRows[0].desired, 'Not required',
+  'Customer 360 must not resurrect a stale/historical paid subscription when canonical access says no primary entitlement');
+assert.strictEqual(canonicalNoAccessRows[0].plan, '—',
+  'Customer 360 service truth must show no current plan when canonical primary access is empty');
+assert.strictEqual(canonicalNoAccessRows[4].desired, 'No active plan roles',
+  'Discord role intent must follow canonical current entitlements rather than historical subscription rows');
+assert(viewSource.includes('detail?.canonicalAccessState?')
+    && truthSource.includes('const primaryEntitlement = canonical')
+    && truthSource.includes('canonical.primary?.entitlement || null'),
+  'Customer 360 current-state presentation must explicitly prefer the canonical access snapshot');
+
 const unknownRows = serviceTruth.resultRows({ subscriptions: [], accounts: [], provisioningState: null });
 assert.strictEqual(unknownRows[0].actual, 'No reconciliation snapshot');
 assert.strictEqual(unknownRows[3].actual, 'No reconciliation snapshot');
