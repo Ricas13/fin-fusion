@@ -105,6 +105,8 @@ function adminAuthorityReconciliationRaceContract(){
     'detached Free inactivity completion must serialize its authority re-check and terminal plan close');
   assert.match(inactivity,/finalizeDetachedRemovalLocked[\s\S]*?subscriptionState\.liveFreeJellyfinSubscription/,
     'detached Free inactivity completion must re-read current authority while holding the customer lock');
+  assert.match(inactivity,/OR public\.subscription_admin_present\(h\.customer_id,'jellyfin',s\.id\)/,
+    'a protected detached retry must remain discoverable if account restore succeeded before hold release failed');
 }
 
 function freeInactivitySafetyContract(){
