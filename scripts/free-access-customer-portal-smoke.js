@@ -21,6 +21,7 @@ const login = fs.readFileSync('views/customer/login.ejs', 'utf8');
 const freePlaces = fs.readFileSync('src/automation/free-places-digest.js', 'utf8');
 const serverMigration = fs.readFileSync('src/jellyfin/server-migration.js', 'utf8');
 const adminServerMigration = fs.readFileSync('src/platform/admin-server-migrations.js', 'utf8');
+const automationRegistry = require('../src/automation/jobs');
 
 assert(/const accessKind = String\(plan\?\.billing_interval \|\| plan\?\.contract_billing_interval \|\| ''\) === 'trial'[\s\S]*\? 'free'[\s\S]*: 'paid'/.test(provision), 'placement must classify trial/free/paid');
 assert(/accessKind === 'paid'[\s\S]*Boolean\(server\.paid_enabled\)[\s\S]*: true/.test(provision), 'free access must not require paid_enabled');
@@ -85,8 +86,7 @@ assert(/Starting signup opens a \$\{FREE_INTENT_MINUTES\}-minute window/.test(fr
 assert(/require\(['"]\.\.\/security\/pending-registration['"]\)/.test(freePlaces),'Discord digest copy must read the live signup-intent duration constant instead of hardcoding it separately');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/allowEveryone:false/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful validated Free Server reservation must nudge the persistent Discord status immediately after commit');
-const automationDefaults = fs.readFileSync('scripts/automation-worker.js','utf8') + fs.readFileSync('src/automation/jobs.js','utf8');
-assert(/free_places_digest:30/.test(automationDefaults),'persistent Discord capacity must also reconcile at least every 30 seconds');
+assert.strictEqual(automationRegistry.defaultIntervalSeconds('free_places_digest'),30,'persistent Discord capacity must also reconcile at least every 30 seconds');
 
 assert(/allowOverCapacity = false/.test(serverMigration)&&/targetAtCapacity && !allowOverCapacity/.test(serverMigration),'normal customer moves must still fail closed at target capacity');
 assert(/overCapacityOverride: targetAtCapacity && Boolean\(allowOverCapacity\)/.test(serverMigration),'server migration preflight must explicitly report an armed over-capacity override');
