@@ -71,7 +71,7 @@ Each completed item should add:
   - Stremio
 - [ ] Prefer merge queue / up-to-date branch enforcement so a PR proven green on an older base cannot bypass combined-main validation.
 - [x] Add a repository-level regression/documentation check describing the required merge gates.
-- [ ] Confirm emergency/owner override behaviour is explicit rather than accidental.
+- [x] Confirm emergency/owner override behaviour is explicit rather than accidental.
 
 **Done when:** a PR cannot normally merge into `main` without the intended green checks on a current base.
 
@@ -324,8 +324,8 @@ Tasks:
 
 - [x] Produce an importer report for compatibility modules.
 - [x] Mark compatibility-only exports/modules explicitly.
-- [ ] Prevent new production callers through ownership/static checks.
-- [ ] Remove each facade only after production importer count reaches zero.
+- [x] Prevent new production callers through ownership/static checks.
+- [x] Remove each facade only after production importer count reaches zero.
 - [ ] Remove corresponding compatibility assertions once the old surface is gone.
 - [ ] Keep compatibility where it protects upgrade/runtime interfaces, not merely because it already exists.
 
@@ -448,6 +448,15 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Synced the roadmap branch onto current `main` after #830 without overwriting roadmap work. The branch now contains the zero-downtime Stremio refresh migration/contracts and Git history records `main` as a merge parent, so combined-base validation is against the current default branch.
+
+- 2026-10-02 — Retired `src/jellyfin/provisioning.js` after its production importer count reached zero. Reconciliation callers now use `resilient-provisioning`, dependency-safe helper callers use `provisioning-helpers`, the compatibility importer audit fails on any new production facade caller, and a circular-dependency regression exposed during CI was removed rather than restoring the shim.
+
+- 2026-10-02 — Customer portal password validation now has one canonical `customer-password-policy` owner shared by registration/reset and security-command password changes; stale static assertions were updated to test the canonical boundary.
+
+- 2026-10-02 — Re-verified the active `Protect main` ruleset: `bypass_actors` is empty and the connected user cannot bypass it, so owner/emergency bypass behaviour is explicit. Required status checks/merge-queue enforcement remain the unresolved repository-admin P0 action.
+
 
 - 2026-10-02 — Oversized-module ownership review completed in `docs/OVERSIZED_MODULE_REVIEW_2026-10-02.md`. Large payment state machines are intentionally kept cohesive; platform read/render modules are not split for size alone; Stremio source admin, lifecycle policy configuration and activity read models are identified as future split candidates only where ownership becomes clearer. `admin-orders.js` already shed duplicate date/CSRF mechanics during the review.
 
