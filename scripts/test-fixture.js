@@ -101,8 +101,8 @@ async function fixturePlan(client, overrides = {}) {
   return (await client.query(`
     INSERT INTO plans(
       code,name,audience,service_type,billing_interval,duration_days,
-      price_minor,currency,streams,active,visible,sort_order
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,TRUE,$10)
+      price_minor,currency,streams,capacity_limit,server_class,active,visible,sort_order
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,TRUE,$12)
     RETURNING *
   `, [
     code,
@@ -114,6 +114,8 @@ async function fixturePlan(client, overrides = {}) {
     Number(overrides.priceMinor ?? 1000),
     overrides.currency || 'GBP',
     Number(overrides.streams ?? 1),
+    overrides.capacityLimit == null ? null : Number(overrides.capacityLimit),
+    overrides.serverClass || null,
     Number(overrides.sortOrder ?? 999)
   ])).rows[0];
 }
