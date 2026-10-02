@@ -113,6 +113,13 @@ function authoritativeLivePaypal(row) {
         && classifier.historyKind(row) === 'payment';
 }
 
+function authoritativeLivePlisio(row) {
+    if (String(row?.provider || '').toLowerCase() !== 'plisio') return false;
+    const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    return metadata.providerAuthoritative === true
+        && Boolean(classifier.historyKind(row));
+}
+
 function paypalCaptureIdFromEvent(row) {
     if (String(row?.provider || '').toLowerCase() !== 'paypal' || row?.event_type !== 'PAYMENT.CAPTURE.COMPLETED') return null;
     const id = row?.payload?.resource?.id;
@@ -235,9 +242,13 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     // exactly once regardless of which successful checkout path ran first.
     const historyRowsScanned = await scanHistoryInRange(range, async row => {
         const livePaypal = authoritativeLivePaypal(row);
+        const livePlisio = authoritativeLivePlisio(row);
         if (livePaypal) authoritativePaypalCaptures.add(String(row.provider_transaction_id || ''));
-        if (!livePaypal && !isCovered(coverage, row.provider, row.occurred_at)) return;
+        if (!livePaypal && !livePlisio && !isCovered(coverage, row.provider, row.occurred_at)) return;
         const kind = classifier.historyKind(row);
+        if (livePlisio && row?.metadata?.feeDataAvailable !== true) {
+            addWarning(warnings, 'Plisio revenue is included from verified provider operations, but provider fee data is unavailable; reported profit excludes Plisio processing/network fees.');
+        }
         if (kind) await visit(historyRecord(row, kind));
     }, queryFn);
 
@@ -386,6 +397,7 @@ module.exports = {
     coverageFromRuns,
     isCovered,
     authoritativeLivePaypal,
+    authoritativeLivePlisio,
     paypalCaptureIdFromEvent,
     historyKind: classifier.historyKind,
     coverageRunsInRange,
