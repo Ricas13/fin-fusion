@@ -145,8 +145,7 @@ function createCustomerPasswordSyncRouter(){
         if(password!==confirm)return redirectWith(res,'/account/access','error','Passwords do not match.');
         try{
             const access=await assertMediaPasswordAccess(req.session.customerId,req.params.accountId);
-            await provisioning.setJellyfinPassword(req.session.customerId,req.params.accountId,password);
-            await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.session.customerId]);
+            await provisioning.setJellyfinPassword(req.session.customerId,req.params.accountId,password,{clearSetupRequired:true,clearResetRequired:true});
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.media_password.change','customer',$2,$3::jsonb)`,[req.session.customerUserId,req.session.customerId,JSON.stringify({accountId:req.params.accountId,serviceType:access.serviceType,secretStored:false})]).catch(()=>{});
             return redirectWith(res,'/account/access','message',`${access.label} password updated.`,`account-${req.params.accountId}`);
         }catch(error){return redirectWith(res,'/account/access','error',error.message||'Streaming-service password could not be updated.',`account-${req.params.accountId}`);}
