@@ -399,7 +399,7 @@ For each candidate:
 These are principles to apply opportunistically while completing the prioritized work, not excuses for unrelated rewrites.
 
 - [x] One canonical current customer access snapshot.
-- [ ] One owner for each destructive mutation.
+- [x] One owner for each destructive mutation.
 - [x] One provider capability/transport boundary.
 - [x] One durable external-notification path.
 - [x] One plan mutation contract.
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Final destructive-mutation ownership closeout: PR #857 rebased the remaining customer-creation, customer-management and portal-credential ownership work onto current `main`, removed the final seven frozen `src/platform` domain-table mutation exceptions, and passed CI, Integration, Release Integrity, Browser & Clean Install, Security CodeQL and Stremio. `platform-business-sql-boundary-smoke.js` now reports zero frozen legacy platform/table exceptions and rejects any future direct mutations of the protected domain tables.
 - 2026-10-02 — Tagged-suite independence validated from clean jobs: `fast`, `db`, `billing`, `access`, `browser` and `security` were each run in an isolated GitHub Actions job with a fresh PostgreSQL service and freshly migrated schema. The evidence run exposed one real hidden dependency in `provider-checkout-recovery-db-smoke.js` (Premium capacity was inherited from an earlier test); PR #853 made that test create/clean its own Premium server fixture. The rerun then passed all six isolated tags.
 
 - 2026-10-02 — Production-image size comparison completed on the same post-#845 code baseline. A temporary non-merge measurement branch restored the pre-cleanup Docker build context and measured `200,788,295` bytes; the normal production exclusions measured `197,942,068` bytes. The CI/test/documentation exclusions therefore reduce the runtime image by `2,846,227` bytes (about `1.42%`) while Release Integrity confirms the required runtime/operator/recovery tools remain present.
