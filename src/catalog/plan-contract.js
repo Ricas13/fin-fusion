@@ -147,7 +147,6 @@ function validateImportedPlan(plan){
   integer(plan.price_minor,0,100000000,'Price');
   currency(plan.currency);
   if(plan.capacity_limit!==undefined&&plan.capacity_limit!==null)integer(plan.capacity_limit,0,1000000,'Capacity');
-  if(plan.media_user_limit!==undefined&&plan.media_user_limit!==null)integer(plan.media_user_limit,0,1000000,'Media customer limit');
   if(plan.server_class!==undefined)member(plan.server_class,SERVER_CLASSES,'Server class');
   if(plan.jellyfin_access_model!==undefined)member(plan.jellyfin_access_model,ACCESS_MODELS,'Jellyfin access model');
   if(plan.streams!==undefined)integer(plan.streams,0,50,'Concurrent streams',{nullable:true});
