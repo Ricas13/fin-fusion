@@ -12,6 +12,8 @@ const PAYPAL_PAYMENT_CODES = new Set([
 ]);
 const PAYPAL_REFUND_CODES = new Set(['T1106','T1107','T1120','T1201']);
 const PAYPAL_SUCCESS_STATUS = 'S';
+const PLISIO_PAYMENT_TYPES = new Set(['payment','invoice','operation']);
+const PLISIO_SUCCESS_STATUSES = new Set(['completed','success','succeeded']);
 
 function clean(value) { return String(value == null ? '' : value).trim(); }
 
@@ -34,7 +36,13 @@ function classifyProviderTransaction({ provider, type, status = '', grossMinor =
         if (clean(status).toUpperCase() !== PAYPAL_SUCCESS_STATUS) return null;
         const code = clean(type).toUpperCase();
         if (amount > 0 && PAYPAL_PAYMENT_CODES.has(code)) return 'payment';
-        if (amount < 0 && PAYPAL_REFUND_CODES.has(code)) return 'refund';
+        if (amount < 0 && (PAYPAL_REFUND_CODES.has(code) || transactionType === 'refund' || transactionType === 'reversal')) return 'refund';
+        return null;
+    }
+
+    if (source === 'plisio') {
+        if (amount > 0 && PLISIO_PAYMENT_TYPES.has(transactionType) && PLISIO_SUCCESS_STATUSES.has(clean(status).toLowerCase())) return 'payment';
+        if (amount < 0 && (transactionType === 'refund' || transactionType === 'reversal') && PLISIO_SUCCESS_STATUSES.has(clean(status).toLowerCase())) return 'refund';
     }
     return null;
 }
@@ -54,6 +62,8 @@ module.exports = {
     PAYPAL_PAYMENT_CODES,
     PAYPAL_REFUND_CODES,
     PAYPAL_SUCCESS_STATUS,
+    PLISIO_PAYMENT_TYPES,
+    PLISIO_SUCCESS_STATUSES,
     classifyProviderTransaction,
     historyKind
 };
