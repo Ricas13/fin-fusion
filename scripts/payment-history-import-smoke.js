@@ -37,12 +37,20 @@ for (const code of ['T1106','T1201']) assert.strictEqual(classifier.classifyProv
 assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'paypal', type: 'T0006', status: 'S', grossMinor: 1000 }), 'payment');
 for (const status of ['', 'P', 'D', 'V']) assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'paypal', type: 'T0006', status, grossMinor: 1000 }), null, `PayPal status ${status || '(blank)'} must not be booked as completed revenue`);
 assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'paypal', type: 'T0400', status: 'S', grossMinor: -941 }), null, 'PayPal withdrawals must never be counted as customer revenue');
+assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'paypal', type: 'refund', status: 'S', grossMinor: -500 }), 'refund', 'Webhook-normalized PayPal refunds must use the canonical classifier too');
+assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'plisio', type: 'payment', status: 'completed', grossMinor: 600 }), 'payment', 'Completed Plisio operations must be canonical revenue');
+assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'plisio', type: 'payment', status: 'pending', grossMinor: 600 }), null, 'Pending Plisio operations must never be booked as revenue');
+assert.strictEqual(classifier.classifyProviderTransaction({ provider: 'plisio', type: 'refund', status: 'completed', grossMinor: -600 }), 'refund', 'Verified Plisio refunds can use the same ledger contract if supported later');
+
 
 assert.strictEqual(historyAccounting.historyKind({ provider: 'stripe', transaction_type: 'charge', transaction_status: 'available', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(historyAccounting.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'S', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(historyAccounting.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'P', gross_amount_minor: 1000 }), null, 'pending PayPal rows must not be booked as revenue');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'S', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'D', gross_amount_minor: 1000 }), null, 'dashboard must reject denied PayPal revenue too');
+assert.strictEqual(dashboardLedger.historyKind({ provider: 'plisio', transaction_type: 'payment', transaction_status: 'completed', gross_amount_minor: 600 }), 'payment', 'dashboard must consume Plisio through the shared classifier');
+assert.strictEqual(dashboardLedger.authoritativeLivePlisio({provider:'plisio',transaction_type:'payment',transaction_status:'completed',gross_amount_minor:600,metadata:{providerAuthoritative:true}}),true,'verified Plisio ledger rows are live accounting truth without a separate import workflow');
+
 
 const delayedStripeRevenue = dashboardAnalytics.revenueFromEvent({
     provider: 'stripe',
@@ -137,6 +145,9 @@ assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(dashboardSource), 'Comme
 assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(accountingSource), 'Payment History must not define a second PayPal code list');
 assert.ok(/T0004[\s\S]*T0021/.test(classifierSource) && /T1106[\s\S]*T1201/.test(classifierSource), 'canonical classifier must retain the complete PayPal accounting code lists');
 assert.ok(/partial_capture_reversal/.test(classifierSource), 'canonical Stripe refunds must include partial capture reversals');
+assert.ok(classifierSource.includes('PLISIO_PAYMENT_TYPES')&&classifierSource.includes('PLISIO_SUCCESS_STATUSES'),'canonical classifier must own Plisio payment status semantics');
+assert.ok(dashboardSource.includes('authoritativeLivePlisio'),'Commerce accounting must consume verified Plisio ledger rows rather than ignore crypto revenue');
+
 assert.ok(dashboardSource.includes('transaction_status'), 'Commerce imported-history query must include provider transaction status');
 assert.ok(dashboardSource.includes('paymentEventsInRange(range)'), 'Commerce webhook fallback must use the paginated reader');
 assert.ok(dashboardSource.includes('EVENT_PAGE_SIZE') && dashboardSource.includes('cursor?.created_at'), 'webhook fallback must keyset paginate provider events');
