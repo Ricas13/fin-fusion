@@ -53,6 +53,8 @@ expect(!moduleSource.includes('.sort('),'Plisio callback signing must not reorde
 expect(moduleSource.includes("findProviderIntent('plisio', providerId)"),'Historical Plisio event recovery must bind provider truth to the stored local checkout identity.');
 expect(moduleSource.includes('TERMINAL_UNPAID_STATUSES.has(fields.status)'),'Historical terminal unpaid Plisio events must be safely closable after provider re-verification.');
 expect(moduleSource.includes('Completed Plisio transaction has no local checkout intent and requires manual reconciliation.'),'Orphan completed Plisio revenue must remain operator-visible rather than being discarded.');
+expect(moduleSource.includes("require('./provider-financial-truth')")&&moduleSource.includes('financialTruth.upsertTransaction'),'Completed Plisio payments must enter the same canonical ledger used by Stripe and PayPal.');
+expect(moduleSource.includes("provider: 'plisio'")&&moduleSource.includes("transactionType: 'payment'")&&moduleSource.includes("transactionStatus: 'completed'"),'Plisio ledger writes must carry canonical provider/type/status semantics.');
 const retrySource=moduleSource.match(/async function retryPaymentEvent\([\s\S]*?\n\}/)?.[0]||'';
 expect(retrySource.includes('reconcileStoredPaymentEvent(eventRow, payload)'),'Durable Plisio retries must recover from authenticated merchant API truth.');
 expect(!retrySource.includes('authenticateCallback'),'Durable Plisio retries must not permanently depend on a historical callback signature.');
@@ -83,6 +85,10 @@ expect(returnRoutes.some(route=>route.includes('/stripe/return'))&&returns.inclu
 const migration=source('db/migrations/035_plisio_only_payment_provider.sql');
 for(const constraint of ['payment_provider_credentials_provider_check','billing_checkout_intents_provider_check','payment_events_provider_check','payment_incidents_provider_check','subscriptions_source_check'])expect(migration.includes(constraint),`Plisio migration is missing ${constraint}.`);
 expect(migration.includes("'plisio'::text")&&migration.includes("'legacy_crypto'::text"),'Migration must keep Plisio active while neutralising unsupported historical crypto records.');
+const financialMigration=source('db/migrations/20261002083000_unified_provider_financial_truth.sql');
+expect(financialMigration.includes('payment_provider_identities'),'Unified financial migration must create the canonical provider identity graph.');
+expect(financialMigration.includes("CHECK (provider IN ('stripe','paypal','plisio'))"),'Canonical financial tables must accept all three supported providers.');
+
 
 // Plisio checkout is exposed on the two live customer plan surfaces. The old
 // standalone Stremio dashboard was retired when Stremio management moved Home.
