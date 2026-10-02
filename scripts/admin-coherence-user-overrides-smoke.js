@@ -51,7 +51,7 @@ const group=key=>nav.groups.find(item=>item.key===key);
 const pageKeys=key=>group(key).pages.map(item=>item[0]);
 const childKeys=key=>nav.childPages(key).map(item=>item[0]);
 assert.deepStrictEqual(nav.groups.map(item=>item.key),['dashboard','customers','servers','commerce','operations','settings'],'Admin navigation must retain the fixed six-section rail');
-assert.strictEqual(nav.groups.reduce((sum,item)=>sum+item.pages.length,0),20,'Admin navigation must retain exactly twenty permanent destinations');
+assert.strictEqual(nav.groups.reduce((sum,item)=>sum+item.pages.length,0),21,'Admin navigation must retain exactly twenty-one permanent destinations');
 assert(!pageKeys('dashboard').includes('search'),'Search must not be a primary sidebar destination');
 assert(nav.hiddenPages.search?.parentKey==='dashboard'&&!childKeys('dashboard').includes('search'),'Quick-find results must retain Dashboard ownership without appearing as a nested sidebar item');
 assert(pageKeys('customers').includes('users')&&customersList.includes('/admin/jellyfin-import'),'Customers navigation must expose the shared customer list and link to Jellyfin Import');
