@@ -81,7 +81,6 @@ function intField(value, { min = 0, max = 100000, nullable = false, field = null
     if (!Number.isInteger(number) || number < min || number > max) throw invalidField(field, `${label} must be between ${min} and ${max}.`);
     return number;
 }
-function defaulted(value, fallback) { return value === '' || value == null ? fallback : value; }
 function safeAdminErrorInfo(error) {
     if (error instanceof FieldValidationError) return { message: error.message, field: error.field || null };
     if (error?.code === '23505') {
