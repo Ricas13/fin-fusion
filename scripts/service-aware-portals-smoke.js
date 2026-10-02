@@ -45,7 +45,7 @@ assert(/@media\(max-width:900px\)[\s\S]*\.compactFreePlan\{display:flex!importan
 assert(/\.manageAccountActions\{display:flex;[\s\S]*flex-wrap:wrap/.test(customerDashboardCss)&&/\.manageAccountActions \.button\.stripe\{background:#181f27/.test(customerDashboardCss),'Manage my account actions must stay in one tidy wrapping toolbar without a detached Stripe-brand block');
 assert(!fs.existsSync(path.join(root,'views/customer/stremio-dashboard.ejs')),'retired standalone Stremio dashboard must stay removed');
 assert(/admin\/plans\/:id\/delivery/.test(planDelivery)&&/snapshots were preserved/.test(planDelivery),'plan delivery editor must preserve existing subscription snapshots');
-assert(/admin\.plan\.delivery\.update/.test(planDelivery)&&/mutationLimit/.test(planDelivery),'plan delivery mutation must be audited and rate limited');
+assert(/mutationLimit/.test(planDelivery)&&/planCommands\.updateDeliveryService/.test(planDelivery)&&/admin\.plan\.delivery\.update/.test(planCommands),'plan delivery mutation must stay rate limited in the route and audited by the canonical plan command owner');
 assert(/createAdminPlanDeliveryRouter/.test(router),'plan delivery router must be mounted');
 assert(/\/delivery/.test(planWorkflow)&&/Delivery/.test(planWorkflow)&&/\/delivery\$/.test(planWorkflow)&&!/>Delivery<\/a>/.test(plansList),'Plan workflow must expose delivery management after opening a plan without restoring arbitrary list shortcuts');
 assert(/registerHandler\('retry_failed'.*provisioning\.reconcileCustomer\(item\.customer_id\)/s.test(bulkOperations)&&/retriedThrough:'service-aware-reconciliation'/.test(bulkOperations),'Retry failed setup must use service-aware reconciliation for Jellyfin, Stremio and bundle customers');
