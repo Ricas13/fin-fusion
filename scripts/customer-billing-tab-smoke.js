@@ -12,12 +12,15 @@ const customer360 = read('src/platform/customer-360.js');
 const billingControl = read('src/payments/billing-control.js');
 const planChange = read('src/payments/customer-plan-change.js');
 
-// Billing tab: provider, period end, renewal on/off, open plan-change,
-// last payment incident — facts only, no in-app refund.
-assert(viewV2.includes("function billing(d,token,options={})"), 'billing() must accept token and options to render actions and pending-change data');
-assert(/renewalRow=s\?`.*Renewal.*pill\(s\.cancel_at_period_end\?'Off':'On'/.test(viewV2), 'billing tab must show renewal on/off derived from cancel_at_period_end');
-assert(viewV2.includes("kv('Open plan change'") && viewV2.includes('pending.target_plan_name'), 'billing tab must show the open plan-change target and effective date when one exists');
-assert(viewV2.includes('No refunds are issued from this page'), 'billing tab must not offer in-app refunds');
+// Compact Customer 360 must preserve the billing controls/facts that used to
+// live in a dedicated billing tab: renewal state plus pending plan-change detail.
+assert(compact.includes('function plansCard(detail,token,plans,pendingChange=null)'), 'Plans card must accept the pending plan-change projection');
+assert(compact.includes("primary.cancel_at_period_end?'Resume renewal':'Stop renewal'"), 'Plans card renewal action must be derived from cancel_at_period_end');
+assert(compact.includes('pendingChange.target_plan_name') && compact.includes('pendingChange.effective_at'), 'Plans card must show the open plan-change target and effective date when one exists');
+assert(compact.includes('/plan-change/cancel') && compact.includes("'Cancel pending change'"), 'Plans card must keep the pending plan-change cancellation action');
+assert(compact.includes('options.pendingChange'), 'Customer 360 render must pass the canonical pending plan-change projection into the Plans card');
+const plansScope=compact.slice(compact.indexOf('function plansCard('),compact.indexOf('\nfunction authorityRows'));
+assert(!plansScope.includes('/refund'), 'Customer 360 plan/billing controls must not offer in-app refunds');
 assert(customer360.includes('COALESCE(s.price_minor_snapshot,p.price_minor) price_minor')&&customer360.includes('COALESCE(s.currency_snapshot,p.currency) currency')&&customer360.includes('COALESCE(s.billing_interval_snapshot,p.billing_interval) billing_interval'),'Billing facts must read preserved subscription billing snapshots, not blindly adopt a manually assigned plan\'s commercial defaults');
 assert(customer360.includes("p.is_free_tier AND NOT ((s.source='stripe'")&&customer360.includes("s.source='paypal'"),'a recurring provider period end must remain visible even when a manual entitlement edit points access at a free-tier plan');
 
