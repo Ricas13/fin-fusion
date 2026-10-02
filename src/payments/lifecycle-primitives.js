@@ -10,6 +10,7 @@ const referrals = require('../referrals');
 const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
 const serviceCreditReservations = require('./service-credit-reservations');
+const providerFinancialTruth = require('./provider-financial-truth');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -96,8 +97,32 @@ async function reconcileCommittedCustomerStrict(customerId) {
 
 async function ensurePaymentCustomer({ customerId, provider, providerCustomerId }) {
     if (!providerCustomerId) return null;
-    const result = await query(`INSERT INTO payment_customers(customer_id,provider,provider_customer_id) VALUES($1,$2,$3) ON CONFLICT(customer_id,provider) DO UPDATE SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW() RETURNING *`, [customerId, provider, providerCustomerId]);
-    return result.rows[0];
+    return transaction(async client => {
+        const existing = await client.query(
+            `SELECT provider_customer_id FROM payment_customers WHERE customer_id=$1 AND provider=$2 FOR UPDATE`,
+            [customerId, provider]
+        );
+        const previous = existing.rows[0]?.provider_customer_id || null;
+        if (previous) {
+            await providerFinancialTruth.rememberIdentity({
+                customerId, provider, resourceType: providerFinancialTruth.RESOURCE_TYPES.CUSTOMER,
+                providerIdentity: previous, source: 'payment_customer_previous'
+            }, client);
+        }
+        await providerFinancialTruth.rememberIdentity({
+            customerId, provider, resourceType: providerFinancialTruth.RESOURCE_TYPES.CUSTOMER,
+            providerIdentity: providerCustomerId, source: 'payment_customer'
+        }, client);
+        const result = await client.query(
+            `INSERT INTO payment_customers(customer_id,provider,provider_customer_id)
+             VALUES($1,$2,$3)
+             ON CONFLICT(customer_id,provider) DO UPDATE
+             SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW()
+             RETURNING *`,
+            [customerId, provider, providerCustomerId]
+        );
+        return result.rows[0];
+    });
 }
 
 async function findPaymentCustomer(customerId, provider) {
@@ -157,7 +182,7 @@ function purchaseSnapshot(snapshot, { provider, planId }) {
 
 async function assertSettlementCheckout(client, checkoutIntentId, { customerId, planId, provider }) {
     if (!checkoutIntentId) return null;
-    const result = await client.query(`SELECT id,customer_id,plan_id,provider,state FROM billing_checkout_intents WHERE id=$1 FOR UPDATE`, [checkoutIntentId]);
+    const result = await client.query(`SELECT id,customer_id,plan_id,provider,provider_checkout_id,state FROM billing_checkout_intents WHERE id=$1 FOR UPDATE`, [checkoutIntentId]);
     if (!result.rowCount) throw new Error('Settlement checkout intent disappeared before activation.');
     const row = result.rows[0];
     if (String(row.customer_id) !== String(customerId) || String(row.plan_id || '') !== String(planId) || row.provider !== provider) {
@@ -369,6 +394,15 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 await settleCheckoutServiceCredit(client, settlementCheckoutIntentId, contract);
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
+            await providerFinancialTruth.rememberEvidence({
+                provider,
+                customerId: row.customer_id,
+                providerCustomerId: row.provider_customer_id || providerCustomerId || null,
+                providerBillingReference: row.provider_subscription_id || providerSubscriptionId,
+                providerCheckoutId: settlementIntent?.provider_checkout_id || null,
+                identitySource: 'purchase_activation',
+                identityMetadata: { subscriptionId: row.id, planId: row.plan_id }
+            }, client);
             await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null })]);
             return row;
         });
