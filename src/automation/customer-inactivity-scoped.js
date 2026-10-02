@@ -122,11 +122,24 @@ async function detachedRemovalRows(limit = MAX_ENFORCEMENTS_PER_RUN) {
           AND p.is_free_tier=TRUE
           AND COALESCE(p.is_addon,FALSE)=FALSE
           AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
-          AND h.metadata->>'accountId' IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1
-              FROM jellyfin_accounts removed
-              WHERE removed.id::text=h.metadata->>'accountId'
+          AND (
+              (
+                  h.metadata->>'accountId' IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM jellyfin_accounts removed
+                      WHERE removed.id::text=h.metadata->>'accountId'
+                  )
+              )
+              OR (
+                  -- Older inactivity removals could leave the Free plan alive,
+                  -- then record a failed restore without retaining the deleted
+                  -- account id. Those rows are terminal under the current
+                  -- invariant too: active Free plan + no Free account is not a
+                  -- valid steady state.
+                  COALESCE(h.metadata,'{}'::jsonb) @> '{"restoreReconcileFailed":true}'::jsonb
+                  AND h.reason='Free Server inactivity restore pending successful reprovisioning'
+              )
           )
           AND (
               NOT EXISTS (
