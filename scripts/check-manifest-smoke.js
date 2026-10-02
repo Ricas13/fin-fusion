@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const pkg = require('../package.json');
 const { TAGS, normalizeTags, suitesForTags, commandsForTags } = require('./check-manifest');
+const manifest = require('./check-suites');
 
 const required = ['fast','db','billing','access','browser','security'];
 assert.deepStrictEqual(Object.keys(TAGS).sort(), required.sort(), 'manifest must expose the required test tags');
@@ -15,6 +16,13 @@ for (const [tag, suites] of Object.entries(TAGS)) {
     assert(pkg.scripts[suite], `${tag} tag references unknown npm script ${suite}`);
   }
   assert(commandsForTags([tag]).length > 0, `${tag} tag must expand to runnable commands`);
+}
+
+for (const suite of Object.keys(manifest.suites)) {
+  assert.strictEqual(pkg.scripts[suite], `node scripts/run-check-suite.js ${suite}`, `${suite} must delegate to the manifest runner`);
+}
+for (const suite of ['check:fast','check:db','check:release']) {
+  assert.strictEqual(pkg.scripts[suite], `node scripts/run-check-suite.js ${suite}`, `${suite} must delegate to the manifest runner`);
 }
 
 assert.strictEqual(pkg.scripts.check, 'npm run check:tag -- fast', 'default check entrypoint must use the canonical tagged manifest');
@@ -53,5 +61,9 @@ assert(browser.includes('admin-accessibility-mobile-smoke.js')
 const runner = fs.readFileSync(path.join(__dirname, 'run-tagged-checks.js'), 'utf8');
 assert(runner.includes("require('./run-check-suite')") && runner.includes('commandsForTags(tags)'),
   'tagged runner must reuse canonical suite expansion/execution rather than own a second command parser');
+
+const suiteRunner = fs.readFileSync(path.join(__dirname, 'run-check-suite.js'), 'utf8');
+assert(suiteRunner.includes("require('./check-suites')") && suiteRunner.includes('suiteManifest'),
+  'suite runner must load suite groups from the shared manifest');
 
 console.log('tagged check manifest smoke: ok');

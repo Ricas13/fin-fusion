@@ -1,6 +1,7 @@
 'use strict';
 
 const { query } = require('../db');
+const calendarDate = require('../finance/calendar-date');
 
 const PRESETS = new Map([
     ['today', { days: 1, label: 'Today' }],
@@ -40,10 +41,10 @@ function dashboardRange(input = {}, now = new Date()) {
         const from = parseIsoDate(input.from);
         const to = parseIsoDate(input.to);
         if (from && to && from <= to) {
-            const inclusiveDays = Math.floor((to - from) / 86400000) + 1;
+            const inclusiveDays = Math.floor((to - from) / calendarDate.DAY_MS) + 1;
             if (inclusiveDays >= 1 && inclusiveDays <= 1095) {
                 start = from;
-                end = new Date(to.getTime() + 86400000);
+                end = calendarDate.addDaysUtc(to,1);
                 label = `${from.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })} – ${to.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`;
                 key = 'custom';
             }
@@ -54,12 +55,12 @@ function dashboardRange(input = {}, now = new Date()) {
         const p = PRESETS.get(preset);
         end = new Date(now);
         if (preset === 'today') start = startOfUtcDay(now);
-        else start = new Date(now.getTime() - p.days * 86400000);
+        else start = calendarDate.addElapsedDays(now,-p.days);
         label = p.label;
     }
 
-    const durationMs = Math.max(86400000, end.getTime() - start.getTime());
-    const days = Math.max(1, Math.ceil(durationMs / 86400000));
+    const durationMs = Math.max(calendarDate.DAY_MS, end.getTime() - start.getTime());
+    const days = Math.max(1, Math.ceil(durationMs / calendarDate.DAY_MS));
     const previousEnd = new Date(start);
     const previousStart = new Date(start.getTime() - durationMs);
     return {
@@ -95,7 +96,7 @@ function bucketKey(value, bucket) {
 function advanceBucket(value, bucket) {
     const d = new Date(value);
     if (bucket === 'month') return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
-    return new Date(d.getTime() + (bucket === 'week' ? 7 : 1) * 86400000);
+    return calendarDate.addElapsedDays(d,bucket === 'week' ? 7 : 1);
 }
 
 function bucketLabel(value, bucket) {
@@ -242,7 +243,7 @@ async function planFallbackCurrency() {
 
 async function analyticsData(range) {
     const bucket = ['day', 'week', 'month'].includes(range.bucket) ? range.bucket : 'day';
-    const forecastEnd = new Date(Date.now() + range.days * 86400000);
+    const forecastEnd = calendarDate.addElapsedDays(new Date(),range.days);
     const fallbackCurrencyPromise = planFallbackCurrency();
 
     const [

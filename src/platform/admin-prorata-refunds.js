@@ -8,6 +8,7 @@ const refunds = require('../payments/prorata-refunds');
 const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const ui = require('./admin-ui');
+const moneyFormat = require('./money-format');
 const { esc, layout } = require('./admin-html');
 
 const refundRouteLimit = routeRateLimit.middleware({
@@ -27,9 +28,7 @@ function noStore(_req, res, next) {
   return next();
 }
 function money(minor, currency) {
-  const code = String(currency || 'GBP').toUpperCase();
-  try { return new Intl.NumberFormat('en-GB', { style:'currency', currency:code, currencyDisplay:'narrowSymbol' }).format(Number(minor || 0) / 100); }
-  catch { return `${code} ${(Number(minor || 0) / 100).toFixed(2)}`; }
+  return moneyFormat.formatMinor(minor,currency || 'GBP');
 }
 function when(value) {
   const date = new Date(value);

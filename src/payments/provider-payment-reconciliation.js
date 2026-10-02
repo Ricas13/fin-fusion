@@ -8,6 +8,7 @@ const checkoutIntents = require('./checkout-intents');
 const livePaypalHistory = require('./live-paypal-payment-history');
 const financialState = require('./provider-financial-state');
 const { classifyProviderTransaction } = require('./provider-transaction-classifier');
+const moneyFormat = require('../platform/money-format');
 
 const DEFAULT_HOURS = 72;
 const MAX_HOURS = 24 * 14;
@@ -15,7 +16,7 @@ const MAX_HOURS = 24 * 14;
 function sinceDate(hours = DEFAULT_HOURS) { const n = Math.max(1, Math.min(MAX_HOURS, Number(hours) || DEFAULT_HOURS)); return new Date(Date.now() - n * 60 * 60 * 1000); }
 function iso(value) { return new Date(value).toISOString(); }
 function providerLabel(provider) { return provider === 'paypal' ? 'PayPal' : 'Stripe'; }
-function money(minor, currency) { const value = Number(minor); if (!Number.isFinite(value)) return '—'; try { return new Intl.NumberFormat('en-GB', { style: 'currency', currency: String(currency || 'USD').toUpperCase(), currencyDisplay: 'narrowSymbol' }).format(value / 100); } catch (_) { return `${String(currency || 'USD').toUpperCase()} ${(value / 100).toFixed(2)}`; } }
+function money(minor, currency) { const value = Number(minor); return Number.isFinite(value) ? moneyFormat.formatMinor(value,currency || 'USD') : '—'; }
 function paypalBase(config) { return config?.environment === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com'; }
 function paypalReportingError(response, payload, requestId, fallback) { return providerHttp.responseError('paypal', response, payload, requestId, fallback); }
 
