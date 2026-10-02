@@ -50,7 +50,7 @@ assert(!compactSource.includes("function activityDisclosure(detail){const rows=(
 assert(compactSource.includes('No playback activity recorded yet.'), 'Activity must use clear playback-specific empty copy');
 assert(compactSource.includes("financialState=require('../payments/provider-financial-state')") && compactSource.includes('financialState.customerSnapshot(customerId)'), 'Customer 360 Payments must consume the canonical provider financial projection');
 assert(financialStateSource.includes('provider_transaction_id') && financialStateSource.includes('provider_reference_id') && financialStateSource.includes('provider_source_id') && financialStateSource.includes('provider_customer_id'), 'Canonical financial state must retain provider identifiers needed for provider-side reconciliation');
-assert(financialStateSource.includes("s.source='plisio'") && financialStateSource.includes("provider IN ('stripe','paypal','plisio')"), 'Canonical financial state must include Plisio alongside Stripe and PayPal');
+assert(financialStateSource.includes("const PROVIDERS = Object.freeze(['stripe','paypal','plisio'])") && financialStateSource.includes("s.source='plisio'"), 'Canonical financial state must include Plisio alongside Stripe and PayPal');
 assert(financialStateSource.includes('payment_incidents'), 'Canonical financial projection must surface disputes, refunds, chargebacks and other payment incidents');
 assert(compactSource.includes("['Transaction',row.provider_transaction_id]"), 'Payments must label the provider transaction identifier');
 assert(compactSource.includes("['Reference',row.provider_reference_id]"), 'Payments must expose provider reference identifiers rather than collapsing to one ID');
