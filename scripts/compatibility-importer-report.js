@@ -48,10 +48,16 @@ for(const facade of facades){
   report.push({facade:facadeRel,productionImporters:[...new Set(importers)].sort()});
 }
 
+let violations=0;
 for(const row of report){
   console.log(`${row.facade}: ${row.productionImporters.length} production importer(s)`);
   for(const importer of row.productionImporters)console.log(`  - ${importer}`);
+  if(row.productionImporters.length){
+    violations+=row.productionImporters.length;
+    console.error(`Compatibility facade ${row.facade} must not gain production callers; import the canonical owner directly.`);
+  }
 }
 
 if(!report.length)console.log('No compatibility facades marked in src/.');
 console.log(JSON.stringify({facades:report},null,2));
+if(violations)process.exitCode=1;
