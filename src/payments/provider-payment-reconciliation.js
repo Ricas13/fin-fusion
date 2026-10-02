@@ -6,6 +6,7 @@ const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
 const checkoutIntents = require('./checkout-intents');
 const livePaypalHistory = require('./live-paypal-payment-history');
+const financialTruth = require('./provider-financial-truth');
 const { classifyProviderTransaction } = require('./provider-transaction-classifier');
 
 const DEFAULT_HOURS = 72;
@@ -96,7 +97,7 @@ function paypalOrderReference(row) {
     return id || null;
 }
 
-async function paypalRecent(since) {
+async function paypalLedgerRecent(since) {
     const config = await providerSettings.get('paypal');
     if (!config?.clientId || !config?.clientSecret) return { provider: 'paypal', configured: false, rows: [] };
     const token = await paypalToken(config), end = new Date();
@@ -112,17 +113,76 @@ async function paypalRecent(since) {
     const rows = details.map(detail => {
         const info = detail.transaction_info || {}, amount = info.transaction_amount || {}, status = String(info.transaction_status || '');
         const referenceId = info.paypal_reference_id || null, referenceType = info.paypal_reference_id_type || null;
+        const amountMinor = livePaypalHistory.moneyMinor(amount);
+        const eventCode = info.transaction_event_code || null;
+        const kind = classifyProviderTransaction({
+            provider: 'paypal', type: eventCode, status, grossMinor: amountMinor
+        });
         return {
             provider: 'paypal', id: info.transaction_id || null, referenceId, referenceType,
             invoiceId: info.invoice_id || null, customId: info.custom_field || null,
-            amountMinor: livePaypalHistory.moneyMinor(amount),
-            currency: amount.currency_code || null, createdAt: info.transaction_initiation_date || info.transaction_updated_date || null,
-            status, eventCode: info.transaction_event_code || null, email: detail.payer_info?.email_address || null, raw: detail
+            amountMinor, currency: amount.currency_code || null,
+            createdAt: info.transaction_initiation_date || info.transaction_updated_date || null,
+            status, eventCode, kind, email: detail.payer_info?.email_address || null, raw: detail
         };
-    }).filter(row => row.id && classifyProviderTransaction({
-        provider: 'paypal', type: row.eventCode, status: row.status, grossMinor: row.amountMinor
-    }) === 'payment');
+    }).filter(row => row.id && row.kind);
     return { provider: 'paypal', configured: true, rows, truncated };
+}
+
+async function paypalRecent(since) {
+    const result = await paypalLedgerRecent(since);
+    return { ...result, rows: (result.rows || []).filter(row => row.kind === 'payment') };
+}
+
+async function syncRecentPayPalRefundHistory({ hours = DEFAULT_HOURS } = {}) {
+    const since = sinceDate(hours);
+    const remote = await paypalLedgerRecent(since);
+    if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, unresolved: 0, truncated: false };
+    const refunds = (remote.rows || []).filter(row => row.kind === 'refund');
+    let recorded = 0, unresolved = 0;
+    for (const row of refunds) {
+        const customerId = await financialTruth.resolveCustomerId({
+            provider: 'paypal',
+            providerTransactionId: row.id,
+            providerReferenceId: row.referenceId,
+            providerSourceId: row.invoiceId,
+            email: row.email
+        });
+        await financialTruth.upsertTransaction({
+            provider: 'paypal',
+            providerTransactionId: row.id,
+            transactionType: row.eventCode,
+            transactionStatus: row.status,
+            occurredAt: row.createdAt || new Date(),
+            currency: row.currency,
+            grossMinor: row.amountMinor,
+            feeMinor: 0,
+            netMinor: row.amountMinor,
+            providerReferenceId: row.referenceId,
+            providerSourceId: row.invoiceId,
+            customerId,
+            metadata: {
+                providerAuthoritative: true,
+                feeDataAvailable: false,
+                paypalTransactionSearch: true,
+                reconciled: true
+            },
+            identitySource: 'paypal_transaction_search'
+        });
+        recorded += 1;
+        if (!customerId) unresolved += 1;
+    }
+    return {
+        provider: 'paypal',
+        configured: true,
+        processed: refunds.length,
+        recorded,
+        unresolved,
+        truncated: Boolean(remote.truncated),
+        warning: unresolved
+            ? `${unresolved} PayPal refund/reversal transaction${unresolved === 1 ? '' : 's'} were recorded but are not yet linked to a customer.`
+            : (remote.truncated ? 'PayPal refund reconciliation results were truncated.' : null)
+    };
 }
 
 async function authoritativePayPalCaptureIds(ids) {
@@ -454,7 +514,9 @@ module.exports = {
     PAYPAL_CAPTURE_LOOKUP_CONCURRENCY,
     PAYPAL_UNMATCHED_RECHECK_MS,
     recentUnmapped,
+    paypalLedgerRecent,
     paypalRecent,
+    syncRecentPayPalRefundHistory,
     paypalCapture,
     paypalOrder,
     paypalOrderById,
