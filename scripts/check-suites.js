@@ -34,6 +34,7 @@ module.exports = {
       "node scripts/ui-helper-inventory.js",
       "node scripts/repository-merge-gates-smoke.js",
       "node scripts/merge-safety-contract-smoke.js",
+      "node scripts/zero-downtime-portal-deploy-smoke.js",
       "node scripts/production-acceptance-audit-smoke.js",
       "node scripts/check-manifest-smoke.js",
       "node scripts/required-merge-gates-smoke.js",
