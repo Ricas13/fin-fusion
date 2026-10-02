@@ -1,8 +1,8 @@
 'use strict';
 
-require('dotenv').config();
 const assert=require('assert');
-const {query,getPool}=require('../src/db');
+const {query}=require('../src/db');
+const {runDbSmoke}=require('./db-test-fixture');
 const planCommands=require('../src/catalog/plan-command-service');
 
 const CODE='audit-plan-command-rollback';
@@ -11,8 +11,7 @@ async function cleanup(){
   await query('DELETE FROM plans WHERE code=$1',[CODE]);
 }
 
-async function main(){
-  if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required');
+runDbSmoke('catalog plan command rollback DB smoke',async()=>{
   await cleanup();
 
   try{
@@ -99,16 +98,7 @@ async function main(){
     )).rows[0];
     assert.strictEqual(Number(audit.n),0,'failed plan update must not leave a partial audit event');
 
-    console.log('catalog plan command rollback DB smoke: ok');
   }finally{
     await cleanup();
-    await getPool().end();
   }
-}
-
-main().catch(async error=>{
-  console.error(error);
-  try{await cleanup();}catch(_){}
-  try{await getPool().end();}catch(_){}
-  process.exit(1);
 });
