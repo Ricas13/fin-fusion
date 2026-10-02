@@ -1,0 +1,62 @@
+name: Tagged Suite Isolation Evidence
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tagged-suite-isolation-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-tag:
+    name: isolated-${{ matrix.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [fast, db, billing, access, browser, security]
+    services:
+      postgres:
+        image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      APP_DATABASE_URL: postgres://steamfusion_app:ci-app-password-2026-very-long-value@127.0.0.1:5432/steamfusion
+      AUTOMATION_DATABASE_URL: postgres://steamfusion_automation:ci-automation-password-2026-very-long-value@127.0.0.1:5432/steamfusion
+      ACTIVITY_DATABASE_URL: postgres://steamfusion_activity:activity-ci-password-very-long-2026@127.0.0.1:5432/steamfusion
+      BACKUP_DATABASE_URL: postgres://steamfusion_backup:ci-backup-password-2026-very-long-value@127.0.0.1:5432/steamfusion
+      BACKUP_VERIFY_DATABASE_URL: postgres://steamfusion_backup_verify:ci-backup-verify-password-2026-very-long@127.0.0.1:5432/steamfusion
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SESSION_SECRET: 4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      BACKUP_ENCRYPTION_KEY: 5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ADMIN_2FA_ENROLLMENT_TOKEN: ci-admin-enrollment-approval-2026-very-long-value
+      ACTIVITY_DB_PASSWORD: activity-ci-password-very-long-2026
+      REQUIRE_ADMIN_2FA: 'true'
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - run: npm ci
+      - name: Build clean database
+        run: npm run db:migrate
+      - name: Run tag independently
+        run: npm run check:tag -- ${{ matrix.tag }}
