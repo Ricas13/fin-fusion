@@ -1,0 +1,49 @@
+'use strict';
+
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+
+const migration=read('db/migrations/20261002081500_stremio_zero_downtime_index_refresh.sql');
+const managedIndex=read('src/stremio/media-index.js');
+const externalIndex=read('src/stremio/source-index.js');
+const runtimeSettings=read('src/stremio/runtime-settings.js');
+const externalPlans=read('src/stremio/plan-external-sources.js');
+const sourcePool=read('src/stremio/source-pool.js');
+const maintenance=read('src/stremio/index-maintenance.js');
+const admin=read('src/platform/admin-stremio-sources.js');
+
+assert(migration.includes('CREATE TABLE IF NOT EXISTS stremio_media_index_build'),'managed refreshes need a shadow build table');
+assert(migration.includes("status IN ('never','queued','running','ready','failed')"),'managed index state must support queued refreshes');
+assert(migration.includes('PRIMARY KEY(generation,server_id,item_id)'),'shadow generations must be isolated by generation and server');
+
+assert(managedIndex.includes('INSERT INTO stremio_media_index_build'),'managed scans must populate the shadow generation');
+assert(managedIndex.includes('SELECT server_id,imdb_id,item_id,item_type,name,production_year,path,generation,updated_at,seen_at'),'promotion must copy one completed shadow generation into the serving table');
+const promoteDelete=managedIndex.indexOf('DELETE FROM stremio_media_index WHERE server_id=$1');
+const promoteInsert=managedIndex.indexOf('INSERT INTO stremio_media_index(server_id,imdb_id,item_id,item_type,name,production_year,path,scan_generation,updated_at,seen_at)',promoteDelete);
+const promoteReady=managedIndex.indexOf("SET status='ready'",promoteInsert);
+assert(promoteDelete>=0&&promoteInsert>promoteDelete&&promoteReady>promoteInsert,'managed promotion must flip serving rows and readiness only after the shadow build completes');
+assert(managedIndex.includes('Keep last_completed_at and item_count untouched'),'a failed managed refresh must retain the previous completed snapshot');
+assert(managedIndex.includes("VALUES($1,'queued',$2,NULL,NOW())"),'manual managed rebuilds must queue work without blanking readiness metadata');
+assert(managedIndex.includes('return{selected,preserved,deleted:0,queued:true}'),'library changes must preserve the serving managed catalogue');
+assert(managedIndex.includes('return{preserved,deleted:0,queued:true}'),'manual managed rebuilds must preserve the serving catalogue');
+
+assert(!externalIndex.slice(externalIndex.indexOf('async function clearAndQueue('),externalIndex.indexOf('async function refreshProgress(')).includes('DELETE FROM stremio_source_media_index'),'manual external rebuilds must keep the previous source index live');
+assert(externalIndex.includes('preservedItems:preserved')&&externalIndex.includes('zeroDowntime:true'),'external rebuild audit metadata must record snapshot preservation');
+assert(!maintenance.includes('DELETE FROM stremio_media_index')&&!maintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must not clear serving Stremio indexes');
+assert(maintenance.includes("UPDATE stremio_media_index_state SET status='queued'")&&maintenance.includes("UPDATE stremio_source_index_state SET status='queued'"),'global rebuild must queue replacements while preserving current rows');
+
+for(const source of [runtimeSettings,externalPlans,sourcePool]){
+  assert(source.includes('i.last_completed_at IS NOT NULL'),'serving eligibility must be based on a completed snapshot');
+}
+assert(!runtimeSettings.includes("i.status='ready' AND i.item_count>0"),'runtime readiness must not disappear merely because a refresh is running');
+assert(!externalPlans.includes("i.status='ready'"),'plan source readiness must keep a completed source usable during refresh');
+assert(!sourcePool.includes("i.status='ready' AND i.item_count>0"),'addon source selection must keep completed source results available during refresh');
+
+assert(admin.includes("pill('Refreshing','accent')")&&admin.includes("pill('Preparing','accent')"),'admin UI must distinguish a live refresh from the first build');
+assert(admin.includes("pill('Serving previous cache','warn')"),'failed refresh UI must make stale-but-serving behaviour explicit');
+assert(admin.includes('Rebuild all indexes')&&!admin.includes('Clear all indexes & rebuild'),'operator rebuild wording must no longer imply destructive clearing');
+assert(admin.includes('current catalogue stays live until the replacement is ready'),'managed library changes must explain the zero-downtime handover');
+
+console.log('stremio zero-downtime index smoke: ok');
