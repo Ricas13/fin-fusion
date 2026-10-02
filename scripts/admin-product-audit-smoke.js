@@ -28,6 +28,7 @@ const plansList=read('src/platform/admin-plans-list.js');
 const routeComposition=read('src/platform/admin-route-composition.js');
 const stremioDispatch=read('src/platform/admin-stremio-plan-dispatch.js');
 const stremioEditor=read('src/platform/admin-stremio-plan-editor.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 const planCreateV2=read('src/platform/admin-plan-create-v2.js');
 const householdMigration=read('db/migrations/026_stremio_household_plan_policy.sql');
 const architecture=read('docs/architecture/admin-information-architecture.md');
@@ -109,7 +110,7 @@ assert(!customerFilterUi.includes('appendChild')&&!customerFilterUi.includes('or
 assert(stremioEditor.includes('Unlimited streams/devices')&&stremioEditor.includes('<span>Devices</span><strong>Unlimited</strong>')&&stremioEditor.includes('Household IPs')&&stremioEditor.includes('Connection lease'),'Stremio editor must expose household-first UX with unlimited streams/devices, Household IPs and one connection lease');
 assert(!stremioEditor.includes('name="replacementPolicy"')&&!stremioEditor.includes('name="cooldownMinutes"'),'Stremio basic access must not expose a competing replacement policy or cooldown control');
 assert(!stremioEditor.includes('New purchases only')&&!stremioEditor.includes('Existing customers too'),'Stremio access changes must no longer support grandfathering current members onto stale household limits');
-assert(compact(stremioEditor).includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioEditor.includes('queuePlanRequestReconciliation'),'Stremio plan saves must propagate access/request policy to all current plan members');
+assert(stremioEditor.includes('planCommands.updateStremioAccess')&&stremioEditor.includes('refreshTracking: refresh')&&stremioEditor.includes('queuePlanRequestReconciliation')&&planCommands.includes('async function updateStremioTrackingSnapshots')&&planCommands.includes('stremio_household_network_limit_snapshot=$2')&&planCommands.includes("status IN ('active','trialing','past_due','paused')"),'Stremio plan saves must propagate access/request policy to all current plan members through the canonical plan command owner');
 assert(!stremioEditor.includes('Delivery service'),'ordinary Stremio plan editing must not expose internal delivery-service terminology');
 assert(!stremioEditor.includes('server_class')&&!stremioEditor.includes('allow_video_transcoding'),'ordinary Stremio plan editing must not expose Jellyfin placement or transcoding controls');
 assert(planCreateV2.includes("['free_jellyfin', 'Free Jellyfin'")&&planCreateV2.includes("['paid_jellyfin', 'Paid Jellyfin'")&&planCreateV2.includes("['stremio', 'Stremio'")&&planCreateV2.includes('name="stremioHouseholdNetworkLimit"'),'Canonical plan creation must adapt across Free Jellyfin, Paid Jellyfin and Stremio and expose configurable Stremio household connections');
