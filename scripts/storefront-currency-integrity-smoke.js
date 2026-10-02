@@ -16,6 +16,7 @@ const publicShellSource=read('src/platform/public-shell.js');
 const checkout=read('src/platform/flexible-checkout.js');
 const currencySettings=read('src/platform/admin-currency-settings.js');
 const planCreate=read('src/platform/admin-plan-create-v2.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const onboarding=read('views/customer/onboarding.ejs');
@@ -44,7 +45,7 @@ assert(currencySettings.includes('changes the denomination of the current catalo
 
 assert(/const\s+reportingCurrency\s*=\s*require\(['"]\.\/reporting-currency['"]\)/.test(planCreate),'Plan creation must load the portal currency server-side');
 assert(/currency\s*=\s*\(await\s+reportingCurrency\.get\(\)\)\.currency/.test(planCreate)&&/parse\(req\.body,\s*currency\)/.test(planCreate),'Plan creation must override any posted currency with the master currency');
-assert(/await\s+planPricing\.setPrice\(client,\s*result\.rows\[0\]\.id,/.test(planCreate),'New plans must create their active master-currency price row');
+assert(/return\s+planCommands\.createPlan\(plan,\s*actorUserId\)/.test(planCreate)&&/await\s+planPricing\.setPrice\(client,\s*created\.id,/.test(planCommands),'New plans must create their active master-currency price row through the canonical plan command owner');
 assert(!planCreate.includes('<select class="input" name="currency">'),'Plan creation must not expose a per-plan currency selector');
 assert(planCreate.includes('not configurable per plan'),'Plan creation must explain that currency is portal-wide');
 
