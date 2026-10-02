@@ -149,17 +149,13 @@ async function verifyPlan(local, remote) {
     return { mapping: mapping.rows[0], externalPlanIds };
 }
 
-async function verifyOwnership(local, remote) {
-    if (!remote.providerCustomerId) {
-        const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
-        return { verified: Boolean(sameEmail), reason: sameEmail ? 'Provider email matches the portal customer.' : 'Provider returned no customer ID; confirm ownership manually.' };
-    }
-    const owners = new Set(await financialState.providerIdentityOwners(remote.provider, remote.providerCustomerId));
+function ownershipDecision(local, remote, ownerIds = []) {
+    const owners = new Set((ownerIds || []).map(value => String(value)));
     if (owners.has(String(local.customer_id))) {
         return { verified: true, reason: 'Provider customer ID is already mapped to this portal customer.' };
     }
     if (remote.provider === 'stripe' && owners.size) {
-        throw new Error('This Stripe customer identity is already mapped to another CAPTaINFiN customer.');
+        throw new Error('This Stripe customer identity is already mapped to another CAPTAINFIN customer.');
     }
     const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
     if (sameEmail) return { verified: true, reason: 'Provider email matches the portal customer.' };
@@ -167,6 +163,15 @@ async function verifyOwnership(local, remote) {
         return { verified: false, reason: 'This PayPal payer ID is shared with another local customer; use the exact I- subscription ID and explicit operator confirmation.' };
     }
     return { verified: false, reason: 'Provider identity is not yet mapped; confirm ownership manually.' };
+}
+
+async function verifyOwnership(local, remote) {
+    if (!remote.providerCustomerId) {
+        const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
+        return { verified: Boolean(sameEmail), reason: sameEmail ? 'Provider email matches the portal customer.' : 'Provider returned no customer ID; confirm ownership manually.' };
+    }
+    const owners = await financialState.providerIdentityOwners(remote.provider, remote.providerCustomerId);
+    return ownershipDecision(local, remote, owners);
 }
 
 async function preview({ subscriptionId, provider, providerSubscriptionId }) {
@@ -204,4 +209,4 @@ async function apply({ subscriptionId, provider, providerSubscriptionId, actorUs
     });
 }
 
-module.exports = { preview, apply, remoteSubscription, localPremium, providerLabel, normalizeLegacyPayPalAgreement, verifyOwnership };
+module.exports = { preview, apply, remoteSubscription, localPremium, providerLabel, normalizeLegacyPayPalAgreement, ownershipDecision, verifyOwnership };
