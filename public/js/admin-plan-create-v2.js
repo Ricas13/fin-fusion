@@ -12,6 +12,9 @@
   const commercial=form.querySelector('[data-commercial-card]');
   const availability=form.querySelector('[data-availability-card]');
   const capacityLimit=form.querySelector('input[name="capacityLimit"]');
+  const mediaUserLimit=form.querySelector('input[name="mediaUserLimit"]');
+  const mediaCapacity=form.querySelector('[data-media-plan-capacity]');
+  const stremioCapacity=form.querySelector('[data-stremio-plan-capacity]');
   const paidJellyfin=form.querySelector('[data-paid-jellyfin-only]');
   const jellyfinBlocks=form.querySelectorAll('[data-jellyfin-access],[data-jellyfin-policy],[data-jellyfin-libraries]');
   const stremioBlocks=form.querySelectorAll('[data-stremio-access]');
@@ -84,11 +87,13 @@
     setVisible(lifecycle,free);
     setVisible(replacementCooldown,stremio&&replacement?.value==='customer_cooldown');
 
-    // Jellyfin capacity is configured only on servers. Keep the legacy database
-    // field at zero for compatibility but do not ask the operator to manage a
-    // second, conflicting plan-level inventory number.
-    if(availability)availability.hidden=!stremio;
-    if(capacityLimit){capacityLimit.disabled=false;if(jellyfin)capacityLimit.value='0';}
+    // Media products own an allocation ceiling while servers retain the hard
+    // physical max-users ceiling. Stremio keeps its household-unit inventory.
+    setVisible(availability,true);
+    setVisible(mediaCapacity,jellyfin);
+    setVisible(stremioCapacity,stremio);
+    if(capacityLimit)capacityLimit.disabled=!stremio;
+    if(mediaUserLimit)mediaUserLimit.disabled=!jellyfin;
 
     syncAccessCopy();
     const label=free?'FREE JELLYFIN':paid?'PAID JELLYFIN':'STREMIO';
