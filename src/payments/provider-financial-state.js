@@ -3,12 +3,120 @@
 const { query } = require('../db');
 
 const PROVIDERS = Object.freeze(['stripe','paypal','plisio']);
+const MAX_QUERY_ROWS = 300000;
+
 function providerName(value) {
     const provider = String(value || '').trim().toLowerCase();
     if (!PROVIDERS.includes(provider)) throw new Error(`Unsupported financial provider: ${provider || 'unknown'}`);
     return provider;
 }
 function text(value) { const out=String(value==null?'':value).trim(); return out||null; }
+function boundedInt(value,{min=0,max=MAX_QUERY_ROWS,fallback=0}={}) {
+    const parsed=Number.parseInt(value,10);
+    if(!Number.isFinite(parsed))return fallback;
+    return Math.max(min,Math.min(max,parsed));
+}
+
+function transactionSelect() {
+    return `SELECT t.id,t.provider,t.provider_transaction_id,t.transaction_type,t.transaction_status,t.occurred_at,t.currency,
+                   t.gross_amount_minor,t.fee_amount_minor,t.net_amount_minor,t.provider_customer_id,t.provider_reference_id,
+                   t.provider_source_id,t.customer_id,t.metadata,
+                   COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) AS customer_email,
+                   c.display_name,u.username AS portal_username
+              FROM payment_history_transactions t
+              LEFT JOIN customers c ON c.id=t.customer_id
+              LEFT JOIN app_users u ON u.id=c.user_id`;
+}
+
+function transactionWhere(filters={},params=[]) {
+    const clauses=['1=1'];
+    const add=value=>{params.push(value);return `$${params.length}`;};
+    const provider=String(filters.provider||'').trim().toLowerCase();
+    if(provider&&provider!=='all')clauses.push(`t.provider=${add(providerName(provider))}`);
+    const currency=String(filters.currency||'').trim().toUpperCase();
+    if(currency)clauses.push(`UPPER(t.currency)=${add(currency)}`);
+    const status=String(filters.status||'').trim();
+    if(status)clauses.push(`LOWER(COALESCE(t.transaction_status,''))=LOWER(${add(status)})`);
+    if(filters.startDate)clauses.push(`t.occurred_at>=${add(filters.startDate)}::date`);
+    if(filters.endDate)clauses.push(`t.occurred_at<(${add(filters.endDate)}::date + INTERVAL '1 day')`);
+    if(filters.startAt)clauses.push(`t.occurred_at>=${add(filters.startAt)}`);
+    if(filters.endAt)clauses.push(`t.occurred_at<${add(filters.endAt)}`);
+    if(filters.customerId)clauses.push(`t.customer_id=${add(String(filters.customerId))}`);
+    if(filters.unowned===true)clauses.push('t.customer_id IS NULL');
+    const q=String(filters.q||'').trim();
+    if(q){
+        const p=add(`%${q}%`);
+        clauses.push(`(
+            COALESCE(c.email,'') ILIKE ${p} OR COALESCE(c.display_name,'') ILIKE ${p} OR COALESCE(u.username,'') ILIKE ${p}
+            OR COALESCE(t.provider_transaction_id,'') ILIKE ${p} OR COALESCE(t.provider_customer_id,'') ILIKE ${p}
+            OR COALESCE(t.provider_reference_id,'') ILIKE ${p} OR COALESCE(t.provider_source_id,'') ILIKE ${p}
+            OR COALESCE(t.transaction_type,'') ILIKE ${p}
+        )`);
+    }
+    return clauses.join(' AND ');
+}
+
+async function queryTransactions(filters={},options={}) {
+    const queryFn=options.queryFn||query;
+    const params=[];
+    const where=transactionWhere(filters,params);
+    const limit=boundedInt(options.limit,{min:1,max:MAX_QUERY_ROWS,fallback:100});
+    const offset=boundedInt(options.offset,{min:0,max:Number.MAX_SAFE_INTEGER,fallback:0});
+    const direction=String(options.order||'desc').toLowerCase()==='asc'?'ASC':'DESC';
+    params.push(limit,offset);
+    return queryFn(`${transactionSelect()} WHERE ${where} ORDER BY t.occurred_at ${direction},t.id ${direction} LIMIT $${params.length-1} OFFSET $${params.length}`,params);
+}
+
+async function countTransactions(filters={},options={}) {
+    const queryFn=options.queryFn||query;
+    const params=[];
+    const where=transactionWhere(filters,params);
+    const result=await queryFn(`SELECT COUNT(*)::bigint AS total FROM payment_history_transactions t LEFT JOIN customers c ON c.id=t.customer_id LEFT JOIN app_users u ON u.id=c.user_id WHERE ${where}`,params);
+    return Number(result.rows[0]?.total||0);
+}
+
+async function transactionCoverage(options={}) {
+    const queryFn=options.queryFn||query;
+    const result=await queryFn(`
+        SELECT provider,COUNT(*)::bigint AS transactions,MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
+               ARRAY_AGG(DISTINCT UPPER(currency) ORDER BY UPPER(currency)) AS currencies
+          FROM payment_history_transactions
+         GROUP BY provider
+         ORDER BY provider
+    `);
+    return result.rows;
+}
+
+async function exportTransactions(limit=MAX_QUERY_ROWS,options={}) {
+    const safe=boundedInt(limit,{min:1,max:MAX_QUERY_ROWS,fallback:MAX_QUERY_ROWS});
+    const result=await queryTransactions({}, { ...options,limit:safe,offset:0,order:'asc' });
+    return result.rows;
+}
+
+async function scanTransactionsInRange(range,visit,{queryFn=query,pageSize=5000,maxPages=1000,overflowMessage=null}={}) {
+    if(typeof visit!=='function')throw new Error('Provider transaction scan requires a visitor.');
+    const start=range?.previousStart||range?.start;
+    const end=range?.end;
+    if(!start||!end)throw new Error('Provider transaction scan requires start and end timestamps.');
+    const size=boundedInt(pageSize,{min:1,max:50000,fallback:5000});
+    const pages=boundedInt(maxPages,{min:1,max:10000,fallback:1000});
+    let cursor=null,scanned=0;
+    for(let page=0;page<pages;page+=1){
+        const result=await queryFn(`
+          SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
+                 gross_amount_minor,fee_amount_minor,net_amount_minor,customer_id,provider_customer_id,metadata
+            FROM payment_history_transactions
+           WHERE occurred_at >= $1 AND occurred_at < $2
+             AND ($3::timestamptz IS NULL OR (occurred_at,provider,provider_transaction_id) > ($3::timestamptz,$4::text,$5::text))
+           ORDER BY occurred_at ASC,provider ASC,provider_transaction_id ASC
+           LIMIT $6
+        `,[start,end,cursor?.occurred_at||null,cursor?.provider||null,cursor?.provider_transaction_id||null,size]);
+        for(const row of result.rows){await visit(row);scanned+=1;}
+        if(result.rows.length<size)return scanned;
+        cursor=result.rows[result.rows.length-1];
+    }
+    throw new Error(overflowMessage||`Provider transaction scan exceeded ${size*pages} rows.`);
+}
 
 async function recordTransaction(input) {
     const provider=providerName(input.provider);
@@ -56,17 +164,20 @@ async function backfillProviderCustomers() {
     const result=await query(`
       WITH ranked AS (
         SELECT DISTINCT ON (s.customer_id,s.source)
-               s.customer_id,s.source AS provider,s.provider_customer_id,s.created_at
+               s.customer_id,s.source AS provider,s.provider_customer_id,s.updated_at,s.created_at
         FROM subscriptions s
-        WHERE s.source IN ('stripe','paypal')
+        WHERE s.source IN ('stripe','paypal','plisio')
           AND NULLIF(BTRIM(COALESCE(s.provider_customer_id,'')),'') IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM payment_customers x
-            WHERE x.provider=s.source
-              AND x.provider_customer_id=s.provider_customer_id
-              AND x.customer_id<>s.customer_id
+          AND (
+            s.source<>'stripe'
+            OR NOT EXISTS (
+              SELECT 1 FROM payment_customers x
+              WHERE x.provider='stripe'
+                AND x.provider_customer_id=s.provider_customer_id
+                AND x.customer_id<>s.customer_id
+            )
           )
-        ORDER BY s.customer_id,s.source,s.created_at DESC
+        ORDER BY s.customer_id,s.source,s.updated_at DESC,s.created_at DESC
       )
       INSERT INTO payment_customers(customer_id,provider,provider_customer_id)
       SELECT customer_id,provider,provider_customer_id FROM ranked
@@ -114,22 +225,11 @@ async function backfillPlisioTransactions() {
 async function repairLinks({limit=5000}={}) {
     const safe=Math.max(1,Math.min(50000,Number(limit)||5000));
     const result=await query(`
-      WITH evidence AS (
-        SELECT t.id,pc.customer_id
+      WITH strong_evidence AS (
+        SELECT t.id,c.id AS customer_id
           FROM payment_history_transactions t
-          JOIN payment_customers pc ON pc.provider=t.provider AND pc.provider_customer_id=t.provider_customer_id
-         WHERE t.customer_id IS NULL AND t.provider_customer_id IS NOT NULL
-        UNION ALL
-        SELECT t.id,s.customer_id
-          FROM payment_history_transactions t
-          JOIN subscriptions s ON s.source=t.provider AND s.provider_customer_id=t.provider_customer_id
-         WHERE t.customer_id IS NULL AND t.provider_customer_id IS NOT NULL
-        UNION ALL
-        SELECT t.id,s.customer_id
-          FROM payment_history_transactions t
-          JOIN subscriptions s ON s.source=t.provider
-           AND s.provider_subscription_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
-         WHERE t.customer_id IS NULL AND s.provider_subscription_id IS NOT NULL
+          JOIN customers c ON c.id::text=COALESCE(t.metadata->>'customerId',t.metadata->>'internal_customer_id')
+         WHERE t.customer_id IS NULL
         UNION ALL
         SELECT t.id,i.customer_id
           FROM payment_history_transactions t
@@ -140,17 +240,38 @@ async function repairLinks({limit=5000}={}) {
            )
          WHERE t.customer_id IS NULL
         UNION ALL
-        SELECT t.id,c.id
+        SELECT t.id,s.customer_id
           FROM payment_history_transactions t
-          JOIN customers c ON c.id::text=COALESCE(t.metadata->>'customerId',t.metadata->>'internal_customer_id')
-         WHERE t.customer_id IS NULL
+          JOIN subscriptions s ON s.source=t.provider
+           AND s.provider_subscription_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
+         WHERE t.customer_id IS NULL AND s.provider_subscription_id IS NOT NULL
+      ),
+      strong_summary AS (
+        SELECT id,MIN(customer_id::text)::uuid customer_id,COUNT(DISTINCT customer_id) candidate_count
+          FROM strong_evidence GROUP BY id
+      ),
+      weak_evidence AS (
+        SELECT t.id,pc.customer_id
+          FROM payment_history_transactions t
+          JOIN payment_customers pc ON pc.provider=t.provider AND pc.provider_customer_id=t.provider_customer_id
+         WHERE t.customer_id IS NULL AND t.provider_customer_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM strong_summary ss WHERE ss.id=t.id)
+        UNION ALL
+        SELECT t.id,s.customer_id
+          FROM payment_history_transactions t
+          JOIN subscriptions s ON s.source=t.provider AND s.provider_customer_id=t.provider_customer_id
+         WHERE t.customer_id IS NULL AND t.provider_customer_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM strong_summary ss WHERE ss.id=t.id)
+      ),
+      weak_summary AS (
+        SELECT id,MIN(customer_id::text)::uuid customer_id,COUNT(DISTINCT customer_id) candidate_count
+          FROM weak_evidence GROUP BY id
       ),
       resolved AS (
-        SELECT id,MIN(customer_id::text)::uuid customer_id
-          FROM evidence
-         GROUP BY id
-        HAVING COUNT(DISTINCT customer_id)=1
-         LIMIT $1
+        SELECT id,customer_id FROM strong_summary WHERE candidate_count=1
+        UNION ALL
+        SELECT id,customer_id FROM weak_summary WHERE candidate_count=1
+        LIMIT $1
       )
       UPDATE payment_history_transactions t
          SET customer_id=r.customer_id,
@@ -170,39 +291,93 @@ async function reconcileLocalEvidence(options={}) {
     return{providerCustomers,plisio,linked,processed:providerCustomers+plisio+linked,failed:0};
 }
 
-async function customerSnapshot(customerId) {
-    const [identities,transactions,incidents,unlinked]=await Promise.all([
-      query(`
-        SELECT provider,provider_customer_id,MIN(source_rank) source_rank
-        FROM (
-          SELECT provider,provider_customer_id,0 source_rank FROM payment_customers WHERE customer_id=$1
-          UNION ALL
-          SELECT source AS provider,provider_customer_id,1 source_rank FROM subscriptions
-           WHERE customer_id=$1 AND source IN ('stripe','paypal','plisio') AND provider_customer_id IS NOT NULL
-        ) x
-        WHERE provider_customer_id IS NOT NULL
-        GROUP BY provider,provider_customer_id
-        ORDER BY provider,source_rank,provider_customer_id
-      `,[customerId]),
-      query(`SELECT provider,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,net_amount_minor,provider_transaction_id,provider_reference_id,provider_source_id,provider_customer_id,metadata FROM payment_history_transactions WHERE customer_id=$1 ORDER BY occurred_at DESC LIMIT 100`,[customerId]),
-      query(`SELECT provider,provider_case_id,incident_type,incident_status,created_at,resolved_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]),
-      query(`
-        SELECT COUNT(DISTINCT t.id)::int AS count
-        FROM payment_history_transactions t
-        WHERE t.customer_id IS NULL AND (
-          EXISTS(SELECT 1 FROM payment_customers pc WHERE pc.customer_id=$1 AND pc.provider=t.provider AND pc.provider_customer_id=t.provider_customer_id)
-          OR EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=$1 AND s.source=t.provider AND (
-              s.provider_customer_id=t.provider_customer_id OR
-              s.provider_subscription_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
-          ))
-          OR EXISTS(SELECT 1 FROM billing_checkout_intents i WHERE i.customer_id=$1 AND i.provider=t.provider AND (
-              i.provider_checkout_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
-              OR i.id::text=COALESCE(t.metadata->>'checkoutIntentId',t.metadata->>'internal_checkout_intent_id')
-          ))
-        )
-      `,[customerId])
-    ]);
-    return{identities:identities.rows,transactions:transactions.rows,incidents:incidents.rows,unlinkedCount:Number(unlinked.rows[0]?.count||0)};
+async function providerIdentities(customerId) {
+    const result=await query(`
+      SELECT provider,provider_customer_id,MIN(source_rank) source_rank
+      FROM (
+        SELECT provider,provider_customer_id,0 source_rank FROM payment_customers WHERE customer_id=$1
+        UNION ALL
+        SELECT source AS provider,provider_customer_id,1 source_rank FROM subscriptions
+         WHERE customer_id=$1 AND source IN ('stripe','paypal','plisio') AND provider_customer_id IS NOT NULL
+      ) x
+      WHERE provider_customer_id IS NOT NULL
+      GROUP BY provider,provider_customer_id
+      ORDER BY provider,source_rank,provider_customer_id
+    `,[customerId]);
+    return result.rows;
 }
 
-module.exports={PROVIDERS,providerName,recordTransaction,backfillProviderCustomers,backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,customerSnapshot};
+async function customerIncidents(customerId) {
+    const result=await query(`SELECT provider,provider_case_id,incident_type,incident_status,created_at,resolved_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]);
+    return result.rows;
+}
+
+async function unlinkedCountForCustomer(customerId) {
+    const result=await query(`
+      WITH strong_for_customer AS (
+        SELECT t.id
+          FROM payment_history_transactions t
+          JOIN customers c ON c.id=$1
+         WHERE t.customer_id IS NULL
+           AND c.id::text=COALESCE(t.metadata->>'customerId',t.metadata->>'internal_customer_id')
+        UNION
+        SELECT t.id
+          FROM payment_history_transactions t
+          JOIN billing_checkout_intents i ON i.customer_id=$1 AND i.provider=t.provider
+           AND (
+             i.provider_checkout_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
+             OR i.id::text=COALESCE(t.metadata->>'checkoutIntentId',t.metadata->>'internal_checkout_intent_id')
+           )
+         WHERE t.customer_id IS NULL
+        UNION
+        SELECT t.id
+          FROM payment_history_transactions t
+          JOIN subscriptions s ON s.customer_id=$1 AND s.source=t.provider
+           AND s.provider_subscription_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
+         WHERE t.customer_id IS NULL AND s.provider_subscription_id IS NOT NULL
+      ),
+      unique_weak AS (
+        SELECT t.id,MIN(e.customer_id::text)::uuid customer_id
+          FROM payment_history_transactions t
+          JOIN (
+            SELECT provider,provider_customer_id,customer_id FROM payment_customers
+            UNION ALL
+            SELECT source,provider_customer_id,customer_id FROM subscriptions
+             WHERE source IN ('stripe','paypal','plisio') AND provider_customer_id IS NOT NULL
+          ) e ON e.provider=t.provider AND e.provider_customer_id=t.provider_customer_id
+         WHERE t.customer_id IS NULL
+           AND t.provider_customer_id IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM payment_history_transactions tx
+             JOIN customers c2 ON c2.id::text=COALESCE(tx.metadata->>'customerId',tx.metadata->>'internal_customer_id')
+             WHERE tx.id=t.id
+           )
+         GROUP BY t.id
+        HAVING COUNT(DISTINCT e.customer_id)=1
+      )
+      SELECT COUNT(DISTINCT id)::int AS count
+      FROM (
+        SELECT id FROM strong_for_customer
+        UNION ALL
+        SELECT id FROM unique_weak WHERE customer_id=$1
+      ) matches
+    `,[customerId]);
+    return Number(result.rows[0]?.count||0);
+}
+
+async function customerSnapshot(customerId) {
+    const [identities,transactions,incidents,unlinkedCount]=await Promise.all([
+      providerIdentities(customerId),
+      queryTransactions({customerId},{limit:100,order:'desc'}).then(result=>result.rows),
+      customerIncidents(customerId),
+      unlinkedCountForCustomer(customerId)
+    ]);
+    return{identities,transactions,incidents,unlinkedCount};
+}
+
+module.exports={
+    PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,
+    transactionCoverage,exportTransactions,scanTransactionsInRange,recordTransaction,backfillProviderCustomers,
+    backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
+    unlinkedCountForCustomer,customerSnapshot
+};
