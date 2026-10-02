@@ -79,7 +79,7 @@ function coverageFromRuns(runs) {
         const start = dateStart(run.range_start);
         const endInclusive = dateStart(run.range_end);
         if (!start || !endInclusive) continue;
-        let end = new Date(endInclusive.getTime() + 86400000);
+        let end = calendarDate.addDaysUtc(endInclusive,1);
         const completedAt = run.completed_at ? new Date(run.completed_at) : null;
         if (completedAt && !Number.isNaN(completedAt.getTime()) && completedAt >= start && completedAt < end) end = completedAt;
         if (end <= start) continue;
