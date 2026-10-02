@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const customerAccessState = require('../access/customer-access-state');
+const subscriptionState = require('../entitlements/subscription-state');
 const referrals = require('../referrals');
 
 function subscriptionId(row) {
@@ -9,12 +10,13 @@ function subscriptionId(row) {
   return value ? String(value) : null;
 }
 
-function subscriptionsFromAccessSnapshot(snapshot = {}) {
+function subscriptionsFromAccessSnapshot(snapshot = {}, addons = []) {
   const rows = [
     snapshot?.free?.entitlement,
     snapshot?.primary?.entitlement,
     snapshot?.stremio?.entitlement,
-    snapshot?.emby?.entitlement
+    snapshot?.emby?.entitlement,
+    ...(Array.isArray(addons) ? addons : [])
   ].filter(Boolean);
   const byId = new Map();
   for (const row of rows) {
@@ -57,14 +59,19 @@ async function current(customerId, {
 
   const accounts = accountResult.rows;
   const jellyfinAccounts = accounts.filter(row => String(row.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin');
-  const accessSnapshot = await customerAccessState.snapshot(customerId, {
-    includeBlocked,
-    accounts: jellyfinAccounts
-  });
+  const [accessSnapshot, addons] = await Promise.all([
+    customerAccessState.snapshot(customerId, {
+      includeBlocked,
+      accounts: jellyfinAccounts
+    }),
+    subscriptionState.effectiveAddons(customerId, {
+      includeBlocked: includeBlocked?.addons ?? true
+    })
+  ]);
 
   return {
     customer: customerResult.rows[0],
-    subscriptions: subscriptionsFromAccessSnapshot(accessSnapshot),
+    subscriptions: subscriptionsFromAccessSnapshot(accessSnapshot, addons),
     accounts,
     providers: providerResult.rows,
     accessSnapshot,
