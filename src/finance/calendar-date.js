@@ -6,6 +6,7 @@
 // explicit UTC boundaries only when interval arithmetic is required.
 
 const DATE_TEXT=/^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS=86400000;
 
 function text(value){
   if(value instanceof Date){
@@ -27,7 +28,19 @@ function startUtc(value){
 function addDaysUtc(value,days){
   const start=startUtc(value);
   if(!start)return null;
-  return new Date(start.getTime()+Number(days||0)*86400000);
+  return new Date(start.getTime()+Number(days||0)*DAY_MS);
 }
 
-module.exports={text,startUtc,addDaysUtc};
+function addElapsedDays(value,days){
+  const start=value instanceof Date?value:new Date(value);
+  if(Number.isNaN(start.getTime()))return null;
+  return new Date(start.getTime()+Number(days||0)*DAY_MS);
+}
+
+function diffDaysCeil(start,end){
+  const from=start instanceof Date?start:new Date(start),to=end instanceof Date?end:new Date(end);
+  if(Number.isNaN(from.getTime())||Number.isNaN(to.getTime()))return 0;
+  return Math.ceil((to.getTime()-from.getTime())/DAY_MS);
+}
+
+module.exports={DAY_MS,text,startUtc,addDaysUtc,addElapsedDays,diffDaysCeil};
