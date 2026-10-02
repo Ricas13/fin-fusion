@@ -55,7 +55,7 @@ const JOB_METADATA=Object.freeze({
  customer_service_recovery:{defaultIntervalSeconds:60,critical:true},
  revenue_integrity:{defaultIntervalSeconds:60,critical:true},
  provider_financial_reconciliation:{defaultIntervalSeconds:300,critical:false},
- paypal_history_reconciliation:{defaultIntervalSeconds:86400,critical:false},
+ paypal_history_reconciliation:{defaultIntervalSeconds:300,critical:false},
  notification_lifecycle:{defaultIntervalSeconds:300,critical:true},
  admin_activity_notifications:{defaultIntervalSeconds:300,critical:false},
  free_places_digest:{defaultIntervalSeconds:30,critical:false},
