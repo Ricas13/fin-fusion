@@ -69,6 +69,7 @@ async function main() {
   const customerSecurityCommands = fs.readFileSync(path.join(root, 'src/security/customer-security-commands.js'), 'utf8');
   const customerPasswordPolicy = fs.readFileSync(path.join(root, 'src/security/customer-password-policy.js'), 'utf8');
   const portalCredentials = fs.readFileSync(path.join(root, 'src/platform/portal-credential-confirmation.js'), 'utf8');
+  const portalCredentialCommands = fs.readFileSync(path.join(root, 'src/security/portal-credential-commands.js'), 'utf8');
   const adminPortalRecovery = fs.readFileSync(path.join(root, 'src/platform/admin-portal-credential-recovery.js'), 'utf8');
   const adminPrimaryActions = fs.readFileSync(path.join(root, 'src/platform/admin-customer-primary-actions.js'), 'utf8');
   const routeRateLimit = fs.readFileSync(path.join(root, 'src/security/route-rate-limit.js'), 'utf8');
@@ -132,21 +133,19 @@ async function main() {
   assert(passwordRequest.includes('current.email_verified_at')&&passwordRequest.includes('emailChange.assertPassword'),'portal password changes must require the current verified email and current password');
   assert(passwordRequest.includes('customers.validateNewPassword(req.body.newPassword)'),'portal password changes must retain breach/password-policy screening');
   assert(passwordRequest.includes('passwordHash=await bcrypt.hash(req.body.newPassword,12)'),'pending portal passwords must be bcrypt hashes before persistence');
-  assert(passwordRequest.includes('basePasswordDigest:passwordDigest(locked.password_hash)')&&passwordRequest.includes('approvalEmail'),'password confirmation must be bound to the credential/email state that requested it');
+  assert(passwordRequest.includes('credentialCommands.stagePasswordChange({'),'portal password staging must delegate atomic persistence to the security domain');
+  assert(portalCredentialCommands.includes('basePasswordDigest:passwordDigest(locked.password_hash)')&&portalCredentialCommands.includes('approvalEmail'),'password confirmation must be bound to the credential/email state that requested it');
 
-  const passwordComplete=portalCredentials.match(/async function completePasswordChange\(raw\)[\s\S]*?\n\}/)?.[0]||'';
-  assert(passwordComplete.includes('tokenForUpdate(client,raw,PASSWORD_TOKEN)'),'portal password approval must lock a live single-use token inside the mutation transaction');
-  assert(passwordComplete.includes("String(user.email||'').toLowerCase()!==approvalEmail")&&passwordComplete.includes('passwordDigest(user.password_hash)'),'portal password approval must reject stale verified-email/password state');
-  assert(passwordComplete.includes('revokeAllSessions(client,token.user_id)')&&passwordComplete.includes('UPDATE account_tokens SET consumed_at=NOW()'),'portal password completion must revoke sessions and atomically consume its approval token');
+  assert(portalCredentialCommands.includes('tokenForUpdate(client,raw,PASSWORD_TOKEN)'),'portal password approval must lock a live single-use token inside the mutation transaction');
+  assert(portalCredentialCommands.includes("String(user.email||'').toLowerCase()!==approvalEmail")&&portalCredentialCommands.includes('passwordDigest(user.password_hash)'),'portal password approval must reject stale verified-email/password state');
+  assert(portalCredentialCommands.includes('revokeAllSessions(client,token.user_id)')&&portalCredentialCommands.includes('UPDATE account_tokens SET consumed_at=NOW()'),'portal password completion must revoke sessions and atomically consume its approval token');
 
   const emailRequest=portalCredentials.match(/async function requestEmailChange\(req,current,nextEmail,displayName\)[\s\S]*?\n\}/)?.[0]||'';
-  assert(emailRequest.includes('current.email_verified_at')&&emailRequest.includes('EMAIL_OLD_TOKEN'),'portal email changes must begin with approval from the current verified address');
-  assert(!emailRequest.includes('EMAIL_NEW_TOKEN,tokenHash(raw)'), 'new-email verification must not be created during the initial old-email request');
-  const oldApproval=portalCredentials.match(/async function approveOldEmail\(raw\)[\s\S]*?\n\}/)?.[0]||'';
-  assert(oldApproval.includes('tokenForUpdate(client,raw,EMAIL_OLD_TOKEN)')&&oldApproval.includes('EMAIL_NEW_TOKEN'),'only a valid old-email approval may create the new-email verification stage');
-  const emailComplete=portalCredentials.match(/async function completeNewEmail\(raw\)[\s\S]*?\n\}/)?.[0]||'';
-  assert(emailComplete.includes('pending_email')&&emailComplete.includes('email_verified_at=NOW()')&&emailComplete.includes('revokeAllSessions(client,token.user_id)'),'new-email completion must verify the staged address and revoke every portal session');
-  assert(emailComplete.includes("invalidate(client,token.user_id,[PASSWORD_TOKEN,EMAIL_OLD_TOKEN,'email_change'])"),'email completion must invalidate stale password and email approval links');
+  assert(emailRequest.includes('current.email_verified_at')&&emailRequest.includes('credentialCommands.stageEmailChange({'),'portal email changes must begin with approval from the current verified address and delegate state persistence');
+  assert(!portalCredentialCommands.match(/stageEmailChange[\s\S]*?EMAIL_NEW_TOKEN,tokenHash\(raw\)/), 'new-email verification must not be created during the initial old-email request');
+  assert(portalCredentialCommands.includes('tokenForUpdate(client,raw,EMAIL_OLD_TOKEN)')&&portalCredentialCommands.includes('EMAIL_NEW_TOKEN'),'only a valid old-email approval may create the new-email verification stage');
+  assert(portalCredentialCommands.includes('pending_email')&&portalCredentialCommands.includes('email_verified_at=NOW()')&&portalCredentialCommands.includes('revokeAllSessions(client,token.user_id)'),'new-email completion must verify the staged address and revoke every portal session');
+  assert(portalCredentialCommands.includes("invalidate(client,token.user_id,[PASSWORD_TOKEN,EMAIL_OLD_TOKEN,'email_change'])"),'email completion must invalidate stale password and email approval links');
 
   assert(adminPortalRecovery.includes("confirmation||'').trim()!=='RECOVER PORTAL'"),'admin portal recovery must require an explicit typed break-glass confirmation');
   assert(adminPortalRecovery.includes("req.body.verifiedCustomer!=='1'"),'admin portal recovery must require an explicit identity-verification acknowledgement');

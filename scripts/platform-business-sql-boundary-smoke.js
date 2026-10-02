@@ -24,13 +24,6 @@ const domainOwnedTables = Object.freeze([
 ]);
 
 const documentedLegacyExceptions = new Set([
-  'src/platform/admin-actions.js::subscriptions',
-  'src/platform/admin-actions.js::customers',
-  'src/platform/admin-actions.js::app_users',
-  'src/platform/admin-customer-management.js::customers',
-  'src/platform/admin-customer-management.js::app_users',
-  'src/platform/portal-credential-confirmation.js::customers',
-  'src/platform/portal-credential-confirmation.js::app_users',
 ]);
 
 
@@ -185,5 +178,68 @@ assert(adminLinkedProfile.includes('UPDATE customers')
     && adminLinkedProfile.includes('INSERT INTO customers')
     && adminLinkedProfile.includes('manualSubscriptions.createManualSubscriptionTx'),
   'customer profile owner must own linked customer persistence and delegate subscription creation to entitlements');
+
+
+
+const adminActionsRoute=fs.readFileSync(path.join(root,'src/platform/admin-actions.js'),'utf8');
+const adminCustomerCreation=fs.readFileSync(path.join(root,'src/customers/admin-customer-creation.js'),'utf8');
+const customerAccountProvisioning=fs.readFileSync(path.join(root,'src/security/customer-account-provisioning.js'),'utf8');
+assert(adminActionsRoute.includes("require('../customers/admin-customer-creation')")
+    && adminActionsRoute.includes('adminCustomerCreation.create({')
+    && adminActionsRoute.includes('adminCustomerCreation.setActivationDeadline(')
+    && !adminActionsRoute.includes('INSERT INTO app_users')
+    && !adminActionsRoute.includes('INSERT INTO customers')
+    && !adminActionsRoute.includes('INSERT INTO subscriptions')
+    && !adminActionsRoute.includes('UPDATE customers SET activation_deadline'),
+  'admin customer creation route must delegate business persistence to domain owners');
+assert(customerAccountProvisioning.includes('INSERT INTO app_users')
+    && customerAccountProvisioning.includes("role,active,email_verified_at"),
+  'security domain must own pending customer login creation');
+assert(adminCustomerCreation.includes('INSERT INTO customers')
+    && adminCustomerCreation.includes('manualSubscriptions.createManualSubscriptionTx')
+    && adminCustomerCreation.includes('UPDATE customers SET activation_deadline'),
+  'customer domain must own customer record/activation state and delegate entitlement creation');
+
+const adminCustomerManagementRoute=fs.readFileSync(path.join(root,'src/platform/admin-customer-management.js'),'utf8');
+const adminCustomerManagementOwner=fs.readFileSync(path.join(root,'src/customers/admin-customer-management-commands.js'),'utf8');
+assert(adminCustomerManagementRoute.includes("require('../customers/admin-customer-management-commands')")
+    && !adminCustomerManagementRoute.includes('INSERT INTO app_users')
+    && !adminCustomerManagementRoute.includes('UPDATE app_users')
+    && !adminCustomerManagementRoute.includes('UPDATE customers'),
+  'admin customer management route must delegate customer/login mutations');
+for(const required of [
+  'async function enrolPortal',
+  'async function updateAccount',
+  'async function setEmailVerified',
+  'async function setActivationDeadline',
+  'async function setPortalStatus',
+  'INSERT INTO app_users',
+  'UPDATE app_users',
+  'UPDATE customers'
+]){
+  assert(adminCustomerManagementOwner.includes(required),
+    `customer management command owner must retain ${required}`);
+}
+
+const portalCredentialRoute=fs.readFileSync(path.join(root,'src/platform/portal-credential-confirmation.js'),'utf8');
+const portalCredentialOwner=fs.readFileSync(path.join(root,'src/security/portal-credential-commands.js'),'utf8');
+assert(portalCredentialRoute.includes("require('../security/portal-credential-commands')")
+    && !portalCredentialRoute.includes('UPDATE app_users')
+    && !portalCredentialRoute.includes('UPDATE customers'),
+  'portal credential route must delegate customer/login persistence to security commands');
+for(const required of [
+  'async function stagePasswordChange',
+  'async function completePasswordChange',
+  'async function stageEmailChange',
+  'async function approveOldEmail',
+  'async function completeNewEmail',
+  'UPDATE app_users',
+  'UPDATE customers',
+  'UPDATE account_tokens',
+  'UPDATE auth_sessions'
+]){
+  assert(portalCredentialOwner.includes(required),
+    `portal credential security owner must retain ${required}`);
+}
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
