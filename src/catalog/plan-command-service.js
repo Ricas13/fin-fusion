@@ -111,7 +111,7 @@ async function updateProduct({
 }
 
 async function updateAvailability({ planId, capacityLimit, actorUserId = null }) {
-  planContract.validateAvailability({ capacityLimit });
+  if (capacityLimit !== null) planContract.validateAvailability({ capacityLimit });
   return transaction(async client => {
     const updated = await client.query(
       'UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1 RETURNING *',

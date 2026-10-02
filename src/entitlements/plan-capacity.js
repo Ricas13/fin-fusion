@@ -224,12 +224,40 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
   if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
   if(model!=='fleet_users')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
-  const fleet=await fleetUsers(plan,db,{excludeReservationId,excludeCheckoutIntentId});
+
+  // Jellyfin has two independent capacity boundaries:
+  //   1. physical capacity across the plan's eligible server pool (max_users);
+  //   2. the commercial allocation owned by this exact plan (capacity_limit).
+  // A NULL plan limit means "no additional plan cap"; it never bypasses the
+  // physical fleet ceiling. Zero closes new acquisition without touching
+  // existing subscriptions or accounts.
+  const [fleet,planUsage]=await Promise.all([
+    fleetUsers(plan,db,{excludeReservationId,excludeCheckoutIntentId}),
+    legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId})
+  ]);
   if(!fleet){
-    const state={planId:plan.id,plan,model:'fleet_users',pool:serverClass(plan)||'jellyfin',configuredServers:0,userLimit:0,userUsed:0,managedUsers:0,pendingUsers:0,reservedUsers:0,userRemaining:0,healthMode:null,limit:0,used:0,reserved:0,remaining:0,soldOut:true,manualLimit:null,manualUsed:0,manualReserved:0,fallbackReason:'No Jellyfin server user capacity is configured for this plan.'};
+    const state={
+      planId:plan.id,plan,model:'fleet_users',pool:serverClass(plan)||'jellyfin',
+      configuredServers:0,userLimit:0,userUsed:0,managedUsers:0,pendingUsers:0,reservedUsers:0,userRemaining:0,healthMode:null,
+      physicalLimit:0,physicalUsed:0,physicalRemaining:0,
+      planLimit:planUsage.limit,planUsed:planUsage.used,planReserved:planUsage.reserved,planRemaining:planUsage.remaining,
+      limit:planUsage.limit,used:planUsage.used,reserved:planUsage.reserved,remaining:0,soldOut:true,
+      manualLimit:planUsage.limit,manualUsed:planUsage.used,manualReserved:planUsage.reserved,
+      fallbackReason:'No Jellyfin server user capacity is configured for this plan.'
+    };
     return{...state,...scarcity(state)};
   }
-  const state={planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,configuredServers:fleet.configuredServers,userLimit:fleet.userLimit,userUsed:fleet.userUsed,managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,healthMode:fleet.healthMode,limit:fleet.userLimit,used:fleet.userUsed,reserved:fleet.reservedUsers,remaining:fleet.userRemaining,soldOut:fleet.userRemaining===0,manualLimit:null,manualUsed:0,manualReserved:0};
+  const planRemaining=planUsage.remaining;
+  const remaining=planRemaining==null?fleet.userRemaining:Math.min(fleet.userRemaining,planRemaining);
+  const state={
+    planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,
+    configuredServers:fleet.configuredServers,userLimit:fleet.userLimit,userUsed:fleet.userUsed,
+    managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,healthMode:fleet.healthMode,
+    physicalLimit:fleet.userLimit,physicalUsed:fleet.userUsed,physicalRemaining:fleet.userRemaining,
+    planLimit:planUsage.limit,planUsed:planUsage.used,planReserved:planUsage.reserved,planRemaining,
+    limit:planUsage.limit,used:planUsage.used,reserved:planUsage.reserved,remaining,
+    soldOut:remaining===0,manualLimit:planUsage.limit,manualUsed:planUsage.used,manualReserved:planUsage.reserved
+  };
   return{...state,...scarcity(state)};
 }
 
@@ -391,7 +419,7 @@ function fleetAvailableSql(alias='p'){
 }
 function acquisitionSql(alias='p'){
   const fleetPlan=`(${alias}.service_type IN('jellyfin','bundle'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
-  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}))`;
+  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${manualAvailable}))`;
 }
 
 module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
