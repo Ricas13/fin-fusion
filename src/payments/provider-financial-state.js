@@ -73,13 +73,6 @@ async function queryTransactions(filters={},options={}) {
     return queryFn(`${transactionSelect()} WHERE ${where} ORDER BY t.occurred_at ${direction},t.id ${direction} LIMIT $${params.length-1} OFFSET $${params.length}`,params);
 }
 
-async function transactionsForCustomers(customerIds,options={}) {
-    const queryFn=options.queryFn||query;
-    const ids=[...new Set((customerIds||[]).map(value=>String(value||'').trim()).filter(Boolean))];
-    if(!ids.length)return[];
-    const result=await queryFn(`${transactionSelect()} WHERE t.customer_id=ANY($1::uuid[]) ORDER BY t.occurred_at DESC,t.id DESC`,[ids]);
-    return result.rows;
-}
 async function countTransactions(filters={},options={}) {
     const queryFn=options.queryFn||query;
     const params=[];
@@ -241,15 +234,6 @@ async function transactionsForCustomers(customerIds,{limit=MAX_QUERY_ROWS,order=
     return result.rows;
 }
 
-async function providerIdentityCounts() {
-    const result=await query(`
-      SELECT provider,COUNT(*)::int count
-      FROM payment_customers
-      GROUP BY provider
-      ORDER BY provider
-    `);
-    return result.rows;
-}
 
 function latestProviderIdentityJoinSql(customerExpression='c.id',alias='pay') {
     const customer=String(customerExpression||'').trim();
@@ -257,10 +241,19 @@ function latestProviderIdentityJoinSql(customerExpression='c.id',alias='pay') {
     if(!/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(customer))throw new Error('Invalid customer SQL expression.');
     if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(joinAlias))throw new Error('Invalid provider identity SQL alias.');
     return `LEFT JOIN LATERAL (
-        SELECT provider
-        FROM payment_customers pc
-        WHERE pc.customer_id=${customer}
-        ORDER BY pc.updated_at DESC
+        SELECT identity.provider
+        FROM (
+            SELECT pc.provider,pc.updated_at,0 source_rank
+            FROM payment_customers pc
+            WHERE pc.customer_id=${customer}
+            UNION ALL
+            SELECT s.source AS provider,s.updated_at,1 source_rank
+            FROM subscriptions s
+            WHERE s.customer_id=${customer}
+              AND s.source IN ('stripe','paypal','plisio')
+              AND s.provider_customer_id IS NOT NULL
+        ) identity
+        ORDER BY identity.source_rank,identity.updated_at DESC NULLS LAST,identity.provider
         LIMIT 1
     ) ${joinAlias} ON TRUE`;
 }
@@ -321,29 +314,6 @@ async function providerIdentityCounts(providers=PROVIDERS) {
       .map(([provider,customers])=>({provider,count:customers.size}));
 }
 
-function providerIdentityJoinSql(customerExpression='c.id',alias='pay') {
-    const customerRef=String(customerExpression||'').trim();
-    const joinAlias=String(alias||'').trim();
-    if(!/^[A-Za-z_][A-Za-z0-9_]*\.id$/.test(customerRef)||!/^[A-Za-z_][A-Za-z0-9_]*$/.test(joinAlias)){
-        throw new Error('Invalid provider identity join reference.');
-    }
-    return `LEFT JOIN LATERAL (
-        SELECT identity.provider
-        FROM (
-            SELECT pc.provider,pc.updated_at,0 source_rank
-            FROM payment_customers pc
-            WHERE pc.customer_id=${customerRef}
-            UNION ALL
-            SELECT s.source AS provider,s.updated_at,1 source_rank
-            FROM subscriptions s
-            WHERE s.customer_id=${customerRef}
-              AND s.source IN ('stripe','paypal','plisio')
-              AND s.provider_customer_id IS NOT NULL
-        ) identity
-        ORDER BY identity.source_rank,identity.updated_at DESC NULLS LAST,identity.provider
-        LIMIT 1
-    ) ${joinAlias} ON TRUE`;
-}
 async function providerIdentityOwners(provider,providerCustomerId) {
     const id=text(providerCustomerId);
     if(!id)return[];
@@ -683,7 +653,7 @@ async function customerSnapshot(customerId) {
 }
 
 module.exports={
-    PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,transactionsForCustomers,countTransactions,resolveCustomerId,
+    PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
     transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
