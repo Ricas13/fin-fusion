@@ -38,11 +38,25 @@ function probeSucceededSince(row, since) {
     return String(row.last_outcome || '') === 'success' && successMs >= sinceMs;
 }
 
+function probeSatisfiedSince(jobKey, row, since) {
+    if (jobKey !== 'revenue_integrity') return probeSucceededSince(row, since);
+    const sinceMs = timestamp(since);
+    const completedMs = timestamp(row?.last_completed_at);
+    if (!row || sinceMs == null || completedMs == null) return false;
+    const outcome = String(row.last_outcome || '');
+    return ['success','degraded'].includes(outcome) && completedMs >= sinceMs;
+}
+
+function deploymentJobBlocks(jobKey, state) {
+    if (jobKey === 'revenue_integrity' && state === 'degraded') return false;
+    return ['failed','degraded','stale','missing'].includes(state);
+}
+
 function probeSnapshot(jobKey, row, requiredSince) {
     return {
         jobKey,
         state: row ? jobHealth.healthState(row) : 'missing',
-        proven: probeSucceededSince(row, requiredSince),
+        proven: probeSatisfiedSince(jobKey, row, requiredSince),
         requiredSince,
         lastStartedAt: row?.last_started_at || null,
         completedAt: row?.last_completed_at || null,
@@ -90,7 +104,7 @@ async function proveAutomationRecoveryPass({
 
     for (const jobKey of DEPLOYMENT_PROBE_JOBS) {
         const row = initialByKey.get(jobKey);
-        if (probeSucceededSince(row, releaseMarker)) {
+        if (probeSatisfiedSince(jobKey, row, releaseMarker)) {
             requiredSince.set(jobKey, releaseMarker);
             continue;
         }
@@ -219,11 +233,12 @@ async function main() {
             // worker heartbeat while customers remain stranded. Deliberately disabled
             // operator-controlled jobs are validated separately below.
             const badStates = new Set(['failed', 'degraded', 'stale', 'missing']);
-            const bad = jobs.filter(job =>
-                critical.has(job.job_key)
-                && job.enabled !== false
-                && badStates.has(deploymentCriticalState(job, automationWorker?.started_at))
-            );
+            const bad = jobs.filter(job => {
+                const state = deploymentCriticalState(job, automationWorker?.started_at);
+                return critical.has(job.job_key)
+                    && job.enabled !== false
+                    && deploymentJobBlocks(job.job_key, state);
+            });
 
             const inactivityJob = jobsByKey.get('customer_inactivity');
             const inactivityState = inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing';
@@ -259,6 +274,12 @@ async function main() {
                     ? `unexpectedly disabled=${disabledCritical.join(',')}`
                     : 'all required-enabled jobs enabled; operator-controlled disablements allowed');
             add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${deploymentCriticalState(job, automationWorker?.started_at)}`).join(', '));
+            const revenueJob = jobsByKey.get('revenue_integrity');
+            const revenueState = revenueJob ? deploymentCriticalState(revenueJob, automationWorker?.started_at) : 'missing';
+            add('revenue integrity execution', Boolean(revenueJob) && !['failed','stale','missing'].includes(revenueState),
+                revenueJob
+                    ? `state=${revenueState}${revenueJob.last_warning ? ` operator_attention=${revenueJob.last_warning}` : ''}`
+                    : 'job row missing');
 
             const lifecycleTable = (await query(`SELECT to_regclass('public.jellyfin_account_lifecycle') AS table_name`)).rows[0]?.table_name;
             add('Free Server lifecycle ledger', Boolean(lifecycleTable), lifecycleTable || 'table missing');
@@ -299,6 +320,8 @@ module.exports = {
     sleep,
     timestamp,
     probeSucceededSince,
+    probeSatisfiedSince,
+    deploymentJobBlocks,
     probeSnapshot,
     formatProbeSnapshot,
     deploymentCriticalState,
