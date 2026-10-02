@@ -285,7 +285,7 @@ async function data(customerId,rawRange,rawScope='all'){
     query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 AND ($2::timestamptz IS NULL OR created_at>=$2::timestamptz)${eventScopeClause} ORDER BY created_at DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
-    customers.getCustomerPortal(customerId),
+    customers.getCurrentCustomerPortal(customerId),
     insightData(customerId,rawRange,scope.key).catch(error=>{
       console.warn('Customer activity personalised analytics unavailable; rendering core activity page:',{error:error.message});
       return fallbackInsights(rawRange,{reason:'unexpected_analytics_failure',scope:scope.key});

@@ -127,21 +127,33 @@ async function stremio(customerId, options = {}) {
     return serviceEntitlement(customerId, 'stremio', options);
 }
 
-async function snapshot(customerId, { includeBlocked = {} } = {}) {
+async function preferUnblockedLane(includeBlocked, initial, readUnblocked) {
+    if (!includeBlocked || initial?.state !== ACCESS_STATES.ACTIVE_BLOCKED) return initial;
+    const fallback = await readUnblocked();
+    return fallback?.entitlement ? fallback : initial;
+}
+
+async function snapshot(customerId, { includeBlocked = {}, accounts = null } = {}) {
     const blocked = {
         primary: includeBlocked.primary ?? true,
         free: includeBlocked.free ?? true,
         emby: includeBlocked.emby ?? true,
         stremio: includeBlocked.stremio ?? true
     };
-    const accounts = await provisioning.normalAccounts(customerId);
-    const [primary, free, embyAccess, stremioAccess] = await Promise.all([
-        primaryJellyfin(customerId, { includeBlocked: blocked.primary, accounts }),
-        freeJellyfin(customerId, { includeBlocked: blocked.free, accounts }),
+    const accountRows = await accountsForCustomer(customerId, accounts);
+    let [primary, free, embyAccess, stremioAccess] = await Promise.all([
+        primaryJellyfin(customerId, { includeBlocked: blocked.primary, accounts: accountRows }),
+        freeJellyfin(customerId, { includeBlocked: blocked.free, accounts: accountRows }),
         emby(customerId, { includeBlocked: blocked.emby }),
         stremio(customerId, { includeBlocked: blocked.stremio })
     ]);
-    return { customerId, primary, free, emby: embyAccess, stremio: stremioAccess };
+    [primary, free, embyAccess, stremioAccess] = await Promise.all([
+        preferUnblockedLane(blocked.primary, primary, () => primaryJellyfin(customerId, { includeBlocked: false, accounts: accountRows })),
+        preferUnblockedLane(blocked.free, free, () => freeJellyfin(customerId, { includeBlocked: false, accounts: accountRows })),
+        preferUnblockedLane(blocked.emby, embyAccess, () => emby(customerId, { includeBlocked: false })),
+        preferUnblockedLane(blocked.stremio, stremioAccess, () => stremio(customerId, { includeBlocked: false }))
+    ]);
+    return { customerId, primary, free, emby: embyAccess, stremio: stremioAccess, accounts: accountRows };
 }
 
 module.exports = {
@@ -159,5 +171,6 @@ module.exports = {
     serviceEntitlement,
     emby,
     stremio,
+    preferUnblockedLane,
     snapshot
 };

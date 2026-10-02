@@ -4,6 +4,7 @@ const fs=require('fs');
 const path=require('path');
 const ejs=require('ejs');
 const customers=require('../customers');
+const customerPortalState=require('../customers/customer-portal-state');
 const runtimeSettings=require('./runtime-settings');
 
 const templatePath=path.join(__dirname,'../../views/customer/_nav.ejs');
@@ -37,13 +38,20 @@ function liveJellyfinEntitlement(portal){
   });
 }
 
+function canonicalAccessFlags(portal){
+  const snapshot=portal?.accessSnapshot;
+  if(!snapshot)return null;
+  return portal?.accessFlags||customerPortalState.currentAccessFlags(snapshot,portal?.subscriptions);
+}
+
 function optionsFromPortal(portal){
+  const canonical=canonicalAccessFlags(portal);
   const subscriptions=Array.isArray(portal?.subscriptions)?portal.subscriptions:[];
-  const hasServiceAccess=subscriptions.some(liveServiceSubscription);
-  const hasRequestAccess=liveRequestEntitlement(portal);
-  const hasJellyfinAccess=liveJellyfinEntitlement(portal);
+  const hasServiceAccess=canonical?.hasServiceAccess??subscriptions.some(liveServiceSubscription);
+  const hasRequestAccess=canonical?.hasRequestAccess??liveRequestEntitlement(portal);
+  const hasJellyfinAccess=canonical?.hasJellyfinAccess??liveJellyfinEntitlement(portal);
   return{
-    showBenefits:Boolean(portal&&portal.referralsEnabled&&portal.referralCode),
+    showBenefits:Boolean(portal&&portal.referralsEnabled),
     showServicePasswords:hasRequestAccess,
     showAccess:hasServiceAccess,
     // Compatibility for older partials/tests while My Access replaces the
@@ -55,7 +63,7 @@ function optionsFromPortal(portal){
 
 async function optionsForCustomer(customerId){
   await runtimeSettings.ensureLoaded();
-  const portal=await customers.getCustomerPortal(customerId);
+  const portal=await customers.getCurrentCustomerPortal(customerId);
   return optionsFromPortal(portal);
 }
 
@@ -65,4 +73,4 @@ function nav(active='',options={}){
   return renderNav({active,...options,standaloneHeader:signedInAccountSurface,siteName:runtimeSettings.siteName()});
 }
 
-module.exports={nav,optionsFromPortal,optionsForCustomer,liveRequestEntitlement,liveJellyfinEntitlement,liveSubscription,liveServiceSubscription,periodIsLive};
+module.exports={nav,optionsFromPortal,optionsForCustomer,canonicalAccessFlags,liveRequestEntitlement,liveJellyfinEntitlement,liveSubscription,liveServiceSubscription,periodIsLive};

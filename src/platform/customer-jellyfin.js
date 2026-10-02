@@ -214,7 +214,7 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
 
 async function accessAccountsForCustomer(customerId,portal){
   const portalAccounts=new Map((Array.isArray(portal?.accounts)?portal.accounts:[]).map(account=>[String(account.id),account]));
-  const context=await customerMediaAccess.accessContext(customerId);
+  const context=await customerMediaAccess.accessContext(customerId,{accounts:portal?.accounts,accessSnapshot:portal?.accessSnapshot});
   const rows=context.accounts;
   const result=[];
   for(const account of rows){
@@ -271,12 +271,12 @@ function createCustomerJellyfinRouter(){
     try{
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
-      const incompleteFreeSubscriptionId=await customerMediaAccess.incompleteFreeSubscriptionId(customerId).catch(()=>null);
-      const portal=await customers.getCustomerPortal(customerId);
-      const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
-        .filter(customerNav.liveServiceSubscription)
+      const portal=await customers.getCurrentCustomerPortal(customerId);
+      if(!portal)throw new Error('Customer portal state is unavailable.');
+      const incompleteFreeSubscriptionId=customerMediaAccess.incompleteFreeSubscriptionIdFromState(portal.accessSnapshot?.free);
+      const rawSubscriptions=(Array.isArray(portal.subscriptions)?portal.subscriptions:[])
         .filter(subscription=>!incompleteFreeSubscriptionId||String(subscription.subscription_id||subscription.id||'')!==incompleteFreeSubscriptionId)
-        .sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
+        .sort((a,b)=>new Date(a.subscription_created_at||a.created_at||0)-new Date(b.subscription_created_at||b.created_at||0));
       const [accounts,requestState,returnStatus,rawFreeUsage]=await Promise.all([
         accessAccountsForCustomer(customerId,portal),
         requestStateForCustomer(customerId),
