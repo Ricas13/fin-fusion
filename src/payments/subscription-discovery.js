@@ -158,11 +158,20 @@ function customerEvidence(remote, local, context) {
     if (remote.providerCustomerId) {
         const mapped = context.providerIdentityToCustomers.get(`${remote.provider}:${remote.providerCustomerId}`);
         if (mapped?.size) {
+            if (remote.provider === 'stripe') {
+                if (mapped.size === 1 && mapped.has(String(local.customer_id))) return ['provider customer ID'];
+                return [];
+            }
+            // A PayPal payer ID identifies a funding account, not a unique
+            // CAPTAINFIN customer. It is useful when it currently maps only to
+            // this customer, but once shared it must fall through to stronger
+            // customer-specific evidence such as a unique provider email.
             if (mapped.size === 1 && mapped.has(String(local.customer_id))) return ['provider customer ID'];
-            return [];
-        }
-        if (clean(local.provider_customer_id)) {
-            return clean(local.provider_customer_id) === remote.providerCustomerId ? ['subscription customer ID'] : [];
+        } else if (clean(local.provider_customer_id)) {
+            if (remote.provider === 'stripe') {
+                return clean(local.provider_customer_id) === remote.providerCustomerId ? ['subscription customer ID'] : [];
+            }
+            if (clean(local.provider_customer_id) === remote.providerCustomerId) reasons.push('subscription payer ID');
         }
     }
     const remoteEmail = emailKey(remote.email), localEmail = emailKey(local.email);
