@@ -121,8 +121,9 @@ assert(
 );
 assert(
   !dashboardSource.includes('function liveSubscription(')
-    && !dashboardSource.includes('customerAccessState.snapshot(customerId,{includeBlocked:'),
-  'Account Home route must not maintain or reload a second current-subscription interpretation'
+    && !dashboardSource.includes('customerAccessState.snapshot(customerId,{includeBlocked:')
+    && !dashboardSource.includes('portal.subscriptions=accessRows'),
+  'Account Home route must not maintain, reload or overwrite the canonical current-subscription projection'
 );
 assert(
   !dashboardView.includes('function isLive(')
