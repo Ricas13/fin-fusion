@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 const accessIntegrity=require('../src/access/access-integrity');
+const revenueIntegrity=require('../src/automation/revenue-integrity');
 const providerRecovery=require('../src/payments/provider-operation-recovery');
 const {getPool}=require('../src/db');
 
@@ -29,8 +30,9 @@ function compactProviderOperation(row){
 }
 
 async function collect(){
-  const [accessFindings,providerOperations]=await Promise.all([
+  const [accessFindings,revenueFindings,providerOperations]=await Promise.all([
     accessIntegrity.scan({limit:500}),
+    revenueIntegrity.scan(),
     providerRecovery.attention({limit:500})
   ]);
   const manualReview=providerOperations.filter(row=>Boolean(row.manual_review_required));
@@ -39,6 +41,11 @@ async function collect(){
       count:accessFindings.length,
       byKind:countBy(accessFindings,'kind'),
       findings:accessFindings
+    },
+    revenueIntegrity:{
+      count:revenueFindings.length,
+      byKind:countBy(revenueFindings,'kind'),
+      findings:revenueFindings
     },
     providerOperations:{
       openCount:providerOperations.length,
@@ -59,13 +66,19 @@ async function main(){
     console.log('PASS  Access Integrity — no current findings.');
   }
 
+  if(report.revenueIntegrity.count){
+    console.error(`ATTENTION: ${report.revenueIntegrity.count} Revenue Integrity finding(s) remain; review the finding details above before closing production acceptance.`);
+  }else{
+    console.log('PASS  Revenue Integrity — no current findings.');
+  }
+
   if(report.providerOperations.manualReviewCount){
     console.error(`ATTENTION: ${report.providerOperations.manualReviewCount} provider operation(s) require manual review. They were not retried by this audit.`);
   }else{
     console.log('PASS  Provider operations — no manual-review operations are waiting.');
   }
 
-  if(report.accessIntegrity.count||report.providerOperations.manualReviewCount){
+  if(report.accessIntegrity.count||report.revenueIntegrity.count||report.providerOperations.manualReviewCount){
     process.exitCode=2;
     return;
   }
