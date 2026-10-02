@@ -42,6 +42,12 @@ function transactionWhere(filters={},params=[]) {
     if(filters.startAt)clauses.push(`t.occurred_at>=${add(filters.startAt)}`);
     if(filters.endAt)clauses.push(`t.occurred_at<${add(filters.endAt)}`);
     if(filters.customerId)clauses.push(`t.customer_id=${add(String(filters.customerId))}`);
+    if(Array.isArray(filters.providerTransactionIds)&&filters.providerTransactionIds.length){
+        const ids=[...new Set(filters.providerTransactionIds.map(value=>String(value||'').trim()).filter(Boolean))];
+        if(ids.length)clauses.push(`t.provider_transaction_id=ANY(${add(ids)}::text[])`);
+    }
+    if(filters.providerAuthoritative===true)clauses.push("COALESCE(t.metadata->>'providerAuthoritative','false')='true'");
+    if(filters.feeDataAvailable===true)clauses.push("COALESCE(t.metadata->>'feeDataAvailable','false')='true'");
     if(filters.unowned===true)clauses.push('t.customer_id IS NULL');
     const q=String(filters.q||'').trim();
     if(q){
@@ -188,6 +194,66 @@ async function resolveCustomerId(evidence={}) {
         if(matched.rowCount===1)return matched.rows[0].id;
     }
     return null;
+}
+
+async function scanAllTransactions(visit,{queryFn=query,pageSize=5000,maxPages=1000}={}) {
+    if(typeof visit!=='function')throw new Error('Provider transaction scan requires a visitor.');
+    const size=boundedInt(pageSize,{min:1,max:50000,fallback:5000});
+    const pages=boundedInt(maxPages,{min:1,max:10000,fallback:1000});
+    let cursor=null,scanned=0;
+    for(let page=0;page<pages;page+=1){
+        const result=await queryFn(`
+          SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
+                 gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,provider_reference_id,
+                 provider_source_id,customer_id,metadata
+            FROM payment_history_transactions
+           WHERE ($1::timestamptz IS NULL OR (occurred_at,provider,provider_transaction_id) > ($1::timestamptz,$2::text,$3::text))
+           ORDER BY occurred_at ASC,provider ASC,provider_transaction_id ASC
+           LIMIT $4
+        `,[cursor?.occurred_at||null,cursor?.provider||null,cursor?.provider_transaction_id||null,size]);
+        for(const row of result.rows){await visit(row);scanned+=1;}
+        if(result.rows.length<size)return scanned;
+        cursor=result.rows[result.rows.length-1];
+    }
+    throw new Error(`Provider transaction scan exceeded ${size*pages} rows.`);
+}
+
+async function providerIdentityRows(providers=['stripe','paypal','plisio']) {
+    const normalized=[...new Set((providers||[]).map(providerName))];
+    if(!normalized.length)return[];
+    const result=await query(`
+      SELECT DISTINCT customer_id,provider,provider_customer_id
+      FROM (
+        SELECT customer_id,provider,provider_customer_id
+          FROM payment_customers
+         WHERE provider=ANY($1::text[]) AND provider_customer_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,source AS provider,provider_customer_id
+          FROM subscriptions
+         WHERE source=ANY($1::text[]) AND provider_customer_id IS NOT NULL
+      ) identities
+      ORDER BY provider,provider_customer_id,customer_id
+    `,[normalized]);
+    return result.rows;
+}
+
+async function providerIdentityOwners(provider,providerCustomerId) {
+    const id=text(providerCustomerId);
+    if(!id)return[];
+    const name=providerName(provider);
+    const rows=await providerIdentityRows([name]);
+    return [...new Set(rows.filter(row=>String(row.provider_customer_id)===id).map(row=>String(row.customer_id)))];
+}
+
+async function paypalSubscriptionReferences() {
+    const result=await query(`
+      SELECT DISTINCT provider_reference_id
+      FROM payment_history_transactions
+      WHERE provider='paypal'
+        AND provider_reference_id IS NOT NULL
+        AND metadata->>'referenceType'='SUB'
+    `);
+    return new Set(result.rows.map(row=>String(row.provider_reference_id||'').trim()).filter(id=>/^I-/i.test(id)));
 }
 
 async function recordTransaction(input) {
@@ -491,7 +557,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    transactionCoverage,exportTransactions,scanTransactionsInRange,recordTransaction,backfillProviderCustomers,
+    transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
