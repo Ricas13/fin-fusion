@@ -18,6 +18,7 @@ const paypal=read('src/payments/paypal.js');
 const accounting=read('src/payments/history-accounting.js');
 const discovery=read('src/payments/subscription-discovery.js');
 const manualLink=read('src/payments/manual-subscription-link.js');
+const lifecyclePrimitives=read('src/payments/lifecycle-primitives.js');
 const jobs=read('src/automation/jobs.js');
 
 assert(state.includes('FROM payment_history_transactions')&&state.includes('INSERT INTO payment_history_transactions'),
@@ -46,6 +47,8 @@ assert(discovery.includes("financialState.providerIdentityRows(['stripe','paypal
   'subscription discovery must reuse canonical provider identity and transaction-reference readers');
 assert(manualLink.includes('financialState.providerIdentityOwners'),
   'manual provider-link verification must reuse canonical provider identity ownership');
+assert(lifecyclePrimitives.includes('financialState.ensureProviderIdentity')&&lifecyclePrimitives.includes('financialState.findProviderIdentity'),
+  'payment lifecycle customer-identity helpers must delegate to canonical provider financial state');
 assert(dataExport.includes("provider === 'plisio' ? 'Plisio'"),
   'exports must preserve Plisio provider identity');
 
@@ -101,9 +104,8 @@ const paymentCustomerUsers=jsFiles(path.join(root,'src','payments')).filter(file
   /\bpayment_customers\b/.test(fs.readFileSync(file,'utf8'))
 ).map(file=>path.relative(path.join(root,'src','payments'),file).replace(/\\/g,'/')).sort();
 assert.deepStrictEqual(paymentCustomerUsers,[
-  'lifecycle-primitives.js',
   'provider-financial-state.js'
-].sort(),
-  'provider-customer identity storage must have only lifecycle mutation and canonical financial read/repair owners');
+],
+  'provider-customer identity storage must have one canonical SQL owner; lifecycle code must delegate to it');
 
 console.log('provider financial state centralization smoke: ok');
