@@ -69,4 +69,41 @@ assert(jobs.includes('provider_financial_reconciliation:{defaultIntervalSeconds:
 assert(compact.includes('Open Stripe ↗')&&compact.includes('provider_customer_id'),
   'Customer 360 must expose the provider identity needed for refund/support work');
 
+
+function jsFiles(dir){
+  const out=[];
+  for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
+    const full=path.join(dir,entry.name);
+    if(entry.isDirectory())out.push(...jsFiles(full));
+    else if(entry.isFile()&&entry.name.endsWith('.js'))out.push(full);
+  }
+  return out;
+}
+const platformRawFinancial=jsFiles(path.join(root,'src','platform')).filter(file=>{
+  const source=fs.readFileSync(file,'utf8');
+  return /\b(?:payment_history_transactions|payment_customers)\b/.test(source);
+}).map(file=>path.relative(root,file).replace(/\\/g,'/'));
+assert.deepStrictEqual(platformRawFinancial,[],
+  'platform/pages must never query provider transaction/customer-identity tables directly; use provider-financial-state or a canonical read-model wrapper');
+
+const paymentTableUsers=jsFiles(path.join(root,'src','payments')).filter(file=>
+  /\bpayment_history_transactions\b/.test(fs.readFileSync(file,'utf8'))
+).map(file=>path.relative(path.join(root,'src','payments'),file).replace(/\\/g,'/')).sort();
+assert.deepStrictEqual(paymentTableUsers,[
+  'live-paypal-payment-history.js',
+  'live-stripe-payment-history.js',
+  'provider-checkout-recovery.js',
+  'provider-financial-state.js'
+].sort(),
+  'new provider-ledger SQL readers/writers must go through provider-financial-state; provider-specific settlement writers and exact checkout recovery are the only documented exceptions');
+
+const paymentCustomerUsers=jsFiles(path.join(root,'src','payments')).filter(file=>
+  /\bpayment_customers\b/.test(fs.readFileSync(file,'utf8'))
+).map(file=>path.relative(path.join(root,'src','payments'),file).replace(/\\/g,'/')).sort();
+assert.deepStrictEqual(paymentCustomerUsers,[
+  'lifecycle-primitives.js',
+  'provider-financial-state.js'
+].sort(),
+  'provider-customer identity storage must have only lifecycle mutation and canonical financial read/repair owners');
+
 console.log('provider financial state centralization smoke: ok');
