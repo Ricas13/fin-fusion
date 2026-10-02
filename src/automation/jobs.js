@@ -19,6 +19,7 @@ const providerCheckoutRecovery=require('../payments/provider-checkout-recovery')
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
 const providerPaymentReconciliation=require('../payments/provider-payment-reconciliation');
+const providerFinancialReconciliation=require('../payments/provider-financial-reconciliation');
 const subscriptionDiscovery=require('../payments/subscription-discovery');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
@@ -53,7 +54,8 @@ const JOB_METADATA=Object.freeze({
  creation_intent_recovery:{defaultIntervalSeconds:60,critical:true},
  customer_service_recovery:{defaultIntervalSeconds:60,critical:true},
  revenue_integrity:{defaultIntervalSeconds:60,critical:true},
- paypal_history_reconciliation:{defaultIntervalSeconds:300,critical:false},
+ provider_financial_reconciliation:{defaultIntervalSeconds:300,critical:false},
+ paypal_history_reconciliation:{defaultIntervalSeconds:86400,critical:false},
  notification_lifecycle:{defaultIntervalSeconds:300,critical:true},
  admin_activity_notifications:{defaultIntervalSeconds:300,critical:false},
  free_places_digest:{defaultIntervalSeconds:30,critical:false},
@@ -120,6 +122,21 @@ async function revenueIntegritySafeRun(){
  };
 }
 
+async function providerFinancialSafeRun(){
+ try{
+  const result=await providerFinancialReconciliation.syncRecent({hours:72,force:true});
+  return{...result,failed:Number(result.failed||0)};
+ }
+ catch(error){
+  const detail=String(error?.message||error);
+  if(workerDbBudget.transientDatabasePressure(detail)){
+   return{processed:0,failed:0,infrastructureSuppressed:1,transientSuppressed:true};
+  }
+  console.error('Provider financial reconciliation failed:',detail);
+  return{processed:0,failed:1,error:detail,warning:`Provider financial reconciliation failed: ${detail}`.slice(0,1000)};
+ }
+}
+
 async function paypalHistorySafeRun(){
  try{
   const result=await providerPaymentReconciliation.syncRecentPayPalHistory({hours:72,limit:100});
@@ -166,7 +183,8 @@ const jobs={
  async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
  async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
  async revenue_integrity(){return revenueIntegritySafeRun()},
- async paypal_history_reconciliation(){return paypalHistorySafeRun()},
+ async provider_financial_reconciliation(){return providerFinancialSafeRun()},
+ async paypal_history_reconciliation(){return{processed:0,failed:0,skipped:'superseded_by_provider_financial_reconciliation'}},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
@@ -217,4 +235,4 @@ function disableableCriticalNames(){return names().filter(jobKey=>definitions[jo
 function isCritical(jobKey){return Boolean(definition(jobKey)?.critical)}
 function mayBeDisabled(jobKey){return Boolean(definition(jobKey)?.disableableCritical)}
 async function run(jobKey){const def=definition(jobKey);if(!def)throw new Error(`Unknown automation job: ${jobKey}`);return def.run()}
-module.exports={jobs,definitions,names,definition,run,criticalNames,disableableCriticalNames,isCritical,mayBeDisabled,DEFAULT_INTERVAL_SECONDS:DEFAULT_INTERVALS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,revenueIntegrityWithPayPal};
+module.exports={jobs,definitions,names,definition,run,criticalNames,disableableCriticalNames,isCritical,mayBeDisabled,DEFAULT_INTERVAL_SECONDS:DEFAULT_INTERVALS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,providerFinancialSafeRun,revenueIntegrityWithPayPal};
