@@ -30,11 +30,9 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-customer-management.js::customers',
   'src/platform/admin-customer-management.js::app_users',
   'src/platform/admin-media-controls.js::plans',
-  'src/platform/admin-plan-order.js::plans',
   'src/platform/admin-profile-account.js::subscriptions',
   'src/platform/admin-profile-account.js::customers',
   'src/platform/admin-profile-account.js::app_users',
-  'src/platform/admin-request-plan-policy.js::plans',
   'src/platform/admin-service-authority.js::customers',
   'src/platform/portal-credential-confirmation.js::customers',
   'src/platform/portal-credential-confirmation.js::app_users',
@@ -126,5 +124,28 @@ assert(
   adminPortalRecoveryOwner.includes('passwordPolicy.validateNewPassword(password)'),
   'admin portal credential recovery must preserve canonical password policy validation'
 );
+
+
+const planOrderRoute=fs.readFileSync(path.join(root,'src/platform/admin-plan-order.js'),'utf8');
+const requestPlanRoute=fs.readFileSync(path.join(root,'src/platform/admin-request-plan-policy.js'),'utf8');
+const planCommandService=fs.readFileSync(path.join(root,'src/catalog/plan-command-service.js'),'utf8');
+assert(planOrderRoute.includes("require('../catalog/plan-command-service')")
+    && planOrderRoute.includes('planCommands.updateStorefrontOrder(')
+    && !planOrderRoute.includes('UPDATE plans SET sort_order'),
+  'storefront ordering must delegate plan persistence to the catalog command owner');
+assert(requestPlanRoute.includes("require('../catalog/plan-command-service')")
+    && requestPlanRoute.includes('planCommands.updateRequestPolicy(')
+    && !requestPlanRoute.includes('UPDATE plans'),
+  'request-plan policy route must delegate plan persistence to the catalog command owner');
+for(const required of [
+  'async function updateStorefrontOrder',
+  "'admin.storefront.order.update'",
+  'async function updateRequestPolicy',
+  "'plan.request_policy.update'",
+  'FOR UPDATE',
+  'request_access_enabled'
+]){
+  assert(planCommandService.includes(required),`catalog plan command service must own ${required}`);
+}
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
