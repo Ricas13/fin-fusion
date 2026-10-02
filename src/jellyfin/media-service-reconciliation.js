@@ -1,7 +1,7 @@
 'use strict';
 
 const {query}=require('../db');
-const core=require('./provisioning');
+const core=require('./resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const serviceCatalog=require('../catalog/service-catalog');
 const planServers=require('./plan-servers');
