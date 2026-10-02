@@ -6,7 +6,7 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-const viewV2 = read('src/platform/customer-360-view-v2.js');
+const compact = read('src/platform/customer-360-compact.js');
 const admin360 = read('src/platform/admin-customer-360.js');
 const customer360 = read('src/platform/customer-360.js');
 const billingControl = read('src/payments/billing-control.js');
