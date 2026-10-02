@@ -16,6 +16,7 @@ const stripe=read('src/payments/stripe.js');
 const paypal=read('src/payments/paypal.js');
 const validator=read('src/payments/provider-mapping-validator.js');
 const commerce=read('src/platform/admin-plan-payment-options.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 const storefront=read('src/platform/storefront.js');
 const communications=read('src/platform/customer-communications.js');
 const nav=read('src/platform/admin-nav.js');
@@ -57,7 +58,7 @@ assert(paypal.includes('resolvedPlan')&&paypal.includes('currency_code:String(pl
 assert(validator.includes('JOIN plan_prices pr ON pr.id=pp.plan_price_id'),'Provider mapping verification must validate the exact stored amount/currency');
 assert(commerce.includes('Portal currency'),'Plan Commerce must present one portal-wide currency');
 assert(!commerce.includes('Multi-currency pricing'),'Plan Commerce must not expose multi-currency plan configuration');
-assert(commerce.includes('Plan price changed; re-verification required.'),'Editing a price must invalidate provider verification');
+assert(planCommands.includes("verification_status='unverified'")&&planCommands.includes('Plan price changed; re-verification required.'),'Editing a price must invalidate provider verification in the canonical plan command owner');
 assert(storefront.includes("function currencySwitcher(_currency,_currencies){return'';}"),'Storefront must not expose a customer currency switcher');
 assert(storefront.includes('async function selectedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Storefront must derive currency from the master setting');
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
