@@ -2,14 +2,13 @@
 
 require('dotenv').config();
 const assert = require('assert');
-const crypto = require('crypto');
-const { query, getPool } = require('../src/db');
+const { query } = require('../src/db');
+const { runDbSmoke, unique } = require('./test-fixture');
 const lifecycle = require('../src/payments/lifecycle-primitives');
 
 async function main() {
-  const suffix = crypto.randomBytes(8).toString('hex');
-  const concurrentId = `ci-replay-${suffix}`;
-  const retryId = `ci-retry-${suffix}`;
+  const concurrentId = unique('ci-replay');
+  const retryId = unique('ci-retry');
   try {
     // Two workers/tabs receiving the same provider event concurrently must
     // produce exactly one processing lease. The unique ledger key is the
@@ -46,11 +45,10 @@ async function main() {
     console.log('payment event replay DB smoke: OK');
   } finally {
     await query(`DELETE FROM payment_events WHERE provider='stripe' AND provider_event_id=ANY($1::text[])`, [[concurrentId, retryId]]).catch(() => {});
-    await getPool().end();
   }
 }
 
-main().catch(error => {
+runDbSmoke('payment event replay DB smoke', main).catch(error => {
   console.error(error.stack || error);
   process.exitCode = 1;
 });
