@@ -67,8 +67,9 @@ for (const token of [
   'BACKUP_DIR=/backups/predeploy',
   'recovery-tools npm run db:backup',
   'docker compose run --rm --no-deps migrate',
-  'docker compose up -d --no-deps app automation-worker activity-worker backup-worker',
-  'npm run verify:deployment'
+  'docker compose up -d --no-deps automation-worker activity-worker backup-worker',
+  'docker compose run --rm --no-deps app npm run verify:deployment',
+  "Candidate verified; switching the customer-facing web application"
 ]) {
   assert(deployScript.includes(token), `deployment script must contain ${token}`);
 }
@@ -114,9 +115,11 @@ assert.strictEqual((compose.match(/pull_policy:\s*never/g) || []).length, 6, 'in
 assert.strictEqual((compose.match(/^\s+build:\s*\.\s*$/gm) || []).length, 1, 'only the app service may own the Docker build definition');
 assert(deployScript.includes('export CAPTAINFIN_IMAGE="captainfin:${CAPTAINFIN_BUILD_SHA}"'), 'production deployment must derive the release image tag only from build SHA');
 assert(deployScript.includes('docker compose build') && /docker compose build[\s\S]*?\n\s*app\b/.test(deployScript), 'deployment must build the shared application image once through app');
-assert(deployScript.includes('for service in app automation-worker activity-worker backup-worker'), 'deployment must verify every long-running runtime service build identity');
+assert(deployScript.includes('for service in automation-worker activity-worker backup-worker'), 'deployment must verify candidate worker build identity before web cutover');
+assert(deployScript.includes('compose_service_env_value app CAPTAINFIN_BUILD_SHA'), 'deployment must verify the web build identity after cutover');
 assert(deployScript.includes('compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA'), 'runtime build verification must read the image-provided build SHA');
-assert(deployScript.indexOf('npm run verify:deployment') < deployScript.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'), 'known-good current image alias must advance only after deployment verification succeeds');
+assert(deployScript.indexOf('docker compose run --rm --no-deps app npm run verify:deployment') < deployScript.indexOf("log 'Candidate verified; switching the customer-facing web application'"), 'candidate verification must complete before live web cutover');
+assert(deployScript.indexOf("log 'Candidate verified; switching the customer-facing web application'") < deployScript.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'), 'known-good current image alias must advance only after verified web cutover');
 
 assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must prove worker liveness');
 assert(verifyDeployment.includes("add('backup worker', backupWorkerAlive"), 'deployment verification must require backup worker liveness');
@@ -177,10 +180,11 @@ const order = [
   deployScript.indexOf('docker compose build'),
   deployScript.indexOf('recovery-tools npm run db:backup'),
   deployScript.indexOf('docker compose run --rm --no-deps migrate'),
-  deployScript.indexOf('docker compose up -d --no-deps app automation-worker activity-worker backup-worker'),
-  deployScript.indexOf('npm run verify:deployment')
+  deployScript.indexOf('docker compose up -d --no-deps automation-worker activity-worker backup-worker'),
+  deployScript.indexOf('docker compose run --rm --no-deps app npm run verify:deployment'),
+  deployScript.indexOf("log 'Candidate verified; switching the customer-facing web application'")
 ];
-assert(order.every((value, index) => value >= 0 && (index === 0 || value > order[index - 1])), 'deployment safety operations must remain in prepare -> config -> build -> encrypted backup -> migrate -> recreate -> verify order');
+assert(order.every((value, index) => value >= 0 && (index === 0 || value > order[index - 1])), 'deployment safety operations must remain in prepare -> config -> build -> encrypted backup -> migrate -> candidate workers -> candidate verify -> web cutover order');
 assert(!deployScript.includes('> "$backup"'), 'deployment helper must not create a raw plaintext pg_dump on the host');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'captainfin-deploy-'));

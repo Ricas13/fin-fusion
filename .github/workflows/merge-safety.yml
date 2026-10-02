@@ -1,0 +1,182 @@
+name: Merge Safety
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: merge-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  production-deploy-simulation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      APP_DATABASE_URL: postgres://steamfusion_app:merge-safety-app-password-2026@127.0.0.1:5432/steamfusion
+      AUTOMATION_DATABASE_URL: postgres://steamfusion_automation:merge-safety-automation-password-2026@127.0.0.1:5432/steamfusion
+      ACTIVITY_DATABASE_URL: postgres://steamfusion_activity:merge-safety-activity-password-2026@127.0.0.1:5432/steamfusion
+      BACKUP_DATABASE_URL: postgres://steamfusion_backup:merge-safety-backup-password-2026@127.0.0.1:5432/steamfusion
+      BACKUP_VERIFY_DATABASE_URL: postgres://steamfusion_backup_verify:merge-safety-backup-verify-password-2026@127.0.0.1:5432/steamfusion
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SESSION_SECRET: 4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      BACKUP_ENCRYPTION_KEY: 5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      NODE_ENV: test
+      COOKIE_SECURE: 'false'
+      PASSWORD_BREACH_CHECK_MODE: disabled
+      CAPTAINFIN_UPDATE_CHECK_ENABLED: 'false'
+      BACKUP_OFFSITE_ENABLED: 'false'
+      STREMIO_RUNTIME_ENABLED: 'false'
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+
+      - name: Install candidate dependencies
+        run: npm ci
+
+      - name: Prove N-1 web runtime survives candidate schema
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "$BASE_SHA" ]]; then BASE_SHA="$(git rev-parse HEAD^)"; fi
+          git worktree add --detach /tmp/captainfin-base "$BASE_SHA"
+          (
+            cd /tmp/captainfin-base
+            npm ci --omit=dev --ignore-scripts
+            npm run db:migrate
+            npm run db:runtime-roles
+            PORT=3031 DATABASE_URL="$APP_DATABASE_URL" node src/application.js >/tmp/captainfin-base-app.log 2>&1 &
+            echo $! >/tmp/captainfin-base-app.pid
+          )
+          for _ in $(seq 1 45); do
+            curl -fsS http://127.0.0.1:3031/health/ready >/dev/null && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3031/health/ready >/dev/null
+
+          npm run db:migrate
+          npm run db:runtime-roles
+
+          # The exact previous main runtime must continue serving after the
+          # candidate schema has been applied. This is what makes live migration
+          # and runtime rollback safe without taking the portal offline first.
+          for _ in 1 2 3; do
+            curl -fsS http://127.0.0.1:3031/health/ready >/dev/null
+            sleep 2
+          done
+          kill "$(cat /tmp/captainfin-base-app.pid)"
+          wait "$(cat /tmp/captainfin-base-app.pid)" 2>/dev/null || true
+
+      - name: Build exact production image
+        run: |
+          docker build \
+            --build-arg CAPTAINFIN_BUILD_SHA="$GITHUB_SHA" \
+            --build-arg CAPTAINFIN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t captainfin:merge-safety .
+
+      - name: Run migration and role tooling from production image
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL -e APP_DATABASE_URL -e AUTOMATION_DATABASE_URL -e ACTIVITY_DATABASE_URL \
+            -e BACKUP_DATABASE_URL -e BACKUP_VERIFY_DATABASE_URL \
+            captainfin:merge-safety npm run db:migrate
+          docker run --rm --network host \
+            -e DATABASE_URL -e APP_DATABASE_URL -e AUTOMATION_DATABASE_URL -e ACTIVITY_DATABASE_URL \
+            -e BACKUP_DATABASE_URL -e BACKUP_VERIFY_DATABASE_URL \
+            captainfin:merge-safety npm run db:runtime-roles
+
+      - name: Start candidate production workers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name merge-safety-automation --network host \
+            -e NODE_ENV -e DATABASE_URL="$AUTOMATION_DATABASE_URL" \
+            -e DATA_ENCRYPTION_KEY -e JELLYFIN_ENCRYPTION_KEY -e AUTH_ENCRYPTION_KEY \
+            -e CAPTAINFIN_UPDATE_CHECK_ENABLED \
+            captainfin:merge-safety node scripts/automation-worker.js
+          docker run -d --name merge-safety-activity --network host \
+            -e NODE_ENV -e ACTIVITY_DATABASE_URL -e JELLYFIN_ENCRYPTION_KEY -e ACTIVITY_ENCRYPTION_KEY \
+            captainfin:merge-safety node scripts/activity-worker.js
+          docker run -d --name merge-safety-backup --network host \
+            -e NODE_ENV -e DATABASE_URL="$BACKUP_DATABASE_URL" -e BACKUP_VERIFY_DATABASE_URL \
+            -e BACKUP_ENCRYPTION_KEY -e BACKUP_OFFSITE_ENABLED -e BACKUP_DIR=/tmp/backups \
+            captainfin:merge-safety node scripts/backup-worker.js
+          sleep 12
+          for name in merge-safety-automation merge-safety-activity merge-safety-backup; do
+            test "$(docker inspect -f '{{.State.Running}}' "$name")" = true
+          done
+
+      - name: Candidate deployment verification before web cutover
+        run: |
+          docker run --rm --network host \
+            -e NODE_ENV -e DATABASE_URL="$APP_DATABASE_URL" \
+            -e DATA_ENCRYPTION_KEY -e JELLYFIN_ENCRYPTION_KEY -e AUTH_ENCRYPTION_KEY -e SESSION_SECRET \
+            -e CAPTAINFIN_UPDATE_CHECK_ENABLED -e COOKIE_SECURE -e PASSWORD_BREACH_CHECK_MODE \
+            captainfin:merge-safety npm run verify:deployment
+
+      - name: Boot candidate web image and hold readiness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name merge-safety-app --network host \
+            -e NODE_ENV -e PORT=3030 -e DATABASE_URL="$APP_DATABASE_URL" \
+            -e DATA_ENCRYPTION_KEY -e JELLYFIN_ENCRYPTION_KEY -e AUTH_ENCRYPTION_KEY -e SESSION_SECRET \
+            -e CAPTAINFIN_UPDATE_CHECK_ENABLED -e COOKIE_SECURE -e PASSWORD_BREACH_CHECK_MODE \
+            captainfin:merge-safety
+          for _ in $(seq 1 45); do
+            curl -fsS http://127.0.0.1:3030/health/ready >/dev/null && break
+            sleep 2
+          done
+          for _ in 1 2 3 4 5; do
+            curl -fsS http://127.0.0.1:3030/health/ready >/dev/null
+            test "$(docker inspect -f '{{.State.Running}}' merge-safety-app)" = true
+            sleep 3
+          done
+
+      - name: Dump candidate runtime logs on failure
+        if: failure()
+        run: |
+          cat /tmp/captainfin-base-app.log 2>/dev/null || true
+          docker logs merge-safety-app 2>/dev/null || true
+          docker logs merge-safety-automation 2>/dev/null || true
+          docker logs merge-safety-activity 2>/dev/null || true
+          docker logs merge-safety-backup 2>/dev/null || true
+
+      - name: Cleanup merge-safety runtime
+        if: always()
+        run: |
+          if [[ -f /tmp/captainfin-base-app.pid ]]; then kill "$(cat /tmp/captainfin-base-app.pid)" 2>/dev/null || true; fi
+          docker rm -f merge-safety-app merge-safety-automation merge-safety-activity merge-safety-backup 2>/dev/null || true
+          git worktree remove --force /tmp/captainfin-base 2>/dev/null || true

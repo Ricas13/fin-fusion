@@ -38,10 +38,12 @@ for(const service of ['app','automation-worker','activity-worker','backup-worker
   const needle=`  ${service}:\n    image: \${CAPTAINFIN_IMAGE:-captainfin:current}`;
   assert(compose.includes(needle),`${service} must use the same immutable CAPTAiNFiN release image`);
 }
-assert(deploy.includes('docker compose exec -T app npm run verify:deployment'),
-  'production deployment must execute application-level verification before completion');
-assert(deploy.indexOf('npm run verify:deployment')<deploy.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'),
-  'verified alias must not advance until deployment verification succeeds');
+assert(deploy.includes('docker compose run --rm --no-deps app npm run verify:deployment'),
+  'production deployment must execute candidate application-level verification before live web cutover');
+assert(deploy.indexOf('docker compose run --rm --no-deps app npm run verify:deployment')<deploy.indexOf("log 'Candidate verified; switching the customer-facing web application'"),
+  'live web cutover must not happen until candidate deployment verification succeeds');
+assert(deploy.indexOf("log 'Candidate verified; switching the customer-facing web application'")<deploy.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'),
+  'verified alias must not advance until the verified candidate web runtime has cut over');
 assert(verify.includes('jobRegistry.criticalNames()')&&verify.includes("add('automation worker registry'"),
   'deployment verification must fail when the automation worker loses registered critical jobs');
 
