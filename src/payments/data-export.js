@@ -59,12 +59,19 @@ function portableTransactionId(row) {
     return text(row.legacy_transaction_id).trim() || `captainfin-sub-${row.subscription_id}`;
 }
 function portableProcessor(row) {
-    if (row.legacy_transaction_id && ['stripe', 'paypal', 'manual'].includes(String(row.legacy_provider || '').toLowerCase())) return String(row.legacy_provider).toLowerCase();
+    const legacy = String(row.legacy_provider || '').toLowerCase();
+    if (row.legacy_transaction_id && ['stripe', 'paypal', 'plisio', 'manual'].includes(legacy)) return legacy;
+    const source = String(row.source || '').toLowerCase();
+    if (['stripe', 'paypal', 'plisio', 'manual'].includes(source)) return source;
     return 'manual';
 }
 function providerLabel(value) {
     const provider = String(value || '').toLowerCase();
-    return provider === 'stripe' ? 'Stripe' : provider === 'paypal' ? 'PayPal' : 'Manual';
+    if (provider === 'stripe') return 'Stripe';
+    if (provider === 'paypal') return 'PayPal';
+    if (provider === 'plisio') return 'Plisio';
+    if (provider === 'legacy_crypto') return 'Legacy crypto';
+    return 'Manual';
 }
 
 async function loadUsers() {
