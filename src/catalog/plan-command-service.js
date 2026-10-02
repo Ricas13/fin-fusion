@@ -1295,6 +1295,130 @@ async function switchCatalogueCurrency(client,currency){
   return{plans:plans.length,invalidatedMappings};
 }
 
+
+async function updateStorefrontOrder({
+  standardIds = [],
+  stremioIds = [],
+  freePlanId = null,
+  actorUserId = null
+}) {
+  const submitted = { standard: standardIds.map(String), stremio: stremioIds.map(String) };
+  return transaction(async client => {
+    let order = 100;
+    for (const id of submitted.standard) {
+      const updated = await client.query(
+        'UPDATE plans SET sort_order=$2,updated_at=NOW() WHERE id=$1 RETURNING id',
+        [id, order]
+      );
+      if (!updated.rowCount) throw new Error('A paid plan changed while storefront order was being saved.');
+      order += 100;
+    }
+
+    order = 100;
+    for (const id of submitted.stremio) {
+      const updated = await client.query(
+        'UPDATE plans SET sort_order=$2,updated_at=NOW() WHERE id=$1 RETURNING id',
+        [id, order]
+      );
+      if (!updated.rowCount) throw new Error('A Stremio plan changed while storefront order was being saved.');
+      order += 100;
+    }
+
+    if (freePlanId) {
+      const pinned = await client.query(
+        'UPDATE plans SET sort_order=0,updated_at=NOW() WHERE id=$1 RETURNING id',
+        [freePlanId]
+      );
+      if (!pinned.rowCount) throw new Error('The Free plan changed while storefront order was being saved.');
+    }
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,metadata)
+       VALUES($1,'admin.storefront.order.update','catalogue',$2::jsonb)`,
+      [actorUserId, JSON.stringify(submitted)]
+    );
+    return submitted;
+  });
+}
+
+async function updateRequestPolicy({
+  planId,
+  movieLimit,
+  movieDays,
+  tvLimit,
+  tvDays,
+  requestAccessEnabled,
+  requestPermissions,
+  watchlistSyncMovies,
+  watchlistSyncTv,
+  locale,
+  discoverRegion,
+  streamingRegion,
+  originalLanguage,
+  confirmDestructiveDisable = false,
+  actorUserId = null
+}) {
+  return transaction(async client => {
+    const current = await client.query(
+      'SELECT id,name,service_type,COALESCE(request_access_enabled,TRUE) AS request_access_enabled FROM plans WHERE id=$1 FOR UPDATE',
+      [planId]
+    );
+    if (!current.rowCount) throw new Error('Plan not found.');
+
+    const disabling = current.rows[0].request_access_enabled === true && requestAccessEnabled === false;
+    if (disabling && !confirmDestructiveDisable) {
+      throw new Error('Confirm that disabling request access will delete managed Seerr accounts and their Seerr request history.');
+    }
+
+    const updated = await client.query(
+      `UPDATE plans
+       SET request_movie_quota_limit=$2,
+           request_movie_quota_days=$3,
+           request_tv_quota_limit=$4,
+           request_tv_quota_days=$5,
+           request_access_enabled=$6,
+           request_permissions=$7,
+           request_watchlist_sync_movies=$8,
+           request_watchlist_sync_tv=$9,
+           request_locale=$10,
+           request_discover_region=$11,
+           request_streaming_region=$12,
+           request_original_language=$13,
+           updated_at=NOW()
+       WHERE id=$1
+       RETURNING name,service_type`,
+      [
+        planId, movieLimit, movieDays, tvLimit, tvDays, requestAccessEnabled,
+        requestPermissions, watchlistSyncMovies, watchlistSyncTv, locale,
+        discoverRegion, streamingRegion, originalLanguage
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'plan.request_policy.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({
+        movieLimit,
+        movieDays,
+        tvLimit,
+        tvDays,
+        requestAccessEnabled,
+        destructiveDisableConfirmed: disabling,
+        permissionMode: requestPermissions == null ? 'preserve' : 'managed',
+        requestPermissions,
+        watchlistSyncMovies,
+        watchlistSyncTv,
+        locale,
+        discoverRegion,
+        streamingRegion,
+        originalLanguage
+      })]
+    );
+
+    return { plan: updated.rows[0], disabling };
+  });
+}
+
 module.exports = {
   createBasicPlan,
   clonePlanVersion,
@@ -1326,5 +1450,7 @@ module.exports = {
   updatePlanOverview,
   archivePlan,
   unarchivePlan,
-  updateDeliveryService
+  updateDeliveryService,
+  updateStorefrontOrder,
+  updateRequestPolicy
 };
