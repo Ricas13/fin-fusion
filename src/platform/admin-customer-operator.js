@@ -12,7 +12,6 @@ const userCapacity=require('../jellyfin/user-capacity');
 const permanentAccess=require('../entitlements/permanent-access');
 const {historyKind}=require('../payments/history-accounting');
 const financialState=require('../payments/provider-financial-state');
-const financialState=require('../payments/provider-financial-state');
 
 const surfaceLimit=rateLimit({windowMs:60000,limit:300,standardHeaders:'draft-8',legacyHeaders:false,message:'Too many customer-management requests. Try again shortly.'});
 const readLimit=routeRateLimit.middleware({scope:'admin-customer-operator-read',max:120,windowSeconds:60,reason:'admin_customer_operator_read'});
