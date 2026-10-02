@@ -7,8 +7,8 @@ const passwordPolicy=require('./customer-password-policy');
 
 const RECOVERY_TOKEN_TYPES=Object.freeze([
   'portal_password_change',
-  'portal_email_change_old',
-  'portal_email_change_new',
+  'portal_email_old_approval',
+  'portal_email_new_verification',
   'email_change',
   'password_reset'
 ]);
