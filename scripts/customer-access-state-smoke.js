@@ -335,4 +335,22 @@ assert.strictEqual(
   'enabled account plus current unblocked entitlement must authorize credential management'
 );
 
-console.log('customer access state smoke: ok');
+Promise.all([
+  accessState.preferUnblockedLane(
+    true,
+    { state: accessState.ACCESS_STATES.ACTIVE_BLOCKED, entitlement: { subscription_id: 'blocked-newer' } },
+    async () => ({ state: accessState.ACCESS_STATES.ACTIVE_READY, entitlement: { subscription_id: 'usable-older' } })
+  ).then(result => assert.strictEqual(result.entitlement.subscription_id, 'usable-older',
+    'blocked-aware snapshots must prefer another usable entitlement in the same lane')),
+  accessState.preferUnblockedLane(
+    true,
+    { state: accessState.ACCESS_STATES.ACTIVE_BLOCKED, entitlement: { subscription_id: 'blocked-only' } },
+    async () => ({ state: accessState.ACCESS_STATES.NONE, entitlement: null })
+  ).then(result => assert.strictEqual(result.entitlement.subscription_id, 'blocked-only',
+    'blocked-aware snapshots must retain blocked state when no usable entitlement exists'))
+]).then(() => {
+  console.log('customer access state smoke: ok');
+}).catch(error => {
+  console.error(error);
+  process.exit(1);
+});
