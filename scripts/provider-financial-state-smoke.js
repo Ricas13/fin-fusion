@@ -94,11 +94,10 @@ const paymentTableUsers=jsFiles(path.join(root,'src','payments')).filter(file=>
 ).map(file=>path.relative(path.join(root,'src','payments'),file).replace(/\\/g,'/')).sort();
 assert.deepStrictEqual(paymentTableUsers,[
   'live-paypal-payment-history.js',
-  'live-stripe-payment-history.js',
   'provider-checkout-recovery.js',
   'provider-financial-state.js'
 ].sort(),
-  'new provider-ledger SQL readers/writers must go through provider-financial-state; provider-specific settlement writers and exact checkout recovery are the only documented exceptions');
+  'new provider-ledger SQL readers/writers must go through provider-financial-state; remaining PayPal settlement import and exact checkout recovery are the only documented exceptions');
 
 const paymentCustomerUsers=jsFiles(path.join(root,'src','payments')).filter(file=>
   /\bpayment_customers\b/.test(fs.readFileSync(file,'utf8'))
