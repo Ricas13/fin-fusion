@@ -11,6 +11,9 @@ assert.strictEqual(typeof fixture.unique, 'function');
 assert.strictEqual(typeof fixture.deferred, 'function');
 assert.strictEqual(typeof fixture.barrier, 'function');
 assert.strictEqual(typeof fixture.installModuleMock, 'function');
+assert.strictEqual(typeof fixture.fixtureCustomer, 'function');
+assert.strictEqual(typeof fixture.fixturePlan, 'function');
+assert.strictEqual(typeof fixture.fixtureSubscription, 'function');
 
 (async () => {
   const before = process.env.CAPTAINFIN_FIXTURE_TEST;
