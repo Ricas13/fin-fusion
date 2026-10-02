@@ -3,7 +3,7 @@
 const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
-const provisioning=require('../jellyfin/resilient-provisioning');
+const provisioning=require('../jellyfin/provisioning-helpers');
 const planServers=require('../jellyfin/plan-servers');
 const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
