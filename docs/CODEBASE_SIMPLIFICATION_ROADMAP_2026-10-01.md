@@ -206,7 +206,7 @@ Current concern: Docker currently uses `COPY . .`; the runtime image therefore c
 
 Tasks:
 
-- [ ] Classify scripts as runtime/operator/recovery vs CI/test-only.
+- [x] Classify scripts as runtime/operator/recovery vs CI/test-only.
 - [ ] Introduce a clear directory convention such as:
   - `scripts/runtime/`
   - `scripts/ops/`
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Production-script classification formalised in `docs/SCRIPT_CLASSIFICATION.md`; runtime/worker and operator/recovery tools are explicitly separated from CI-only smoke/audit helpers. `.dockerignore` now also excludes `*-audit.js`, `smoke-db.js` and `db-test-fixture.js`, closing additional test-helper leakage into the production image without a risky bulk path rename.
 
 - 2026-10-02 — Test-estate consolidation started without removing coverage: added `scripts/db-test-fixture.js` for shared DB lifecycle, rollback scopes and timezone loops; migrated payment-history timezone, business-expense timezone and catalog rollback regressions onto it. Tagged manifest remains the suite source of truth; broader node:test/process consolidation remains open.
 
