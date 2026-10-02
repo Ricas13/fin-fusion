@@ -14,7 +14,7 @@ const readiness=read('src/platform/product-readiness.js');
 const sourcePool=read('src/stremio/source-pool.js');
 
 assert(planExternal.includes('JOIN plan_stremio_sources ps'),'external runtime sources must come from explicit plan mappings');
-assert(planExternal.includes("i.status='ready'")&&planExternal.includes('i.item_count>0'),'selected external sources must still be indexed and ready');
+assert(planExternal.includes('i.last_completed_at IS NOT NULL')&&planExternal.includes('i.item_count>0'),'selected external sources must have a completed serving snapshot, even while a newer refresh is queued or running');
 assert(!planExternal.includes('SELECT s.*,s.priority plan_priority FROM stremio_sources'),'explicit plan source helper must not fall back to every external source');
 assert(externalRuntime.includes("require('./plan-external-sources')"),'external stream generation must use explicit plan source composition');
 assert(externalRuntime.includes('planExternalSources.forEntitlement(entitlement)'),'external stream generation must not implicitly add unselected sources');
