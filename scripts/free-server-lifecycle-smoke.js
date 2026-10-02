@@ -151,6 +151,52 @@ const originalRequest = registry.request;
         assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane=\'free\'', [customerId])).rows[0].n, 0,
             'canonical reconciliation must not recreate Free access after the Free plan has ended');
 
+        // Compatibility regression: before inactivity became terminal, an
+        // attempted restore could leave the exact Free subscription live with
+        // no Free account and a restoreReconcileFailed hold that did not retain
+        // the deleted accountId. The detached finalizer must now close that
+        // legacy episode instead of warning forever or attempting reprovisioning.
+        const legacySubscription = await query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days')
+            RETURNING id
+        `, [customerId, planId]);
+        const legacySubscriptionId = legacySubscription.rows[0].id;
+        const legacyHold = await query(`
+            INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason,metadata)
+            VALUES(
+                $1,
+                'inactivity_policy',
+                'plan:'||$2::text,
+                'Free Server inactivity restore pending successful reprovisioning',
+                $3::jsonb
+            )
+            RETURNING id
+        `, [
+            customerId,
+            planId,
+            JSON.stringify({
+                subscriptionId: legacySubscriptionId,
+                restoreReconcileFailed: true,
+                error: 'No eligible Jellyfin server is currently available for plan free-access'
+            })
+        ]);
+        const legacyHoldId = legacyHold.rows[0].id;
+
+        const finalizedLegacy = await lifecycle.finalizeDetachedRemovals();
+        assert.strictEqual(finalizedLegacy.failed, 0, 'legacy failed-restores must finalize without error');
+        assert.strictEqual(finalizedLegacy.finalized, 1, 'legacy failed-restore must close the stranded Free plan');
+        const legacyEnded = await query('SELECT status,current_period_end,service_extension_days FROM subscriptions WHERE id=$1', [legacySubscriptionId]);
+        assert.strictEqual(legacyEnded.rows[0].status, 'cancelled', 'legacy stranded Free subscription must be cancelled');
+        assert(new Date(legacyEnded.rows[0].current_period_end).getTime() <= Date.now() + 5000, 'legacy stranded Free subscription must end immediately');
+        assert.strictEqual(Number(legacyEnded.rows[0].service_extension_days || 0), 0, 'legacy stranded Free subscription must retain no extension access');
+        const legacyReleased = await query('SELECT released_at FROM customer_access_holds WHERE id=$1', [legacyHoldId]);
+        assert(legacyReleased.rows[0].released_at, 'legacy restore-failure hold must be released after terminal plan closure');
+        assert.strictEqual(await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true }), null,
+            'legacy failed restore must converge to no live Free entitlement');
+        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE customer_id=$1 AND access_lane=\'free\'', [customerId])).rows[0].n, 0,
+            'legacy failed restore finalization must not recreate a Free account');
+
         console.log('free server lifecycle db smoke: ok');
     } finally {
         registry.request = originalRequest;
