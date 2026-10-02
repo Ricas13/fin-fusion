@@ -208,6 +208,33 @@ async function upsertTransaction(values = {}) {
 
     return transaction(async client => {
         const incomingAuthoritative = authoritative(metadata);
+        // A provider import can carry a more specific but still canonical
+        // transaction category than a live webhook/capture normalizer. Keep it
+        // when both representations classify to the same financial meaning;
+        // replace malformed/unknown categories with the canonical incoming one.
+        const existing = await client.query(`
+            SELECT transaction_type,transaction_status,gross_amount_minor
+            FROM payment_history_transactions
+            WHERE provider=$1 AND provider_transaction_id=$2
+            LIMIT 1
+            FOR UPDATE
+        `, [provider, providerTransactionId]);
+        const existingRow = existing.rows[0] || null;
+        const existingKind = existingRow ? classifier.classifyProviderTransaction({
+            provider,
+            type: existingRow.transaction_type,
+            status: existingRow.transaction_status,
+            grossMinor: existingRow.gross_amount_minor
+        }) : null;
+        const incomingKind = classifier.classifyProviderTransaction({
+            provider,
+            type: transactionType,
+            status: transactionStatus,
+            grossMinor
+        });
+        const effectiveTransactionType = existingKind && incomingKind && existingKind === incomingKind
+            ? existingRow.transaction_type
+            : transactionType;
         const result = await client.query(`
             INSERT INTO payment_history_transactions(
                 provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
@@ -261,7 +288,7 @@ async function upsertTransaction(values = {}) {
                OR payment_history_transactions.customer_id=EXCLUDED.customer_id
             RETURNING customer_id
         `, [
-            provider, providerTransactionId, transactionType, transactionStatus, occurredAt, currency,
+            provider, providerTransactionId, effectiveTransactionType, transactionStatus, occurredAt, currency,
             grossMinor, feeMinor, netMinor,
             clean(values.providerCustomerId) || null,
             clean(values.providerReferenceId) || null,
