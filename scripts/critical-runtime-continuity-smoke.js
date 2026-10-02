@@ -36,7 +36,7 @@ assert(worker.includes('jobRegistry.run(jobKey)')&&worker.includes('jobRegistry.
 
 for(const service of ['app','automation-worker','activity-worker','backup-worker']){
   const needle=`  ${service}:\n    image: \${CAPTAINFIN_IMAGE:-captainfin:current}`;
-  assert(compose.includes(needle),`${service} must use the same immutable CaptainFin release image`);
+  assert(compose.includes(needle),`${service} must use the same immutable CAPTAiNFiN release image`);
 }
 assert(deploy.includes('docker compose exec -T app npm run verify:deployment'),
   'production deployment must execute application-level verification before completion');
