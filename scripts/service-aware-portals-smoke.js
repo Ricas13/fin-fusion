@@ -34,7 +34,7 @@ const serviceScope=require('../src/entitlements/service-scope');
 require('./customer-access-variants-smoke');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
-assert(/customerAccessState\.snapshot\(customerId,\{includeBlocked:\{primary:false,free:false,stremio:false,emby:true\}\}\)/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use one canonical access snapshot on the unified multi-access Home');
+assert(/customers\.getCurrentCustomerPortal\(customerId\)/.test(customerDashboard)&&/const accessSnapshot=portal\.accessSnapshot/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use the canonical current portal access snapshot on the unified multi-access Home');
 assert(/sellablePlans/.test(customerDashboard)&&/productReadiness\.evaluatePlan/.test(customerDashboard),'customer acquisition catalogue must hide undeliverable products with plan-specific readiness');
 assert(/Create your private installation link/.test(customerAccessJs)&&/Keep this link private/.test(customerAccessJs)&&/Copy URL/.test(customerAccessJs)&&!/Installation manifest/.test(customerAccessJs),'My Access Stremio surface must keep the private-link warning and expose one Copy URL action without a duplicate manifest section');
 assert(!/id="stremio-access"/.test(customerDashboardView)&&!/Installation manifest/.test(customerDashboardView),'Account Home must remain Stremio summary/navigation only');
