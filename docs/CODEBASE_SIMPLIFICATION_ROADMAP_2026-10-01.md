@@ -356,7 +356,7 @@ Tasks:
 
 Tasks:
 
-- [ ] Inventory duplicate helpers for:
+- [x] Inventory duplicate helpers for:
   - HTML escaping
   - CSRF hidden inputs
   - confirmation parsing
@@ -400,7 +400,7 @@ These are principles to apply opportunistically while completing the prioritized
 
 - [x] One canonical current customer access snapshot.
 - [ ] One owner for each destructive mutation.
-- [ ] One provider capability/transport boundary.
+- [x] One provider capability/transport boundary.
 - [x] One durable external-notification path.
 - [x] One plan mutation contract.
 - [x] One automation registry.
@@ -469,6 +469,10 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Provider capability/transport ownership is now executable: `provider-boundary-smoke.js` prevents platform/access/entitlement/automation code from importing Stripe SDK or lifecycle/refund HTTP adapters directly, while billing continues through `provider-contract.js`. Added the check to the fast customer-access suite.
+
+- 2026-10-02 — Completed the duplicate UI-helper inventory with `scripts/ui-helper-inventory.js` and `docs/UI_HELPER_INVENTORY.md`. Security-sensitive/shared mechanics have named canonical owners; feature-specific date/status/card rendering remains local where consolidation would add indirection rather than reduce risk.
 
 - 2026-10-02 — Reconciled cross-cutting completion markers with the implemented contracts already enforced elsewhere in this branch: canonical customer access state, durable notification outboxes, plan mutation ownership, automation registry ownership, Compose service resolution and shared UI primitives are now marked complete. Broader destructive-mutation/provider/test-fixture boundaries remain open where the roadmap still has real work.
 
