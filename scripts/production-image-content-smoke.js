@@ -15,6 +15,7 @@ for(const ignored of [
   'scripts/*-audit.js',
   'scripts/check-*.js',
   'scripts/dead-code-audit.js',
+  'scripts/compatibility-importer-report.js',
   'scripts/run-check-suite.js',
   'scripts/run-tagged-checks.js'
 ]){
