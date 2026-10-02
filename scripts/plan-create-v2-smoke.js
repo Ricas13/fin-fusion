@@ -33,11 +33,12 @@ async function main(){
 
     const jellyfin=planCreate.parse({...common('smoke-v2-jellyfin','Jellyfin','jellyfin'),serverClass:'premium',allowAudioTranscoding:'on',allowRemoteAccess:'on'});
     assert(jellyfin.serviceType==='jellyfin','Jellyfin parsing failed');
-    assert(jellyfin.inactivityPolicy&&Object.keys(jellyfin.inactivityPolicy).length===0,'Retired lifecycle JSON must remain empty');
+    assert(jellyfin.inactivityPolicy?.mediaCapacityManaged===true,'New Jellyfin plans must explicitly opt into plan-owned capacity semantics');
     assert(Number(jellyfin.mediaUserLimit)===20,'Jellyfin creation must parse its plan-owned customer ceiling');
     const createdJellyfin=await planCreate.create(jellyfin,null);
-    const storedJellyfin=(await query('SELECT media_user_limit FROM plans WHERE id=$1',[createdJellyfin.id])).rows[0];
-    assert(Number(storedJellyfin.media_user_limit)===20,'Jellyfin creation must persist its plan-owned customer ceiling');
+    const storedJellyfin=(await query('SELECT capacity_limit,inactivity_policy FROM plans WHERE id=$1',[createdJellyfin.id])).rows[0];
+    assert(Number(storedJellyfin.capacity_limit)===20,'Jellyfin creation must persist its plan-owned customer ceiling');
+    assert(storedJellyfin.inactivity_policy?.mediaCapacityManaged===true,'Jellyfin creation must persist the opt-in marker that distinguishes new plan capacity from stale legacy values');
 
     // Retired lifecycle fields from stale clients are ignored rather than becoming
     // retired lifecycle JSON again. Free inactivity thresholds now live in the Free Plan,
