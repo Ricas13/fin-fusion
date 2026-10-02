@@ -5,6 +5,7 @@ const expenses = require('./business-expenses');
 const reportingCurrency = require('./reporting-currency');
 const { revenueFromEvent } = require('./admin-dashboard-analytics');
 const dashboardLedger = require('../payments/dashboard-ledger');
+const calendarDate = require('../finance/calendar-date');
 
 const PROFIT_BASIS = 'Net provider receipts (imported history + webhooks) minus booked expenses. Bank payouts are transfers, not costs.';
 
@@ -82,7 +83,7 @@ function utcDayAfter(value){const d=new Date(value);return new Date(Date.UTC(d.g
 function monthStart(value){const d=new Date(value);return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1));}
 function yearStart(value){const d=new Date(value);return new Date(Date.UTC(d.getUTCFullYear(),0,1));}
 function mondayStart(value){const d=new Date(value),day=d.getUTCDay(),offset=(day+6)%7;return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()-offset));}
-function addDays(value,days){return new Date(new Date(value).getTime()+Number(days)*86400000);}
+function addDays(value,days){return calendarDate.addElapsedDays(value,days);}
 
 async function headerProfitability(reporting,{now=new Date()}={}){
   const currentStart=monthStart(now),end=utcDayAfter(now),ytdStart=yearStart(now);
