@@ -449,6 +449,8 @@ Before final merge/deployment of the completed roadmap:
 
 # Progress log
 
+- 2026-10-02 — Repaired CI drift after Customer 360 renderer consolidation: `customer-billing-tab-smoke.js` now asserts renewal, plan-change and payment-history/refund boundaries against canonical `customer-360-compact.js` instead of importing the deliberately deleted V2 renderer. No retired compatibility layer was restored.
+
 - 2026-10-02 — Synced the roadmap branch onto current `main` after #830 without overwriting roadmap work. The branch now contains the zero-downtime Stremio refresh migration/contracts and Git history records `main` as a merge parent, so combined-base validation is against the current default branch.
 
 - 2026-10-02 — Retired `src/jellyfin/provisioning.js` after its production importer count reached zero. Reconciliation callers now use `resilient-provisioning`, dependency-safe helper callers use `provisioning-helpers`, the compatibility importer audit fails on any new production facade caller, and a circular-dependency regression exposed during CI was removed rather than restoring the shim.
