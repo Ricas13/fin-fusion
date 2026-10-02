@@ -85,6 +85,11 @@ const addonOnlyPortal = {
   },
   referralsEnabled: false
 };
+assert.strictEqual(
+  portalState.hasCurrentServiceAccess(addonOnlyPortal.accessSnapshot, addonOnlyPortal.subscriptions),
+  true,
+  'canonical portal service-access flags must count a current streaming-service add-on'
+);
 const addonOnlyNav = customerNav.optionsFromPortal(addonOnlyPortal);
 assert.strictEqual(addonOnlyNav.showAccess, true, 'a canonical service add-on must keep My Access visible even without a primary service lane');
 assert.strictEqual(addonOnlyNav.showServicePasswords, false, 'a service add-on alone must not invent non-add-on request access');
