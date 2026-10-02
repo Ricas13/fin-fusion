@@ -1,7 +1,7 @@
 'use strict';
 
 const { query, transaction } = require('../db');
-const provisioning = require('../jellyfin/provisioning');
+const provisioning = require('../jellyfin/resilient-provisioning');
 const manualSubscriptions = require('./manual-subscriptions');
 const subscriptionState = require('./subscription-state');
 
