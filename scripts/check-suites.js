@@ -167,6 +167,7 @@ module.exports = {
       "node scripts/discord-relink-role-revocation-smoke.js",
       "node scripts/customer-communications-page-smoke.js",
       "node scripts/customer-portal-ia-smoke.js",
+      "node scripts/customer-portal-state-smoke.js",
       "node scripts/customer-dashboard-readonly-smoke.js",
       "node scripts/free-access-customer-portal-smoke.js",
       "node scripts/admin-coherence-user-overrides-smoke.js",
