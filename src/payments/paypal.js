@@ -300,6 +300,7 @@ async function recordSubscriptionPaymentSuccess(event,resource){
   const subscriptionId=billingFailureSubscriptionId(resource);
   if(!subscriptionId)throw new Error('PayPal subscription payment success is missing the billing subscription ID.');
   const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
+  await recordPaypalLivePayment(event,resource,{subscriptionId,customerId:synced.row?.customer_id||null,type:'paypal_subscription_payment'});
   if(synced.row&&paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)){
     await failedRenewals.resolveOpen({
       provider:'paypal',
