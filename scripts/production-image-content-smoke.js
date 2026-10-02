@@ -9,6 +9,8 @@ const dockerfile=fs.readFileSync(path.join(root,'Dockerfile'),'utf8');
 
 for(const ignored of [
   'docs',
+  'scripts/*/README.md',
+  'scripts/ci',
   'scripts/*-smoke.js',
   'scripts/db-test-fixture.js',
   'scripts/smoke-db.js',
