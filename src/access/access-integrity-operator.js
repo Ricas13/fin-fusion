@@ -5,6 +5,7 @@ const accessRepair = require('./access-repair');
 
 const LABELS = Object.freeze({
   free_plan_without_ready_server: 'Free plan without ready server',
+  free_restore_reprovision_failed: 'Free restore reprovisioning failed',
   free_server_without_plan: 'Free server account without plan',
   unpaid_trial_without_ready_server: 'Unpaid trial without ready server',
   primary_server_without_plan: 'Primary server account without plan',
