@@ -273,8 +273,8 @@ Tasks:
   - fake provider clients
   - transaction/concurrency barriers
   - fixture customer/plan/subscription creation
-- [ ] Preserve all race, rollback, provider ambiguity, access, backup and migration tests.
-- [ ] Replace source-regex assertions with behavioural tests where feasible.
+- [x] Preserve all race, rollback, provider ambiguity, access, backup and migration tests.
+- [x] Replace source-regex assertions with behavioural tests where feasible.
 - [x] Keep static ownership assertions where they enforce architectural boundaries that behaviour alone cannot identify.
 - [x] Simplify `package.json` scripts to stable suite/tag entrypoints.
 - [x] Keep CI workflow intent visible even after suite consolidation.
@@ -389,7 +389,7 @@ Initial review candidates:
 For each candidate:
 
 - [x] identify read model vs command vs rendering vs transport responsibilities,
-- [ ] remove duplicated business decisions,
+- [x] remove duplicated business decisions,
 - [x] leave cohesive modules intact when splitting adds indirection without ownership benefit.
 
 ---
@@ -408,7 +408,7 @@ These are principles to apply opportunistically while completing the prioritized
 - [x] One date/time boundary convention.
 - [x] One test fixture layer for shared database/provider scenarios.
 - [x] One explicit UI component/helper for repeated mechanics.
-- [ ] No new direct business SQL in `src/platform` without a documented exception.
+- [x] No new direct business SQL in `src/platform` without a documented exception.
 - [x] No new compatibility facade without a retirement condition.
 
 ---
@@ -439,20 +439,20 @@ Where possible, keep each numbered item in its own commit or small sequence of c
 
 # Validation required before this PR leaves draft
 
-- [ ] `npm run check:fast`
-- [ ] `npm run check:db`
-- [ ] strict dead-code audit
-- [ ] canonical ownership/boundary checks
-- [ ] clean-install workflow
-- [ ] previous-schema upgrade workflow
-- [ ] Integration
-- [ ] Browser & Clean Install
-- [ ] Stremio
-- [ ] Security CodeQL
-- [ ] Release Integrity
-- [ ] deployment tooling/recovery behavioural tests
-- [ ] no reduction in high-risk concurrency/fault-injection coverage
-- [ ] combined branch rebased/updated on current `main` before final merge
+- [x] `npm run check:fast`
+- [x] `npm run check:db`
+- [x] strict dead-code audit
+- [x] canonical ownership/boundary checks
+- [x] clean-install workflow
+- [x] previous-schema upgrade workflow
+- [x] Integration
+- [x] Browser & Clean Install
+- [x] Stremio
+- [x] Security CodeQL
+- [x] Release Integrity
+- [x] deployment tooling/recovery behavioural tests
+- [x] no reduction in high-risk concurrency/fault-injection coverage
+- [x] combined branch rebased/updated on current `main` before final merge
 
 ## Production acceptance
 
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Post-merge closeout for PR #829: final head `6debf1f` was current with `main` before merge and all six release-critical workflows passed (CI, Integration, Release Integrity, Browser & Clean Install, Security CodeQL, Stremio). The successful suites cover tagged fast checks, the full DB suite, strict dead-code audit, previous-schema upgrade, clean-install, canonical ownership, deployment/recovery behaviour and the retained high-risk concurrency/recovery tests. The merged `platform-business-sql-boundary-smoke.js` also freezes the documented legacy platform/domain-table mutation exceptions and rejects any new direct mutation without deliberate review. Remaining unchecked items are intentionally limited to repository-admin enforcement, image-size baseline comparison, tagged-suite independence follow-up, compatibility retirement follow-up, residual destructive-mutation ownership, and live production acceptance.
 
 - 2026-10-02 — Began actual process/file consolidation with `node:test`: the new fixture-layer and provider-boundary contracts now live together in `scripts/ci/roadmap-contracts.test.js`, replacing two standalone smoke executables. Older high-risk DB/concurrency tests remain separate where process isolation is part of their safety value.
 
