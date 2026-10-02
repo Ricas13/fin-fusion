@@ -1,6 +1,7 @@
 'use strict';
 
 const {query,transaction}=require('../db');
+const planCommands=require('../catalog/plan-command-service');
 const CURRENCIES=Object.freeze(['GBP','USD','EUR']);
 const KEY='reporting_currency_v1';
 let refreshPromise=null;
@@ -22,38 +23,7 @@ function convertMinor(minor,from,to,state){from=cleanCurrency(from);to=cleanCurr
 // The canonical free tier is a deliberate schema exception: its compatibility
 // price rows must remain active and zero in every supported storage currency.
 // Only the selected portal currency is exposed by live storefront APIs.
-async function switchCatalogueCurrency(client,currency){
-  const plans=(await client.query(`SELECT id,price_minor,currency,is_free_tier FROM plans WHERE archived_at IS NULL ORDER BY id FOR UPDATE`)).rows;
-  if(!plans.length)return{plans:0,invalidatedMappings:0};
-  const ids=plans.map(row=>row.id);
-  const existing=(await client.query(`SELECT id,plan_id,price_minor FROM plan_prices WHERE currency=$1 AND plan_id=ANY($2::uuid[])`,[currency,ids])).rows;
-  const priorByPlan=new Map(existing.map(row=>[String(row.plan_id),row]));
-
-  // Paid plans expose one active currency. Free-tier compatibility rows stay
-  // active at zero because protect_canonical_free_tier_price enforces that
-  // invariant; their non-master variants are simply never selected by the UI.
-  await client.query(`
-    UPDATE plan_prices pr
-       SET active=CASE WHEN p.is_free_tier THEN TRUE ELSE FALSE END,
-           is_default=FALSE,
-           updated_at=NOW()
-      FROM plans p
-     WHERE pr.plan_id=p.id AND pr.plan_id=ANY($1::uuid[])
-  `,[ids]);
-  await client.query(`UPDATE plan_provider_prices pp SET active=FALSE,updated_at=NOW() FROM plan_prices pr WHERE pp.plan_price_id=pr.id AND pr.plan_id=ANY($1::uuid[]) AND pr.currency<>$2`,[ids,currency]);
-
-  let invalidatedMappings=0;
-  for(const plan of plans){
-    const amount=plan.is_free_tier?0:Number(plan.price_minor||0),prior=priorByPlan.get(String(plan.id));
-    const target=await client.query(`INSERT INTO plan_prices(plan_id,currency,price_minor,active,is_default) VALUES($1,$2,$3,TRUE,TRUE) ON CONFLICT(plan_id,currency) DO UPDATE SET price_minor=EXCLUDED.price_minor,active=TRUE,is_default=TRUE,updated_at=NOW() RETURNING id`,[plan.id,currency,amount]);
-    if(prior&&Number(prior.price_minor)!==amount){
-      const changed=await client.query(`UPDATE plan_provider_prices SET active=FALSE,verification_status='unverified',verification_error='Portal currency switch changed the catalogue amount; re-verification required.',updated_at=NOW() WHERE plan_price_id=$1 AND active=TRUE`,[target.rows[0].id]);
-      invalidatedMappings+=Number(changed.rowCount||0);
-    }
-  }
-  await client.query(`UPDATE plans SET currency=$1,updated_at=NOW() WHERE id=ANY($2::uuid[])`,[currency,ids]);
-  return{plans:plans.length,invalidatedMappings};
-}
+async function switchCatalogueCurrency(client,currency){return planCommands.switchCatalogueCurrency(client,currency);}
 
 async function saveCurrency(currency,actorUserId=null){
   currency=assertCurrency(currency);
