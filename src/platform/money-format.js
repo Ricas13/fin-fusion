@@ -87,10 +87,10 @@ function providerMajorFromMinor(minor,currency='USD'){
 }
 
 function formatProviderMinor(minor,currency='USD',options={}){
-  const digits=providerFractionDigits(currency);
+  const displayDigits=fractionDigits(currency);
   return formatMajor(providerMajorFromMinor(minor,currency),currency,{
-    minimumFractionDigits:options.minimumFractionDigits??digits,
-    maximumFractionDigits:options.maximumFractionDigits??digits
+    minimumFractionDigits:options.minimumFractionDigits??displayDigits,
+    maximumFractionDigits:options.maximumFractionDigits??displayDigits
   });
 }
 
