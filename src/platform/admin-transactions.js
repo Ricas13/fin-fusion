@@ -16,7 +16,7 @@ function gate(req, res, next) {
 function noStore(_req, res, next) { res.setHeader('Cache-Control','no-store, private, max-age=0'); res.setHeader('Pragma','no-cache'); next(); }
 function dateTime(value) { if (!value) return '—'; const d = new Date(value); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('en-GB'); }
 function money(minor, currency) {
-    return moneyFormat.formatCurrencyMinor(minor,currency || 'USD');
+    return moneyFormat.formatProviderMinor(minor,currency || 'USD');
 }
 function pill(text, cls='') { return `<span class="pill ${cls}">${esc(text)}</span>`; }
 function kindPill(kind) { return kind === 'payment' ? pill('Payment','good') : kind === 'refund' ? pill('Refund','warn') : pill('Provider movement'); }
