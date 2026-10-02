@@ -305,6 +305,9 @@ runtime_sha="$(compose_service_env_value app CAPTAINFIN_BUILD_SHA)"
 
 docker compose exec -T app node -e "fetch('http://127.0.0.1:3030/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
+log 'Running live post-cutover deployment verification'
+docker compose exec -T app npm run verify:deployment
+
 log 'Publishing verified runtime alias'
 docker image tag "$CAPTAINFIN_IMAGE" captainfin:current
 
