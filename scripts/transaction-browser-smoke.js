@@ -13,6 +13,8 @@ assert.strictEqual(browser.classify({provider:'stripe',transaction_type:'payout'
 assert.strictEqual(browser.classify({provider:'paypal',transaction_type:'T0003',transaction_status:'S',gross_amount_minor:1000}),'payment');
 assert.strictEqual(browser.classify({provider:'paypal',transaction_type:'T1107',transaction_status:'S',gross_amount_minor:-500}),'refund');
 assert.strictEqual(browser.classify({provider:'paypal',transaction_type:'T0003',transaction_status:'P',gross_amount_minor:1000}),'ignored');
+assert.strictEqual(browser.classify({provider:'paypal',transaction_type:'paypal_sale',transaction_status:'COMPLETED',gross_amount_minor:1000}),'payment');
+assert.strictEqual(browser.classify({provider:'paypal',transaction_type:'paypal_refund',transaction_status:'COMPLETED',gross_amount_minor:-500}),'refund');
 assert.strictEqual(browser.classify({provider:'plisio',transaction_type:'payment',transaction_status:'completed',gross_amount_minor:1000}),'payment');
 assert.strictEqual(browser.normalizeFilters({provider:'PLISIO'}).provider,'plisio');
 const service=read('src/payments/transaction-browser.js');
