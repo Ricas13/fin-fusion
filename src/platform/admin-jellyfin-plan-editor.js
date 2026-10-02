@@ -140,8 +140,9 @@ function availabilityCard(data, req) {
     const infrastructure = physicalLimit == null
       ? ''
       : `<div class="inlineHelp">Eligible servers currently provide <strong>${esc(physicalLimit)}</strong> physical customer places, with <strong>${esc(physicalRemaining ?? 0)}</strong> physically open. The plan limit below can be lower, but can never create capacity beyond the selected servers.</div>`;
+    const inactivityConfigured = p.free_first_playback_grace_days != null && p.free_playback_window_days != null && p.free_minimum_playback_minutes != null;
     const inactivity = data.free
-      ? `<div class="planCardDetails"><div class="planDetailsBody"><div class="formGroup"><label>Free inactivity policy</label><div class="inlineHelp">This policy belongs to the Free Plan, not to an individual server. Existing automation semantics are preserved; only the ownership of these thresholds moves here.</div></div><div class="formGrid"><div class="formGroup"><label>Initial playback grace</label><div class="inputUnit"><input class="input" type="number" min="1" max="3650" name="freeFirstPlaybackGraceDays" value="${esc(p.free_first_playback_grace_days ?? 3)}" required><span>days</span></div></div><div class="formGroup"><label>Playback window</label><div class="inputUnit"><input class="input" type="number" min="1" max="365" name="freePlaybackWindowDays" value="${esc(p.free_playback_window_days ?? 7)}" required><span>days</span></div></div><div class="formGroup"><label>Minimum playback</label><div class="inputUnit"><input class="input" type="number" min="1" max="1000000" name="freeMinimumPlaybackMinutes" value="${esc(p.free_minimum_playback_minutes ?? 30)}" required><span>minutes</span></div></div></div></div></div>`
+      ? `<div class="planCardDetails"><div class="planDetailsBody"><div class="formGroup"><label>Free inactivity policy</label><div class="inlineHelp">This policy belongs to the Free Plan, not to an individual server. ${inactivityConfigured ? 'These plan thresholds are authoritative.' : 'This plan is still using the legacy assigned-server thresholds. Leave all three fields blank to preserve that exact behaviour, or enter all three values to move the policy explicitly onto this plan.'}</div></div><div class="formGrid"><div class="formGroup"><label>Initial playback grace</label><div class="inputUnit"><input class="input" type="number" min="1" max="3650" name="freeFirstPlaybackGraceDays" value="${esc(p.free_first_playback_grace_days ?? '')}" placeholder="3"><span>days</span></div></div><div class="formGroup"><label>Playback window</label><div class="inputUnit"><input class="input" type="number" min="1" max="365" name="freePlaybackWindowDays" value="${esc(p.free_playback_window_days ?? '')}" placeholder="7"><span>days</span></div></div><div class="formGroup"><label>Minimum playback</label><div class="inputUnit"><input class="input" type="number" min="1" max="1000000" name="freeMinimumPlaybackMinutes" value="${esc(p.free_minimum_playback_minutes ?? '')}" placeholder="30"><span>minutes</span></div></div></div></div></div>`
       : '';
     return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>Plan places are capped independently from server capacity.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}<div class="formGroup"><label>Maximum customers on this plan</label><input class="input" type="number" min="0" max="1000000" name="mediaUserLimit" value="${esc(mediaLimit)}" placeholder="Use all eligible server capacity"><div class="inlineHelp">Leave blank to let this plan use all capacity offered by its selected servers. Set 0 to close new acquisition without removing existing access.</div></div>${infrastructure}${inactivity}<button class="button" type="submit">Save availability</button></form></section>`;
   }
@@ -247,13 +248,22 @@ async function saveAvailability(req, plan) {
       actorUserId: req.session.authUserId
     });
     if (freePlan(plan)) {
-      await planCommands.updateFreeInactivityPolicy({
-        planId: plan.id,
-        firstPlaybackGraceDays: int(req.body.freeFirstPlaybackGraceDays, 1, 3650, 'Initial playback grace'),
-        playbackWindowDays: int(req.body.freePlaybackWindowDays, 1, 365, 'Playback window'),
-        minimumPlaybackMinutes: int(req.body.freeMinimumPlaybackMinutes, 1, 1000000, 'Minimum playback'),
-        actorUserId: req.session.authUserId
-      });
+      const policyRaw = [
+        String(req.body.freeFirstPlaybackGraceDays ?? '').trim(),
+        String(req.body.freePlaybackWindowDays ?? '').trim(),
+        String(req.body.freeMinimumPlaybackMinutes ?? '').trim()
+      ];
+      const supplied = policyRaw.filter(Boolean).length;
+      if (supplied > 0 && supplied < 3) throw new Error('Enter all three Free inactivity thresholds, or leave all three blank to preserve the legacy assigned-server policy.');
+      if (supplied === 3) {
+        await planCommands.updateFreeInactivityPolicy({
+          planId: plan.id,
+          firstPlaybackGraceDays: int(policyRaw[0], 1, 3650, 'Initial playback grace'),
+          playbackWindowDays: int(policyRaw[1], 1, 365, 'Playback window'),
+          minimumPlaybackMinutes: int(policyRaw[2], 1, 1000000, 'Minimum playback'),
+          actorUserId: req.session.authUserId
+        });
+      }
     }
     return;
   }
