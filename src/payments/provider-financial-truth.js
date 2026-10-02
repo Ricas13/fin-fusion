@@ -400,40 +400,57 @@ async function linkUnownedTransactions(customerId = null) {
 }
 
 async function identityConflictCount(customerId = null) {
-    const params = customerId ? [customerId] : [];
-    const filter = customerId ? ' WHERE customer_id=$1' : '';
-    const result = await query(`
-        WITH evidence AS (
-            SELECT customer_id,provider,'customer'::text resource_type,provider_customer_id provider_identity FROM payment_customers
-            UNION ALL
-            SELECT customer_id,source,'customer',provider_customer_id FROM subscriptions WHERE provider_customer_id IS NOT NULL
-            UNION ALL
-            SELECT customer_id,source,'billing_reference',provider_subscription_id FROM subscriptions WHERE provider_subscription_id IS NOT NULL
-            UNION ALL
-            SELECT customer_id,provider,'checkout',provider_checkout_id FROM billing_checkout_intents WHERE customer_id IS NOT NULL AND provider_checkout_id IS NOT NULL
-            UNION ALL
-            SELECT customer_id,provider,'transaction',provider_transaction_id FROM payment_history_transactions WHERE customer_id IS NOT NULL
-            UNION ALL
-            SELECT customer_id,provider,'customer',provider_customer_id FROM payment_history_transactions WHERE customer_id IS NOT NULL AND provider_customer_id IS NOT NULL
-            UNION ALL
-            SELECT customer_id,provider,'reference',provider_reference_id FROM payment_history_transactions WHERE customer_id IS NOT NULL AND provider_reference_id IS NOT NULL
-            UNION ALL
-            SELECT customer_id,provider,'source',provider_source_id FROM payment_history_transactions WHERE customer_id IS NOT NULL AND provider_source_id IS NOT NULL
-        ),
-        scoped AS (
-            SELECT * FROM evidence
-            ${filter}
-        )
-        SELECT COUNT(*)::int total
-        FROM (
-            SELECT provider,resource_type,provider_identity
-            FROM scoped
-            WHERE provider IN ('stripe','paypal','plisio')
-              AND provider_identity IS NOT NULL
-            GROUP BY provider,resource_type,provider_identity
-            HAVING COUNT(DISTINCT customer_id)>1
-        ) conflicts
-    `, params);
+    const evidence = `
+        SELECT customer_id,provider,'customer'::text resource_type,provider_customer_id provider_identity FROM payment_customers
+        UNION ALL
+        SELECT customer_id,source,'customer',provider_customer_id FROM subscriptions WHERE provider_customer_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,source,'billing_reference',provider_subscription_id FROM subscriptions WHERE provider_subscription_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,provider,'checkout',provider_checkout_id FROM billing_checkout_intents WHERE customer_id IS NOT NULL AND provider_checkout_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,provider,'transaction',provider_transaction_id FROM payment_history_transactions WHERE customer_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,provider,'customer',provider_customer_id FROM payment_history_transactions WHERE customer_id IS NOT NULL AND provider_customer_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,provider,'reference',provider_reference_id FROM payment_history_transactions WHERE customer_id IS NOT NULL AND provider_reference_id IS NOT NULL
+        UNION ALL
+        SELECT customer_id,provider,'source',provider_source_id FROM payment_history_transactions WHERE customer_id IS NOT NULL AND provider_source_id IS NOT NULL
+    `;
+    const result = customerId
+        ? await query(`
+            WITH evidence AS (${evidence}),
+            relevant AS (
+                SELECT DISTINCT provider,resource_type,provider_identity
+                FROM evidence
+                WHERE customer_id=$1
+                  AND provider IN ('stripe','paypal','plisio')
+                  AND provider_identity IS NOT NULL
+            )
+            SELECT COUNT(*)::int total
+            FROM (
+                SELECT e.provider,e.resource_type,e.provider_identity
+                FROM evidence e
+                JOIN relevant r
+                  ON r.provider=e.provider
+                 AND r.resource_type=e.resource_type
+                 AND r.provider_identity=e.provider_identity
+                GROUP BY e.provider,e.resource_type,e.provider_identity
+                HAVING COUNT(DISTINCT e.customer_id)>1
+            ) conflicts
+        `, [customerId])
+        : await query(`
+            WITH evidence AS (${evidence})
+            SELECT COUNT(*)::int total
+            FROM (
+                SELECT provider,resource_type,provider_identity
+                FROM evidence
+                WHERE provider IN ('stripe','paypal','plisio')
+                  AND provider_identity IS NOT NULL
+                GROUP BY provider,resource_type,provider_identity
+                HAVING COUNT(DISTINCT customer_id)>1
+            ) conflicts
+        `);
     return Number(result.rows[0]?.total || 0);
 }
 
