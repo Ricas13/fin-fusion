@@ -266,7 +266,7 @@ Tasks:
 - [x] Keep the current tagged manifest as the transition source of truth.
 - [x] Introduce shared DB fixture builders with scoped setup/cleanup.
 - [ ] Make tagged suites independently runnable without relying on side effects from prior tests.
-- [ ] Prefer `node:test` suites/modules for related tests rather than one process/file per assertion group where practical.
+- [x] Prefer `node:test` suites/modules for related tests rather than one process/file per assertion group where practical.
 - [x] Consolidate repeated helpers for:
   - temporary PostgreSQL schema/database setup
   - environment overrides
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Began actual process/file consolidation with `node:test`: the new fixture-layer and provider-boundary contracts now live together in `scripts/ci/roadmap-contracts.test.js`, replacing two standalone smoke executables. Older high-risk DB/concurrency tests remain separate where process isolation is part of their safety value.
 
 - 2026-10-02 — Established `scripts/test-fixture.js` as the canonical shared test-fixture layer: DB lifecycle/rollback/timezone helpers, scoped environment overrides, unique IDs, concurrency barriers, module/provider mocking and customer/plan/subscription builders now live together. `db-test-fixture.js` is a transitional re-export; payment-event replay and provider-checkout recovery were migrated to the canonical helper, and fixture code is excluded from production images.
 
