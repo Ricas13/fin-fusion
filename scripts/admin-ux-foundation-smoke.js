@@ -9,6 +9,7 @@ const html=read('src/platform/admin-html.js');
 const core=read('src/platform/admin-html-core-base.js');
 const coreWrapper=read('src/platform/admin-html-core.js');
 const catalog=read('src/platform/admin-catalog-shell.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 const planCreateV2=read('src/platform/admin-plan-create-v2.js');
 const adminActions=read('src/platform/admin-actions.js');
 const accountActivation=read('src/auth/account-activation.js');
@@ -64,8 +65,8 @@ assert(!navModel.aliases.libraries&&navModel.sidebarKey('libraries')==='servers'
 
 assert(planCreateV2.includes('name="streams"'),'New plan form must expose a Jellyfin concurrent-stream rule');
 assert(catalog.includes("int(body.streams,1,50,'Concurrent streams')"),'Legacy plan input compatibility must still validate concurrent streams from 1 to 50');
-assert(catalog.includes('sort_order,streams,allow_remuxing'),'Legacy plan input compatibility must still persist stream limits into plans.streams');
-assert(catalog.includes('streams:plan.streams'),'Legacy plan creation audit metadata must record the selected stream limit');
+assert(catalog.includes('planCommands.createBasicPlan(plan,actorUserId)')&&planCommands.includes('sort_order,streams,allow_remuxing'),'Legacy plan input compatibility must delegate persistence while retaining stream limits in plans.streams');
+assert(planCommands.includes('streams:plan.streams'),'Canonical plan command audit metadata must record the selected legacy stream limit');
 assert(planCreateV2.includes("'concurrent_streams', 'household_network'")&&planCreateV2.includes("const streams = stremio ? 1 : int(body.streams ?? '1', 0, 50, 'Jellyfin concurrent streams')")&&planCreateV2.includes("jellyfinAccessModel === 'household_network' ? int(body.jellyfinHouseholdNetworkLimit")&&planCreateV2.includes('data-jellyfin-stream-fields')&&planCreateV2.includes('data-jellyfin-household-fields'),'Jellyfin plan creation must keep concurrent streams independently configurable alongside optional household enforcement');
 assert(planCreateV2.includes('name="stremioHouseholdNetworkLimit"')&&planCreateV2.includes("int(body.stremioHouseholdNetworkLimit ?? '1', 1, 10")&&planCreateV2.includes('Unlimited streams')&&planCreateV2.includes('Unlimited</strong>'),'Stremio plan creation must expose a configurable household-connection allowance while keeping simultaneous streams/devices unlimited');
 assert(catalog.includes('Prepare included services immediately')&&catalog.includes('Historical bundles and add-ons are not assignable here')&&catalog.includes("COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','emby')")&&catalog.includes('serviceCatalog.planLabel(p)'),'Admin customer creation must label every standalone service through the canonical catalogue and avoid assigning historical bundles/add-ons');
