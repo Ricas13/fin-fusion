@@ -91,9 +91,15 @@ tbody:has(.planHiddenToggle:checked) .planHiddenDisclosure{background:linear-gra
 function capacityCell(plan) {
   const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{},customers=Math.max(0,Number(plan.live_subscriber_count||0));
   if(state.model==='fleet_users'){
-    const remaining=Math.max(0,Number(state.remaining||0)),limit=state.userLimit==null?null:Math.max(0,Number(state.userLimit)),used=limit==null?0:Math.max(0,limit-remaining),pct=limit?Math.min(100,Math.max(0,Math.round((used/limit)*100))):100,near=pct>=85?' nearFull':'';
-    const managed=Math.max(0,Number(state.managedUsers||0)),pending=Math.max(0,Number(state.pendingUsers||0)),held=Math.max(0,Number(state.reservedUsers||0));
-    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${managed}/${limit??'—'} managed users${pending?` · ${pending} awaiting access`:''}${held?` · ${held} held`:''}</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View server user capacity →</a></div>`;
+    const remaining=Math.max(0,Number(state.remaining||0));
+    const planLimit=state.planLimit==null?null:Math.max(0,Number(state.planLimit));
+    const planUsed=Math.max(0,Number(state.planUsed??state.used??0)+Number(state.planReserved??state.reserved??0));
+    const physicalLimit=Math.max(0,Number(state.physicalLimit??state.userLimit??0));
+    const physicalRemaining=Math.max(0,Number(state.physicalRemaining??state.userRemaining??0));
+    const displayLimit=planLimit==null?physicalLimit:Math.min(planLimit,physicalLimit||planLimit);
+    const pct=displayLimit?Math.min(100,Math.max(0,Math.round(((displayLimit-remaining)/displayLimit)*100))):100,near=pct>=85?' nearFull':'';
+    const planText=planLimit==null?'no extra plan cap':`plan ${planUsed}/${planLimit}`;
+    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${esc(planText)} · fleet ${physicalRemaining}/${physicalLimit} free</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage plan & server capacity →</a></div>`;
   }
   const limit=state.limit==null?null:Number(state.limit),used=Number(state.used||0)+Number(state.reserved||0);
   if(limit==null)return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${customers} ${plural(customers,'customer')} currently active · no customer limit configured</div><a class="subText" href="${esc(link)}">Set customer availability →</a>`;
@@ -172,8 +178,8 @@ async function plansPage(req) {
   const showEmbyZeroState = !showArchived && (!type || type === 'emby');
   const embyEmpty = `<div class="emptyAction"><div><strong>No Emby Share plans yet.</strong><div>Create the first Emby Share when you want this product to appear on the public storefront.</div></div><a class="button" href="/admin/plans/new?type=emby">Add Emby Share plan</a></div>`;
   const sections = [
-    sectionTable('free', 'Free Server Plans', 'Free Jellyfin availability comes directly from Free server user capacity. One customer uses one place.', groups.free, ctx),
-    sectionTable('paid', 'Jellyfin Shares', 'Paid Jellyfin availability comes directly from eligible server user capacity. One customer uses one place.', groups.paid, ctx),
+    sectionTable('free', 'Free Server Plans', 'Free Jellyfin plans own their sellable allocation inside the selected Free server capacity. One customer uses one physical place.', groups.free, ctx),
+    sectionTable('paid', 'Jellyfin Shares', 'Paid Jellyfin plans own their sellable allocation inside eligible server capacity. One customer uses one physical place.', groups.paid, ctx),
     sectionTable('emby', 'Emby Shares', 'Standalone Emby Share plans use Emby-only server placement and an independent customer entitlement.', groups.emby, ctx, { keepEmpty: showEmbyZeroState, emptyHtml: embyEmpty }),
     sectionTable('stremio', 'Stremio Shares', 'Standalone Stremio shares use a manually configured customer place limit.', groups.stremio, ctx),
     sectionTable('reseller', 'Reseller Plans', 'Reseller catalogue plans remain separated from direct customer plans.', groups.reseller, ctx),
