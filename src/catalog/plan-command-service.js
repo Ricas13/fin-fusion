@@ -1146,7 +1146,159 @@ async function updateDeliveryService({
   });
 }
 
+function legacyPlanCode(value){
+  const code=String(value||'').trim().toLowerCase();
+  if(!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code))throw new Error('Code must use lowercase letters, numbers and hyphens.');
+  return code;
+}
+
+function legacyPlanName(value){
+  const name=String(value||'').trim().slice(0,100);
+  if(!name)throw new Error('Name is required.');
+  return name;
+}
+
+function legacyEffectiveDate(value){
+  if(!String(value||'').trim())return null;
+  const date=new Date(value);
+  if(!Number.isFinite(date.getTime()))throw new Error('Effective date is invalid.');
+  return date;
+}
+
+function schemaIdentifier(name){
+  if(!/^[a-z_][a-z0-9_]*$/.test(name))throw new Error('Unsafe schema identifier');
+  return `"${name}"`;
+}
+
+async function createBasicPlan(plan,actorUserId=null){
+  return transaction(async client=>{
+    const created=await client.query(
+      `INSERT INTO plans(code,name,description,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,is_addon,server_class,visible,active,sort_order,streams,allow_remuxing,allow_remote_access)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,FALSE,TRUE)
+       RETURNING *`,
+      [plan.code,plan.name,plan.description,plan.serviceType,plan.audience,plan.billing,plan.duration,plan.priceMinor,plan.currency,plan.capacityLimit,plan.isAddon,plan.serverClass,plan.visible,plan.active,plan.sortOrder,plan.streams]
+    );
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.create','plan',$2,$3::jsonb)`,
+      [actorUserId,created.rows[0].id,JSON.stringify({
+        code:plan.code,name:plan.name,serviceType:plan.serviceType,audience:plan.audience,
+        billingInterval:plan.billing,durationDays:plan.duration,priceMinor:plan.priceMinor,
+        currency:plan.currency,capacityLimit:plan.capacityLimit,streams:plan.streams,isAddon:plan.isAddon
+      })]
+    );
+    return created.rows[0];
+  });
+}
+
+async function clonePlanVersion(sourceId,{code,name,effectiveFrom=null},actorUserId=null){
+  code=legacyPlanCode(code);
+  name=legacyPlanName(name);
+  effectiveFrom=legacyEffectiveDate(effectiveFrom);
+  return transaction(async client=>{
+    const source=(await client.query('SELECT * FROM plans WHERE id=$1 FOR SHARE',[sourceId])).rows[0];
+    if(!source)throw new Error('Plan not found.');
+    const cols=(await client.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plans'
+         AND is_generated='NEVER' AND identity_generation IS NULL
+       ORDER BY ordinal_position`
+    )).rows.map(x=>x.column_name).filter(c=>!new Set([
+      'id','code','name','active','visible','archived_at','archived_by','created_at','updated_at',
+      'version_group_id','version_number','effective_from','effective_until'
+    ]).has(c));
+    const group=source.version_group_id||source.id;
+    const version=Number((await client.query(
+      `SELECT COALESCE(MAX(version_number),0)::int+1 n
+       FROM plans WHERE COALESCE(version_group_id,id)=$1`,
+      [group]
+    )).rows[0].n||2);
+    const values=cols.map(col=>source[col]);
+    const params=values.map((_,i)=>`${i+6}`);
+    const inserted=(await client.query(
+      `INSERT INTO plans(code,name,active,visible,version_group_id,version_number,effective_from,${cols.map(schemaIdentifier).join(',')})
+       VALUES($1,$2,FALSE,FALSE,$3,$4,$5,${params.join(',')})
+       RETURNING *`,
+      [code,name,group,version,effectiveFrom,...values]
+    )).rows[0];
+    await client.query(
+      `INSERT INTO plan_server_eligibility(plan_id,server_id,weight)
+       SELECT $1,server_id,weight FROM plan_server_eligibility WHERE plan_id=$2
+       ON CONFLICT DO NOTHING`,
+      [inserted.id,sourceId]
+    );
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.clone','plan',$2,$3::jsonb)`,
+      [actorUserId,inserted.id,JSON.stringify({sourceId,version,effectiveFrom,providerMappingsCopied:false})]
+    );
+    return inserted;
+  });
+}
+
+async function switchCatalogueCurrency(client,currency){
+  const plans=(await client.query(
+    `SELECT id,price_minor,currency,is_free_tier FROM plans
+     WHERE archived_at IS NULL ORDER BY id FOR UPDATE`
+  )).rows;
+  if(!plans.length)return{plans:0,invalidatedMappings:0};
+  const ids=plans.map(row=>row.id);
+  const existing=(await client.query(
+    `SELECT id,plan_id,price_minor FROM plan_prices
+     WHERE currency=$1 AND plan_id=ANY($2::uuid[])`,
+    [currency,ids]
+  )).rows;
+  const priorByPlan=new Map(existing.map(row=>[String(row.plan_id),row]));
+  await client.query(`
+    UPDATE plan_prices pr
+       SET active=CASE WHEN p.is_free_tier THEN TRUE ELSE FALSE END,
+           is_default=FALSE,
+           updated_at=NOW()
+      FROM plans p
+     WHERE pr.plan_id=p.id AND pr.plan_id=ANY($1::uuid[])
+  `,[ids]);
+  await client.query(
+    `UPDATE plan_provider_prices pp
+     SET active=FALSE,updated_at=NOW()
+     FROM plan_prices pr
+     WHERE pp.plan_price_id=pr.id AND pr.plan_id=ANY($1::uuid[]) AND pr.currency<>$2`,
+    [ids,currency]
+  );
+  let invalidatedMappings=0;
+  for(const plan of plans){
+    const amount=plan.is_free_tier?0:Number(plan.price_minor||0);
+    const prior=priorByPlan.get(String(plan.id));
+    const target=await client.query(
+      `INSERT INTO plan_prices(plan_id,currency,price_minor,active,is_default)
+       VALUES($1,$2,$3,TRUE,TRUE)
+       ON CONFLICT(plan_id,currency)
+       DO UPDATE SET price_minor=EXCLUDED.price_minor,active=TRUE,is_default=TRUE,updated_at=NOW()
+       RETURNING id`,
+      [plan.id,currency,amount]
+    );
+    if(prior&&Number(prior.price_minor)!==amount){
+      const changed=await client.query(
+        `UPDATE plan_provider_prices
+         SET active=FALSE,verification_status='unverified',
+             verification_error='Portal currency switch changed the catalogue amount; re-verification required.',
+             updated_at=NOW()
+         WHERE plan_price_id=$1 AND active=TRUE`,
+        [target.rows[0].id]
+      );
+      invalidatedMappings+=Number(changed.rowCount||0);
+    }
+  }
+  await client.query(
+    'UPDATE plans SET currency=$1,updated_at=NOW() WHERE id=ANY($2::uuid[])',
+    [currency,ids]
+  );
+  return{plans:plans.length,invalidatedMappings};
+}
+
 module.exports = {
+  createBasicPlan,
+  clonePlanVersion,
+  switchCatalogueCurrency,
   createPlan,
   updateProduct,
   updateAvailability,
