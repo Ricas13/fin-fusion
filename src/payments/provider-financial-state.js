@@ -275,7 +275,12 @@ async function recordTransaction(input) {
           WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
            AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
           THEN payment_history_transactions.transaction_type ELSE EXCLUDED.transaction_type END,
-        transaction_status=COALESCE(EXCLUDED.transaction_status,payment_history_transactions.transaction_status),
+        transaction_status=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.transaction_status
+          ELSE COALESCE(EXCLUDED.transaction_status,payment_history_transactions.transaction_status)
+        END,
         occurred_at=CASE
           WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
            AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
@@ -296,9 +301,24 @@ async function recordTransaction(input) {
           WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
            AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
           THEN payment_history_transactions.net_amount_minor ELSE EXCLUDED.net_amount_minor END,
-        provider_customer_id=COALESCE(EXCLUDED.provider_customer_id,payment_history_transactions.provider_customer_id),
-        provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
-        provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
+        provider_customer_id=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN COALESCE(payment_history_transactions.provider_customer_id,EXCLUDED.provider_customer_id)
+          ELSE COALESCE(EXCLUDED.provider_customer_id,payment_history_transactions.provider_customer_id)
+        END,
+        provider_reference_id=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN COALESCE(payment_history_transactions.provider_reference_id,EXCLUDED.provider_reference_id)
+          ELSE COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id)
+        END,
+        provider_source_id=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN COALESCE(payment_history_transactions.provider_source_id,EXCLUDED.provider_source_id)
+          ELSE COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id)
+        END,
         customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
         metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
           ||COALESCE(EXCLUDED.metadata,'{}'::jsonb)
