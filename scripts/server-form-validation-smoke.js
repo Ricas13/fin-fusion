@@ -81,16 +81,14 @@ if (legacyFallbackPolicy.thresholdOwner !== 'free_server_legacy_fallback' || !le
 
 const root = path.join(__dirname, '..');
 const inactivitySource = fs.readFileSync(path.join(root, 'src/automation/customer-inactivity.js'), 'utf8');
-for (const column of ['p.free_first_playback_grace_days AS plan_free_first_playback_grace_days', 'p.free_playback_window_days AS plan_free_playback_window_days', 'p.free_minimum_playback_minutes AS plan_free_minimum_playback_minutes']) {
+for (const column of ["p.inactivity_policy #>> '{freeInactivity,firstPlaybackGraceDays}'", "p.inactivity_policy #>> '{freeInactivity,playbackWindowDays}'", "p.inactivity_policy #>> '{freeInactivity,minimumPlaybackMinutes}'"]) {
     if (!inactivitySource.includes(column)) throw new Error(`Inactivity candidate discovery must read plan-owned policy column: ${column}`);
 }
 if (!inactivitySource.includes("COALESCE(fa.plan_free_playback_window_days,js.free_playback_window_days,7)")) {
     throw new Error('Rolling playback SQL must prefer the Free Plan window with a safe assigned-server fallback.');
 }
-const migrationSource = fs.readFileSync(path.join(root, 'db/migrations/20261002220000_plan_owned_media_capacity_and_free_inactivity.sql'), 'utf8');
-if (!migrationSource.includes('media_user_limit') || !migrationSource.includes('free_first_playback_grace_days')) {
-    throw new Error('Plan-owned media capacity/inactivity migration is missing.');
-}
+const capacitySource = fs.readFileSync(path.join(root, 'src/entitlements/plan-capacity.js'), 'utf8');
+if (!capacitySource.includes('mediaCapacityManaged') || !capacitySource.includes('capacity_limit')) throw new Error('Plan-owned capacity must use the existing schema with an explicit opt-in marker.');
 const formView = fs.readFileSync(path.join(root, 'views/admin/server-form.ejs'), 'utf8');
 for (const field of ['freeFirstPlaybackGraceDays', 'freePlaybackWindowDays', 'freeMinimumPlaybackMinutes']) {
     if (formView.includes(`name="${field}"`)) throw new Error(`Server form must no longer expose plan-owned field ${field}`);
