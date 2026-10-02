@@ -6,6 +6,7 @@ const primaryActions=require('./admin-customer-primary-actions');
 const desiredState=require('../entitlements/customer-access-desired-state');
 const serviceTruth=require('./customer-360-service-truth');
 const moneyFormat=require('./money-format');
+const {esc:escapeHtml,csrfHidden}=require('./html-primitives');
 
 function serviceType(detail){const canonical=detail?.canonicalAccessState;const entitlement=canonical?(canonical.primary?.entitlement||canonical.free?.entitlement||canonical.emby?.entitlement||canonical.stremio?.entitlement||null):(detail?.primaryEntitlement||null);return String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
