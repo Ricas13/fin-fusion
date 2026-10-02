@@ -196,6 +196,22 @@ async function releaseCustomerHold(customerId,holdId,actorUserId,resolutionReaso
   }
 }
 
+
+async function clearAutomationProtection(customerId){
+  const result=await query(`
+    UPDATE customers
+       SET automation_protected=FALSE,
+           automation_protected_reason=NULL,
+           automation_protected_at=NULL,
+           automation_protected_by=NULL,
+           updated_at=NOW()
+     WHERE id=$1
+     RETURNING id
+  `,[customerId]);
+  if(!result.rowCount)throw new Error('Customer not found.');
+  return true;
+}
+
 module.exports={
   MANUAL_RELEASE_TYPES,
   clean,
@@ -206,5 +222,6 @@ module.exports={
   reconcileBanScope,
   banCustomer,
   unbanCustomer,
-  releaseCustomerHold
+  releaseCustomerHold,
+  clearAutomationProtection
 };
