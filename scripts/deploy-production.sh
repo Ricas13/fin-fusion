@@ -247,15 +247,15 @@ if [[ "$existing_database" == 1 && -n "$(compose_service_container app)" ]]; the
   log 'Proving the currently serving portal remains healthy on the migrated schema'
   previous_app_ready=0
   for _ in $(seq 1 30); do
-    health="$(compose_service_health app)"
-    if [[ "$health" == 'healthy' || "$health" == 'running' ]]; then
+    if docker compose exec -T app node -e "fetch('http://127.0.0.1:3030/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" >/dev/null 2>&1; then
       previous_app_ready=1
       break
     fi
-    [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
+    state="$(compose_service_state app)"
+    [[ "$state" == 'exited' || "$state" == 'dead' ]] && break
     sleep 2
   done
-  [[ "$previous_app_ready" == 1 ]] || fail 'previous web application did not remain healthy after migration'
+  [[ "$previous_app_ready" == 1 ]] || fail 'previous portal readiness probe failed after migration'
   rollback_safe=1
   log 'Previous web runtime is compatible with the migrated schema; rollback remains available'
 fi
@@ -307,6 +307,15 @@ docker compose exec -T app node -e "fetch('http://127.0.0.1:3030/health/ready').
 
 log 'Publishing verified runtime alias'
 docker image tag "$CAPTAINFIN_IMAGE" captainfin:current
+
+log 'Auditing post-cutover production acceptance'
+acceptance_rc=0
+docker compose exec -T app npm run verify:production-acceptance || acceptance_rc=$?
+if [[ "$acceptance_rc" == 2 ]]; then
+  printf '\nProduction acceptance requires operator review. The deployment remains healthy and was not rolled back.\n' >&2
+elif [[ "$acceptance_rc" != 0 ]]; then
+  fail 'production acceptance audit could not be completed'
+fi
 
 workers_stopped=0
 workers_recreated=0
