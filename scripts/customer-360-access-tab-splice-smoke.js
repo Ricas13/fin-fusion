@@ -14,7 +14,6 @@ const cardsSource=read('src/platform/customer-360-access-cards.js');
 const statusSource=read('src/platform/customer-360-access-status.js');
 const holdRouteSource=read('src/platform/admin-customer-access-holds.js');
 const accessControlSource=read('src/access/admin-customer-access-control.js');
-const v2Source=read('src/platform/customer-360-view-v2.js');
 const adminSource=read('src/platform/admin-customer-360.js');
 const accessLoaderSource=read('src/platform/customer-360.js');
 
@@ -22,11 +21,12 @@ const accessLoaderSource=read('src/platform/customer-360.js');
 // heading strings. The old dense access renderer remains available as a
 // secondary disclosure inside the Jellyfin/Emby service card.
 assert(!/indexOf\(marker\)|const marker=|skipAccessSections/.test(wrapperSource),'Customer 360 must not splice HTML into a legacy Access tab any more');
+for(const retired of ['removeLegacyPlanRevoke','addPlanRevokeAction','movePlanRevokeIntoSubscriptions'])assert(!wrapperSource.includes(retired),`retired Customer 360 HTML surgery helper returned: ${retired}`);
 assert(!/\.replace\(\s*\/\(<section class=/.test(wrapperSource)&&!wrapperSource.includes('end_jellyfin_plan'),'Customer 360 wrapper must not rewrite rendered HTML to relocate plan actions');
 assert(compactSource.includes("customerLink(id,'subscriptions/revoke','Revoke a plan'"),'compact plan card must own the revoke-plan action explicitly');
 
-assert(!/skipAccessSections/.test(v2Source),'the retired tab-splice contract must not linger in v2 either');
-assert(v2Source.includes("nav(id,token,appUserId)")||/function nav\(/.test(v2Source),'v2 must expose the single-page nav (Customer record + Portal view)');
+assert(!fs.existsSync(path.join(root,'src/platform/customer-360-view-v2.js')),'retired Customer 360 V2 renderer must stay removed');
+assert(wrapperSource.includes('function nav(id,token,appUserId)')&&wrapperSource.includes('Customer record')&&wrapperSource.includes('Portal view'),'unified Customer 360 wrapper must own the single-page record/portal navigation explicitly');
 assert(wrapperSource.includes("compact=require('./customer-360-compact')"),'Customer 360 must use the focused action-first renderer');
 assert(wrapperSource.includes('async function body(detail,token,options={})'),'the unified page body must no longer take a tab/accessDetail argument');
 assert(!adminSource.includes('Preview customer portal'),'The redundant Preview customer portal action must be removed');
