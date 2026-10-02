@@ -71,11 +71,14 @@ function main() {
     const automationJobs = source('src/automation/jobs.js');
     const automationWorker = source('scripts/automation-worker.js');
     assert(automationJobs.includes('async revenue_integrity(){return revenueIntegritySafeRun()}'), 'Core revenue integrity must remain independent from provider reconciliation latency.');
-    assert(automationJobs.includes('async paypal_history_reconciliation(){return paypalHistorySafeRun()}'), 'PayPal history reconciliation must remain a separate automation job.');
+    assert(automationJobs.includes('async provider_financial_reconciliation(){return providerFinancialSafeRun()}'), 'Provider financial reconciliation must remain the canonical Stripe/PayPal/Plisio catch-up job.');
+    assert(automationJobs.includes("async paypal_history_reconciliation(){return{processed:0,failed:0,skipped:'superseded_by_provider_financial_reconciliation'}}"), 'The legacy PayPal history key must remain as a no-op compatibility job rather than running a second reconciliation path.');
     assert.strictEqual(automationRegistry.defaultIntervalSeconds('revenue_integrity'), 60,
         'Core revenue integrity must stay at a 60-second cadence.');
+    assert.strictEqual(automationRegistry.defaultIntervalSeconds('provider_financial_reconciliation'), 300,
+        'Canonical provider financial reconciliation must stay on a bounded five-minute cadence.');
     assert.strictEqual(automationRegistry.defaultIntervalSeconds('paypal_history_reconciliation'), 300,
-        'PayPal history reconciliation must stay on a bounded five-minute cadence.');
+        'Legacy PayPal compatibility job cadence must remain bounded while it is retained.');
     assert(automationWorker.includes('jobRegistry.defaultIntervalSeconds(jobKey)'),
         'automation worker must consume cadence from the canonical job registry.');
 
