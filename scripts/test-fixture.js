@@ -86,6 +86,59 @@ function installModuleMock(moduleName, replacement) {
   };
 }
 
+async function fixtureCustomer(client, overrides = {}) {
+  const displayName = overrides.displayName || unique('Fixture customer');
+  const email = overrides.email || `${unique('fixture')}@example.invalid`;
+  return (await client.query(
+    `INSERT INTO customers(display_name,email,registration_source) VALUES($1,$2,$3) RETURNING *`,
+    [displayName, email, overrides.registrationSource || 'public']
+  )).rows[0];
+}
+
+async function fixturePlan(client, overrides = {}) {
+  const code = overrides.code || unique('fixture-plan');
+  const name = overrides.name || 'Fixture Plan';
+  return (await client.query(`
+    INSERT INTO plans(
+      code,name,audience,service_type,billing_interval,duration_days,
+      price_minor,currency,streams,active,visible,sort_order
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,TRUE,$10)
+    RETURNING *
+  `, [
+    code,
+    name,
+    overrides.audience || 'direct',
+    overrides.serviceType || 'jellyfin',
+    overrides.billingInterval || 'month',
+    Number(overrides.durationDays ?? 30),
+    Number(overrides.priceMinor ?? 1000),
+    overrides.currency || 'GBP',
+    Number(overrides.streams ?? 1),
+    Number(overrides.sortOrder ?? 999)
+  ])).rows[0];
+}
+
+async function fixtureSubscription(client, { customerId, planId, ...overrides } = {}) {
+  if (!customerId || !planId) throw new Error('fixtureSubscription requires customerId and planId');
+  return (await client.query(`
+    INSERT INTO subscriptions(
+      customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,
+      provider_subscription_id,service_type_snapshot
+    ) VALUES($1,$2,$3,$4,$5,COALESCE($6::timestamptz,NOW()),COALESCE($7::timestamptz,NOW()+INTERVAL '30 days'),$8,$9)
+    RETURNING *
+  `, [
+    customerId,
+    planId,
+    overrides.status || 'active',
+    overrides.source || 'admin_grant',
+    overrides.billingMode || 'manual',
+    overrides.startsAt || null,
+    overrides.currentPeriodEnd || null,
+    overrides.providerSubscriptionId || null,
+    overrides.serviceType || 'jellyfin'
+  ])).rows[0];
+}
+
 module.exports = {
   runDbSmoke,
   withRollback,
@@ -94,5 +147,8 @@ module.exports = {
   unique,
   deferred,
   barrier,
-  installModuleMock
+  installModuleMock,
+  fixtureCustomer,
+  fixturePlan,
+  fixtureSubscription
 };
