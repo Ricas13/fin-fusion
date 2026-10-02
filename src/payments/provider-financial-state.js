@@ -205,18 +205,42 @@ async function recordTransaction(input) {
         provider_reference_id,provider_source_id,customer_id,metadata
       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
       ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
-        transaction_type=EXCLUDED.transaction_type,
+        transaction_type=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.transaction_type ELSE EXCLUDED.transaction_type END,
         transaction_status=COALESCE(EXCLUDED.transaction_status,payment_history_transactions.transaction_status),
-        occurred_at=EXCLUDED.occurred_at,
-        currency=EXCLUDED.currency,
-        gross_amount_minor=EXCLUDED.gross_amount_minor,
-        fee_amount_minor=EXCLUDED.fee_amount_minor,
-        net_amount_minor=EXCLUDED.net_amount_minor,
+        occurred_at=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.occurred_at ELSE EXCLUDED.occurred_at END,
+        currency=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.currency ELSE EXCLUDED.currency END,
+        gross_amount_minor=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.gross_amount_minor ELSE EXCLUDED.gross_amount_minor END,
+        fee_amount_minor=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.fee_amount_minor ELSE EXCLUDED.fee_amount_minor END,
+        net_amount_minor=CASE
+          WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+           AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+          THEN payment_history_transactions.net_amount_minor ELSE EXCLUDED.net_amount_minor END,
         provider_customer_id=COALESCE(EXCLUDED.provider_customer_id,payment_history_transactions.provider_customer_id),
         provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
         provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
         customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-        metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)||COALESCE(EXCLUDED.metadata,'{}'::jsonb),
+        metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
+          ||COALESCE(EXCLUDED.metadata,'{}'::jsonb)
+          ||CASE
+              WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
+               AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
+              THEN '{"feeDataAvailable":true}'::jsonb ELSE '{}'::jsonb
+            END,
         updated_at=NOW()
       WHERE payment_history_transactions.customer_id IS NULL
          OR EXCLUDED.customer_id IS NULL
