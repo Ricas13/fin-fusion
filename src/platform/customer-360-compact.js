@@ -5,9 +5,8 @@ const requestUsers=require('../integrations/request-user-sync');
 const accessCards=require('./customer-360-access-cards');
 const serviceDesiredState=require('../entitlements/service-desired-state');
 const customerInactivityStatus=require('../automation/customer-inactivity-status');
-const {esc}=require('./admin-html');
+const {esc,csrfHidden}=require('./html-primitives');
 
-function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
 function dt(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});}
 function money(minor,currency='GBP'){const raw=String(currency||'GBP').toUpperCase(),code=/^[A-Z]{3}$/.test(raw)?raw:'GBP';return new Intl.NumberFormat('en-GB',{style:'currency',currency:code,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}
 function pill(text,tone=''){return `<span class="pill ${tone}">${esc(text)}</span>`;}
