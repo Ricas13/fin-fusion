@@ -12,7 +12,7 @@ async function main(){
   const suffix=crypto.randomBytes(8).toString('hex');
   const emails=[`financial-a-${suffix}@example.invalid`,`financial-b-${suffix}@example.invalid`,`financial-s-${suffix}@example.invalid`];
   let customerA=null,customerB=null,customerS=null,plan=null;
-  const transactionIds=[`PAYPAL-STRONG-${suffix}`,`PAYPAL-WEAK-${suffix}`,`STRIPE-WEAK-${suffix}`];
+  const transactionIds=[`PAYPAL-STRONG-${suffix}`,`PAYPAL-WEAK-${suffix}`,`STRIPE-WEAK-${suffix}`,`PAYPAL-QUALITY-${suffix}`];
   try{
     customerA=(await query(`INSERT INTO customers(display_name,email) VALUES('Financial A',$1) RETURNING id`,[emails[0]])).rows[0];
     customerB=(await query(`INSERT INTO customers(display_name,email) VALUES('Financial B',$1) RETURNING id`,[emails[1]])).rows[0];
@@ -57,6 +57,40 @@ async function main(){
       'exact PayPal I- subscription evidence must beat ambiguous shared payer identity');
     assert.strictEqual(weak.customer_id,null,
       'shared PayPal payer identity alone must never guess which local customer owns a payment');
+
+
+    await query(`
+      INSERT INTO payment_history_transactions(
+        provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
+        gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,provider_reference_id,customer_id,metadata
+      ) VALUES('paypal',$1,'T0003','S','2026-09-01T12:00:00Z','GBP',600,25,575,$2,$3,$4,
+        '{"providerAuthoritative":true,"feeDataAvailable":true,"referenceType":"SUB"}'::jsonb)
+    `,[transactionIds[3],sharedPayer,`I-B-${suffix}`,customerB.id]);
+    await financialState.recordTransaction({
+      provider:'paypal',
+      providerTransactionId:transactionIds[3],
+      transactionType:'paypal_sale',
+      transactionStatus:'COMPLETED',
+      occurredAt:'2026-09-01T12:05:00Z',
+      currency:'GBP',
+      grossMinor:650,
+      feeMinor:0,
+      netMinor:650,
+      providerCustomerId:sharedPayer,
+      providerReferenceId:`I-B-${suffix}`,
+      customerId:customerB.id,
+      metadata:{providerAuthoritative:true,feeDataAvailable:false,livePaypalWebhook:true}
+    });
+    const quality=(await query(`
+      SELECT transaction_type,transaction_status,occurred_at,gross_amount_minor,fee_amount_minor,net_amount_minor,metadata
+      FROM payment_history_transactions WHERE provider='paypal' AND provider_transaction_id=$1
+    `,[transactionIds[3]])).rows[0];
+    assert.strictEqual(quality.transaction_type,'T0003','weaker live webhook data must not replace exact provider transaction classification');
+    assert.strictEqual(quality.transaction_status,'S','weaker live webhook data must not replace exact provider accounting status');
+    assert.strictEqual(Number(quality.gross_amount_minor),600,'weaker live webhook data must not replace exact gross accounting');
+    assert.strictEqual(Number(quality.fee_amount_minor),25,'weaker live webhook data must not erase exact provider fees');
+    assert.strictEqual(Number(quality.net_amount_minor),575,'weaker live webhook data must not erase exact provider net proceeds');
+    assert.strictEqual(quality.metadata.feeDataAvailable,true,'strong fee-data provenance must survive later weaker webhook convergence');
 
     const stripeCustomer=`cus_financial_${suffix}`;
     await query(`
