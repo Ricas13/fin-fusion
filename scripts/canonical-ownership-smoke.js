@@ -34,21 +34,21 @@ assert(adminSecurity.includes("require('./admin-security-routes')"),'canonical a
 assert(adminSecurity.includes('createAdminStepUpRouter')&&adminSecurity.includes('sensitiveMutationGuard'),'canonical admin security facade must retain step-up and sensitive mutation guards');
 assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/platform/admin-security.js'],'only the canonical admin security facade may import internal security routes');
 
-// Jellyfin provisioning: low-level helpers are dependency-safe, the legacy
-// facade delegates every customer mutation, and the resilient owner never imports
-// the compatibility facade. This keeps old callers working without a module cycle
-// or a path back into the retired single-lane mutation implementation.
-assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning compatibility facade must stay removed');
-const provisioning=read('src/jellyfin/provisioning.js');
+// Jellyfin provisioning: the historical compatibility facade is gone. Low-level
+// helpers are dependency-safe, and all customer reconciliation mutations belong
+// to the resilient multi-service owner. No source module may reintroduce the old
+// facade as a shortcut around that ownership boundary.
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning-core compatibility facade must stay removed');
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning.js')),'retired provisioning compatibility facade must stay removed');
 const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
 assert(provisioningHelpers.includes("require('./provisioning-engine')"),'dependency-safe helper surface must own the internal engine import');
-assert(provisioning.includes("require('./provisioning-helpers')"),'compatibility facade must consume the dependency-safe helper surface');
 assert(resilientProvisioning.includes("require('./provisioning-helpers')"),'canonical reconciler must consume helpers directly');
-assert(!resilientProvisioning.includes("require('./provisioning')"),'canonical reconciler must never depend on the compatibility facade');
-assert(!provisioning.includes("require('./provisioning-engine')"),'compatibility facade must not import the internal engine directly');
+assert(!resilientProvisioning.includes("require('./provisioning')"),'canonical reconciler must never depend on the retired compatibility facade');
+assert.deepStrictEqual(importers("require('./provisioning')"),[],'no source module may import the retired same-directory provisioning facade');
+assert.deepStrictEqual(importers("require('../jellyfin/provisioning')"),[],'no source module may import the retired Jellyfin provisioning facade');
 assert.deepStrictEqual(importers("require('./provisioning-engine')"),['src/jellyfin/provisioning-helpers.js'],'only the dependency-safe helper module may import provisioning-engine');
 assert(provisioningHelpers.includes('markPasswordSetupRequired'),'helper surface must retain password-setup state for created Jellyfin identities');
 for(const retired of ['reconcileCustomer','reconcileAccount','holdAccess','releaseAccess','expireSubscriptionsAndReconcile']){
@@ -61,18 +61,13 @@ for(const retired of ['selectServerForPlan','currentEntitlement']){
   assert(!new RegExp(`\\b${retired}\\b`).test(provisioningEngine.split('module.exports =')[1]||''),`low-level provisioning engine must not export canonical ownership helper ${retired}`);
 }
 assert(!provisioningEngine.includes("require('./placement')")&&!provisioningEngine.includes("require('../entitlements/subscription-state')"),'primitive provisioning engine must not regain placement or entitlement dependencies');
-assert(provisioning.includes("function canonicalReconciler() { return require('./resilient-provisioning'); }"),'legacy provisioning imports must route mutations through the resilient multi-lane owner');
-assert(provisioning.includes('canonicalReconciler().reconcileCustomer(customerId)')&&provisioning.includes('canonicalReconciler().reconcileAccount(accountId)'),'customer and account reconciliation must delegate to resilient provisioning');
-assert(provisioning.includes('canonicalReconciler().holdAccess(customerId, reason, actorUserId)')&&provisioning.includes('canonicalReconciler().releaseAccess(customerId, actorUserId)'),'access-hold mutations must delegate to the same canonical owner');
-assert(provisioning.includes('canonicalReconciler().expireSubscriptionsAndReconcile()'),'subscription expiry compatibility path must delegate to the canonical owner');
 assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical resilient provisioning must retain inactivity-hold reconciliation');
 assert(resilientProvisioning.includes('autoDowngradeEligibleCustomer'),'canonical resilient provisioning must retain automatic free-tier downgrade behavior');
-assert(provisioning.includes("require('../entitlements/subscription-expiry')")&&resilientProvisioning.includes("require('../entitlements/subscription-expiry')"),'notification compatibility and canonical mutation owner must both use the entitlement expiry helper');
-assert(!provisioning.includes('subscriptionExpiry.expireAndReconcile'),'compatibility facade must not own an independent expiry/reconcile callback');
+assert(resilientProvisioning.includes("require('../entitlements/subscription-expiry')"),'canonical mutation owner must use the entitlement expiry helper');
 assert(resilientProvisioning.includes('subscriptionExpiry.expireAndReconcile'),'canonical reconciler must own expiry/reconcile composition');
-assert(!provisioning.includes('WITH expired AS')&&!resilientProvisioning.includes('WITH expired AS'),'subscription expiry SQL must not be duplicated across provisioning layers');
+assert(!resilientProvisioning.includes('WITH expired AS'),'subscription expiry SQL must not be duplicated into resilient provisioning');
 assert(subscriptionExpiry.includes('WITH expired AS')&&subscriptionExpiry.includes("status IN('active','trialing','past_due','paused','cancelled')"),'canonical subscription expiry helper must own the expiry state transition');
-assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/jellyfin/provisioning.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry helper consumers must stay limited to provisioning surfaces');
+assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/automation/jobs.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry consumers must stay limited to the automation scheduler and canonical reconciler');
 
 
 // Access Integrity operator decisions belong to the access domain. The admin
