@@ -326,8 +326,7 @@ function createCustomerJellyfinRouter(){
     if(password!==confirm)return redirectAccess(res,'error','Passwords do not match.',`account-${req.params.accountId}`);
     try{
       const {account}=await assertMediaAccess(req.session.customerId,req.params.accountId);
-      await provisioning.setJellyfinPassword(req.session.customerId,req.params.accountId,password);
-      await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.session.customerId]);
+      await provisioning.setJellyfinPassword(req.session.customerId,req.params.accountId,password,{clearSetupRequired:true,clearResetRequired:true});
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.media_password.change','customer',$2,$3::jsonb)`,[
         req.session.customerUserId,req.session.customerId,JSON.stringify({accountId:req.params.accountId,serviceType:mediaType(account),source:'my_access',secretStored:false})
       ]).catch(()=>{});
