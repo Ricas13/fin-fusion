@@ -114,6 +114,27 @@ assert.strictEqual(matches[0].state, 'safe');
 assert.strictEqual(matches[0].match.id, 'sub_live');
 assert(/Exact plan/.test(matches[0].reason));
 
+
+const sharedPayPalContext=baseContext();
+sharedPayPalContext.providerIdentityToCustomers.set('paypal:PAYER-1',new Set(['customer-2','customer-other']));
+const localPayPal={
+    ...local,
+    customer_id:'customer-2',
+    subscription_id:'local-paypal-2',
+    plan_id:'plan-premium-paypal',
+    email:'paypal@example.com'
+};
+matches=discovery.matchPremiumRows([localPayPal],[paypal],sharedPayPalContext);
+assert.strictEqual(matches[0].state,'safe',
+    'shared PayPal payer identity must fall through to unique customer email instead of blocking safe exact-plan discovery');
+assert.match(matches[0].reason,/unique customer email/);
+const sharedPayPalNoEmail=baseContext();
+sharedPayPalNoEmail.providerIdentityToCustomers.set('paypal:PAYER-1',new Set(['customer-2','customer-other']));
+sharedPayPalNoEmail.emailToCustomers.set('paypal@example.com',new Set(['customer-2','customer-other']));
+matches=discovery.matchPremiumRows([localPayPal],[paypal],sharedPayPalNoEmail);
+assert.strictEqual(matches[0].state,'unresolved',
+    'shared PayPal payer identity without unique customer-specific evidence must never be auto-linked');
+
 const duplicate = { ...stripe, id: 'sub_live_2' };
 matches = discovery.matchPremiumRows([local], [stripe, duplicate], baseContext());
 assert.strictEqual(matches[0].state, 'ambiguous', 'two live exact matches must never be guessed');
