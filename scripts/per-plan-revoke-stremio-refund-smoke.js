@@ -25,7 +25,7 @@ assert(revokeService.includes('await managedStremio.revokeInactiveMappings()'),'
 assert(revokeService.includes("'admin.subscription.revoke_selected.completed'"),'targeted plan revocation must be auditable');
 assert(targeted.includes('Other plans were preserved.'),'operator feedback must state that unrelated plans were preserved');
 
-assert(customerView.includes('post-render HTML')&&customerView.includes('mutation is deliberately forbidden'),'Customer 360 must not reintroduce post-render revoke-action HTML surgery');
+for(const retired of ['removeLegacyPlanRevoke','addPlanRevokeAction','movePlanRevokeIntoSubscriptions'])assert(!customerView.includes(retired),`Customer 360 must not reintroduce post-render revoke-action HTML surgery: ${retired}`);
 assert(compactView.includes("actions.push(customerLink(id,'subscriptions/revoke','Revoke a plan'"),'server-rendered revoke entry must be available for any customer with a live plan, including Stremio-only customers');
 assert(compactView.includes('current.length'),'Customer 360 plan actions must be driven by any current live subscription rather than Jellyfin-only state');
 assert(compactView.includes("'subscriptions/revoke'"),'Customer 360 revoke action must open the canonical plan picker');
