@@ -19,7 +19,41 @@ function finding(kind, row, detail) {
   };
 }
 
-function automaticAccessAllowedSql(alias = 's') {
+function freeScopedAccessBlockedSql(alias = 's', planAlias = 'p') {
+  return `EXISTS(
+    SELECT 1
+    FROM customer_access_holds integrity_hold
+    WHERE integrity_hold.customer_id=${alias}.customer_id
+      AND integrity_hold.released_at IS NULL
+      AND (
+        (
+          integrity_hold.hold_type='inactivity_policy'
+          AND integrity_hold.source_key=('plan:'||${planAlias}.id::text)
+          AND (
+            integrity_hold.metadata->>'subscriptionId'=${alias}.id::text
+            OR (
+              integrity_hold.metadata->>'subscriptionId' IS NULL
+              AND integrity_hold.created_at>=${alias}.created_at
+            )
+          )
+        )
+        OR (
+          integrity_hold.hold_type='jellyfin_cleanup'
+          AND EXISTS(
+            SELECT 1
+            FROM jellyfin_accounts integrity_free_account
+            WHERE integrity_free_account.customer_id=${alias}.customer_id
+              AND integrity_free_account.account_purpose='jellyfin'
+              AND integrity_free_account.access_lane='free'
+              AND integrity_hold.source_key=('server:'||integrity_free_account.server_id::text)
+          )
+        )
+      )
+  )`;
+}
+
+function automaticAccessAllowedSql(alias = 's', { free = false, planAlias = 'p' } = {}) {
+  const scopedFreeBlock = free ? ` OR ${freeScopedAccessBlockedSql(alias, planAlias)}` : '';
   return `(
     EXISTS(
       SELECT 1
@@ -30,7 +64,10 @@ function automaticAccessAllowedSql(alias = 's') {
         AND integrity_override.revoked_at IS NULL
     )
     OR public.subscription_admin_present(${alias}.customer_id,'jellyfin',${alias}.id)
-    OR NOT public.subscription_access_blocked(${alias}.customer_id,${alias}.source,${alias}.provider_subscription_id)
+    OR NOT (
+      public.subscription_access_blocked(${alias}.customer_id,${alias}.source,${alias}.provider_subscription_id)
+      ${scopedFreeBlock}
+    )
   )`;
 }
 
@@ -84,7 +121,7 @@ async function scan({ limit = 100 } = {}) {
       JOIN plans p ON p.id=s.plan_id
       WHERE TRUE ${freeLive}
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
-        AND ${automaticAccessAllowedSql('s')}
+        AND ${automaticAccessAllowedSql('s', { free: true, planAlias: 'p' })}
         AND NOT EXISTS(
           SELECT 1
           FROM jellyfin_accounts ja
@@ -224,6 +261,7 @@ async function scan({ limit = 100 } = {}) {
 module.exports = {
   clean,
   finding,
+  freeScopedAccessBlockedSql,
   automaticAccessAllowedSql,
   liveEntitlementSql,
   scan
