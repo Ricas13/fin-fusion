@@ -2,7 +2,7 @@
 
 const assert=require('assert');
 const expenses=require('../src/platform/business-expenses');
-const {runDbSmoke,withTimezones}=require('./db-test-fixture');
+const {runDbSmoke,withTimezones}=require('./test-fixture');
 
 runDbSmoke('business expense calendar date DB smoke',async()=>{
   const createdIds=[];
