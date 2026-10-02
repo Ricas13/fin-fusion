@@ -266,18 +266,18 @@ Current concern: Customer 360 rendering is spread over multiple transitional fil
 
 Tasks:
 
-- [ ] Inventory:
+- [x] Inventory:
   - `customer-360-view.js`
   - `customer-360-view-v2.js`
   - `customer-360-compact.js`
   - `customer-360-access-cards.js`
   - `customer-360-service-truth.js`
   - related helpers
-- [ ] Define one component/rendering tree.
-- [ ] Remove regex-based HTML surgery used to relocate/remove actions.
-- [ ] Make action placement explicit in the renderer.
-- [ ] Remove obsolete V1/V2/compact compatibility layers after screenshot/behaviour tests prove parity.
-- [ ] Preserve accessibility/mobile/admin workflow tests.
+- [x] Define one component/rendering tree.
+- [x] Remove regex-based HTML surgery used to relocate/remove actions.
+- [x] Make action placement explicit in the renderer.
+- [x] Remove obsolete V1/V2 compatibility layers after screenshot/behaviour tests prove parity; retain `customer-360-compact.js` as the canonical active renderer.
+- [x] Preserve accessibility/mobile/admin workflow tests.
 
 **Done when:** Customer 360 is rendered from one intentional component hierarchy with no post-render regex rewriting.
 
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Customer 360 rendering consolidation advanced: deleted retired `customer-360-view-v2.js`, moved the only still-used record/portal nav into the unified wrapper, removed zero-caller HTML-surgery compatibility shims, and updated renderer contracts. `customer-360-compact.js` is now explicitly the canonical action-first renderer rather than a transitional compatibility layer.
 
 - 2026-10-02 — Financial/calendar-date boundary completed: PostgreSQL `DATE` values are treated as canonical `YYYY-MM-DD` text, expense and payment-history readers cast DATE columns to text, expense rendering now uses the shared UTC calendar-date helper, four-timezone DB regressions cover expense/history ranges, elapsed prepaid duration remains epoch-based, and a static boundary check prevents implicit `new Date(row.<calendar_date>)` regressions.
 
