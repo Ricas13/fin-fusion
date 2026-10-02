@@ -458,17 +458,19 @@ Where possible, keep each numbered item in its own commit or small sequence of c
 
 Before final merge/deployment of the completed roadmap:
 
-- [ ] create an encrypted pre-deploy backup,
-- [ ] deploy only through the supported deployment helper,
-- [ ] confirm all runtime services report the intended build SHA,
-- [ ] run live `npm run verify:deployment`,
-- [ ] confirm critical automation jobs are healthy,
-- [ ] check Access Integrity / revenue-integrity findings,
+- [x] create an encrypted pre-deploy backup,
+- [x] deploy only through the supported deployment helper,
+- [x] confirm all runtime services report the intended build SHA,
+- [x] run live `npm run verify:deployment`,
+- [x] confirm critical automation jobs are healthy,
+- [x] check Access Integrity / revenue-integrity findings,
 - [ ] review any manual-review provider operations rather than retrying them blindly.
 
 ---
 
 # Progress log
+
+- 2026-10-02 — Live production deployment acceptance advanced on build `90494f04`: deployment used the supported helper, created an encrypted pre-deploy PostgreSQL backup, validated candidate worker SHAs, passed candidate verification, cut over the web app, and passed live post-cutover `npm run verify:deployment`. Critical automation health passed; Revenue Integrity executed and surfaced two `free_plan_without_ready_server` findings for operator follow-up. The final manual-review provider-operation review remains open because the acceptance audit script was accidentally excluded from the runtime image by the generic `scripts/*-audit.js` Docker ignore pattern; PR #865 fixes packaging and adds built-image assertions to Release Integrity and Merge Safety.
 
 - 2026-10-02 — Final destructive-mutation ownership closeout: PR #857 rebased the remaining customer-creation, customer-management and portal-credential ownership work onto current `main`, removed the final seven frozen `src/platform` domain-table mutation exceptions, and passed CI, Integration, Release Integrity, Browser & Clean Install, Security CodeQL and Stremio. `platform-business-sql-boundary-smoke.js` now reports zero frozen legacy platform/table exceptions and rejects any future direct mutations of the protected domain tables.
 - 2026-10-02 — Tagged-suite independence validated from clean jobs: `fast`, `db`, `billing`, `access`, `browser` and `security` were each run in an isolated GitHub Actions job with a fresh PostgreSQL service and freshly migrated schema. The evidence run exposed one real hidden dependency in `provider-checkout-recovery-db-smoke.js` (Premium capacity was inherited from an earlier test); PR #853 made that test create/clean its own Premium server fixture. The rerun then passed all six isolated tags.
