@@ -218,6 +218,29 @@ async function scanAllTransactions(visit,{queryFn=query,pageSize=5000,maxPages=1
     throw new Error(`Provider transaction scan exceeded ${size*pages} rows.`);
 }
 
+async function ensureProviderIdentity({customerId,provider,providerCustomerId}) {
+    const id=text(providerCustomerId);
+    if(!id)return null;
+    const name=providerName(provider);
+    const result=await query(`
+      INSERT INTO payment_customers(customer_id,provider,provider_customer_id)
+      VALUES($1,$2,$3)
+      ON CONFLICT(customer_id,provider) DO UPDATE
+        SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW()
+      RETURNING *
+    `,[customerId,name,id]);
+    return result.rows[0]||null;
+}
+
+async function findProviderIdentity(customerId,provider) {
+    const result=await query(`
+      SELECT * FROM payment_customers
+      WHERE customer_id=$1 AND provider=$2
+      LIMIT 1
+    `,[customerId,providerName(provider)]);
+    return result.rows[0]||null;
+}
+
 async function providerIdentityRows(providers=['stripe','paypal','plisio']) {
     const normalized=[...new Set((providers||[]).map(providerName))];
     if(!normalized.length)return[];
@@ -577,7 +600,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
+    transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
