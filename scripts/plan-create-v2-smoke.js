@@ -10,7 +10,7 @@ async function cleanup(){await query('DELETE FROM plans WHERE code=ANY($1::text[
 function common(code,name,serviceType){return{
   __submitted:'1',code,name,description:`${serviceType} canonical create smoke`,serviceType,
   audience:'direct',billingInterval:'month',durationDays:'30',price:'6',currency:'USD',
-  capacityLimit:'20',streams:'1',sortOrder:'100',visible:'on',active:'on'
+  capacityLimit:'20',mediaUserLimit:'20',streams:'1',sortOrder:'100',visible:'on',active:'on'
 };}
 
 async function main(){
@@ -33,11 +33,15 @@ async function main(){
 
     const jellyfin=planCreate.parse({...common('smoke-v2-jellyfin','Jellyfin','jellyfin'),serverClass:'premium',allowAudioTranscoding:'on',allowRemoteAccess:'on'});
     assert(jellyfin.serviceType==='jellyfin','Jellyfin parsing failed');
-    assert(jellyfin.inactivityPolicy&&Object.keys(jellyfin.inactivityPolicy).length===0,'New Jellyfin plans must not carry per-plan lifecycle configuration');
-    await planCreate.create(jellyfin,null);
+    assert(jellyfin.inactivityPolicy&&Object.keys(jellyfin.inactivityPolicy).length===0,'Retired lifecycle JSON must remain empty');
+    assert(Number(jellyfin.mediaUserLimit)===20,'Jellyfin creation must parse its plan-owned customer ceiling');
+    const createdJellyfin=await planCreate.create(jellyfin,null);
+    const storedJellyfin=(await query('SELECT media_user_limit FROM plans WHERE id=$1',[createdJellyfin.id])).rows[0];
+    assert(Number(storedJellyfin.media_user_limit)===20,'Jellyfin creation must persist its plan-owned customer ceiling');
 
     // Retired lifecycle fields from stale clients are ignored rather than becoming
-    // plan-scoped configuration again. Free inactivity is controlled globally.
+    // retired lifecycle JSON again. Free inactivity thresholds now live in the Free Plan,
+    // while the global lifecycle page controls only enable/dry-run mode.
     const staleStremio=planCreate.parse({...common('unused-stremio','Stale Stremio','stremio'),inactivityEnabled:'on',noPlaybackDays:'7'});
     assert(staleStremio.inactivityPolicy&&Object.keys(staleStremio.inactivityPolicy).length===0,'Retired lifecycle fields must not reactivate plan-scoped policy');
 
