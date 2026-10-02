@@ -152,7 +152,7 @@ async function main() {
   assert(adminPortalRecovery.includes("req.body.verifiedCustomer!=='1'"),'admin portal recovery must require an explicit identity-verification acknowledgement');
   assert(adminPortalRecovery.includes('reason.length<8'),'admin portal recovery must record a meaningful support reason');
   assert(adminPortalRecoveryOwner.includes('session_version=session_version+1')&&adminPortalRecoveryOwner.includes("UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW())"),'admin portal recovery owner must invalidate existing customer sessions');
-  for(const tokenType of [PASSWORD_TOKEN,EMAIL_OLD_TOKEN,EMAIL_NEW_TOKEN,'email_change','password_reset'])assert(adminPortalRecoveryOwner.includes(`'${tokenType}'`),`admin portal recovery owner must invalidate outstanding ${tokenType} tokens`);
+  for(const tokenType of ['portal_password_change','portal_email_old_approval','portal_email_new_verification','email_change','password_reset'])assert(adminPortalRecoveryOwner.includes(`'${tokenType}'`),`admin portal recovery owner must invalidate outstanding ${tokenType} tokens`);
   assert(adminPortalRecoveryOwner.includes("'admin.customer.portal_credential_recovery'"),'admin recovery owner must create a dedicated audit event');
   assert(adminPortalRecovery.includes("req.body.clear2fa==='1'")&&adminPortalRecoveryOwner.includes('DELETE FROM auth_recovery_codes'),'2FA removal must remain an explicit admin recovery choice and clear recovery material');
   assert(adminPrimaryActions.includes('Recover portal account')&&adminPrimaryActions.includes('/portal-credential-recovery'),'portal recovery must be discoverable from the customer admin actions');
