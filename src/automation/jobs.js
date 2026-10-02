@@ -20,6 +20,8 @@ const providerCheckoutRecovery=require('../payments/provider-checkout-recovery')
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
 const providerPaymentReconciliation=require('../payments/provider-payment-reconciliation');
+const liveStripeHistory=require('../payments/live-stripe-payment-history');
+const providerFinancialTruth=require('../payments/provider-financial-truth');
 const subscriptionDiscovery=require('../payments/subscription-discovery');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
@@ -98,6 +100,73 @@ async function paypalHistorySafeRun(){
  }
 }
 
+async function stripeHistorySafeRun(){
+ try{
+  const result=await liveStripeHistory.syncRecent({hours:72,force:true});
+  const degraded=Boolean(Number(result?.skipped||0)>0);
+  return{...result,failed:degraded?1:0,...(degraded?{warning:`${result.skipped} Stripe charge${Number(result.skipped)===1?'':'s'} could not be normalized into the provider ledger.`}:{})};
+ }catch(error){
+  const detail=String(error?.message||error);
+  if(workerDbBudget.transientDatabasePressure(detail)){
+   return{provider:'stripe',configured:true,processed:0,recorded:0,refundsRecorded:0,skipped:0,failed:0,infrastructureSuppressed:1,transientSuppressed:true};
+  }
+  console.error('Stripe payment-history reconciliation failed:',detail);
+  return{provider:'stripe',configured:true,processed:0,recorded:0,refundsRecorded:0,skipped:0,error:detail,failed:1,warning:`Stripe payment-history reconciliation failed: ${detail}`.slice(0,1000)};
+ }
+}
+
+async function paypalRefundHistorySafeRun(){
+ try{
+  const result=await providerPaymentReconciliation.syncRecentPayPalRefundHistory({hours:72});
+  const degraded=Boolean(result?.warning||Number(result?.unresolved||0)>0||result?.truncated);
+  return{...result,failed:degraded?1:0};
+ }catch(error){
+  const detail=String(error?.message||error);
+  if(workerDbBudget.transientDatabasePressure(detail)){
+   return{provider:'paypal',configured:true,processed:0,recorded:0,unresolved:0,truncated:false,failed:0,infrastructureSuppressed:1,transientSuppressed:true};
+  }
+  console.error('PayPal refund-history reconciliation failed:',detail);
+  return{provider:'paypal',configured:true,processed:0,recorded:0,unresolved:0,truncated:false,error:detail,failed:1,warning:`PayPal refund-history reconciliation failed: ${detail}`.slice(0,1000)};
+ }
+}
+
+async function providerFinancialReconciliationSafeRun(){
+ const[stripe,paypalPayments,paypalRefunds]=await Promise.all([
+  stripeHistorySafeRun(),
+  paypalHistorySafeRun(),
+  paypalRefundHistorySafeRun()
+ ]);
+ let ownership;
+ try{
+  ownership=await providerFinancialTruth.repairOwnership();
+ }catch(error){
+  const detail=String(error?.message||error);
+  if(workerDbBudget.transientDatabasePressure(detail)){
+   ownership={remembered:0,linked:0,unmatched:0,conflicts:0,infrastructureSuppressed:1,transientSuppressed:true};
+  }else{
+   ownership={remembered:0,linked:0,unmatched:0,conflicts:0,error:detail};
+  }
+ }
+ const warnings=[
+  stripe?.warning,
+  paypalPayments?.warning,
+  paypalRefunds?.warning,
+  ownership?.error?`Provider identity repair failed: ${ownership.error}`:null,
+  Number(ownership?.conflicts||0)>0?`${ownership.conflicts} provider identit${Number(ownership.conflicts)===1?'y':'ies'} have conflicting customer ownership and require review.`:null,
+  Number(ownership?.unmatched||0)>0?`${ownership.unmatched} provider ledger transaction${Number(ownership.unmatched)===1?' is':'s are'} still unmatched to a customer.`:null
+ ].filter(Boolean);
+ const failed=Number(stripe?.failed||0)+Number(paypalPayments?.failed||0)+Number(paypalRefunds?.failed||0)+(ownership?.error?1:0)+(Number(ownership?.conflicts||0)>0?1:0);
+ return{
+  processed:Number(stripe?.seen||0)+Number(paypalPayments?.processed||0)+Number(paypalRefunds?.processed||0)+Number(ownership?.linked||0),
+  failed,
+  stripe,
+  paypal:{payments:paypalPayments,refunds:paypalRefunds},
+  ownership,
+  infrastructureSuppressed:Number(stripe?.infrastructureSuppressed||0)+Number(paypalPayments?.infrastructureSuppressed||0)+Number(paypalRefunds?.infrastructureSuppressed||0)+Number(ownership?.infrastructureSuppressed||0),
+  ...(warnings.length?{warning:warnings.join(' ').slice(0,1000)}:{})
+ };
+}
+
 // Retained as a compatibility helper for direct callers/tests. Scheduled work uses
 // separate jobs below so provider latency/outages can never delay the core integrity
 // watchdog. If invoked directly, start both branches concurrently for the same reason.
@@ -128,7 +197,7 @@ const jobs={
  async creation_intent_recovery(){return creationIntentRecovery.run({limit:25})},
  async customer_service_recovery(){return customerServiceRecovery.run({limit:100})},
  async revenue_integrity(){return revenueIntegritySafeRun()},
- async paypal_history_reconciliation(){return paypalHistorySafeRun()},
+ async provider_financial_reconciliation(){return providerFinancialReconciliationSafeRun()},
  async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
@@ -176,4 +245,4 @@ function definition(jobKey){return definitions[String(jobKey||'')]||null}
 function defaultIntervalSeconds(jobKey){return Number(definition(jobKey)?.defaultIntervalSeconds||jobMetadata.DEFAULT_INTERVAL_SECONDS)}
 function criticalNames(){return names().filter(jobKey=>definitions[jobKey].critical)}
 async function run(jobKey){const def=definition(jobKey);if(!def)throw new Error(`Unknown automation job: ${jobKey}`);return def.run()}
-module.exports={jobs,definitions,names,definition,run,criticalNames,DEFAULT_INTERVAL_SECONDS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,revenueIntegrityWithPayPal};
+module.exports={jobs,definitions,names,definition,run,criticalNames,DEFAULT_INTERVAL_SECONDS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,stripeHistorySafeRun,paypalRefundHistorySafeRun,providerFinancialReconciliationSafeRun,revenueIntegrityWithPayPal};
