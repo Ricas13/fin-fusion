@@ -14,10 +14,12 @@ assert.strictEqual(pkg.scripts['verify:production-acceptance'],'node scripts/pro
 
 for(const token of [
   "accessIntegrity.scan({limit:500})",
+  "revenueIntegrity.scan()",
   "providerRecovery.attention({limit:500})",
   "manual_review_required",
   "process.exitCode=2",
-  "They were not retried by this audit"
+  "They were not retried by this audit",
+  "Revenue Integrity finding(s) remain"
 ]){
   assert(audit.includes(token),`production acceptance audit missing: ${token}`);
 }
