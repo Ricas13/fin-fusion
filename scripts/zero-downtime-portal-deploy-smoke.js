@@ -29,6 +29,10 @@ const retire=deploy.indexOf("Replacement verified; retiring overlap candidate");
 
 assert(candidateStart>=0&&candidateAttach>candidateStart,'candidate must become ready before production attachment');
 assert(canonicalReplace>candidateAttach,'canonical replacement must occur only after candidate overlap begins');
+const rollbackArm=deploy.indexOf('app_recreated=1',canonicalReplace);
+const canonicalComposeUp=deploy.indexOf('docker compose',canonicalReplace);
+assert(rollbackArm>canonicalReplace&&canonicalComposeUp>rollbackArm,
+  'canonical app rollback must be armed before Compose can partially replace the serving container');
 assert(replacementAttach>canonicalReplace,'replacement must be attached while overlap candidate is still serving');
 assert(liveVerify>replacementAttach,'live verification must run after replacement attachment');
 assert(retire>liveVerify,'overlap candidate must remain serving through live post-cutover verification');

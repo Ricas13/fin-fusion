@@ -341,12 +341,14 @@ fi
 
 log 'Candidate verified; switching the customer-facing web application'
 log 'Verified overlap candidate keeps customer traffic live during canonical replacement'
+# Mark replacement as rollback-owned before Compose can mutate the canonical
+# container. A non-zero Compose exit may occur after partial replacement.
+app_recreated=1
 if [[ -n "$runtime_labels_override" ]]; then
   docker compose -f docker-compose.yml -f "$runtime_labels_override" up -d --no-deps app
 else
   docker compose up -d --no-deps app
 fi
-app_recreated=1
 
 new_app_container="$(compose_service_container app)"
 [[ -n "$new_app_container" ]] || fail 'replacement app container was not created'
