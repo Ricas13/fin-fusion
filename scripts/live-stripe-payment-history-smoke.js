@@ -84,6 +84,7 @@ assert.strictEqual(settlement.netMinor, 260);
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src/payments/live-stripe-payment-history.js'), 'utf8');
 const page = fs.readFileSync(path.join(root, 'src/platform/admin-transactions.js'), 'utf8');
+const financialState = fs.readFileSync(path.join(root, 'src/payments/provider-financial-state.js'), 'utf8');
 
 assert(source.includes("ON CONFLICT(provider,provider_transaction_id) DO UPDATE"));
 assert(source.includes("transaction_type='charge'"));
@@ -92,7 +93,8 @@ assert(source.includes('balanceTransactions.retrieve'));
 assert(source.includes('providerAuthoritative: true'));
 assert(source.includes('providerTransactionId: String(balanceTransaction.id)'));
 assert(source.includes('providerSourceId: String(charge.id)'));
-assert(source.includes('FROM legacy_subscription_imports'));
+assert(source.includes('financialState.resolveCustomerId'));
+assert(financialState.includes('FROM legacy_subscription_imports'),'canonical ownership resolver must preserve legacy Stripe transaction linkage');
 assert(!/INSERT\s+INTO\s+subscriptions/i.test(source));
 assert(!/UPDATE\s+subscriptions/i.test(source));
 assert(page.includes("require('../payments/provider-financial-reconciliation')"));
