@@ -124,9 +124,9 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.created_at subscription_created_at,
             p.code plan_code,
             p.name plan_name,
-            p.free_first_playback_grace_days AS plan_free_first_playback_grace_days,
-            p.free_playback_window_days AS plan_free_playback_window_days,
-            p.free_minimum_playback_minutes AS plan_free_minimum_playback_minutes
+            NULLIF(p.inactivity_policy #>> '{freeInactivity,firstPlaybackGraceDays}','')::int AS plan_free_first_playback_grace_days,
+            NULLIF(p.inactivity_policy #>> '{freeInactivity,playbackWindowDays}','')::int AS plan_free_playback_window_days,
+            NULLIF(p.inactivity_policy #>> '{freeInactivity,minimumPlaybackMinutes}','')::int AS plan_free_minimum_playback_minutes
           FROM subscriptions s
           JOIN plans p ON p.id=s.plan_id
           WHERE s.superseded_by IS NULL
