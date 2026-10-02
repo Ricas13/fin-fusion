@@ -16,8 +16,8 @@ assert.strictEqual(browser.classify({provider:'paypal',transaction_type:'T0003',
 assert.strictEqual(browser.classify({provider:'plisio',transaction_type:'payment',transaction_status:'completed',gross_amount_minor:1000}),'payment');
 assert.strictEqual(browser.normalizeFilters({provider:'PLISIO'}).provider,'plisio');
 const service=read('src/payments/transaction-browser.js');
-assert(service.includes('payment_history_transactions'),'Transactions browser must use the imported provider ledger');
-assert(service.includes("LEFT JOIN customers c ON c.id=t.customer_id")&&service.includes("LEFT JOIN app_users u ON u.id=c.user_id"),'Transactions browser must resolve existing customer identities without duplicating users');
+assert(service.includes("require('./provider-financial-state')")&&service.includes('financialState.queryTransactions'),'Transactions browser must read through canonical provider financial state');
+assert(!service.includes('payment_history_transactions'),'Transactions browser must not create a second direct provider-ledger query path');
 assert(service.includes('historyAccounting.historyKind(row)'),'Transactions browser must reuse Payment History accounting classification');
 assert(service.includes('MAX_CLASSIFIED_SCAN')&&service.includes('truncated'),'Large classified searches must surface a completeness warning instead of silently truncating');
 const admin=read('src/platform/admin-transactions.js');
