@@ -232,7 +232,7 @@ Tasks:
   - `scripts/runtime/`
   - `scripts/ops/`
   - `scripts/ci/`
-- [ ] Update npm scripts/workflows incrementally rather than in one risky rename.
+- [x] Update npm scripts/workflows incrementally rather than in one risky rename.
 - [x] Change Docker build COPY rules or stages so CI-only test scripts and non-runtime docs are omitted from the final production image.
 - [x] Keep migration, backup, restore, environment preparation and deployment verification tools available where required.
 - [x] Add an image-content smoke test for required runtime tools and forbidden CI-only content.
@@ -276,8 +276,8 @@ Tasks:
 - [ ] Preserve all race, rollback, provider ambiguity, access, backup and migration tests.
 - [ ] Replace source-regex assertions with behavioural tests where feasible.
 - [x] Keep static ownership assertions where they enforce architectural boundaries that behaviour alone cannot identify.
-- [ ] Simplify `package.json` scripts to stable suite/tag entrypoints.
-- [ ] Keep CI workflow intent visible even after suite consolidation.
+- [x] Simplify `package.json` scripts to stable suite/tag entrypoints.
+- [x] Keep CI workflow intent visible even after suite consolidation.
 
 **Done when:** test coverage remains at least as strong but suite composition is understandable without maintaining hundreds of bespoke runners.
 
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Test entrypoints now converge on the tagged manifest without removing any underlying checks: CI runs the explicit `fast` tag, `npm test`-style `check` resolves through the same tag runner, and stable `check:billing`, `check:access`, `check:browser` and `check:security` aliases expose intent without another bespoke command graph. Existing granular suites remain available during the incremental migration.
 
 - 2026-10-02 — Repaired CI drift after Customer 360 renderer consolidation: `customer-billing-tab-smoke.js` now asserts renewal, plan-change and payment-history/refund boundaries against canonical `customer-360-compact.js` instead of importing the deliberately deleted V2 renderer. No retired compatibility layer was restored.
 
