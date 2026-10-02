@@ -11,6 +11,7 @@ const renewalCredits = require('./service-credit-renewals');
 const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
 const providerLifecycleState = require('./provider-lifecycle-state');
+const financialState = require('./provider-financial-state');
 const referrals = require('../referrals');
 const { query } = require('../db');
 
@@ -273,6 +274,27 @@ async function incidentContextForCharge(stripe,charge) {
 async function reverseReferralForDirectIdentity(identity,incidentResult,reason,options={}){if(identity?.scope!=='direct'||!identity.customerId)return null;return referrals.revisitRewardAfterAdversePayment({referredCustomerId:identity.customerId,incidentId:incidentResult?.incident?.id||null,reason,...options});}
 async function recordStripeRefund(event,stripe,charge) {
     const ctx=await incidentContextForCharge(stripe,charge),amount=Number(charge?.amount||0),refunded=Number(charge?.amount_refunded||0),fullRefund=amount>0&&refunded>=amount,recorded=await incidents.record({provider:'stripe',eventId:event.id,caseId:charge?.id||ctx.paymentIntentId,kind:'refund',status:'recorded',identity:ctx.identity,providerSubscriptionId:ctx.providerSubscriptionId,amountMinor:refunded,currency:charge?.currency,metadata:{...ctx.metadata,chargeId:charge?.id||null,fullRefund,originalAmountMinor:amount}});
+    const customerId=ctx.identity?.customerId||null,providerCustomerId=stripeObjectId(charge?.customer);
+    for(const refund of charge?.refunds?.data||[]){
+        if(!refund?.id||!['succeeded','pending'].includes(String(refund.status||'succeeded').toLowerCase()))continue;
+        let bt=refund.balance_transaction||null;
+        if(typeof bt==='string')bt=await stripe.balanceTransactions.retrieve(bt);
+        const rawAmount=Number(bt?.amount),grossMinor=Number.isFinite(rawAmount)&&rawAmount<0?Math.round(rawAmount):-Math.abs(Number(refund.amount||0));
+        if(!grossMinor)continue;
+        const feeMinor=Number.isFinite(Number(bt?.fee))?Math.round(Number(bt.fee)):0;
+        const netMinor=Number.isFinite(Number(bt?.net))?Math.round(Number(bt.net)):grossMinor-feeMinor;
+        await financialState.recordTransaction({
+            provider:'stripe',
+            providerTransactionId:bt?.id||refund.id,
+            transactionType:'refund',
+            transactionStatus:String(bt?.status||refund.status||'succeeded'),
+            occurredAt:new Date(Number(bt?.created||refund.created||Date.now()/1000)*1000),
+            currency:String(bt?.currency||refund.currency||charge.currency||'').toUpperCase(),
+            grossMinor,feeMinor,netMinor,providerCustomerId,
+            providerReferenceId:refund.id,providerSourceId:charge?.id||null,customerId,
+            metadata:{providerAuthoritative:true,feeDataAvailable:Boolean(bt?.id),stripeRefundWebhook:true,providerEventId:event.id,chargeId:charge?.id||null,paymentIntentId:ctx.paymentIntentId,invoiceId:ctx.invoiceId,fullRefund}
+        });
+    }
     await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:refund:${event.id}`,{amountMinor:refunded,fullLoss:fullRefund});return recorded;
 }
 async function recordStripeDispute(event,stripe,dispute) {
