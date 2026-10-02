@@ -37,13 +37,27 @@ function liveJellyfinEntitlement(portal){
   });
 }
 
-function optionsFromPortal(portal){
-  const subscriptions=Array.isArray(portal?.subscriptions)?portal.subscriptions:[];
-  const hasServiceAccess=subscriptions.some(liveServiceSubscription);
-  const hasRequestAccess=liveRequestEntitlement(portal);
-  const hasJellyfinAccess=liveJellyfinEntitlement(portal);
+function canonicalAccessFlags(portal){
+  const snapshot=portal?.accessSnapshot;
+  if(!snapshot)return null;
+  const primary=Boolean(snapshot.primary?.entitlement);
+  const free=Boolean(snapshot.free?.entitlement);
+  const stremio=Boolean(snapshot.stremio?.entitlement);
+  const emby=Boolean(snapshot.emby?.entitlement);
   return{
-    showBenefits:Boolean(portal&&portal.referralsEnabled&&portal.referralCode),
+    hasServiceAccess:primary||free||stremio||emby,
+    hasJellyfinAccess:primary||free
+  };
+}
+
+function optionsFromPortal(portal){
+  const canonical=canonicalAccessFlags(portal);
+  const subscriptions=Array.isArray(portal?.subscriptions)?portal.subscriptions:[];
+  const hasServiceAccess=canonical?.hasServiceAccess??subscriptions.some(liveServiceSubscription);
+  const hasRequestAccess=canonical?canonical.hasServiceAccess:liveRequestEntitlement(portal);
+  const hasJellyfinAccess=canonical?.hasJellyfinAccess??liveJellyfinEntitlement(portal);
+  return{
+    showBenefits:Boolean(portal&&portal.referralsEnabled),
     showServicePasswords:hasRequestAccess,
     showAccess:hasServiceAccess,
     // Compatibility for older partials/tests while My Access replaces the
@@ -55,7 +69,7 @@ function optionsFromPortal(portal){
 
 async function optionsForCustomer(customerId){
   await runtimeSettings.ensureLoaded();
-  const portal=await customers.getCustomerPortal(customerId);
+  const portal=await customers.getCurrentCustomerPortal(customerId);
   return optionsFromPortal(portal);
 }
 
@@ -65,4 +79,4 @@ function nav(active='',options={}){
   return renderNav({active,...options,standaloneHeader:signedInAccountSurface,siteName:runtimeSettings.siteName()});
 }
 
-module.exports={nav,optionsFromPortal,optionsForCustomer,liveRequestEntitlement,liveJellyfinEntitlement,liveSubscription,liveServiceSubscription,periodIsLive};
+module.exports={nav,optionsFromPortal,optionsForCustomer,canonicalAccessFlags,liveRequestEntitlement,liveJellyfinEntitlement,liveSubscription,liveServiceSubscription,periodIsLive};
