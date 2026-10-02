@@ -42,7 +42,7 @@ assert(planUi.includes('requestAccessEnabled'), 'plan policy must control reques
 assert(planUi.includes('confirmRequestDeletion'), 'disabling request access must require explicit destructive confirmation');
 assert(planUi.includes('permanently removes') && planUi.includes('request history'), 'plan UI must describe destructive Seerr user/history deletion');
 assert(!planUi.includes('permissions are set to zero while the account and request history are preserved'), 'obsolete non-destructive request-disable copy must not return');
-assert(planUi.includes('destructiveDisableConfirmed'), 'request-policy audit must record destructive disable confirmation');
+assert(planCommands.includes('destructiveDisableConfirmed'), 'request-policy command owner must record destructive disable confirmation');
 assert(planUi.includes('watchlistSyncMovies') && planUi.includes('watchlistSyncTv'), 'plan policy must expose watchlist defaults');
 assert(planUi.includes('discoverRegion') && planUi.includes('streamingRegion'), 'plan policy must expose modern Seerr region defaults');
 assert(planUi.includes('Username, email, password and personal notification destinations remain user-owned'), 'plan UI must make the identity/privacy boundary explicit');
