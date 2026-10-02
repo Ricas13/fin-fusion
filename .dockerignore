@@ -21,6 +21,9 @@ db/*.tmp
 # production services. Keep runtime/operator/recovery scripts in the image.
 docs
 scripts/*-smoke.js
+scripts/db-test-fixture.js
+scripts/smoke-db.js
+scripts/*-audit.js
 scripts/check-*.js
 scripts/dead-code-audit.js
 scripts/run-check-suite.js
