@@ -24,7 +24,10 @@ assert(compactSource.includes("const rows=(detail.playback||[]).slice(0,30)"), '
 assert(!compactSource.includes("function activityDisclosure(detail){const rows=(detail.timeline||[])"), 'generic customer/audit events must not be presented as playback Activity');
 assert(compactSource.includes('No playback activity recorded yet.'), 'Activity must use clear playback-specific empty copy');
 assert(compactSource.includes('provider_transaction_id,provider_reference_id,provider_source_id,provider_customer_id'), 'Payments must load provider identifiers needed for provider-side reconciliation');
-assert(compactSource.includes("s.source='plisio'"), 'Customer 360 Payments must include Plisio purchases as well as imported Stripe/PayPal history');
+assert(compactSource.includes("FROM payment_history_transactions") && !compactSource.includes("UNION ALL\n      SELECT 'plisio'"), 'Customer 360 Payments must read one canonical Stripe/PayPal/Plisio ledger instead of synthesizing Plisio rows from subscriptions');
+assert(compactSource.includes("require('../payments/provider-financial-truth')") && compactSource.includes('repairOwnership({customerId})'), 'Customer 360 must repair local provider ownership through the canonical provider identity graph before reading payments');
+assert(compactSource.includes('providerFinancialTruth.customerIdentities(customerId)'), 'Customer 360 must expose canonical provider identities for provider-side reconciliation');
+assert(compactSource.includes('dashboard.stripe.com/search?query='), 'Customer 360 must provide an operator jump from Stripe identities to Stripe search');
 assert(compactSource.includes('payment_incidents'), 'Payments must surface disputes, refunds, chargebacks and other payment incidents');
 assert(compactSource.includes("['Transaction',row.provider_transaction_id]"), 'Payments must label the provider transaction identifier');
 assert(compactSource.includes("['Reference',row.provider_reference_id]"), 'Payments must expose provider reference identifiers rather than collapsing to one ID');
