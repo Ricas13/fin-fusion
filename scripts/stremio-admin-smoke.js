@@ -42,7 +42,7 @@ assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integr
 assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'legacy Stremio settings URLs must land on the single Stremio control centre');
 assert(managedAdmin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed Stremio URL must redirect to the single control centre');
 
-for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Libraries included in Stremio','Clear all indexes & rebuild','Add external Jellyfin source'])assert(sources.includes(phrase),`Stremio control centre missing: ${phrase}`);
+for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Libraries included in Stremio','Rebuild all indexes','Add external Jellyfin source'])assert(sources.includes(phrase),`Stremio control centre missing: ${phrase}`);
 assert(sources.includes('capabilitySummary')&&sources.includes('capabilityTable')&&sources.includes('capabilitySourceDisclosure'),'Stremio must use the shared compact capability-page pattern');
 assert(htmlCore.includes('/css/admin-capability.css'),'shared capability-page stylesheet must be loaded globally');
 assert(capabilityCss.includes('grid-template-columns:repeat(5,minmax(0,1fr))'),'library choices must use the dense wide-screen grid');
@@ -72,9 +72,9 @@ assert(managedIndex.includes('managedLibraries.indexFilter(serverId)')&&managedI
 assert(managedIndex.includes('if(!filter.configured)return[null]'),'upgrades must preserve all-library managed indexing until an operator establishes explicit selections');
 assert(managedIndex.includes('clearAndReset'),'managed rows must support a clean local re-index without touching Jellyfin media');
 
-assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must clear only CAPTAiNFiN managed/external lookup indexes');
-assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes('Wait for active indexing'),'global destructive index cleanup must refuse to run while indexing is active');
-assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source clean rebuild');
+assert(!indexMaintenance.includes('DELETE FROM stremio_media_index')&&!indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must preserve the currently serving managed/external lookup indexes');
+assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes('Wait for active indexing'),'global zero-downtime rebuild must refuse to race an already active indexing pass');
+assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source zero-downtime rebuild');
 
 assert(sources.includes("const leaseAdmin=require('./admin-stremio-leases')")&&sources.includes('leaseAdmin.list(leasePage)')&&sources.includes('leaseAdmin.mount(r,mutationLimit)'),'Stremio control centre must load, render and mount household lease operations');
 assert(leases.includes("scope='stremio'")&&leases.includes("expires_at>NOW()")&&leases.includes('network_hash')&&leases.includes('network_family'),'household lease table must use the existing privacy-safe hash/family lease schema');
