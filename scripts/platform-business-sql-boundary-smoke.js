@@ -31,8 +31,6 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-customer-management.js::app_users',
   'src/platform/admin-media-controls.js::plans',
   'src/platform/admin-plan-order.js::plans',
-  'src/platform/admin-portal-credential-recovery.js::customers',
-  'src/platform/admin-portal-credential-recovery.js::app_users',
   'src/platform/admin-profile-account.js::subscriptions',
   'src/platform/admin-profile-account.js::customers',
   'src/platform/admin-profile-account.js::app_users',
