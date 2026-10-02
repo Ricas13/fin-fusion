@@ -25,10 +25,10 @@ async function main(){
 
     const sharedPayer=`PAYER-SHARED-${suffix}`;
     await query(`
-      INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_customer_id,provider_subscription_id,starts_at,current_period_end)
+      INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_customer_id,provider_subscription_id,billing_mode,starts_at,current_period_end)
       VALUES
-        ($1,$3,'active','paypal',$4,$5,NOW(),NOW()+INTERVAL '30 days'),
-        ($2,$3,'active','paypal',$4,$6,NOW(),NOW()+INTERVAL '30 days')
+        ($1,$3,'active','paypal',$4,$5,'subscription',NOW(),NOW()+INTERVAL '30 days'),
+        ($2,$3,'active','paypal',$4,$6,'subscription',NOW(),NOW()+INTERVAL '30 days')
     `,[customerA.id,customerB.id,plan.id,sharedPayer,`I-A-${suffix}`,`I-B-${suffix}`]);
 
     const payerOwners=await financialState.providerIdentityOwners('paypal',sharedPayer);
@@ -94,8 +94,8 @@ async function main(){
 
     const stripeCustomer=`cus_financial_${suffix}`;
     await query(`
-      INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_customer_id,provider_subscription_id,starts_at,current_period_end)
-      VALUES($1,$2,'active','stripe',$3,$4,NOW(),NOW()+INTERVAL '30 days')
+      INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_customer_id,provider_subscription_id,billing_mode,starts_at,current_period_end)
+      VALUES($1,$2,'active','stripe',$3,$4,'subscription',NOW(),NOW()+INTERVAL '30 days')
     `,[customerS.id,plan.id,stripeCustomer,`sub_financial_${suffix}`]);
     await query(`
       INSERT INTO payment_history_transactions(
