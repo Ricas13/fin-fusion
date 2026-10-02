@@ -11,9 +11,10 @@ const manualService = fs.readFileSync(path.join(root, 'src/entitlements/admin-ma
 const subscriptionState = fs.readFileSync(path.join(root, 'src/entitlements/subscription-state.js'), 'utf8');
 const routes = fs.readFileSync(path.join(root, 'src/platform/admin-route-composition.js'), 'utf8');
 const customerActions = fs.readFileSync(path.join(root, 'src/platform/admin-actions.js'), 'utf8');
+const customerCreation = fs.readFileSync(path.join(root, 'src/customers/admin-customer-creation.js'), 'utf8');
 const clientScript = fs.readFileSync(path.join(root, 'public/js/admin-manual-entitlement.js'), 'utf8');
 
-assert(customerActions.includes("INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)"), 'Add customer subscription insert contract must remain present');
+assert(customerActions.includes('adminCustomerCreation.create({') && customerCreation.includes('manualSubscriptions.createManualSubscriptionTx') && !customerActions.includes('INSERT INTO subscriptions'), 'Add customer flow must delegate subscription creation to the canonical entitlement owner');
 assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)'), 'canonical manual subscription owner must retain the subscription INSERT');
 assert(manual.includes("require('../entitlements/admin-manual-entitlement-service')"), 'manual grant route must delegate to the entitlement-domain service');
 assert(manualService.includes("require('./manual-subscriptions')"), 'manual grant domain service must delegate subscription creation to the canonical entitlement owner');
