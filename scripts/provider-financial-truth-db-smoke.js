@@ -106,7 +106,7 @@ async function main() {
       metadata: { providerAuthoritative: false, feeDataAvailable: false }
     });
     const authoritative = await client.query(
-      "SELECT gross_amount_minor,fee_amount_minor,net_amount_minor FROM payment_history_transactions WHERE provider='stripe' AND provider_transaction_id=$1",
+      "SELECT gross_amount_minor,fee_amount_minor,net_amount_minor,metadata FROM payment_history_transactions WHERE provider='stripe' AND provider_transaction_id=$1",
       [immutableId]
     );
     assert.deepStrictEqual(
@@ -118,6 +118,8 @@ async function main() {
       [1000,59,941],
       'lower-quality webhook evidence must never overwrite provider-authoritative accounting'
     );
+    assert.strictEqual(authoritative.rows[0].metadata?.providerAuthoritative, true, 'lower-quality enrichment must not downgrade provider-authoritative provenance');
+    assert.strictEqual(authoritative.rows[0].metadata?.feeDataAvailable, true, 'lower-quality enrichment must not downgrade authoritative fee provenance');
 
     await assert.rejects(
       financialTruth.upsertTransaction({
