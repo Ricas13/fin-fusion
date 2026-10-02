@@ -242,8 +242,8 @@ Current concern: the repository has hundreds of one-off smoke/check scripts and 
 
 Tasks:
 
-- [ ] Keep the current tagged manifest as the transition source of truth.
-- [ ] Introduce shared DB fixture builders with scoped setup/cleanup.
+- [x] Keep the current tagged manifest as the transition source of truth.
+- [x] Introduce shared DB fixture builders with scoped setup/cleanup.
 - [ ] Make tagged suites independently runnable without relying on side effects from prior tests.
 - [ ] Prefer `node:test` suites/modules for related tests rather than one process/file per assertion group where practical.
 - [ ] Consolidate repeated helpers for:
@@ -254,7 +254,7 @@ Tasks:
   - fixture customer/plan/subscription creation
 - [ ] Preserve all race, rollback, provider ambiguity, access, backup and migration tests.
 - [ ] Replace source-regex assertions with behavioural tests where feasible.
-- [ ] Keep static ownership assertions where they enforce architectural boundaries that behaviour alone cannot identify.
+- [x] Keep static ownership assertions where they enforce architectural boundaries that behaviour alone cannot identify.
 - [ ] Simplify `package.json` scripts to stable suite/tag entrypoints.
 - [ ] Keep CI workflow intent visible even after suite consolidation.
 
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Test-estate consolidation started without removing coverage: added `scripts/db-test-fixture.js` for shared DB lifecycle, rollback scopes and timezone loops; migrated payment-history timezone, business-expense timezone and catalog rollback regressions onto it. Tagged manifest remains the suite source of truth; broader node:test/process consolidation remains open.
 
 - 2026-10-02 — Customer 360 rendering consolidation advanced: deleted retired `customer-360-view-v2.js`, moved the only still-used record/portal nav into the unified wrapper, removed zero-caller HTML-surgery compatibility shims, and updated renderer contracts. `customer-360-compact.js` is now explicitly the canonical action-first renderer rather than a transitional compatibility layer.
 
