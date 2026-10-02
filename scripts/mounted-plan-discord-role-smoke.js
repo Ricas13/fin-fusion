@@ -30,7 +30,7 @@ const db={
   },
   async transaction(fn){
     return fn({query:async(sql,params=[])=>{
-      if(sql.includes('UPDATE plans SET name=')){
+      if(/UPDATE\s+plans\s+SET\s+name=/.test(sql)){
         savedRole=params[6]||null;
         plan.discord_role_id=savedRole;
         return rows([plan]);
