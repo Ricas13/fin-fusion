@@ -2,7 +2,7 @@
 
 require('dotenv').config();
 const { getPool } = require('../src/db');
-const { validateRuntimePrivileges } = require('./runtime-db-privilege-smoke');
+const { validateRuntimePrivileges } = require('./runtime-db-privileges');
 
 const ROLE_SPECS = {
     app: { role: 'steamfusion_app', urlEnv: 'APP_DATABASE_URL', connectionLimit: -1, statementTimeout: '30s', lockTimeout: '10s', idleTimeout: '30s', createdb: false },
