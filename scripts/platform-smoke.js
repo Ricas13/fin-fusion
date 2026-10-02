@@ -42,7 +42,7 @@ function assertPasswordPolicySurfaces() {
         if ((source.match(/minlength="8"/g) || []).length < 2) throw new Error(`${name} does not expose the 8-character password minimum`);
     }
     for (const [name, source] of [
-        ['customer password core', fs.readFileSync('src/customers.js', 'utf8')],
+        ['customer password core', fs.readFileSync('src/customers.js', 'utf8') + customerPasswordPolicy],
         ['first-run setup core', firstRunCore],
         ['activation core', activationCore],
         ['staff password core', staffAuth],
