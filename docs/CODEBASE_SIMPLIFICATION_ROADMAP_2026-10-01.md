@@ -464,11 +464,13 @@ Before final merge/deployment of the completed roadmap:
 - [x] run live `npm run verify:deployment`,
 - [x] confirm critical automation jobs are healthy,
 - [x] check Access Integrity / revenue-integrity findings,
-- [ ] review any manual-review provider operations rather than retrying them blindly.
+- [x] review any manual-review provider operations rather than retrying them blindly.
 
 ---
 
 # Progress log
+
+- 2026-10-02 — Final live provider-operation acceptance completed on production build `8b5f590b`: the packaged production acceptance audit ran successfully and reported `openCount=0` and `manualReviewCount=0` for provider operations. No provider operation was retried blindly. Two remaining findings are Free-access convergence issues (`free_plan_without_ready_server`), not provider-operation review items.
 
 - 2026-10-02 — Live production deployment acceptance advanced on build `90494f04`: deployment used the supported helper, created an encrypted pre-deploy PostgreSQL backup, validated candidate worker SHAs, passed candidate verification, cut over the web app, and passed live post-cutover `npm run verify:deployment`. Critical automation health passed; Revenue Integrity executed and surfaced two `free_plan_without_ready_server` findings for operator follow-up. The final manual-review provider-operation review remains open because the acceptance audit script was accidentally excluded from the runtime image by the generic `scripts/*-audit.js` Docker ignore pattern; PR #865 fixes packaging and adds built-image assertions to Release Integrity and Merge Safety.
 
