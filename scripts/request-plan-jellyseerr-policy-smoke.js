@@ -14,6 +14,7 @@ const requestEntitlement = read('src/integrations/request-entitlement.js');
 const requestUsers = read('src/platform/admin-request-users.js');
 const jellyfinEditor = read('src/platform/admin-jellyfin-plan-editor.js');
 const stremioEditor = read('src/platform/admin-stremio-plan-editor.js');
+const planCommands = read('src/catalog/plan-command-service.js');
 const bulkJobs = read('src/platform/bulk-jobs.js');
 const bulkWorker = read('src/jellyfin/bulk-worker.js');
 const nav = read('src/platform/admin-nav.js');
@@ -77,7 +78,7 @@ assert(requestUsers.includes('value="plan_change"'), 'bulk access action must en
 assert(jellyfinEditor.includes('requestPlanPolicy.planCard(req, p)'), 'Jellyfin plans must embed the request policy card');
 assert(stremioEditor.includes("requestPlanPolicy.planCard(req, p, { variant: 'stremio' })"), 'Stremio plans must embed the request policy card');
 assert(!stremioEditor.includes("value=\"new_only\""), 'Stremio access changes must not leave existing plan members on an old household policy');
-assert(stremioEditor.includes("updateTrackingSnapshots(client, data.plan, input, impact, 'all_current')"), 'Stremio plan saves must explicitly apply household policy to current members');
+assert(stremioEditor.includes('planCommands.updateStremioAccess') && stremioEditor.includes('refreshTracking: refresh') && planCommands.includes('async function updateStremioTrackingSnapshots') && planCommands.includes('stremio_household_network_limit_snapshot=$2'), 'Stremio plan saves must explicitly apply household policy to current members through the canonical plan command owner');
 assert(stremioEditor.includes('queuePlanRequestReconciliation'), 'Stremio plan saves must reapply request policy to current members');
 
 for (const predicate of ["superseded_by IS NULL", "'paused'", 'starts_at<=NOW()', 'current_period_end>NOW()']) {
