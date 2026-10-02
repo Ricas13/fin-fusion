@@ -15,6 +15,9 @@ const dataExport=read('src/payments/data-export.js');
 const stripeHistory=read('src/payments/live-stripe-payment-history.js');
 const reconciliation=read('src/payments/provider-financial-reconciliation.js');
 const paypal=read('src/payments/paypal.js');
+const accounting=read('src/payments/history-accounting.js');
+const discovery=read('src/payments/subscription-discovery.js');
+const manualLink=read('src/payments/manual-subscription-link.js');
 const jobs=read('src/automation/jobs.js');
 
 assert(state.includes('FROM payment_history_transactions')&&state.includes('INSERT INTO payment_history_transactions'),
@@ -23,7 +26,8 @@ for(const [name,source] of [
   ['transaction browser',browser],
   ['Customer 360',compact],
   ['commerce dashboard ledger',dashboard],
-  ['data export',dataExport]
+  ['data export',dataExport],
+  ['history accounting',accounting]
 ]){
   assert(source.includes('provider-financial-state'),`${name} must consume canonical provider financial state`);
   assert(!source.includes('FROM payment_history_transactions'),`${name} must not create a second direct provider-ledger reader`);
@@ -36,6 +40,12 @@ assert(dashboard.includes('financialState.scanTransactionsInRange'),
   'commerce accounting must stream canonical ledger rows through the central reader');
 assert(dataExport.includes('financialState.exportTransactions')&&dataExport.includes('financialState.countTransactions'),
   'exports and export counts must use the same canonical transaction reader');
+assert(accounting.includes('financialState.scanAllTransactions'),
+  'stored accounting summaries must use the same canonical transaction reader');
+assert(discovery.includes("financialState.providerIdentityRows(['stripe','paypal'])")&&discovery.includes('financialState.paypalSubscriptionReferences()'),
+  'subscription discovery must reuse canonical provider identity and transaction-reference readers');
+assert(manualLink.includes('financialState.providerIdentityOwners'),
+  'manual provider-link verification must reuse canonical provider identity ownership');
 assert(dataExport.includes("provider === 'plisio' ? 'Plisio'"),
   'exports must preserve Plisio provider identity');
 
