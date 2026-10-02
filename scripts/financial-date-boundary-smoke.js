@@ -28,10 +28,13 @@ assert(expenseUi.includes("require('../finance/calendar-date')")&&expenseUi.incl
   'expense rendering must use the same explicit UTC calendar-date conversion');
 
 const ledger=read('src/payments/dashboard-ledger.js');
+const orders=read('src/platform/admin-orders.js');
 assert(ledger.includes("require('../finance/calendar-date')"),'payment coverage must use the canonical calendar-date boundary');
 assert(ledger.includes('range_start::text AS range_start')&&ledger.includes('range_end::text AS range_end'),
   'payment-history coverage DATE columns must cross into Node as YYYY-MM-DD text');
 assert(ledger.includes('calendarDate.startUtc(value)'),'coverage interval arithmetic must begin from explicit UTC calendar dates');
+assert(orders.includes("require('../finance/calendar-date')")&&orders.includes('calendarDate.startUtc(value)'),
+  'commerce order date filters must reuse the canonical calendar-date parser');
 
 const migrations=read('db/migrations/20261001163000_refund_queue_elapsed_time.sql');
 assert(migrations.includes('EXTRACT(EPOCH FROM current_period_end-starts_at)'),
