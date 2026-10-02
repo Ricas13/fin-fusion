@@ -23,6 +23,22 @@ const ejs=require('ejs');
   const html=await ejs.renderFile(path.join(root,'views','customer','dashboard.ejs'),locals);
   assert.match(html,/Everything you have, in one place/);assert.match(html,/Your active access/);assert.match(html,/Free Server/);assert.match(html,/Premium Jellyfin/);assert.match(html,/Stremio Monthly/);assert.match(html,/Open Free Jellyfin/);assert.match(html,/Open Premium Jellyfin/);assert(!html.includes('Install in Stremio'),'Home must not render a Stremio install CTA');assert(!html.includes('id="stremio-access"'),'Home must not render the Stremio setup panel');assert(!html.includes('Installation manifest'),'Home must not expose the private manifest');assert.match(html,/href="\/account\/activity">Activity/);assert.match(html,/href="\/account\/access">Manage access/);assert.match(html,/Plans &amp; payments/);assert(!html.includes('Enabled libraries'),'Home must not duplicate library management owned by My Access');assert(!html.includes('/account/libraries/account-free'),'Home must not render Jellyfin library forms');assert(!html.includes('/account/libraries/account-premium'),'Home must not render Jellyfin library forms');assert.match(html,/Affiliate · copy referral link/);assert.match(html,/href="\/account\/communications">Notifications/);assert.match(html,/customerSidebar/);assert.match(html,/customer-checkout\.js/);assert.strictEqual((html.match(/data-promo-input/g)||[]).length,2,'Each paid plan card must expose its own promo field');assert(!html.includes('Invalid Date'),'Portal must never render Invalid Date');
 
+  const extensionEnd=new Date(Date.now()+2*86400000);
+  const expiredPeriodEnd=new Date(Date.now()-86400000);
+  const extendedPlan={...currentPlan,id:'sub-extended',subscription_id:'sub-extended',status:'expired',current_period_end:expiredPeriodEnd,access_expires_at:extensionEnd,service_extension_days:3};
+  const extensionHtml=await ejs.renderFile(path.join(root,'views','customer','dashboard.ejs'),{
+    ...locals,
+    portal:{...locals.portal,subscriptions:[extendedPlan]},
+    currentAccessRows:[extendedPlan],
+    currentPlan:extendedPlan,
+    freePlan:null,
+    stremioPlan:null,
+    hasStremio:false
+  });
+  assert.match(extensionHtml,/Extended access/,'extension-backed entitlement must remain visible after the provider period/status has ended');
+  assert.match(extensionHtml,/Access until/,'extension-backed entitlement must display its canonical access expiry');
+  assert(!extensionHtml.includes('No active access.'),'extension-backed entitlement must not be dropped by template-local live checks');
+
   const withHousehold=await ejs.renderFile(path.join(root,'views','customer','dashboard.ejs'),{...locals,stremioHousehold:{accessModel:'Unlimited streams · Unlimited devices · 2 household connections',replacementState:{allowed:true,message:'You can change the registered household connection now.'}}});
   assert(!withHousehold.includes('Unlimited streams · Unlimited devices · 2 household connections'),'Home must not render Stremio household setup details');assert(!withHousehold.includes('Use a different household connection'),'Home must not render the Stremio household replacement control');assert(!withHousehold.includes('/account/stremio/reset-household'),'Home must not own Stremio household mutations');
 
