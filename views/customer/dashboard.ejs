@@ -43,7 +43,7 @@
     {key:'other',title:'Other Plans',description:'Other access products available to this account.'}
   ].map(group=>({...group,plans:plans.filter(plan=>planFamily(plan)===group.key)})).filter(group=>group.plans.length);
   const username=portal.customer.login_username||portal.customer.login_email||portal.customer.display_name||'Customer';
-  const currentSubscriptions=Array.isArray(portal.subscriptions)?portal.subscriptions.filter(s=>!s.is_addon):[];
+  const currentSubscriptions=(typeof currentAccessRows!=='undefined'&&Array.isArray(currentAccessRows)?currentAccessRows:(Array.isArray(portal.subscriptions)?portal.subscriptions.filter(s=>!s.is_addon):[]));
   const accessRows=currentSubscriptions.slice().sort((a,b)=>{const rank=s=>s.is_free_tier?0:planService(s)==='jellyfin'||planService(s)==='bundle'?1:planService(s)==='stremio'?2:3;return rank(a)-rank(b)||new Date(a.subscription_created_at||a.created_at||0)-new Date(b.subscription_created_at||b.created_at||0);});
   function subscriptionForEntitlement(entitlement){if(!entitlement)return null;const id=entitlement.subscription_id||entitlement.id;return currentSubscriptions.find(s=>id&&String(s.subscription_id||s.id)===String(id))||null;}
   function laneEntitlement(plan){const service=planService(plan);if(service==='stremio')return stremioPlan||null;if(service==='emby')return embyPlan||null;if(service==='jellyfin'||service==='bundle')return currentPlan||null;return null;}
