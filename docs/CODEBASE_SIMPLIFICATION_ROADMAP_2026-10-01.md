@@ -343,10 +343,10 @@ Tasks:
   - notice/error redirects
   - pills/status tones
   - admin form rows/buttons/cards
-- [ ] Establish canonical helpers/components.
+- [x] Establish canonical helpers/components.
 - [ ] Migrate modules gradually.
 - [ ] Keep feature-specific rendering local where abstraction would make code harder to read.
-- [ ] Add tests preventing unsafe raw HTML interpolation in canonical form helpers.
+- [x] Add tests preventing unsafe raw HTML interpolation in canonical form helpers.
 
 **Done when:** common UI mechanics have one implementation while domain-specific presentation remains explicit.
 
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — UI-helper standardisation started with a canonical `src/platform/html-primitives.js` for HTML escaping and CSRF hidden inputs. Admin shell/UI and Customer 360 now share it, with hostile-input regression coverage preventing unsafe interpolation. Feature-specific cards remain local; broader helper inventory/migration remains incremental.
 
 - 2026-10-02 — Production-script classification formalised in `docs/SCRIPT_CLASSIFICATION.md`; runtime/worker and operator/recovery tools are explicitly separated from CI-only smoke/audit helpers. `.dockerignore` now also excludes `*-audit.js`, `smoke-db.js` and `db-test-fixture.js`, closing additional test-helper leakage into the production image without a risky bulk path rename.
 
