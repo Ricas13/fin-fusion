@@ -126,6 +126,8 @@ async function main() {
   assert(portalCredentials.includes("router.use('/account/security/profile',onlyPost,requireCustomer,credentialRequestLimit,csrfGuard"),'portal email changes must pass through the verified-email policy interceptor with explicit rate limiting');
   assert.doesNotMatch(portalCredentials,/router\.post\('\/account\/security\/(?:password|profile)'/,'credential policy must not register duplicate POST route owners');
 
+  const adminPortalRecoveryOwner=fs.readFileSync(path.join(root,'src/security/admin-portal-credential-recovery.js'),'utf8');
+
   const passwordRequest=portalCredentials.match(/async function requestPasswordChange\(req\)[\s\S]*?\n\}/)?.[0]||'';
   assert(passwordRequest.includes('current.email_verified_at')&&passwordRequest.includes('emailChange.assertPassword'),'portal password changes must require the current verified email and current password');
   assert(passwordRequest.includes('customers.validateNewPassword(req.body.newPassword)'),'portal password changes must retain breach/password-policy screening');
@@ -149,10 +151,10 @@ async function main() {
   assert(adminPortalRecovery.includes("confirmation||'').trim()!=='RECOVER PORTAL'"),'admin portal recovery must require an explicit typed break-glass confirmation');
   assert(adminPortalRecovery.includes("req.body.verifiedCustomer!=='1'"),'admin portal recovery must require an explicit identity-verification acknowledgement');
   assert(adminPortalRecovery.includes('reason.length<8'),'admin portal recovery must record a meaningful support reason');
-  assert(adminPortalRecovery.includes('session_version=session_version+1')&&adminPortalRecovery.includes("UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW())"),'admin portal recovery must invalidate existing customer sessions');
-  assert(adminPortalRecovery.includes("[PASSWORD_TOKEN,EMAIL_OLD_TOKEN,EMAIL_NEW_TOKEN,'email_change','password_reset']"),'admin portal recovery must invalidate outstanding customer credential tokens');
-  assert(adminPortalRecovery.includes("'admin.customer.portal_credential_recovery'"),'admin recovery must create a dedicated audit event');
-  assert(adminPortalRecovery.includes("req.body.clear2fa==='1'")&&adminPortalRecovery.includes('DELETE FROM auth_recovery_codes'),'2FA removal must remain an explicit admin recovery choice and clear recovery material');
+  assert(adminPortalRecoveryOwner.includes('session_version=session_version+1')&&adminPortalRecoveryOwner.includes("UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW())"),'admin portal recovery owner must invalidate existing customer sessions');
+  for(const tokenType of ['portal_password_change','portal_email_old_approval','portal_email_new_verification','email_change','password_reset'])assert(adminPortalRecoveryOwner.includes(`'${tokenType}'`),`admin portal recovery owner must invalidate outstanding ${tokenType} tokens`);
+  assert(adminPortalRecoveryOwner.includes("'admin.customer.portal_credential_recovery'"),'admin recovery owner must create a dedicated audit event');
+  assert(adminPortalRecovery.includes("req.body.clear2fa==='1'")&&adminPortalRecoveryOwner.includes('DELETE FROM auth_recovery_codes'),'2FA removal must remain an explicit admin recovery choice and clear recovery material');
   assert(adminPrimaryActions.includes('Recover portal account')&&adminPrimaryActions.includes('/portal-credential-recovery'),'portal recovery must be discoverable from the customer admin actions');
 
   console.log('customer credential defense smoke passed');

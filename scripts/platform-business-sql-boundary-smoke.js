@@ -31,8 +31,6 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-customer-management.js::app_users',
   'src/platform/admin-media-controls.js::plans',
   'src/platform/admin-plan-order.js::plans',
-  'src/platform/admin-portal-credential-recovery.js::customers',
-  'src/platform/admin-portal-credential-recovery.js::app_users',
   'src/platform/admin-profile-account.js::subscriptions',
   'src/platform/admin-profile-account.js::customers',
   'src/platform/admin-profile-account.js::app_users',
@@ -80,6 +78,53 @@ assert.deepStrictEqual(
   staleExceptions,
   [],
   `A documented platform SQL exception is no longer needed; remove it from the frozen legacy allowlist: ${JSON.stringify(staleExceptions)}`
+);
+
+
+
+const adminPortalRecovery=fs.readFileSync(path.join(root,'src/platform/admin-portal-credential-recovery.js'),'utf8');
+const adminPortalRecoveryOwner=fs.readFileSync(path.join(root,'src/security/admin-portal-credential-recovery.js'),'utf8');
+assert(
+  adminPortalRecovery.includes("require('../security/admin-portal-credential-recovery')"),
+  'admin portal credential recovery must delegate destructive security mutation to the security domain'
+);
+for(const forbidden of [
+  'UPDATE app_users',
+  'UPDATE customers',
+  'DELETE FROM auth_recovery_codes',
+  'DELETE FROM auth_totp_enrollments',
+  'UPDATE auth_sessions',
+  'DELETE FROM user_sessions',
+  'UPDATE account_tokens'
+]){
+  assert(
+    !adminPortalRecovery.includes(forbidden),
+    `platform recovery route must not own destructive persistence: ${forbidden}`
+  );
+}
+for(const required of [
+  'FOR UPDATE OF c,u',
+  'UPDATE app_users',
+  'UPDATE customers',
+  'DELETE FROM auth_recovery_codes',
+  'DELETE FROM auth_totp_enrollments',
+  'UPDATE auth_sessions',
+  'DELETE FROM user_sessions',
+  'UPDATE account_tokens',
+  "'admin.customer.portal_credential_recovery'"
+]){
+  assert(
+    adminPortalRecoveryOwner.includes(required),
+    `security recovery owner must retain ${required}`
+  );
+}
+assert(
+  adminPortalRecoveryOwner.includes('transaction(async client=>'),
+  'admin portal credential recovery must remain one serialized transaction'
+);
+assert(
+  adminPortalRecoveryOwner.includes('passwordPolicy.validateNewPassword(password)'),
+  'admin portal credential recovery must preserve canonical password policy validation'
 );
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
