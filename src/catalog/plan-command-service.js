@@ -1419,6 +1419,34 @@ async function updateRequestPolicy({
   });
 }
 
+
+
+async function updateFourKTranscodePolicy({
+  planId,
+  enabled,
+  previous = false,
+  liveEntitlements = 0,
+  actorUserId = null
+}) {
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET kick_4k_transcodes=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, Boolean(enabled)]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.4k_transcode_policy','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({
+        enabled: Boolean(enabled),
+        previous: Boolean(previous),
+        liveEntitlements: Number(liveEntitlements || 0)
+      })]
+    );
+    return updated.rows[0];
+  });
+}
+
 module.exports = {
   createBasicPlan,
   clonePlanVersion,
@@ -1452,5 +1480,6 @@ module.exports = {
   unarchivePlan,
   updateDeliveryService,
   updateStorefrontOrder,
-  updateRequestPolicy
+  updateRequestPolicy,
+  updateFourKTranscodePolicy
 };

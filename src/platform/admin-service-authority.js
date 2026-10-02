@@ -8,6 +8,7 @@ const serviceAdminControl = require('../entitlements/service-admin-control');
 const permanentAccess = require('../entitlements/permanent-access');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const requestUserSync = require('../integrations/request-user-sync');
+const adminAccessControl = require('../access/admin-customer-access-control');
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -63,9 +64,7 @@ async function removePermanentUser(customerId, { actorUserId = null } = {}) {
 async function returnToNormalAutomation(customerId, { actorUserId = null } = {}) {
     const reason = 'Returned customer to normal automation';
     const permanent = await permanentAccess.revoke(customerId, { actorUserId, reason });
-    await query(`UPDATE customers
-                 SET automation_protected=FALSE,automation_protected_reason=NULL,automation_protected_at=NULL,automation_protected_by=NULL,updated_at=NOW()
-                 WHERE id=$1`, [customerId]);
+    await adminAccessControl.clearAutomationProtection(customerId);
     const services = {};
     for (const service of ['jellyfin', 'stremio', 'overseerr']) {
         services[service] = await serviceAdminControl.clear(customerId, service, { actorUserId, reason });

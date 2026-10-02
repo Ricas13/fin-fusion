@@ -29,11 +29,9 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-actions.js::app_users',
   'src/platform/admin-customer-management.js::customers',
   'src/platform/admin-customer-management.js::app_users',
-  'src/platform/admin-media-controls.js::plans',
   'src/platform/admin-profile-account.js::subscriptions',
   'src/platform/admin-profile-account.js::customers',
   'src/platform/admin-profile-account.js::app_users',
-  'src/platform/admin-service-authority.js::customers',
   'src/platform/portal-credential-confirmation.js::customers',
   'src/platform/portal-credential-confirmation.js::app_users',
 ]);
@@ -147,5 +145,27 @@ for(const required of [
 ]){
   assert(planCommandService.includes(required),`catalog plan command service must own ${required}`);
 }
+
+
+
+const mediaControlsRoute=fs.readFileSync(path.join(root,'src/platform/admin-media-controls.js'),'utf8');
+const serviceAuthorityRoute=fs.readFileSync(path.join(root,'src/platform/admin-service-authority.js'),'utf8');
+const accessControlOwner=fs.readFileSync(path.join(root,'src/access/admin-customer-access-control.js'),'utf8');
+const catalogCommands=fs.readFileSync(path.join(root,'src/catalog/plan-command-service.js'),'utf8');
+assert(mediaControlsRoute.includes("require('../catalog/plan-command-service')")
+    && mediaControlsRoute.includes('planCommands.updateFourKTranscodePolicy(')
+    && !mediaControlsRoute.includes('UPDATE plans SET kick_4k_transcodes'),
+  '4K plan mutation must stay behind the catalog command owner');
+assert(catalogCommands.includes('async function updateFourKTranscodePolicy')
+    && catalogCommands.includes("'admin.plan.4k_transcode_policy'"),
+  'catalog command owner must retain 4K policy persistence and audit');
+assert(serviceAuthorityRoute.includes("require('../access/admin-customer-access-control')")
+    && serviceAuthorityRoute.includes('adminAccessControl.clearAutomationProtection(')
+    && !serviceAuthorityRoute.includes('SET automation_protected=FALSE'),
+  'return-to-automation route must delegate customer protection persistence to the access domain');
+assert(accessControlOwner.includes('async function clearAutomationProtection')
+    && accessControlOwner.includes('UPDATE customers')
+    && accessControlOwner.includes('automation_protected=FALSE'),
+  'access domain must own automation-protection reset persistence');
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
