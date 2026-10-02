@@ -39,13 +39,20 @@ const requiredRuntimeScripts=[
   'scripts/inspect-backup.js',
   'scripts/verify-backup.js',
   'scripts/restore-db.js',
-  'scripts/verify-deployment.js'
+  'scripts/verify-deployment.js',
+  'scripts/production-acceptance-audit.js'
 ];
 for(const file of requiredRuntimeScripts){
   assert(fs.existsSync(path.join(root,file)),`required runtime/operator script is missing: ${file}`);
   assert(!/-smoke\.js$/.test(file)&&!/^scripts\/check-/.test(file),
     `required runtime script would be removed by the CI-only ignore patterns: ${file}`);
 }
+
+const ignoreLines=dockerignore.split(/\r?\n/).map(line=>line.trim());
+const auditIgnoreAt=ignoreLines.indexOf('scripts/*-audit.js');
+const acceptanceIncludeAt=ignoreLines.indexOf('!scripts/production-acceptance-audit.js');
+assert(auditIgnoreAt>=0&&acceptanceIncludeAt>auditIgnoreAt,
+  'production acceptance audit must be explicitly re-included after the generic *-audit.js exclusion');
 const runtimeRoleScript=fs.readFileSync(path.join(root,'scripts/configure-runtime-db-roles.js'),'utf8');
 assert(runtimeRoleScript.includes("require('./runtime-db-privileges')"),
   'runtime role configuration must depend on a production-image runtime helper, never a *-smoke.js file');

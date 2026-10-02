@@ -58,6 +58,7 @@ jobs:
             test -f /app/scripts/backup-worker.js
             test -f /app/scripts/migrate-db.js
             test -f /app/scripts/verify-deployment.js
+            test -f /app/scripts/production-acceptance-audit.js
             test ! -e /app/docs
             test ! -e /app/scripts/customer-security-domain-smoke.js
             test ! -e /app/scripts/check-js-syntax.js
