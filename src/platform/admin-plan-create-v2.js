@@ -55,8 +55,8 @@ function parse(body = {}, forcedCurrency = null) {
   const currency = text(forcedCurrency || body.currency || 'GBP', 3).toUpperCase();
   if (!CURRENCIES.includes(currency)) throw new Error('Currency must be GBP, USD or EUR.');
   const duration = freeJellyfin ? 30 : (BILLING[billing].days ?? int(body.durationDays, 1, 3650, 'Duration'));
-  const capacityLimit = stremio ? int(body.capacityLimit, 0, 1000000, 'Available slots') : 0;
   const mediaUserLimit = jellyfin ? int(body.mediaUserLimit ?? '0', 0, 1000000, 'Maximum plan customers') : null;
+  const capacityLimit = jellyfin ? mediaUserLimit : int(body.capacityLimit, 0, 1000000, 'Available slots');
   if (b(body.isAddon)) throw new Error('Add-ons are retired. Create a standalone Stremio plan instead.');
   const isAddon = false;
   const jellyfinAccessModel = jellyfin && JELLYFIN_ACCESS_MODELS.includes(body.jellyfinAccessModel) ? body.jellyfinAccessModel : 'concurrent_streams';
@@ -80,7 +80,10 @@ function parse(body = {}, forcedCurrency = null) {
     liveManagement: jellyfin && b(body.allowLiveTvManagement), remote: jellyfin && b(body.allowRemoteAccess), fourk: jellyfin && b(body.allow4k),
     subtitles: jellyfin && b(body.allowSubtitleEditing),
     libraryMode: jellyfin ? libraryMode : 'all', libraries: jellyfin ? libraries : [],
-    inactivityPolicy: {},
+    inactivityPolicy: jellyfin ? {
+      mediaCapacityManaged: true,
+      ...(freeJellyfin ? { freeInactivity: { firstPlaybackGraceDays: 3, playbackWindowDays: 7, minimumPlaybackMinutes: 30 } } : {})
+    } : {},
     freeFirstPlaybackGraceDays: freeJellyfin ? 3 : null,
     freePlaybackWindowDays: freeJellyfin ? 7 : null,
     freeMinimumPlaybackMinutes: freeJellyfin ? 30 : null
