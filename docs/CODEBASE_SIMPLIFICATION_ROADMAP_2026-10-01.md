@@ -347,8 +347,8 @@ Tasks:
 - [x] Mark compatibility-only exports/modules explicitly.
 - [x] Prevent new production callers through ownership/static checks.
 - [x] Remove each facade only after production importer count reaches zero.
-- [ ] Remove corresponding compatibility assertions once the old surface is gone.
-- [ ] Keep compatibility where it protects upgrade/runtime interfaces, not merely because it already exists.
+- [x] Remove corresponding compatibility assertions once the old surface is gone.
+- [x] Keep compatibility where it protects upgrade/runtime interfaces, not merely because it already exists.
 
 **Done when:** transitional compatibility code has an explicit lifecycle instead of becoming permanent accidental architecture.
 
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Final compatibility-scaffolding cleanup: the full CI run on the preceding ownership branch reported no marked compatibility facades remaining under `src/`. Removed the zero-importer `scripts/db-test-fixture.js` transitional alias, retired the now-empty compatibility importer report from the fast suite, and kept only compatibility behavior that protects explicit upgrade/runtime interfaces rather than historical module surfaces. Canonical ownership guards that prevent retired mutation owners from being reintroduced remain intentionally in place.
 
 - 2026-10-02 — Post-merge closeout for PR #829: final head `6debf1f` was current with `main` before merge and all six release-critical workflows passed (CI, Integration, Release Integrity, Browser & Clean Install, Security CodeQL, Stremio). The successful suites cover tagged fast checks, the full DB suite, strict dead-code audit, previous-schema upgrade, clean-install, canonical ownership, deployment/recovery behaviour and the retained high-risk concurrency/recovery tests. The merged `platform-business-sql-boundary-smoke.js` also freezes the documented legacy platform/domain-table mutation exceptions and rejects any new direct mutation without deliberate review. Remaining unchecked items are intentionally limited to repository-admin enforcement, image-size baseline comparison, tagged-suite independence follow-up, compatibility retirement follow-up, residual destructive-mutation ownership, and live production acceptance.
 
