@@ -4,6 +4,7 @@ const Stripe = require('stripe');
 const { query } = require('../db');
 const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
+const financialTruth = require('./provider-financial-truth');
 
 const DEFAULT_HOURS = 24 * 7;
 const MAX_HOURS = 24 * 30;
@@ -19,11 +20,16 @@ function positiveInteger(value) {
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
-function occurredAt(charge, balanceTransaction) {
+function integer(value) {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : null;
+}
+function occurredAt(object, balanceTransaction) {
     const balanceCreated = Number(balanceTransaction?.created);
     if (Number.isFinite(balanceCreated) && balanceCreated > 0) return new Date(balanceCreated * 1000);
-    const chargeCreated = Number(charge?.created);
-    return Number.isFinite(chargeCreated) && chargeCreated > 0 ? new Date(chargeCreated * 1000) : new Date();
+    const created = Number(object?.created);
+    return Number.isFinite(created) && created > 0 ? new Date(created * 1000) : new Date();
 }
 function mergedMetadata(charge) {
     const paymentIntent = charge?.payment_intent && typeof charge.payment_intent === 'object' ? charge.payment_intent : null;
@@ -35,25 +41,22 @@ function invoiceReference(charge) { return objectId(charge?.invoice); }
 
 async function resolveCustomerId(charge) {
     const metadata = mergedMetadata(charge);
-    const claimed = String(metadata.internal_customer_id || '').trim();
-    if (claimed) {
-        const direct = await query('SELECT id FROM customers WHERE id=$1 LIMIT 1', [claimed]);
-        if (direct.rowCount === 1) return direct.rows[0].id;
-    }
+    const generic = await financialTruth.resolveCustomerId({
+        provider: 'stripe',
+        customerId: metadata.internal_customer_id || null,
+        providerCustomerId: customerReference(charge),
+        providerTransactionId: objectId(charge?.balance_transaction),
+        providerReferenceId: paymentIntentReference(charge),
+        providerSourceId: charge?.id || null,
+        providerCheckoutId: metadata.internal_checkout_intent_id || null,
+        email: charge?.billing_details?.email || null
+    });
+    if (generic) return generic;
 
-    const providerCustomerId = customerReference(charge);
-    if (providerCustomerId) {
-        const mapped = await query(`
-            SELECT customer_id
-              FROM subscriptions
-             WHERE source='stripe' AND provider_customer_id=$1
-             ORDER BY created_at DESC
-             LIMIT 2
-        `, [providerCustomerId]);
-        const ids = [...new Set(mapped.rows.map(row => String(row.customer_id || '')).filter(Boolean))];
-        if (ids.length === 1) return ids[0];
-    }
-
+    // Imported pre-CAPTAiNFiN subscriptions can only expose the PaymentIntent
+    // relationship through legacy_subscription_imports. Keep this as a final
+    // compatibility bridge, then remember the recovered identity in the new
+    // canonical graph when the ledger row is written.
     const paymentIntentId = paymentIntentReference(charge);
     if (paymentIntentId) {
         const legacy = await query(`
@@ -66,18 +69,6 @@ async function resolveCustomerId(charge) {
         `, [paymentIntentId]);
         if (legacy.rowCount === 1) return legacy.rows[0].customer_id;
     }
-
-    const email = String(charge?.billing_details?.email || '').trim().toLowerCase();
-    if (email) {
-        const matched = await query(`
-            SELECT c.id
-              FROM customers c
-              LEFT JOIN app_users u ON u.id=c.user_id
-             WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=$1
-             LIMIT 2
-        `, [email]);
-        if (matched.rowCount === 1) return matched.rows[0].id;
-    }
     return null;
 }
 
@@ -88,17 +79,22 @@ async function expandedBalanceTransaction(stripe, charge) {
     return stripe.balanceTransactions.retrieve(String(value));
 }
 
+async function expandedRefundBalanceTransaction(stripe, refund) {
+    const value = refund?.balance_transaction;
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    return stripe.balanceTransactions.retrieve(String(value));
+}
+
 function historyValues(charge, balanceTransaction, customerId) {
-    // This is an accounting ledger. Stripe's balance transaction is the
-    // canonical identity and monetary source because it owns settlement
-    // currency, gross, fee and net.
+    // Stripe balance transactions are the canonical accounting identity because
+    // they own settlement currency, gross, fee and net.
     const amount = positiveInteger(balanceTransaction?.amount);
     if (!charge?.id || !charge?.paid || !balanceTransaction?.id || amount == null || amount <= 0) return null;
 
     const fee = positiveInteger(balanceTransaction?.fee);
-    const rawNet = balanceTransaction?.net;
-    const net = rawNet == null || rawNet === '' ? Number.NaN : Number(rawNet);
-    if (fee == null || !Number.isFinite(net)) return null;
+    const net = integer(balanceTransaction?.net);
+    if (fee == null || net == null) return null;
 
     const metadata = mergedMetadata(charge);
     return {
@@ -108,7 +104,7 @@ function historyValues(charge, balanceTransaction, customerId) {
         currency: String(balanceTransaction.currency || charge.currency || '').toUpperCase(),
         grossMinor: amount,
         feeMinor: fee,
-        netMinor: Math.round(net),
+        netMinor: net,
         providerCustomerId: customerReference(charge),
         providerReferenceId: paymentIntentReference(charge),
         providerSourceId: String(charge.id),
@@ -127,53 +123,134 @@ function historyValues(charge, balanceTransaction, customerId) {
     };
 }
 
+function refundHistoryValues(charge, refund, balanceTransaction, customerId) {
+    if (!refund?.id || !balanceTransaction?.id) return null;
+    const gross = integer(balanceTransaction.amount);
+    const fee = integer(balanceTransaction.fee);
+    const net = integer(balanceTransaction.net);
+    if (gross == null || gross >= 0 || fee == null || net == null) return null;
+    const metadata = mergedMetadata(charge);
+    return {
+        providerTransactionId: String(balanceTransaction.id),
+        status: String(balanceTransaction.status || refund.status || 'available'),
+        occurredAt: occurredAt(refund, balanceTransaction),
+        currency: String(balanceTransaction.currency || refund.currency || charge?.currency || '').toUpperCase(),
+        grossMinor: gross,
+        feeMinor: fee,
+        netMinor: net,
+        providerCustomerId: customerReference(charge),
+        providerReferenceId: String(refund.id),
+        providerSourceId: String(charge?.id || ''),
+        customerId: customerId || null,
+        metadata: {
+            liveStripeSync: true,
+            providerAuthoritative: true,
+            feeDataAvailable: true,
+            stripeRefund: true,
+            balanceTransactionId: String(balanceTransaction.id),
+            refundId: String(refund.id),
+            chargeId: String(charge?.id || ''),
+            paymentIntentId: paymentIntentReference(charge),
+            invoiceId: invoiceReference(charge),
+            checkoutIntentId: metadata.internal_checkout_intent_id || null,
+            planId: metadata.internal_plan_id || null
+        }
+    };
+}
+
 async function upsertCharge(stripe, charge) {
     const balanceTransaction = await expandedBalanceTransaction(stripe, charge);
     const customerId = await resolveCustomerId(charge);
     const values = historyValues(charge, balanceTransaction, customerId);
-    if (!values || !values.currency) return { skipped: true, id: charge?.id || null };
-    await query(`
-        INSERT INTO payment_history_transactions(
-            provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
-            gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,
-            provider_reference_id,provider_source_id,customer_id,metadata
-        ) VALUES(
-            'stripe',$1,'charge',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb
-        )
-        ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
-            transaction_type='charge',
-            transaction_status=EXCLUDED.transaction_status,
-            occurred_at=EXCLUDED.occurred_at,
-            currency=EXCLUDED.currency,
-            gross_amount_minor=EXCLUDED.gross_amount_minor,
-            fee_amount_minor=EXCLUDED.fee_amount_minor,
-            net_amount_minor=EXCLUDED.net_amount_minor,
-            provider_customer_id=COALESCE(EXCLUDED.provider_customer_id,payment_history_transactions.provider_customer_id),
-            provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
-            provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
-            customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-            metadata=payment_history_transactions.metadata || EXCLUDED.metadata,
-            updated_at=NOW()
-    `, [
-        values.providerTransactionId, values.status, values.occurredAt, values.currency,
-        values.grossMinor, values.feeMinor, values.netMinor, values.providerCustomerId,
-        values.providerReferenceId, values.providerSourceId, values.customerId, JSON.stringify(values.metadata)
-    ]);
-    return { skipped: false, id: values.providerTransactionId, customerId: values.customerId };
+    if (!values || !values.currency) return { skipped: true, id: charge?.id || null, refundsRecorded: 0 };
+    const stored = await financialTruth.upsertTransaction({
+        provider: 'stripe',
+        providerTransactionId: values.providerTransactionId,
+        transactionType: 'charge',
+        transactionStatus: values.status,
+        occurredAt: values.occurredAt,
+        currency: values.currency,
+        grossMinor: values.grossMinor,
+        feeMinor: values.feeMinor,
+        netMinor: values.netMinor,
+        providerCustomerId: values.providerCustomerId,
+        providerReferenceId: values.providerReferenceId,
+        providerSourceId: values.providerSourceId,
+        customerId: values.customerId,
+        providerBillingReference: values.providerReferenceId,
+        metadata: values.metadata,
+        identitySource: 'stripe_charge'
+    });
+    const refundsRecorded = await syncChargeRefunds(stripe, charge, stored.customerId || customerId);
+    return { skipped: false, id: values.providerTransactionId, customerId: stored.customerId || customerId, refundsRecorded };
+}
+
+async function listChargeRefunds(stripe, charge) {
+    if (!charge?.id || Number(charge.amount_refunded || 0) <= 0) return [];
+    const rows = [];
+    let startingAfter = null;
+    let pages = 0;
+    while (true) {
+        const response = await stripe.refunds.list({
+            charge: String(charge.id),
+            limit: 100,
+            expand: ['data.balance_transaction'],
+            ...(startingAfter ? { starting_after: startingAfter } : {})
+        });
+        rows.push(...(response.data || []));
+        pages += 1;
+        if (!response.has_more) break;
+        if (pages >= MAX_PAGES) throw new Error(`Stripe refund sync exceeded its safe pagination limit for charge ${charge.id}.`);
+        const last = (response.data || [])[response.data.length - 1];
+        if (!last?.id) throw new Error('Stripe refund sync could not continue pagination safely.');
+        startingAfter = last.id;
+    }
+    return rows;
+}
+
+async function syncChargeRefunds(stripe, charge, customerId = null) {
+    const refunds = await listChargeRefunds(stripe, charge);
+    let recorded = 0;
+    for (const refund of refunds) {
+        const balanceTransaction = await expandedRefundBalanceTransaction(stripe, refund);
+        const owner = customerId || await resolveCustomerId(charge);
+        const values = refundHistoryValues(charge, refund, balanceTransaction, owner);
+        if (!values || !values.currency) continue;
+        await financialTruth.upsertTransaction({
+            provider: 'stripe',
+            providerTransactionId: values.providerTransactionId,
+            transactionType: 'refund',
+            transactionStatus: values.status,
+            occurredAt: values.occurredAt,
+            currency: values.currency,
+            grossMinor: values.grossMinor,
+            feeMinor: values.feeMinor,
+            netMinor: values.netMinor,
+            providerCustomerId: values.providerCustomerId,
+            providerReferenceId: values.providerReferenceId,
+            providerSourceId: values.providerSourceId,
+            customerId: values.customerId,
+            providerBillingReference: paymentIntentReference(charge),
+            metadata: values.metadata,
+            identitySource: 'stripe_refund'
+        });
+        recorded += 1;
+    }
+    return recorded;
 }
 
 async function runSync({ hours = DEFAULT_HOURS } = {}) {
     const boundedHours = Math.max(1, Math.min(MAX_HOURS, Number(hours) || DEFAULT_HOURS));
     const config = await providerSettings.get('stripe');
     const key = config?.restrictedKey || config?.apiKey || '';
-    if (!key) return { configured: false, seen: 0, recorded: 0, skipped: 0, hours: boundedHours };
+    if (!key) return { provider: 'stripe', configured: false, seen: 0, recorded: 0, refundsRecorded: 0, skipped: 0, hours: boundedHours };
     const stripe = new Stripe(key, {
         apiVersion: '2026-06-24.dahlia',
         appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' },
         timeout: providerHttp.timeoutMs('stripe')
     });
     const since = Math.floor((Date.now() - boundedHours * 60 * 60 * 1000) / 1000);
-    let startingAfter = null, pages = 0, seen = 0, recorded = 0, skipped = 0;
+    let startingAfter = null, pages = 0, seen = 0, recorded = 0, refundsRecorded = 0, skipped = 0;
     while (true) {
         const response = await stripe.charges.list({
             limit: 100,
@@ -184,7 +261,11 @@ async function runSync({ hours = DEFAULT_HOURS } = {}) {
         for (const charge of response.data || []) {
             seen += 1;
             const out = await upsertCharge(stripe, charge);
-            if (out.skipped) skipped += 1; else recorded += 1;
+            if (out.skipped) skipped += 1;
+            else {
+                recorded += 1;
+                refundsRecorded += Number(out.refundsRecorded || 0);
+            }
         }
         pages += 1;
         if (!response.has_more) break;
@@ -193,12 +274,12 @@ async function runSync({ hours = DEFAULT_HOURS } = {}) {
         if (!last?.id) throw new Error('Stripe payment-history sync could not continue pagination safely.');
         startingAfter = last.id;
     }
-    return { configured: true, seen, recorded, skipped, hours: boundedHours };
+    return { provider: 'stripe', configured: true, seen, recorded, refundsRecorded, skipped, hours: boundedHours };
 }
 
 async function syncRecent(options = {}) {
     const now = Date.now();
-    if (!options.force && lastSyncAt && now - lastSyncAt < MIN_SYNC_INTERVAL_MS) return { cached: true };
+    if (!options.force && lastSyncAt && now - lastSyncAt < MIN_SYNC_INTERVAL_MS) return { provider: 'stripe', cached: true };
     if (inFlight) return inFlight;
     inFlight = runSync(options)
         .then(result => { lastSyncAt = Date.now(); return result; })
@@ -208,6 +289,7 @@ async function syncRecent(options = {}) {
 
 module.exports = {
     DEFAULT_HOURS, MAX_HOURS, MAX_PAGES, MIN_SYNC_INTERVAL_MS,
-    objectId, mergedMetadata, historyValues, resolveCustomerId, expandedBalanceTransaction,
-    upsertCharge, runSync, syncRecent
+    objectId, mergedMetadata, historyValues, refundHistoryValues, resolveCustomerId,
+    expandedBalanceTransaction, expandedRefundBalanceTransaction, listChargeRefunds,
+    upsertCharge, syncChargeRefunds, runSync, syncRecent
 };
