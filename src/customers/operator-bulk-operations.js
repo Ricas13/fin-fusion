@@ -5,7 +5,7 @@
 // preserve its own idempotency and lifecycle safety rules.
 const {query}=require('../db');
 const bulkWorker=require('../jellyfin/bulk-worker');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 const jellyfinAdminControl=require('../jellyfin/admin-control');
 const serverMigration=require('../jellyfin/server-migration');
 const deletion=require('./customer-deletion');
