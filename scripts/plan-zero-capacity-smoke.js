@@ -33,16 +33,17 @@ const inactivity=read('src/automation/customer-inactivity.js')+read('src/automat
 const freeCapacityBackfill=read('src/automation/free-capacity-backfill.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
-// Jellyfin plans no longer own an inventory number. Server max_users is the
-// only customer-capacity input, with exactly one managed customer per place.
+// Jellyfin capacity has two independent ceilings: server max_users protects
+// infrastructure, while plans.media_user_limit controls how many customers a
+// product is allowed to allocate within its selected fleet.
 assert(create.includes('name="capacityLimit" required'),'legacy plan storage field must remain available for compatible plan creation');
 assert(createBrowser.includes("if(availability)availability.hidden=!stremio")&&createBrowser.includes("if(jellyfin)capacityLimit.value='0'"),'Jellyfin plan creation must hide the duplicate plan inventory field and keep it neutral internally');
-assert(inventory.includes("usage.model==='fleet_users'")&&inventory.includes('One managed Jellyfin customer = one place'),'Jellyfin plan inventory must be derived from server user capacity');
+assert(inventory.includes("usage.model==='fleet_users'")&&inventory.includes('One managed Jellyfin customer = one place'),'Jellyfin plan inventory must still expose fleet customer capacity');
 assert(inventory.includes('managed users:')&&inventory.includes('customers still owed an account:')&&inventory.includes('temporary reservations:'),'Jellyfin availability must explain managed, owed and held customer places');
 assert(!inventory.includes('server stream capacity')&&!inventory.includes('Fleet stream capacity')&&!inventory.includes('Sold / held streams'),'admin plan inventory must not expose retired stream-weighted capacity language');
 assert(serverForm.includes('Customer capacity')&&serverForm.includes('Every Jellyfin customer uses exactly one place'),'server configuration must define max_users as customer-user capacity');
 assert(!serverForm.includes('Sellable stream capacity')&&!serverForm.includes('3-stream plan consumes'),'server configuration must not describe capacity as stream inventory');
-assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'Jellyfin fleet availability must be expressed only in customer places');
+assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('physicalUserLimit')&&capacitySource.includes('planUserLimit')&&capacitySource.includes('physicalRemaining')&&capacitySource.includes('planRemaining'),'Jellyfin fleet availability must enforce both physical server capacity and plan-owned customer capacity');
 assert(capacitySource.includes("NOT public.subscription_admin_removed(s.customer_id,'jellyfin')")&&capacitySource.includes("NOT public.subscription_admin_removed(pending_subscription.customer_id,'jellyfin')"),'admin-removed Jellyfin customers must not consume storefront fleet capacity in either live usage or acquisition SQL');
 assert(capacitySource.includes('function freePendingUnblockedSql')&&capacitySource.includes("hold_type NOT IN('payment_delinquency','inactivity_policy','jellyfin_cleanup')"),'Free pending capacity must share the canonical Free-lane blocker precedence');
 assert(capacitySource.includes("public.subscription_admin_present(${subscriptionAlias}.customer_id,'jellyfin',${subscriptionAlias}.id)"),'Permanent/admin-present authority must override automatic Free holds in pending capacity');
@@ -51,8 +52,13 @@ assert(freeCapacityBackfill.includes("NOT public.subscription_admin_removed(s.cu
 assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'capacity must not depend on plan streams or raw Jellyfin total-user metrics');
 assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource.includes('COUNT(DISTINCT customer_id)')&&userCapacitySource.includes("ja.account_purpose='jellyfin'")&&userCapacitySource.includes('ja.disabled=FALSE')&&userCapacitySource.includes('jellyfin_account_creation_intents')&&userCapacitySource.includes('jellyfin_server_placement_leases'),'canonical server capacity must count each managed customer exactly once across persisted accounts, creation intents and active placement leases');
 assert(capacitySource.includes("key=model==='fleet_users'?`fleet-users:${serverClass(plan)||'unclassified'}`"),'all Jellyfin plans sharing a server class must serialize acquisition against the same user-capacity lock');
+assert(capacitySource.includes('media_user_limit')&&capacitySource.includes('mediaPlanLimitAvailableSql'),'storefront acquisition SQL must enforce the plan-owned media customer ceiling as well as physical fleet capacity');
+assert(capacitySource.includes('Math.min(physicalRemaining,planRemaining)'),'effective Jellyfin availability must be the lower of physical fleet capacity and the plan-owned limit');
+const planEditor=read('src/platform/admin-jellyfin-plan-editor.js');
+assert(planEditor.includes('name="mediaUserLimit"')&&planEditor.includes('Maximum customers on this plan'),'Jellyfin plan editor must expose an independent product customer limit');
+assert(planEditor.includes('Eligible servers currently provide')&&planEditor.includes('physical customer places'),'Jellyfin plan editor must explain the distinction between plan slots and server capacity');
 assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'server user capacity must still honor automatic placement health/state');
-assert(plansList.includes("state.model==='fleet_users'")&&plansList.includes('View server user capacity'),'Plans must display server user capacity rather than stream inventory');
+assert(plansList.includes("state.model==='fleet_users'")&&plansList.includes('View server user capacity'),'Plans must continue exposing the physical fleet capacity view alongside plan limits');
 assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative capacity recheck');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must continue to admit explicit zero capacity for non-Jellyfin/manual inventory');
 assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'free'}),'fleet_users');
