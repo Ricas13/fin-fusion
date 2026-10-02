@@ -2,7 +2,7 @@
 const assert=require('assert');
 const crypto=require('crypto');
 const ledger=require('../src/payments/dashboard-ledger');
-const {runDbSmoke,withRollback,withTimezones}=require('./db-test-fixture');
+const {runDbSmoke,withRollback,withTimezones}=require('./test-fixture');
 
 runDbSmoke('payment history coverage timezone DB smoke',async()=>{
   await withTimezones(['UTC','Europe/London','America/New_York','Asia/Kolkata'],async zone=>{
