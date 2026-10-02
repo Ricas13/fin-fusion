@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const stripe = require('./stripe');
 const paypal = require('./paypal');
+const plisio = require('./plisio');
 const checkoutIntents = require('./checkout-intents');
 const providerPaymentReconciliation = require('./provider-payment-reconciliation');
 const providerLifecycleState = require('./provider-lifecycle-state');
@@ -77,12 +78,12 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
             ORDER BY ph.occurred_at DESC,ph.provider_transaction_id DESC
             LIMIT 1
         ) paid ON TRUE
-        WHERE i.provider IN ('stripe','paypal')
+        WHERE i.provider IN ('stripe','paypal','plisio')
           AND i.provider_checkout_id IS NOT NULL
           AND i.created_at >= NOW() - ($2::int * INTERVAL '1 day')
           AND (
               (
-                  (i.provider='stripe' OR i.checkout_mode='subscription')
+                  (i.provider IN ('stripe','plisio') OR i.checkout_mode='subscription')
                   AND i.state IN ('open','failed','expired','cancelled')
                   AND i.provider_terminal_at IS NULL
               )
@@ -103,6 +104,9 @@ function defaultHandlers() {
     return {
         async stripe(row) {
             return stripe.confirmCheckout(row.provider_checkout_id);
+        },
+        async plisio(row) {
+            return plisio.confirmCheckout(row.provider_checkout_id, row);
         },
         async paypalStatus(row) {
             return paypal.syncCurrentSubscription(row.provider_checkout_id, { activateMissing: false });
@@ -130,6 +134,16 @@ async function recoverStripe(row, handlers) {
     if (outcome?.completed) return { state: 'recovered', detail: outcome.status || 'completed' };
     if (outcome?.waiting) return { state: 'waiting', detail: outcome.status || 'processing' };
     return { state: 'terminal', detail: outcome?.status || 'terminal' };
+}
+
+async function recoverPlisio(row, handlers) {
+    const outcome = await handlers.plisio(row);
+    if (outcome?.completed) return { state: 'recovered', detail: outcome.status || 'completed' };
+    if (outcome?.terminal) return { state: 'terminal', detail: outcome.status || 'terminal' };
+    // A provider response that is neither paid nor proven terminal is retained
+    // for another pass. Unknown Plisio states must never be converted into
+    // cancellation or access.
+    return { state: 'waiting', detail: outcome?.status || 'provider_pending' };
 }
 
 async function recoverPayPalPayment(row, handlers) {
@@ -224,7 +238,9 @@ async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds =
         try {
             const result = row.provider === 'stripe'
                 ? await recoverStripe(row, activeHandlers)
-                : await recoverPayPal(row, activeHandlers);
+                : row.provider === 'plisio'
+                    ? await recoverPlisio(row, activeHandlers)
+                    : await recoverPayPal(row, activeHandlers);
             summary[result.state] = Number(summary[result.state] || 0) + 1;
         } catch (error) {
             summary.failed += 1;
@@ -253,6 +269,7 @@ module.exports = {
     failureWarning,
     candidates,
     recoverStripe,
+    recoverPlisio,
     recoverPayPalPayment,
     recoverPayPal,
     run
