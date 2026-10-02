@@ -45,6 +45,11 @@ previous_app_image=''
 previous_automation_image=''
 previous_activity_image=''
 previous_backup_image=''
+previous_app_container=''
+runtime_labels_override=''
+candidate_container='captainfin-candidate'
+candidate_started=0
+candidate_attached=0
 
 cleanup() {
   if [[ -n "$rollback_override" && -f "$rollback_override" ]]; then
