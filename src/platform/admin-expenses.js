@@ -7,6 +7,7 @@ const expenses=require('./business-expenses');
 const calendarDate=require('../finance/calendar-date');
 const reportingCurrency=require('./reporting-currency');
 const profitability=require('./business-profitability');
+const moneyFormat=require('./money-format');
 const runtimeSettings=require('./runtime-settings');
 const {layout,esc}=require('./admin-html');
 const ui=require('./admin-ui');
@@ -18,11 +19,11 @@ function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.
 function text(value,max){return String(value||'').trim().slice(0,max);}
 function checked(value){return value==='1'||value==='on'||value===true;}
 function currency(value){const c=String(value||'GBP').trim().toUpperCase();if(!/^[A-Z]{3}$/.test(c))throw new Error('Currency must be a three-letter code.');return c;}
-function amountMinor(value){const v=String(value||'').trim();if(!/^\d+(?:\.\d{1,2})?$/.test(v))throw new Error('Enter a valid positive amount with up to two decimal places.');const [whole,fraction='']=v.split('.');const minor=Number(whole)*100+Number((fraction+'00').slice(0,2));if(!Number.isSafeInteger(minor)||minor<=0)throw new Error('Expense amount must be greater than zero.');return minor;}
+function amountMinor(value){const minor=moneyFormat.parseMajorToMinor(value,{allowZero:false,error:'Enter a valid positive amount with up to two decimal places.'});if(minor<=0)throw new Error('Expense amount must be greater than zero.');return minor;}
 function recurrence(value){const v=String(value||'one_time');if(!expenses.RECURRENCES.has(v))throw new Error('Choose a valid recurrence.');return v;}
 function expenseDate(value,label){const v=expenses.isoDate(value);if(!v)throw new Error(`${label} is required.`);return v;}
 function parseInput(body){const startDate=expenseDate(body.startDate,'Start / expense date'),endDate=body.endDate?expenseDate(body.endDate,'End date'):null;if(endDate&&endDate<startDate)throw new Error('End date cannot be before the start date.');return{name:text(body.name,160),supplier:text(body.supplier,160),category:text(body.category,80)||'Other',amountMinor:amountMinor(body.amount),currency:currency(body.currency),recurrence:recurrence(body.recurrence),startDate,endDate,active:checked(body.active),reference:text(body.reference,500),notes:text(body.notes,4000)};}
-function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c,currencyDisplay:'narrowSymbol',minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${c} ${(Number(minor||0)/100).toFixed(2)}`;}}
+function money(minor,c){return moneyFormat.formatMinor(minor,c);}
 function date(value){if(!value)return'—';const d=calendarDate.startUtc(value);return d?d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric',timeZone:'UTC'}):'—';}
 function recurrenceLabel(value){return({one_time:'One-off',monthly:'Monthly',quarterly:'Quarterly',yearly:'Yearly'})[value]||value;}
 async function audit(req,action,id,metadata={}){await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'business_expense',$3,$4::jsonb)`,[req.session.authUserId,action,String(id),JSON.stringify(metadata)]).catch(()=>{});}
