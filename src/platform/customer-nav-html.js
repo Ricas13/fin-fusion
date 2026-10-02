@@ -4,6 +4,7 @@ const fs=require('fs');
 const path=require('path');
 const ejs=require('ejs');
 const customers=require('../customers');
+const customerPortalState=require('../customers/customer-portal-state');
 const runtimeSettings=require('./runtime-settings');
 
 const templatePath=path.join(__dirname,'../../views/customer/_nav.ejs');
@@ -40,20 +41,7 @@ function liveJellyfinEntitlement(portal){
 function canonicalAccessFlags(portal){
   const snapshot=portal?.accessSnapshot;
   if(!snapshot)return null;
-  const primary=Boolean(snapshot.primary?.entitlement);
-  const free=Boolean(snapshot.free?.entitlement);
-  const stremio=Boolean(snapshot.stremio?.entitlement);
-  const emby=Boolean(snapshot.emby?.entitlement);
-  const mainAccess=primary||free||stremio||emby;
-  const addons=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[]).filter(subscription=>subscription?.is_addon);
-  const addonServices=new Set(addons.map(subscription=>String(subscription?.service_type_snapshot||subscription?.service_type||'jellyfin').toLowerCase()));
-  const addonServiceAccess=['jellyfin','emby','stremio','bundle'].some(service=>addonServices.has(service));
-  const addonJellyfinAccess=addonServices.has('jellyfin')||addonServices.has('bundle');
-  return{
-    hasServiceAccess:mainAccess||addonServiceAccess,
-    hasRequestAccess:mainAccess,
-    hasJellyfinAccess:primary||free||addonJellyfinAccess
-  };
+  return portal?.accessFlags||customerPortalState.currentAccessFlags(snapshot,portal?.subscriptions);
 }
 
 function optionsFromPortal(portal){
