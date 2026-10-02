@@ -1,6 +1,5 @@
 'use strict';
 
-const v2=require('./customer-360-view-v2');
 const accessCards=require('./customer-360-access-cards');
 const compact=require('./customer-360-compact');
 const primaryActions=require('./admin-customer-primary-actions');
@@ -15,15 +14,12 @@ function activeSubscription(detail){return liveSubscriptions(detail)[0]||detail.
 function isBanned(detail){return (detail?.activeHolds||[]).some(hold=>String(hold?.hold_type||'')==='administrative_ban'&&!hold?.released_at);}
 function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${escapeHtml(token)}">`;}
+function nav(id,token,appUserId){
+  const impersonate=appUserId?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate">${csrfHidden(token)}<button class="detailTab" type="submit">Portal view</button></form>`:'';
+  return `<nav class="detailTabs"><a class="detailTab active" href="/admin/users/${encodeURIComponent(id)}">Customer record</a>${impersonate}</nav>`;
+}
 function fmtDate(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 function initials(value){const parts=String(value||'U').trim().split(/\s+/).filter(Boolean);if(parts.length>1)return(parts[0][0]+parts[parts.length-1][0]).toUpperCase();return String(parts[0]||'U').slice(0,2).toUpperCase();}
-
-// Compatibility exports retained temporarily for old internal callers. The
-// compact renderer now owns action placement explicitly; post-render HTML
-// mutation is deliberately forbidden.
-function removeLegacyPlanRevoke(html){return String(html||'');}
-function addPlanRevokeAction(actions){return String(actions||'');}
-function movePlanRevokeIntoSubscriptions(main){return String(main||'');}
 
 function accessWorkspaceSection(detail,token,accessDetail){
   const sub=detail?.canonicalAccessState?(detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null):(detail.primaryEntitlement||activeSubscription(detail));
@@ -100,10 +96,10 @@ async function body(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const safe=customerFacingDetail(detail);
   const heroSummary=mockHero(safe,token,options.permanent);
-  const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
+  const navBar=nav(safe.customer.id,token,safe.customer.app_user_id);
   const actions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const main=await compact.render(safe,token,options);
   return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${main}`;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,isBanned,removeLegacyPlanRevoke,addPlanRevokeAction,movePlanRevokeIntoSubscriptions,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,banAction,mockHero};
+module.exports={body,nav,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,isBanned,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,banAction,mockHero};
