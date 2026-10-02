@@ -46,7 +46,7 @@ assert(!/Free Access entitlement is still reserved|Free Access plan will be rele
 assert(/Your Free Server access was removed because of inactivity\. You now have no active Free Server plan/.test(dash),'inactivity-removed users must get an explicit no-plan message');
 assert(/excludeSubscriptionIds/.test(dash)&&/effectiveCurrentPlan=incompleteFreeSubscriptionId/.test(dash),'a live Free row without a ready server must be excluded from both raw portal subscriptions and current-plan selection');
 assert(/You do not currently have a Free Server plan/.test(dash),'incomplete legacy Free rows must be presented simply as no active Free plan, never as deployment pending');
-assert(/customerAccessState\.freeJellyfin\(customerId,\{includeBlocked:false\}\)/.test(dash)&&/freeAccess\.state!==customerAccessState\.ACCESS_STATES\.ACTIVE_READY/.test(dash),'blocked, removed or incomplete Free entitlements must not be rendered as active dashboard plans');
+assert(/customerAccessState\.snapshot\(customerId,\{includeBlocked:\{primary:false,free:false,stremio:false,emby:true\}\}\)/.test(dash)&&/freeAccess\.state!==customerAccessState\.ACCESS_STATES\.ACTIVE_READY/.test(dash),'blocked, removed or incomplete Free entitlements must not be rendered as active dashboard plans');
 assert(/No active plan/.test(onboarding)&&/you do not currently have a streaming plan/.test(onboarding),'onboarding must make the no-plan state explicit');
 assert(/<button class="button free full" type="submit">Join<\/button>/.test(onboarding),'available Free Access must expose a Join action after the old plan is released');
 assert(/aria-disabled="true">Full<\/span>/.test(onboarding),'sold-out Free Access must render as Full');
