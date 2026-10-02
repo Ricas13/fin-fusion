@@ -32,24 +32,17 @@ function requireCustomer(req,res,next){return req.session?.customerId&&req.sessi
 async function hideInternalAccounts(_customerId,portal){if(!portal||!Array.isArray(portal.accounts))return portal;portal.accounts=portal.accounts.filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');return portal;}
 async function tagMediaServerAccounts(customerId,portal){if(!portal||!Array.isArray(portal.accounts)||!portal.accounts.length)return portal;const result=await query(`SELECT ja.id,COALESCE(js.media_server_type,'jellyfin') AS media_server_type FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1`,[customerId]);const map=new Map(result.rows.map(row=>[String(row.id),String(row.media_server_type||'jellyfin')]));portal.accounts=portal.accounts.map(account=>({...account,media_server_type:map.get(String(account.id))||'jellyfin'}));return portal;}
 function deliveryType(entitlement){return productReadiness.serviceType({service_type:entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin'});}
-function liveSubscription(row){if(!row||row.superseded_by||!['active','trialing','past_due','paused'].includes(String(row.status||'')))return false;if(!row.current_period_end)return true;const end=new Date(row.current_period_end);return !Number.isNaN(end.getTime())&&end.getTime()>Date.now();}
 function recurringProvider(row){return billingMode.recurringProvider(row);}
 function subscriptionId(row){return row&&(row.subscription_id||row.id)?String(row.subscription_id||row.id):null;}
 function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=null,embyPlan=null,entitlements=[],excludeSubscriptionIds=[]}={}){
-  const rowsById=new Map(),forcedIds=new Set(),excludedIds=new Set((excludeSubscriptionIds||[]).map(String).filter(Boolean));
-  function add(row,{force=false}={}){
-    const id=subscriptionId(row);if(!id||excludedIds.has(id))return;
+  const rowsById=new Map(),excludedIds=new Set((excludeSubscriptionIds||[]).map(String).filter(Boolean));
+  function add(row){
+    const id=subscriptionId(row);if(!id||excludedIds.has(id)||row?.is_addon)return;
     rowsById.set(id,{...(rowsById.get(id)||{}),...row,id,subscription_id:id});
-    if(force)forcedIds.add(id);
   }
-  for(const row of Array.isArray(portal?.subscriptions)?portal.subscriptions:[]){
-    if(row?.is_addon||!liveSubscription(row))continue;
-    add(row);
-  }
-  for(const entitlement of [freePlan,currentPlan,stremioPlan,embyPlan,...(Array.isArray(entitlements)?entitlements:[])]){
-    add(entitlement,{force:true});
-  }
-  return Array.from(rowsById.values()).filter(row=>forcedIds.has(subscriptionId(row))||(!row.is_addon&&liveSubscription(row)));
+  for(const row of Array.isArray(portal?.subscriptions)?portal.subscriptions:[])add(row);
+  for(const entitlement of [freePlan,currentPlan,stremioPlan,embyPlan,...(Array.isArray(entitlements)?entitlements:[])])add(entitlement);
+  return Array.from(rowsById.values());
 }
 function plansFromAccessSnapshot(snapshot={}) {
   return {
@@ -61,10 +54,7 @@ function plansFromAccessSnapshot(snapshot={}) {
 }
 function canonicalizePortalSubscriptions(portal,accessRows){
   if(!portal)return portal;
-  const canonical=Array.isArray(accessRows)?accessRows:[],ids=new Set(canonical.map(subscriptionId).filter(Boolean));
-  const preserved=(Array.isArray(portal.subscriptions)?portal.subscriptions:[]).filter(row=>row.is_addon||!liveSubscription(row)||ids.has(subscriptionId(row)));
-  const preservedById=new Set(preserved.map(subscriptionId).filter(Boolean));
-  portal.subscriptions=[...canonical.filter(row=>!preservedById.has(subscriptionId(row))),...preserved];
+  portal.subscriptions=Array.isArray(accessRows)?accessRows.slice():[];
   return portal;
 }
 function livePlanIds(rows){return new Set((Array.isArray(rows)?rows:[]).map(row=>String(row.plan_id||'')).filter(Boolean));}
@@ -152,12 +142,22 @@ function createCustomerDashboardRouter(){
       const customerId=req.session.customerId;
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
-      const portalRaw=await customers.getCustomerPortal(customerId),currency=await planPricing.platformDefaultCurrency();
-      const [accessSnapshot,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
-        customerAccessState.snapshot(customerId,{includeBlocked:{primary:false,free:false,stremio:false,emby:true}}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
+      const [portal,currency,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+        customers.getCurrentCustomerPortal(customerId),
+        planPricing.platformDefaultCurrency(),
+        requestUserSync.requestAccessForCustomer(customerId),
+        requestUserSync.configuration(),
+        provisioning.control.getCustomerState(customerId).catch(()=>null),
+        planChange.currentRecurring(customerId).catch(()=>null),
+        planChange.pendingForCustomer(customerId).catch(()=>null),
+        notificationSettings.status().catch(()=>({}))
       ]);
-      const primaryAccess=accessSnapshot.primary,freeAccess=accessSnapshot.free,stremioAccess=accessSnapshot.stremio,embyAccess=accessSnapshot.emby;
-      const {currentPlan,freePlan,stremioPlan,embyPlan}=plansFromAccessSnapshot(accessSnapshot);
+      if(!portal)throw new Error('Customer portal state is unavailable.');
+      const accessSnapshot=portal.accessSnapshot,primaryAccess=accessSnapshot.primary,freeAccess=accessSnapshot.free,stremioAccess=accessSnapshot.stremio,embyAccess=accessSnapshot.emby;
+      let {currentPlan,freePlan,stremioPlan,embyPlan}=plansFromAccessSnapshot(accessSnapshot);
+      if(primaryAccess.state===customerAccessState.ACCESS_STATES.ACTIVE_BLOCKED)currentPlan=null;
+      if(freeAccess.state===customerAccessState.ACCESS_STATES.ACTIVE_BLOCKED)freePlan=null;
+      if(stremioAccess.state===customerAccessState.ACCESS_STATES.ACTIVE_BLOCKED)stremioPlan=null;
       let effectiveFreePlan=freePlan,incompleteFreePlan=false,incompleteFreeSubscriptionId=null;
       if(effectiveFreePlan&&!effectiveFreePlan.blocked&&freeAccess.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
         incompleteFreePlan=true;
@@ -165,10 +165,9 @@ function createCustomerDashboardRouter(){
         effectiveFreePlan=null;
       }
       const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
-      const accessRows=canonicalAccessRows(portalRaw,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
-      const portal=portalRaw,navOptions=customerNav.optionsFromPortal(portal);
-      await tagMediaServerAccounts(customerId,await hideInternalAccounts(customerId,portal));
-      canonicalizePortalSubscriptions(portal,accessRows);
+      const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
+      portal.subscriptions=accessRows;
+      const navOptions=customerNav.optionsFromPortal(portal);
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
       if(!accessRows.length&&!openPlanChange){
         const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
@@ -186,4 +185,4 @@ function createCustomerDashboardRouter(){
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));const outcome=await provisioning.reconcileCustomer(customerId);if(outcome?.active&&(outcome?.account?.id||outcome?.emby?.account?.id||outcome?.stremio?.status==='active'))return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your streaming access has been refreshed.'));const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});
   return r;
 }
-module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,homeCataloguePlans,readySalePlans,customerVariantState,liveSubscription,recurringProvider,canonicalAccessRows,plansFromAccessSnapshot,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,recentFreeInactivityRemoval,returningAccessPage};
+module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,homeCataloguePlans,readySalePlans,customerVariantState,recurringProvider,canonicalAccessRows,plansFromAccessSnapshot,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,recentFreeInactivityRemoval,returningAccessPage};
