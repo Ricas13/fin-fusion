@@ -20,7 +20,7 @@ const notifications = read('src/platform/admin-notification-preferences.js');
 const payments = read('src/platform/admin-payment-settings.js');
 const commerce = read('src/platform/admin-commerce.js');
 const plans = read('src/platform/admin-plans-list.js');
-const customer360ViewV2 = read('src/platform/customer-360-view-v2.js');
+const customer360View = read('src/platform/customer-360-view.js');
 const orders = read('src/platform/admin-orders.js');
 const billing = read('src/platform/admin-billing.js');
 const support = read('src/platform/admin-support-tickets.js');
@@ -98,7 +98,7 @@ assert(!plans.includes('Plan policies & storefront tools') && plans.includes('/a
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search'), 'Plans must not render filters for the deliberately small catalogue');
 assert(plans.includes('archived=1') && plans.includes('Retired catalogue versions'), 'Archived plan versions must remain reachable without cluttering the active catalogue');
 
-assert(customer360ViewV2.includes('Customer record') && customer360ViewV2.includes("action=\"/admin/users/${encodeURIComponent(id)}/impersonate\""), 'Customer 360 is one page now: nav must be exactly "Customer record" plus a Portal view impersonation action, not a multi-tab bar');
+assert(customer360View.includes('Customer record') && customer360View.includes("action=\"/admin/users/${encodeURIComponent(id)}/impersonate\""), 'Customer 360 is one page now: nav must be exactly "Customer record" plus a Portal view impersonation action, not a multi-tab bar');
 
 assert(orders.includes("title:'Orders'") && orders.includes('Open customer billing →'), 'Orders must remain a transaction trail into customer billing rather than a raw provider-record table');
 assert(orders.includes('const PAGE_SIZE=10') && orders.includes('ordersPurchaseFilters') && orders.includes('ordersDatePicker'), 'Orders must keep the approved ten-per-page searchable and filterable purchase browser');
