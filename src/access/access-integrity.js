@@ -149,7 +149,7 @@ async function scan({ limit = 100 } = {}) {
         ON o.customer_id=s.customer_id AND o.subscription_id=s.id
       WHERE h.hold_type='inactivity_policy'
         AND h.released_at IS NULL
-        AND COALESCE((h.metadata->>'restoreReconcileFailed')::boolean,FALSE)=TRUE
+        AND COALESCE(h.metadata,'{}'::jsonb) @> '{"restoreReconcileFailed":true}'::jsonb
         AND h.source_key=('plan:'||p.id::text)
         ${freeLive}
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
