@@ -6,7 +6,7 @@ const historyAccounting = require('./history-accounting');
 const PAGE_SIZE = 100;
 const SCAN_BATCH = 2000;
 const MAX_CLASSIFIED_SCAN = 100000;
-const PROVIDERS = new Set(['all', 'stripe', 'paypal']);
+const PROVIDERS = new Set(['all', 'stripe', 'paypal', 'plisio']);
 const KINDS = new Set(['all', 'payment', 'refund', 'ignored']);
 
 function clean(value, max = 320) { return String(value == null ? '' : value).trim().slice(0, max); }
