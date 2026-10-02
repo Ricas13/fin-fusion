@@ -12,7 +12,7 @@ const JOB_METADATA = Object.freeze({
   creation_intent_recovery: { defaultIntervalSeconds: 60, critical: true, timeoutMs: null, concurrencyClass: 'shared' },
   customer_service_recovery: { defaultIntervalSeconds: 60, critical: true, timeoutMs: null, concurrencyClass: 'shared' },
   revenue_integrity: { defaultIntervalSeconds: 60, critical: true, timeoutMs: null, concurrencyClass: 'shared' },
-  paypal_history_reconciliation: { defaultIntervalSeconds: 300, critical: false, timeoutMs: null, concurrencyClass: 'shared' },
+  provider_financial_reconciliation: { defaultIntervalSeconds: 300, critical: false, timeoutMs: null, concurrencyClass: 'shared' },
   notification_lifecycle: { defaultIntervalSeconds: 300, critical: true, timeoutMs: null, concurrencyClass: 'shared' },
   admin_activity_notifications: { defaultIntervalSeconds: 300, critical: false, timeoutMs: null, concurrencyClass: 'shared' },
   free_places_digest: { defaultIntervalSeconds: 30, critical: false, timeoutMs: null, concurrencyClass: 'shared' },
