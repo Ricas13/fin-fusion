@@ -25,8 +25,8 @@ for (const token of [
   "docker compose stop --timeout 45 automation-worker activity-worker backup-worker",
   'migration_started=1',
   '--no-deps --no-build --force-recreate',
-  'Automatic runtime rollback suppressed: database migrations changed in this release.',
-  'Previous runtime images restored. Database contents were not rolled back.'
+  'Automatic runtime rollback suppressed: migrated schema compatibility with the previous runtime was not proven.',
+  'Previous worker images restored; the previous web application remained serving throughout. Database contents were not rolled back.'
 ]) {
   assert(deploy.includes(token), `deployment drain/rollback contract missing: ${token}`);
 }
@@ -48,6 +48,6 @@ assert(deploy.includes('if [[ "$migration_started" == 0 || "$rollback_safe" == 1
 assert(deploy.includes("Proving the currently serving portal remains healthy on the migrated schema"),'production deploy must prove N-1 compatibility before declaring rollback safe');
 assert(deploy.includes('rollback_services=(automation-worker activity-worker backup-worker)'),'pre-cutover rollback must restore workers without recreating the live app');
 assert(!/pg_restore/.test(deploy), 'normal deployment failure handling must never perform an automatic database restore');
-assert(deploy.includes('Use the encrypted pre-deploy backup and recovery tooling if database rollback is required.'), 'migration-bearing rollback must direct the operator to explicit recovery tooling');
+assert(deploy.includes('use the encrypted pre-deploy backup and recovery tooling if database recovery is required.'), 'migration-bearing rollback must direct the operator to explicit recovery tooling');
 
 console.log('deployment drain/rollback smoke passed');
