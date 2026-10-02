@@ -27,8 +27,6 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-actions.js::subscriptions',
   'src/platform/admin-actions.js::customers',
   'src/platform/admin-actions.js::app_users',
-  'src/platform/admin-customer-management.js::customers',
-  'src/platform/admin-customer-management.js::app_users',
   'src/platform/portal-credential-confirmation.js::customers',
   'src/platform/portal-credential-confirmation.js::app_users',
 ]);
@@ -185,5 +183,28 @@ assert(adminLinkedProfile.includes('UPDATE customers')
     && adminLinkedProfile.includes('INSERT INTO customers')
     && adminLinkedProfile.includes('manualSubscriptions.createManualSubscriptionTx'),
   'customer profile owner must own linked customer persistence and delegate subscription creation to entitlements');
+
+
+
+const adminCustomerManagementRoute=fs.readFileSync(path.join(root,'src/platform/admin-customer-management.js'),'utf8');
+const adminCustomerManagementOwner=fs.readFileSync(path.join(root,'src/customers/admin-customer-management-commands.js'),'utf8');
+assert(adminCustomerManagementRoute.includes("require('../customers/admin-customer-management-commands')")
+    && !adminCustomerManagementRoute.includes('INSERT INTO app_users')
+    && !adminCustomerManagementRoute.includes('UPDATE app_users')
+    && !adminCustomerManagementRoute.includes('UPDATE customers'),
+  'admin customer management route must delegate customer/login mutations');
+for(const required of [
+  'async function enrolPortal',
+  'async function updateAccount',
+  'async function setEmailVerified',
+  'async function setActivationDeadline',
+  'async function setPortalStatus',
+  'INSERT INTO app_users',
+  'UPDATE app_users',
+  'UPDATE customers'
+]){
+  assert(adminCustomerManagementOwner.includes(required),
+    `customer management command owner must retain ${required}`);
+}
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
