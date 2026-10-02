@@ -69,6 +69,31 @@ function currencyMinorDecimal(minor,currency='GBP'){
   return currencyMajorFromMinor(minor,currency).toFixed(digits);
 }
 
+const PROVIDER_ZERO_DECIMAL=new Set(['BIF','CLP','DJF','GNF','JPY','KMF','KRW','MGA','PYG','RWF','UGX','VND','VUV','XAF','XOF','XPF']);
+const PROVIDER_THREE_DECIMAL=new Set(['BHD','JOD','KWD','OMR','TND']);
+
+function providerFractionDigits(currency='USD'){
+  const code=cleanCurrency(currency,'USD');
+  if(PROVIDER_ZERO_DECIMAL.has(code))return 0;
+  if(PROVIDER_THREE_DECIMAL.has(code))return 3;
+  // Stripe and other provider APIs use two-decimal integer units for a few
+  // ISO zero-decimal currencies (notably ISK), so provider-ledger rendering
+  // must preserve the provider-unit convention instead of generic Intl digits.
+  return 2;
+}
+
+function providerMajorFromMinor(minor,currency='USD'){
+  return Number(minor||0)/(10**providerFractionDigits(currency));
+}
+
+function formatProviderMinor(minor,currency='USD',options={}){
+  const digits=providerFractionDigits(currency);
+  return formatMajor(providerMajorFromMinor(minor,currency),currency,{
+    minimumFractionDigits:options.minimumFractionDigits??digits,
+    maximumFractionDigits:options.maximumFractionDigits??digits
+  });
+}
+
 function parseMajorToMinor(value,{allowNegative=false,allowZero=true,error='Enter a valid amount with up to two decimal places.'}={}){
   const raw=String(value??'').trim();
   const sign=allowNegative?'-?':'';
@@ -93,4 +118,4 @@ function optionLabel(currency){
   return known?`${known.name} (${known.symbol})`:`${symbol(code)} currency`;
 }
 
-module.exports={COMMON,cleanCurrency,fractionDigits,symbol,formatMajor,majorFromMinor,formatMinor,currencyMajorFromMinor,formatCurrencyMinor,currencyMinorDecimal,parseMajorToMinor,portableAmount,optionLabel};
+module.exports={COMMON,cleanCurrency,fractionDigits,symbol,formatMajor,majorFromMinor,formatMinor,currencyMajorFromMinor,formatCurrencyMinor,currencyMinorDecimal,providerFractionDigits,providerMajorFromMinor,formatProviderMinor,parseMajorToMinor,portableAmount,optionLabel};
