@@ -12,19 +12,20 @@ async function createPlan(plan, actorUserId = null) {
     )).rows[0]?.n || 10);
 
     const result = await client.query(
-      `INSERT INTO plans(code,name,description,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,is_addon,server_class,visible,active,sort_order,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,stremio_household_network_limit,stremio_household_lease_minutes,stremio_ip_replacement_policy,stremio_ip_replacement_cooldown_minutes,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,allow_subtitle_editing,library_access_mode,library_names,inactivity_policy)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::text[],$35::jsonb) RETURNING *`,
+      `INSERT INTO plans(code,name,description,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,media_user_limit,is_addon,server_class,visible,active,sort_order,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,stremio_household_network_limit,stremio_household_lease_minutes,stremio_ip_replacement_policy,stremio_ip_replacement_cooldown_minutes,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,allow_subtitle_editing,library_access_mode,library_names,inactivity_policy,free_first_playback_grace_days,free_playback_window_days,free_minimum_playback_minutes)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35::text[],$36::jsonb,$37,$38,$39) RETURNING *`,
       [
         plan.code, plan.name, plan.description, plan.serviceType, plan.audience,
         plan.billing, plan.duration, plan.priceMinor, plan.currency, plan.capacityLimit,
-        plan.isAddon, plan.serverClass, plan.visible, plan.active, nextOrder,
+        plan.mediaUserLimit ?? null, plan.isAddon, plan.serverClass, plan.visible, plan.active, nextOrder,
         plan.jellyfinAccessModel, plan.jellyfinHouseholdNetworkLimit,
         plan.jellyfinHouseholdLeaseMinutes, plan.stremioHouseholdNetworkLimit,
         plan.stremioHouseholdLeaseMinutes, plan.stremioIpReplacementPolicy,
         plan.stremioIpReplacementCooldownMinutes, plan.streams, plan.downloads,
         plan.video, plan.audio, plan.remux, plan.live, plan.liveManagement,
         plan.remote, plan.fourk, plan.subtitles, plan.libraryMode, plan.libraries,
-        JSON.stringify(plan.inactivityPolicy)
+        JSON.stringify(plan.inactivityPolicy),
+        plan.freeFirstPlaybackGraceDays ?? null, plan.freePlaybackWindowDays ?? null, plan.freeMinimumPlaybackMinutes ?? null
       ]
     );
 
@@ -50,6 +51,7 @@ async function createPlan(plan, actorUserId = null) {
           currency: plan.currency,
           priceMinor: plan.priceMinor,
           capacityLimit: plan.capacityLimit,
+          mediaUserLimit: plan.mediaUserLimit ?? null,
           jellyfinAccessModel: plan.jellyfinAccessModel,
           streams: plan.streams,
           jellyfinHouseholdNetworkLimit: plan.jellyfinHouseholdNetworkLimit,
