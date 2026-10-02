@@ -322,8 +322,8 @@ Candidates include compatibility shims/facades introduced while moving ownership
 
 Tasks:
 
-- [ ] Produce an importer report for compatibility modules.
-- [ ] Mark compatibility-only exports/modules explicitly.
+- [x] Produce an importer report for compatibility modules.
+- [x] Mark compatibility-only exports/modules explicitly.
 - [ ] Prevent new production callers through ownership/static checks.
 - [ ] Remove each facade only after production importer count reaches zero.
 - [ ] Remove corresponding compatibility assertions once the old surface is gone.
@@ -388,7 +388,7 @@ These are principles to apply opportunistically while completing the prioritized
 - [ ] One test fixture layer for shared database/provider scenarios.
 - [ ] One explicit UI component/helper for repeated mechanics.
 - [ ] No new direct business SQL in `src/platform` without a documented exception.
-- [ ] No new compatibility facade without a retirement condition.
+- [x] No new compatibility facade without a retirement condition.
 
 ---
 
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Compatibility debt now has an executable importer report (`scripts/compatibility-importer-report.js`). `src/jellyfin/provisioning.js` is explicitly marked with its retirement condition, and the report is part of operations checks while remaining excluded from the runtime image. No facade will be deleted until the report proves production importer count reaches zero.
 
 - 2026-10-02 — UI-helper standardisation started with a canonical `src/platform/html-primitives.js` for HTML escaping and CSRF hidden inputs. Admin shell/UI and Customer 360 now share it, with hostile-input regression coverage preventing unsafe interpolation. Feature-specific cards remain local; broader helper inventory/migration remains incremental.
 
