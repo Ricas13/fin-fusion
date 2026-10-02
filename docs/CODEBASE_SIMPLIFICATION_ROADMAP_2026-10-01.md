@@ -265,7 +265,7 @@ Tasks:
 
 - [x] Keep the current tagged manifest as the transition source of truth.
 - [x] Introduce shared DB fixture builders with scoped setup/cleanup.
-- [ ] Make tagged suites independently runnable without relying on side effects from prior tests.
+- [x] Make tagged suites independently runnable without relying on side effects from prior tests.
 - [x] Prefer `node:test` suites/modules for related tests rather than one process/file per assertion group where practical.
 - [x] Consolidate repeated helpers for:
   - temporary PostgreSQL schema/database setup
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+- 2026-10-02 — Tagged-suite independence validated from clean jobs: `fast`, `db`, `billing`, `access`, `browser` and `security` were each run in an isolated GitHub Actions job with a fresh PostgreSQL service and freshly migrated schema. The evidence run exposed one real hidden dependency in `provider-checkout-recovery-db-smoke.js` (Premium capacity was inherited from an earlier test); PR #853 made that test create/clean its own Premium server fixture. The rerun then passed all six isolated tags.
+
 - 2026-10-02 — Production-image size comparison completed on the same post-#845 code baseline. A temporary non-merge measurement branch restored the pre-cleanup Docker build context and measured `200,788,295` bytes; the normal production exclusions measured `197,942,068` bytes. The CI/test/documentation exclusions therefore reduce the runtime image by `2,846,227` bytes (about `1.42%`) while Release Integrity confirms the required runtime/operator/recovery tools remain present.
 
 
