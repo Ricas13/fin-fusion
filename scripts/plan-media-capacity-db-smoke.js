@@ -26,11 +26,11 @@ const capacity = require('../src/entitlements/plan-capacity');
       const row = (await query(`
         INSERT INTO plans(
           code,name,description,service_type,audience,billing_interval,duration_days,
-          price_minor,currency,capacity_limit,media_user_limit,is_addon,server_class,
+          price_minor,currency,capacity_limit,inactivity_policy,is_addon,server_class,
           visible,active,streams
-        ) VALUES($1,$2,'capacity smoke','jellyfin','direct','month',30,500,'GBP',0,$3,FALSE,'custom',TRUE,TRUE,1)
+        ) VALUES($1,$2,'capacity smoke','jellyfin','direct','month',30,500,'GBP',$3,$4::jsonb,FALSE,'custom',TRUE,TRUE,1)
         RETURNING id
-      `, [code, code, mediaUserLimit])).rows[0];
+      `, [code, code, mediaUserLimit, JSON.stringify({ mediaCapacityManaged: true })])).rows[0];
       planIds.push(row.id);
       await query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)`, [row.id, serverId]);
       return row.id;
@@ -44,19 +44,19 @@ const capacity = require('../src/entitlements/plan-capacity');
     assert.strictEqual(state.limit, 50, 'effective capacity must use the lower plan ceiling');
     assert.strictEqual(state.remaining, 50);
 
-    await query(`UPDATE plans SET media_user_limit=NULL WHERE id=$1`, [limitedPlan]);
+    await query(`UPDATE plans SET capacity_limit=NULL WHERE id=$1`, [limitedPlan]);
     state = await capacity.usage(limitedPlan);
     assert.strictEqual(state.planUserLimit, null, 'NULL plan ceiling means use the eligible physical fleet');
     assert.strictEqual(state.limit, 200);
     assert.strictEqual(state.remaining, 200);
 
-    await query(`UPDATE plans SET media_user_limit=300 WHERE id=$1`, [limitedPlan]);
+    await query(`UPDATE plans SET capacity_limit=300 WHERE id=$1`, [limitedPlan]);
     state = await capacity.usage(limitedPlan);
     assert.strictEqual(state.planUserLimit, 300);
     assert.strictEqual(state.limit, 200, 'plan configuration must never manufacture capacity beyond the servers');
     assert.strictEqual(state.remaining, 200);
 
-    await query(`UPDATE plans SET media_user_limit=50 WHERE id=$1`, [limitedPlan]);
+    await query(`UPDATE plans SET capacity_limit=50 WHERE id=$1`, [limitedPlan]);
 
     const planCustomer = (await query(
       `INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,
@@ -98,7 +98,7 @@ const capacity = require('../src/entitlements/plan-capacity');
     assert.strictEqual(state.physicalRemaining, 198);
     assert.strictEqual(state.remaining, 49, 'effective availability must be the lower of plan and physical remaining capacity');
 
-    await query(`UPDATE plans SET media_user_limit=500 WHERE id=$1`, [limitedPlan]);
+    await query(`UPDATE plans SET capacity_limit=500 WHERE id=$1`, [limitedPlan]);
     state = await capacity.usage(limitedPlan);
     assert.strictEqual(state.remaining, 198, 'when plan ceiling exceeds infrastructure, physical remaining capacity must win');
 
