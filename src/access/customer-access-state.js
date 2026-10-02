@@ -127,21 +127,21 @@ async function stremio(customerId, options = {}) {
     return serviceEntitlement(customerId, 'stremio', options);
 }
 
-async function snapshot(customerId, { includeBlocked = {} } = {}) {
+async function snapshot(customerId, { includeBlocked = {}, accounts = null } = {}) {
     const blocked = {
         primary: includeBlocked.primary ?? true,
         free: includeBlocked.free ?? true,
         emby: includeBlocked.emby ?? true,
         stremio: includeBlocked.stremio ?? true
     };
-    const accounts = await provisioning.normalAccounts(customerId);
+    const accountRows = await accountsForCustomer(customerId, accounts);
     const [primary, free, embyAccess, stremioAccess] = await Promise.all([
-        primaryJellyfin(customerId, { includeBlocked: blocked.primary, accounts }),
-        freeJellyfin(customerId, { includeBlocked: blocked.free, accounts }),
+        primaryJellyfin(customerId, { includeBlocked: blocked.primary, accounts: accountRows }),
+        freeJellyfin(customerId, { includeBlocked: blocked.free, accounts: accountRows }),
         emby(customerId, { includeBlocked: blocked.emby }),
         stremio(customerId, { includeBlocked: blocked.stremio })
     ]);
-    return { customerId, primary, free, emby: embyAccess, stremio: stremioAccess };
+    return { customerId, primary, free, emby: embyAccess, stremio: stremioAccess, accounts: accountRows };
 }
 
 module.exports = {
