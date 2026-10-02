@@ -28,7 +28,7 @@ lacks(customerDashboard,'Your Free Access entitlement is active, but Jellyfin pr
 
 const adminPassword=read('src/platform/admin-customer-jellyfin-password.js');
 has(adminPassword,"router.get('/admin/customer-jellyfin-password'",'admin Jellyfin password support page must be mounted');
-has(adminPassword,'provisioning.setJellyfinPassword(req.params.customerId,req.params.accountId,password)','admin support must use canonical Jellyfin password setter');
+has(adminPassword,'provisioning.setJellyfinPassword(req.params.customerId,req.params.accountId,password,{clearSetupRequired:true})','admin support must use canonical Jellyfin password setter and clear local setup state through that owner');
 has(adminPassword,"'admin.customer.jellyfin_password.change'",'admin-assisted password changes must be audited');
 lacks(adminPassword,'JSON.stringify({password','password must never be placed in audit metadata');
 const adminRouter=read('src/platform/router.js');

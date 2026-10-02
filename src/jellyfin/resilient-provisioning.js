@@ -569,7 +569,7 @@ async function releaseAccess(customerId, actorUserId = null) {
     return reconcileCustomer(customerId);
 }
 
-async function setJellyfinPassword(customerId, accountId, newPassword) {
+async function setJellyfinPassword(customerId, accountId, newPassword, options = {}) {
     const account = await query(`
         SELECT account_purpose FROM jellyfin_accounts
         WHERE id=$1 AND customer_id=$2
@@ -577,7 +577,19 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
     if (account.rows[0]?.account_purpose === 'stremio_internal') {
         throw new Error('Internal Stremio Jellyfin credentials cannot be changed through customer password controls.');
     }
-    return base.setJellyfinPassword(customerId, accountId, newPassword);
+    const result = await base.setJellyfinPassword(customerId, accountId, newPassword);
+    const clearSetupRequired = options.clearSetupRequired === true;
+    const clearResetRequired = options.clearResetRequired === true;
+    if (clearSetupRequired || clearResetRequired) {
+        await query(`
+            UPDATE jellyfin_accounts
+            SET password_setup_required=CASE WHEN $3::boolean THEN FALSE ELSE password_setup_required END,
+                password_reset_required=CASE WHEN $4::boolean THEN FALSE ELSE password_reset_required END,
+                updated_at=NOW()
+            WHERE id=$1 AND customer_id=$2
+        `, [accountId, customerId, clearSetupRequired, clearResetRequired]);
+    }
+    return result;
 }
 
 async function renameJellyfinAccount(customerId, accountId, newUsername, options = {}) {

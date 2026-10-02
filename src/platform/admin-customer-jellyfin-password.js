@@ -45,8 +45,7 @@ function createAdminCustomerJellyfinPasswordRouter(){
         try{
             const owned=await query(`SELECT 1 FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose<>'stremio_internal'`,[req.params.accountId,req.params.customerId]);
             if(!owned.rowCount)throw new Error('Jellyfin account not found for this customer.');
-            await provisioning.setJellyfinPassword(req.params.customerId,req.params.accountId,password);
-            await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.params.customerId]);
+            await provisioning.setJellyfinPassword(req.params.customerId,req.params.accountId,password,{clearSetupRequired:true});
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.jellyfin_password.change','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({accountId:req.params.accountId})]);
             return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&message=${encodeURIComponent('Jellyfin password changed.')}`);
         }catch(error){return res.redirect(supportPath+'&error='+encodeURIComponent(error.message||'Jellyfin password could not be changed.'));}

@@ -67,6 +67,7 @@ const planAccess=read('src/platform/admin-plan-access.js');
 const composition=read('src/platform/admin-route-composition.js');
 const storefront=read('src/platform/storefront-core.js');
 const catalogVersioning=read('src/platform/catalog-versioning.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 
 for(const token of ['jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes','access_network_leases','access_network_events'])assert(migration.includes(token),`migration is missing ${token}`);
 assert(migration.includes('ALTER COLUMN streams DROP NOT NULL'),'legacy household-plan migrations must remain replayable even though new plan creation now keeps stream caps independent');
@@ -100,6 +101,6 @@ assert(planAccess.includes("queuePlanReconciliation(plan.id"),'existing plan acc
 assert(planAccess.includes('clearPlanLeases'),'policy edits must invalidate old household lease state immediately');
 assert(composition.indexOf('createAdminPlanAccessRouter()')<composition.indexOf('createAdminPlansRouter()'),'household-aware access routes must own the established endpoint before the legacy controller');
 assert(storefront.includes('planComponents.accessLabel(plan)'),'public plan cards must render the shared component access model');
-assert(catalogVersioning.includes("information_schema.columns")&&catalogVersioning.includes('source[c]'),'dynamic plan cloning must automatically preserve the new component-driver columns');
+assert(catalogVersioning.includes('planCommands.clonePlanVersion')&&planCommands.includes("information_schema.columns")&&planCommands.includes('source[col]'),'dynamic plan cloning must delegate to the canonical catalog owner while automatically preserving new component-driver columns');
 
 console.log('modular access drivers smoke: ok');
