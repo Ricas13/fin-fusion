@@ -11,8 +11,24 @@ const suffix = fixtureUnique('checkout-recovery');
 const createdCustomers = [];
 const createdPlans = [];
 const createdIntents = [];
+const createdServers = [];
 
 function unique(label) { return `${label}-${suffix}-${fixtureUnique('case')}`; }
+
+async function ensurePremiumCapacity() {
+    const row = (await query(`
+        INSERT INTO jellyfin_servers(
+            name,slug,server_class,base_url,api_key_encrypted,
+            enabled,allow_new_users,paid_enabled,priority,max_users,
+            health_status,last_health_check
+        )
+        VALUES($1,$2,'premium','https://checkout-recovery.example.invalid','key',
+               TRUE,TRUE,TRUE,10,1000,'healthy',NOW())
+        RETURNING id
+    `, [`Checkout recovery ${suffix}`, unique('checkout-recovery-server')])).rows[0];
+    createdServers.push(row.id);
+    return row;
+}
 
 async function customer(label) {
     const row = await fixtureCustomer({ query }, {
@@ -86,6 +102,7 @@ async function cleanup() {
     if (createdIntents.length) await query(`DELETE FROM billing_checkout_intents WHERE id=ANY($1::uuid[])`, [createdIntents]).catch(() => {});
     if (createdPlans.length) await query(`DELETE FROM plans WHERE id=ANY($1::uuid[])`, [createdPlans]).catch(() => {});
     if (createdCustomers.length) await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [createdCustomers]).catch(() => {});
+    if (createdServers.length) await query(`DELETE FROM jellyfin_servers WHERE id=ANY($1::uuid[])`, [createdServers]).catch(() => {});
 }
 
 function missingPayPalError(status = 404, message = 'The specified resource does not exist.') {
@@ -98,6 +115,7 @@ function missingPayPalError(status = 404, message = 'The specified resource does
 }
 
 async function main() {
+    await ensurePremiumCapacity();
     const stripeOk = await attachedIntent('recovery stripe ok', 'stripe', `cs_test_${unique('ok')}`, `price_${unique('ok')}`);
     const stripeFail = await attachedIntent('recovery stripe fail', 'stripe', `cs_test_${unique('fail')}`, `price_${unique('fail')}`);
     const stripePayment = await attachedIntent('recovery stripe payment', 'stripe', `cs_test_${unique('payment')}`, null, 'payment');
