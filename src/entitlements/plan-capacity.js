@@ -469,6 +469,10 @@ function mediaPlanLimitAvailableSql(alias='p'){
       AND plan_capacity_subscription.status IN ('active','trialing','past_due','paused')
       AND plan_capacity_subscription.starts_at<=NOW()
       AND plan_capacity_subscription.current_period_end>NOW()
+      AND (
+        COALESCE(${alias}.is_free_tier,FALSE)=FALSE
+        OR ${freePendingUnblockedSql('plan_capacity_subscription','plan_limit_hold')}
+      )
   ) + (
     SELECT COUNT(*) FROM free_access_registration_reservations plan_capacity_free
     WHERE plan_capacity_free.plan_id=${alias}.id
