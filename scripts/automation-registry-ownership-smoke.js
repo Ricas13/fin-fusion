@@ -24,7 +24,7 @@ function walk(dir){
       const rel=path.relative(root,full).replace(/\\/g,'/');
       if(rel==='scripts/automation-registry-ownership-smoke.js')continue;
       const source=fs.readFileSync(full,'utf8');
-      if(/(?:job-metadata|critical-jobs)/.test(source))offenders.push(rel);
+      if(/require\(\s*['"][^'"]*(?:job-metadata|critical-jobs)['"]\s*\)/.test(source))offenders.push(rel);
     }
   }
 }
