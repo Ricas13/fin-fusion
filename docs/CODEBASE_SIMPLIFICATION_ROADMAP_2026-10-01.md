@@ -198,9 +198,30 @@ Tasks:
 
 ---
 
+## 7. Unify provider financial identity and transaction truth
+
+Current concern: Stripe, PayPal and Plisio historically exposed overlapping but incomplete views of payment identity, transaction history, provider reconciliation and customer ownership. A provider payment could therefore exist while Customer 360 showed no transaction or no usable provider identity.
+
+Tasks:
+
+- [x] Establish one provider financial-state owner for customer/provider identities and transaction ownership repair.
+- [x] Make Stripe, PayPal and Plisio share one canonical transaction ledger.
+- [x] Allow verified Plisio settlements into `payment_history_transactions` rather than synthesizing them only in a view.
+- [x] Add a single scheduled provider financial reconciliation job covering Stripe catch-up, PayPal reconciliation, Plisio local evidence and ownership repair.
+- [x] Keep the former PayPal-only scheduled key as a no-op compatibility entry while operators/configuration migrate.
+- [x] Backfill missing `payment_customers` mappings from unambiguous provider subscriptions.
+- [x] Repair unowned transaction rows only when all available local evidence resolves to exactly one customer.
+- [x] Record Stripe refund ledger rows from authenticated Stripe webhook data while preserving the existing incident workflow.
+- [x] Make Customer 360 read the canonical financial projection and show provider identities, provider transaction IDs and unresolved-link warnings.
+- [x] Add direct Stripe search links from Customer 360 so refunds/support do not depend on manually rediscovering the Stripe customer.
+- [x] Make the global transaction browser include Plisio and use the unified reconciliation owner.
+- [x] Extend smoke coverage for the unified automation registry, transaction classifier/browser, Stripe catch-up and Plisio ledger path.
+
+**Done when:** a successful provider payment has one durable financial record and one unambiguous customer identity path, regardless of whether it arrived by browser return, webhook, provider-history catch-up or later repair.
+
 # P2 — simplify runtime, automation, tests and views
 
-## 7. Remove CI-only material from the production image
+## 8. Remove CI-only material from the production image
 
 Current concern: Docker currently uses `COPY . .`; the runtime image therefore contains the large smoke/audit/test estate and documentation even though most is never executed in production.
 
@@ -219,7 +240,7 @@ Tasks:
 
 **Done when:** the production image contains only the application and tools needed to operate/recover it.
 
-## 8. Finish the automation registry design
+## 9. Finish the automation registry design
 
 Current state: the registry now exposes `run`, `defaultIntervalSeconds`, `critical`, `timeoutMs` and `concurrencyClass`, but timeout/concurrency metadata is largely declarative rather than enforced.
 
@@ -236,7 +257,7 @@ Tasks:
 
 **Done when:** automation scheduling policy has one executable source of truth rather than metadata placeholders and compatibility layers.
 
-## 9. Consolidate the test estate without losing behavioural coverage
+## 10. Consolidate the test estate without losing behavioural coverage
 
 Current concern: the repository has hundreds of one-off smoke/check scripts and very long package-script command chains.
 
@@ -260,7 +281,7 @@ Tasks:
 
 **Done when:** test coverage remains at least as strong but suite composition is understandable without maintaining hundreds of bespoke runners.
 
-## 10. Collapse transitional Customer 360 rendering layers
+## 11. Collapse transitional Customer 360 rendering layers
 
 Current concern: Customer 360 rendering is spread over multiple transitional files and includes regex manipulation of generated HTML.
 
@@ -281,7 +302,7 @@ Tasks:
 
 **Done when:** Customer 360 is rendered from one intentional component hierarchy with no post-render regex rewriting.
 
-## 11. Formalise financial/date boundary types
+## 12. Formalise financial/date boundary types
 
 Tasks:
 
@@ -297,7 +318,7 @@ Tasks:
 
 **Done when:** changing the Node process timezone cannot alter financial coverage dates or prepaid elapsed duration.
 
-## 12. Move customer security mutations out of platform
+## 13. Move customer security mutations out of platform
 
 Current concern: `src/platform/customer-security.js` still performs TOTP/recovery/session/user mutation SQL.
 
@@ -316,7 +337,7 @@ Tasks:
 
 # P3 — remove compatibility debt and standardise helpers
 
-## 13. Retire compatibility facades deliberately
+## 14. Retire compatibility facades deliberately
 
 Candidates include compatibility shims/facades introduced while moving ownership out of platform and automation.
 
@@ -331,7 +352,7 @@ Tasks:
 
 **Done when:** transitional compatibility code has an explicit lifecycle instead of becoming permanent accidental architecture.
 
-## 14. Standardise platform/UI helpers
+## 15. Standardise platform/UI helpers
 
 Tasks:
 
@@ -350,7 +371,7 @@ Tasks:
 
 **Done when:** common UI mechanics have one implementation while domain-specific presentation remains explicit.
 
-## 15. Review oversized read-model/platform modules
+## 16. Review oversized read-model/platform modules
 
 Do not split files solely because they are large. Split only where the module currently owns multiple independent reasons to change.
 
