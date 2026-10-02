@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const accessHolds=require('../entitlements/access-holds');
 const customerAccessState=require('../access/customer-access-state');
+const financialState=require('../payments/provider-financial-state');
 
 function seconds(value){return Number(value||0)}
 function bytes(value){return Number(value||0)}
@@ -51,7 +52,7 @@ async function customer360(customerId){
         query(`SELECT id,provider,provider_case_id,incident_type,incident_status,created_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50`,[customerId]),
         query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.account_purpose,ja.is_primary,ja.created_at,ja.last_activity_at,ja.last_policy_sync,js.id server_id,js.name server_name,js.server_class,js.location,js.public_url,js.health_status,jpr.status recon_status,jpr.last_error recon_last_error,jpr.attempt_count recon_attempts,jpr.last_attempt_at recon_last_attempt FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id LEFT JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja.id WHERE ja.customer_id=$1 ORDER BY ja.created_at`,[customerId]),
         query(`SELECT status,attempt_count,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at FROM customer_provisioning_state WHERE customer_id=$1 LIMIT 1`,[customerId]),
-        query(`SELECT provider,provider_customer_id,created_at,updated_at FROM payment_customers WHERE customer_id=$1 ORDER BY provider`,[customerId]),
+        financialState.providerIdentities(customerId).then(rows=>({rows})),
         query(`SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,aps.playback_method,aps.is_paused,aps.first_seen_at,aps.last_seen_at,js.name server_name FROM active_playback_sessions aps LEFT JOIN jellyfin_servers js ON js.id=aps.server_id WHERE aps.customer_id=$1 ORDER BY aps.last_seen_at DESC`,[customerId]),
         query(`SELECT COUNT(*)::int sessions_30d,COUNT(*) FILTER(WHERE playback_method='transcode')::int transcodes_30d,COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at))),0)::bigint watch_seconds_30d,MAX(last_seen_at) last_playback_at FROM playback_history WHERE customer_id=$1 AND started_at>=NOW()-INTERVAL '30 days'`,[customerId]),
         query(`SELECT ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,ph.started_at,ph.last_seen_at,ph.ended_at,ph.ended_reason,js.name server_name FROM playback_history ph LEFT JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 ORDER BY ph.started_at DESC LIMIT 100`,[customerId]),
