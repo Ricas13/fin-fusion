@@ -72,7 +72,7 @@ assert.throws(
         { provider:'stripe', providerCustomerId:'cus_shared', email:'different@example.com' },
         ['customer-stripe-a']
     ),
-    /already mapped to another CAPTAINFIN customer/,
+    /already mapped to another CAPTAiNFiN customer/,
     'a Stripe cus_ identity must remain strictly one-to-one'
 );
 assert.strictEqual(
