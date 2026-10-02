@@ -50,11 +50,18 @@ const snapshot = {
   emby: { state: accessState.ACCESS_STATES.ACTIVE_ENTITLED, entitlement: embyEntitlement }
 };
 
-const subscriptions = portalState.subscriptionsFromAccessSnapshot(snapshot);
+const addonEntitlement = {
+  subscription_id: 'stremio-addon',
+  plan_id: 'stremio-addon-plan',
+  status: 'active',
+  service_type: 'stremio',
+  is_addon: true
+};
+const subscriptions = portalState.subscriptionsFromAccessSnapshot(snapshot, [addonEntitlement]);
 assert.deepStrictEqual(
   subscriptions.map(row => row.subscription_id),
-  ['free-lane', 'extended-primary', 'stremio-blocked', 'emby-current'],
-  'current portal subscriptions must come directly from canonical lane entitlements'
+  ['free-lane', 'extended-primary', 'stremio-blocked', 'emby-current', 'stremio-addon'],
+  'current portal subscriptions must come directly from canonical lane entitlements plus canonical live add-ons'
 );
 assert(
   subscriptions.some(row => row.subscription_id === 'extended-primary' && row.status === 'expired'),
@@ -69,6 +76,14 @@ assert.strictEqual(nav.showJellyfin, true, 'navigation must expose Jellyfin acce
 assert.strictEqual(nav.showBenefits, true, 'Affiliate navigation depends on programme availability, not eager referral-code creation');
 
 const homeRows = dashboard.canonicalAccessRows(portal);
+assert(
+  subscriptions.some(row => row.subscription_id === 'stremio-addon'),
+  'My Access projection must retain canonical current service add-ons'
+);
+assert(
+  !homeRows.some(row => row.subscription_id === 'stremio-addon'),
+  'Account Home must not promote add-ons as separate service lanes'
+);
 assert(
   homeRows.some(row => row.subscription_id === 'extended-primary'),
   'Account Home must keep canonical extension-backed access without rechecking raw status/current_period_end'
