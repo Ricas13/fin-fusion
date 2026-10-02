@@ -25,6 +25,7 @@ scripts/db-test-fixture.js
 scripts/test-fixture.js
 scripts/smoke-db.js
 scripts/*-audit.js
+!scripts/production-acceptance-audit.js
 scripts/check-*.js
 scripts/dead-code-audit.js
 scripts/compatibility-importer-report.js
