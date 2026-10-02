@@ -73,7 +73,8 @@ async function page(req) {
     await runtimeSettings.ensureLoaded();
     let liveSyncWarning = '';
     try {
-        await providerFinancialReconciliation.syncRecent({force:false});
+        const syncResult=await providerFinancialReconciliation.syncRecent({force:false});
+        if(syncResult?.warning)liveSyncWarning = `<div class="operatorCallout warn"><strong>Provider reconciliation completed with warnings.</strong> ${esc(syncResult.warning)}</div>`;
     } catch (error) {
         console.error('Live Stripe payment-history catch-up failed:', error.message || error);
         liveSyncWarning = `<div class="operatorCallout warn"><strong>Provider financial catch-up could not complete.</strong> Stored transactions are still shown below, but very recent provider transactions may be missing until the provider API is reachable again.</div>`;
