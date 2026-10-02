@@ -13,6 +13,7 @@ const expectedFiles = [
   'ci.yml',
   'dependency-audit.yml',
   'integration.yml',
+  'merge-safety.yml',
   'release-integrity.yml',
   'security-codeql.yml',
   'stremio.yml',
@@ -135,5 +136,5 @@ if (integrationRunner.includes("['scripts/provisioning-control-smoke.js']")) {
 
 console.log(
   `workflow trigger/suite hygiene: ok (${files.length} workflows; ` +
-  'CI owns fast checks; Integration owns isolated feature DB checks; Release owns DB release checks)'
+  'CI owns fast checks; Integration owns isolated feature DB checks; Release owns DB release checks; Merge Safety owns production deploy simulation)'
 );
