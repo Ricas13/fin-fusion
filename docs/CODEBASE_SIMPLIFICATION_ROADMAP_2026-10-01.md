@@ -236,7 +236,7 @@ Tasks:
 - [x] Change Docker build COPY rules or stages so CI-only test scripts and non-runtime docs are omitted from the final production image.
 - [x] Keep migration, backup, restore, environment preparation and deployment verification tools available where required.
 - [x] Add an image-content smoke test for required runtime tools and forbidden CI-only content.
-- [ ] Compare image size before/after.
+- [x] Compare image size before/after.
 
 **Done when:** the production image contains only the application and tools needed to operate/recover it.
 
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+- 2026-10-02 — Production-image size comparison completed on the same post-#845 code baseline. A temporary non-merge measurement branch restored the pre-cleanup Docker build context and measured `200,788,295` bytes; the normal production exclusions measured `197,942,068` bytes. The CI/test/documentation exclusions therefore reduce the runtime image by `2,846,227` bytes (about `1.42%`) while Release Integrity confirms the required runtime/operator/recovery tools remain present.
+
 
 - 2026-10-02 — Final compatibility-scaffolding cleanup: the full CI run on the preceding ownership branch reported no marked compatibility facades remaining under `src/`. Removed the zero-importer `scripts/db-test-fixture.js` transitional alias, retired the now-empty compatibility importer report from the fast suite, and kept only compatibility behavior that protects explicit upgrade/runtime interfaces rather than historical module surfaces. Canonical ownership guards that prevent retired mutation owners from being reintroduced remain intentionally in place.
 
