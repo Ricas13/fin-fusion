@@ -17,6 +17,10 @@ for (const [tag, suites] of Object.entries(TAGS)) {
   assert(commandsForTags([tag]).length > 0, `${tag} tag must expand to runnable commands`);
 }
 
+assert.strictEqual(pkg.scripts.check, 'npm run check:tag -- fast', 'default check entrypoint must use the canonical tagged manifest');
+for (const tag of ['billing','access','browser','security']) {
+  assert.strictEqual(pkg.scripts[`check:${tag}`], `npm run check:tag -- ${tag}`, `check:${tag} must be a stable tagged-suite alias`);
+}
 assert.deepStrictEqual(normalizeTags(['ACCESS','billing,access']), ['access','billing']);
 assert.throws(() => normalizeTags(['unknown']), /Unknown check tag/);
 
