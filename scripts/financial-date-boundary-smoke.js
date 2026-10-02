@@ -37,7 +37,7 @@ assert(orders.includes("require('../finance/calendar-date')")&&orders.includes('
   'commerce order date filters must reuse the canonical calendar-date parser');
 
 const migrations=read('db/migrations/20261001163000_refund_queue_elapsed_time.sql');
-assert(migrations.includes('EXTRACT(EPOCH FROM current_period_end-starts_at)'),
+assert(/EXTRACT\(EPOCH FROM \(?refunded\.current_period_end-refunded\.starts_at\)?\)/.test(migrations),
   'prepaid duration movement must use elapsed time rather than calendar-day arithmetic');
 
 const dangerous=[];
