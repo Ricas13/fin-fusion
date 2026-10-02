@@ -13,6 +13,7 @@ for(const ignored of [
   'scripts/ci',
   'scripts/*-smoke.js',
   'scripts/db-test-fixture.js',
+  'scripts/test-fixture.js',
   'scripts/smoke-db.js',
   'scripts/*-audit.js',
   'scripts/check-*.js',
