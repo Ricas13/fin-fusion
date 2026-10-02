@@ -2,6 +2,7 @@
 
 const { query, transaction } = require('../db');
 const providerState = require('./provider-lifecycle-state');
+const classifier = require('./provider-transaction-classifier');
 
 const RESOURCE_TYPES = Object.freeze({
     CUSTOMER: 'customer',
@@ -246,7 +247,14 @@ async function upsertTransaction(values = {}) {
                 provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
                 provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
                 customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-                metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb) || COALESCE(EXCLUDED.metadata,'{}'::jsonb),
+                metadata=CASE
+                    WHEN COALESCE(payment_history_transactions.metadata->>'providerAuthoritative','false')='true'
+                     AND COALESCE(EXCLUDED.metadata->>'providerAuthoritative','false')<>'true'
+                    THEN COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
+                         || (COALESCE(EXCLUDED.metadata,'{}'::jsonb) - 'providerAuthoritative' - 'feeDataAvailable')
+                    ELSE COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
+                         || COALESCE(EXCLUDED.metadata,'{}'::jsonb)
+                END,
                 updated_at=NOW()
             WHERE payment_history_transactions.customer_id IS NULL
                OR EXCLUDED.customer_id IS NULL
@@ -454,38 +462,67 @@ async function identityConflictCount(customerId = null) {
     return Number(result.rows[0]?.total || 0);
 }
 
-async function repairOwnership({ customerId = null } = {}) {
-    const rememberedBefore = await seedLocalIdentities(customerId);
-    const linked = await linkUnownedTransactions(customerId);
-    const rememberedAfter = linked.length ? await seedLocalIdentities(customerId) : 0;
-    const params = customerId ? [customerId] : [];
-    const ownerJoin = customerId ? ' AND customer_id=$1' : '';
-    const unmatched = await query(`
-        SELECT COUNT(*)::int total
-        FROM payment_history_transactions
-        WHERE provider IN ('stripe','paypal','plisio')
-          AND customer_id IS NULL
-          ${customerId ? '' : ''}
-    `, []);
-    const customerUnmatched = customerId ? await query(`
-        SELECT COUNT(*)::int total
-        FROM payment_history_transactions t
-        WHERE t.provider IN ('stripe','paypal','plisio')
-          AND t.customer_id IS NULL
+async function unresolvedFinancialCount(customerId = null) {
+    const stripePayments=[...classifier.STRIPE_PAYMENT_CATEGORIES];
+    const stripeRefunds=[...classifier.STRIPE_REFUND_CATEGORIES];
+    const paypalPayments=[...classifier.PAYPAL_PAYMENT_CODES];
+    const paypalRefunds=[...classifier.PAYPAL_REFUND_CODES,'refund','reversal'];
+    const plisioTypes=[...classifier.PLISIO_PAYMENT_TYPES,'refund','reversal'];
+    const plisioStatuses=[...classifier.PLISIO_SUCCESS_STATUSES];
+    const params=[stripePayments,stripeRefunds,paypalPayments,paypalRefunds,plisioTypes,plisioStatuses];
+    let related='';
+    if(customerId){
+        params.push(customerId);
+        related=`
           AND EXISTS (
-            SELECT 1 FROM payment_provider_identities i
-            WHERE i.customer_id=$1
+            SELECT 1
+            FROM payment_provider_identities i
+            WHERE i.customer_id=$7
               AND i.provider=t.provider
               AND i.provider_identity = ANY(ARRAY_REMOVE(ARRAY[
                     t.provider_customer_id,t.provider_transaction_id,t.provider_reference_id,t.provider_source_id
                   ],NULL))
+          )`;
+    }
+    const result=await query(`
+        SELECT COUNT(*)::int total
+        FROM payment_history_transactions t
+        WHERE t.customer_id IS NULL
+          AND (
+            (t.provider='stripe' AND (
+                (t.gross_amount_minor>0 AND lower(t.transaction_type)=ANY($1::text[]))
+                OR (t.gross_amount_minor<0 AND lower(t.transaction_type)=ANY($2::text[]))
+            ))
+            OR
+            (t.provider='paypal' AND upper(COALESCE(t.transaction_status,''))='S' AND (
+                (t.gross_amount_minor>0 AND upper(t.transaction_type)=ANY($3::text[]))
+                OR (t.gross_amount_minor<0 AND (
+                    upper(t.transaction_type)=ANY($4::text[])
+                    OR lower(t.transaction_type)=ANY($4::text[])
+                ))
+            ))
+            OR
+            (t.provider='plisio'
+             AND lower(COALESCE(t.transaction_status,''))=ANY($6::text[])
+             AND lower(t.transaction_type)=ANY($5::text[]))
           )
-    `, params) : null;
-    const conflicts = await identityConflictCount(customerId);
+          ${related}
+    `,params);
+    return Number(result.rows[0]?.total||0);
+}
+
+async function repairOwnership({ customerId = null } = {}) {
+    const rememberedBefore = await seedLocalIdentities(customerId);
+    const linked = await linkUnownedTransactions(customerId);
+    const rememberedAfter = linked.length ? await seedLocalIdentities(customerId) : 0;
+    const [unmatched,conflicts] = await Promise.all([
+        unresolvedFinancialCount(customerId),
+        identityConflictCount(customerId)
+    ]);
     return {
         remembered: rememberedBefore + rememberedAfter,
         linked: linked.length,
-        unmatched: customerId ? Number(customerUnmatched?.rows[0]?.total || 0) : Number(unmatched.rows[0]?.total || 0),
+        unmatched,
         conflicts
     };
 }
@@ -512,6 +549,7 @@ module.exports = {
     seedLocalIdentities,
     linkUnownedTransactions,
     identityConflictCount,
+    unresolvedFinancialCount,
     repairOwnership,
     customerIdentities
 };
