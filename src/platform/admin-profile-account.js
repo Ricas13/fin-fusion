@@ -1,10 +1,12 @@
 'use strict';
 
 const express=require('express');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const adminProfileSecurity=require('../security/admin-profile-account');
+const adminPersonalProfile=require('../customers/admin-personal-media-profile');
 const {page:emailInfrastructurePage}=require('./admin-email');
 const {layout,esc}=require('./admin-html');
 
@@ -23,10 +25,6 @@ function cleanEmail(value){
   const email=String(value||'').trim().toLowerCase();
   if(email.length>254||!/^\S+@\S+\.\S+$/.test(email))throw new Error('Enter a valid email address.');
   return email;
-}
-function cleanName(value,fallback){
-  const name=String(value||'').trim().slice(0,100);
-  return name||String(fallback||'Administrator').slice(0,100);
 }
 function dt(value){return value?new Date(value).toLocaleString('en-GB'):'—';}
 
@@ -83,16 +81,7 @@ async function saveEmail(req,res){
   if(!csrf.verify(req))return res.status(403).send('Invalid security token');
   try{
     const email=cleanEmail(req.body.email);
-    await transaction(async client=>{
-      const current=await client.query(`SELECT email FROM app_users WHERE id=$1 AND role='admin' FOR UPDATE`,[req.session.authUserId]);
-      if(!current.rowCount)throw new Error('Administrator account not found.');
-      const duplicate=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) AND id<>$2 LIMIT 1`,[email,req.session.authUserId]);
-      if(duplicate.rowCount)throw new Error('That email address is already used by another account.');
-      const changed=String(current.rows[0].email||'').toLowerCase()!==email;
-      await client.query(`UPDATE app_users SET email=$2,email_verified_at=CASE WHEN $3 THEN NULL ELSE email_verified_at END,updated_at=NOW() WHERE id=$1`,[req.session.authUserId,email,changed]);
-      await client.query(`UPDATE customers SET email=$2,updated_at=NOW() WHERE user_id=$1`,[req.session.authUserId,email]);
-      await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.profile.email.update','app_user',$2,$3::jsonb)`,[req.session.authUserId,String(req.session.authUserId),JSON.stringify({changed})]);
-    });
+    await adminProfileSecurity.updateAdminEmail({userId:req.session.authUserId,email});
     return res.redirect('/admin/profile?message='+encodeURIComponent('Administrator email saved.'));
   }catch(error){return res.redirect('/admin/profile?error='+encodeURIComponent(error.message||'Email could not be saved.'));}
 }
@@ -101,19 +90,10 @@ async function createMediaProfile(req,res){
   if(!csrf.verify(req))return res.status(403).send('Invalid security token');
   let created=null;
   try{
-    created=await transaction(async client=>{
-      const user=(await client.query(`SELECT id,username,email FROM app_users WHERE id=$1 AND role='admin' FOR UPDATE`,[req.session.authUserId])).rows[0];
-      if(!user)throw new Error('Administrator account not found.');
-      if(!user.email)throw new Error('Set your administrator email first.');
-      const existing=await client.query(`SELECT id FROM customers WHERE user_id=$1 ORDER BY created_at LIMIT 1`,[req.session.authUserId]);
-      if(existing.rowCount)return {customerId:existing.rows[0].id,existing:true};
-      const plan=(await client.query(`SELECT * FROM plans WHERE code=$1 AND active=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN ('direct','both') AND COALESCE(service_type,'jellyfin') IN ('jellyfin','bundle')`,[String(req.body.planCode||'').trim()])).rows[0];
-      if(!plan)throw new Error('Choose an active Jellyfin-capable customer plan.');
-      const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note) VALUES($1,$2,$3,'immediate','admin_personal',$4) RETURNING id`,[user.id,cleanName(req.body.displayName,user.username),user.email,'Personal media profile linked to administrator account.'])).rows[0];
-      const now=new Date(),days=Math.max(1,Number(plan.duration_days||30)),end=new Date(now.getTime()+days*86400000);
-      await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,$3,'admin_grant',$4,$5)`,[customer.id,plan.id,plan.billing_interval==='trial'?'trialing':'active',now,end]);
-      await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.profile.media.create','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({planCode:plan.code,rolePreserved:'admin'})]);
-      return {customerId:customer.id,existing:false};
+    created=await adminPersonalProfile.createPersonalMediaProfile({
+      userId:req.session.authUserId,
+      displayName:req.body.displayName,
+      planCode:req.body.planCode
     });
     if(created.existing)return res.redirect('/admin/profile?message='+encodeURIComponent('This administrator already has a linked media profile.'));
     try{
