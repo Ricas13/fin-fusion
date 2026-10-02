@@ -145,8 +145,6 @@ async function scan({ limit = 100 } = {}) {
         ON s.customer_id=h.customer_id
        AND h.metadata->>'subscriptionId'=s.id::text
       JOIN plans p ON p.id=s.plan_id
-      LEFT JOIN customer_entitlement_overrides o
-        ON o.customer_id=s.customer_id AND o.subscription_id=s.id
       WHERE h.hold_type='inactivity_policy'
         AND h.released_at IS NULL
         AND COALESCE(h.metadata,'{}'::jsonb) @> '{"restoreReconcileFailed":true}'::jsonb
@@ -154,7 +152,14 @@ async function scan({ limit = 100 } = {}) {
         ${freeLive}
         AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
         AND NOT public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
-        AND NOT (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+        AND NOT EXISTS(
+          SELECT 1
+          FROM customer_entitlement_overrides restore_override
+          WHERE restore_override.customer_id=s.customer_id
+            AND restore_override.subscription_id=s.id
+            AND restore_override.permanent_access=TRUE
+            AND restore_override.revoked_at IS NULL
+        )
         AND NOT EXISTS(
           SELECT 1
           FROM jellyfin_accounts ja
