@@ -33,6 +33,7 @@ const requiredRuntimeScripts=[
   'scripts/backup-healthcheck.js',
   'scripts/migrate-db.js',
   'scripts/configure-runtime-db-roles.js',
+  'scripts/runtime-db-privileges.js',
   'scripts/bootstrap-admin.js',
   'scripts/backup-db.js',
   'scripts/inspect-backup.js',
@@ -45,6 +46,11 @@ for(const file of requiredRuntimeScripts){
   assert(!/-smoke\.js$/.test(file)&&!/^scripts\/check-/.test(file),
     `required runtime script would be removed by the CI-only ignore patterns: ${file}`);
 }
+const runtimeRoleScript=fs.readFileSync(path.join(root,'scripts/configure-runtime-db-roles.js'),'utf8');
+assert(runtimeRoleScript.includes("require('./runtime-db-privileges')"),
+  'runtime role configuration must depend on a production-image runtime helper, never a *-smoke.js file');
+assert(!runtimeRoleScript.includes("runtime-db-privilege-smoke"),
+  'runtime role configuration must not import a smoke file excluded by .dockerignore');
 assert(dockerfile.includes('COPY . .'),'image-content contract assumes source COPY is filtered by .dockerignore');
 assert(dockerfile.includes('npm ci --omit=dev --ignore-scripts'),'production image must retain production-only dependency installation');
 
