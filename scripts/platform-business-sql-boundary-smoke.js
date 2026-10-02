@@ -29,8 +29,6 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-actions.js::app_users',
   'src/platform/admin-customer-management.js::customers',
   'src/platform/admin-customer-management.js::app_users',
-  'src/platform/portal-credential-confirmation.js::customers',
-  'src/platform/portal-credential-confirmation.js::app_users',
 ]);
 
 
@@ -185,5 +183,28 @@ assert(adminLinkedProfile.includes('UPDATE customers')
     && adminLinkedProfile.includes('INSERT INTO customers')
     && adminLinkedProfile.includes('manualSubscriptions.createManualSubscriptionTx'),
   'customer profile owner must own linked customer persistence and delegate subscription creation to entitlements');
+
+
+
+const portalCredentialRoute=fs.readFileSync(path.join(root,'src/platform/portal-credential-confirmation.js'),'utf8');
+const portalCredentialOwner=fs.readFileSync(path.join(root,'src/security/portal-credential-commands.js'),'utf8');
+assert(portalCredentialRoute.includes("require('../security/portal-credential-commands')")
+    && !portalCredentialRoute.includes('UPDATE app_users')
+    && !portalCredentialRoute.includes('UPDATE customers'),
+  'portal credential route must delegate customer/login persistence to security commands');
+for(const required of [
+  'async function stagePasswordChange',
+  'async function completePasswordChange',
+  'async function stageEmailChange',
+  'async function approveOldEmail',
+  'async function completeNewEmail',
+  'UPDATE app_users',
+  'UPDATE customers',
+  'UPDATE account_tokens',
+  'UPDATE auth_sessions'
+]){
+  assert(portalCredentialOwner.includes(required),
+    `portal credential security owner must retain ${required}`);
+}
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
