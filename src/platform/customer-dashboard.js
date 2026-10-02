@@ -166,7 +166,6 @@ function createCustomerDashboardRouter(){
       }
       const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
       const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
-      portal.subscriptions=accessRows;
       const navOptions=customerNav.optionsFromPortal(portal);
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
       if(!accessRows.length&&!openPlanChange){
