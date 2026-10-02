@@ -250,8 +250,9 @@ assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-veri
 // Customer 360 remains one server-rendered page with only one record nav entry
 // plus the Portal view action. The retired multi-tab navigation stabilizer must
 // not return now that operational actions live directly in the eight cards.
-const viewV2=read('src/platform/customer-360-view-v2.js');
-assert(viewV2.includes('Customer record')&&viewV2.includes('detailTab active'),'Customer 360 must keep one active "Customer record" nav entry');
+const customer360View=read('src/platform/customer-360-view.js');
+assert(customer360View.includes('Customer record')&&customer360View.includes('detailTab active'),'Customer 360 must keep one active "Customer record" nav entry');
+assert(!fs.existsSync(path.join(root,'src/platform/customer-360-view-v2.js')),'retired Customer 360 V2 renderer must not return');
 assert(!fs.existsSync(path.join(root,'public/js/customer-360-navigation.js')),'the retired multi-tab navigation stabilizer must not be reintroduced');
 assert(!adminHtml.includes('/js/customer-360-navigation.js'),'admin pages must no longer load the retired Customer 360 navigation stabilizer');
 assert(customerOperatorClient.includes('relocatePortalAndTopActions'),'the impersonation relocation into the customer nav must remain available to the legacy enrichment layer');
