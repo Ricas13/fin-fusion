@@ -23,16 +23,21 @@ async function mediaRows(customerId) {
   return result.rows;
 }
 
-async function accessContext(customerId) {
-  const [accounts, accessSnapshot] = await Promise.all([
-    mediaRows(customerId),
-    customerAccessState.snapshot(customerId).catch(() => null)
+async function accessContext(customerId, { accounts = null, accessSnapshot = null } = {}) {
+  const suppliedAccounts = Array.isArray(accounts) ? accounts : null;
+  const [accountRows, snapshot] = await Promise.all([
+    suppliedAccounts ? Promise.resolve(suppliedAccounts) : mediaRows(customerId),
+    accessSnapshot ? Promise.resolve(accessSnapshot) : customerAccessState.snapshot(customerId, {
+      accounts: suppliedAccounts
+        ? suppliedAccounts.filter(row => mediaType(row) === 'jellyfin')
+        : null
+    }).catch(() => null)
   ]);
   return {
     customerId,
-    accounts,
-    accessSnapshot,
-    embyEntitlement: accessSnapshot?.emby?.entitlement || null
+    accounts: accountRows,
+    accessSnapshot: snapshot,
+    embyEntitlement: snapshot?.emby?.entitlement || null
   };
 }
 
