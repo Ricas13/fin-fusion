@@ -31,6 +31,7 @@ jobs:
         run: |
           node scripts/stremio-source-client-smoke.js
           node scripts/stremio-admin-smoke.js
+          node scripts/stremio-zero-downtime-index-smoke.js
           node scripts/stremio-playback-compatibility-smoke.js
           node scripts/stremio-household-access-smoke.js
           node scripts/cloudflare-network-identity-smoke.js
