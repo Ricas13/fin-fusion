@@ -13,6 +13,7 @@ const entitlements=read('src/stremio/entitlements.js');
 const customerStremio=read('src/platform/customer-stremio.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
+const managementCommands=read('src/customers/admin-customer-management-commands.js');
 const accessHoldsAdmin=read('src/platform/admin-customer-access-holds.js');
 const accessControlService=read('src/access/admin-customer-access-control.js');
 const customer360Route=read('src/platform/admin-customer-360.js');
@@ -169,10 +170,10 @@ assert(billingControl.includes('async function setCustomerRenewal')
     && billingControl.includes('return setRenewal(current.subscription_id || current.id, enabled, actorUserId, options)'),
   'billing control must own Customer 360 renewal subscription selection before provider mutation');
 
-assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
-assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
-assert(management.includes("password_changed_at")&&management.includes('Use the onboarding link'),'portal accounts must not be enabled before onboarding has established a customer password');
-assert(management.includes("'admin.customer.portal.enrol'")&&management.includes("'admin.customer.account.update'")&&accessControlService.includes("'admin.customer.service.reconcile'"),'high-impact Customer 360 management changes must be audited by their canonical owners');
+assert(management.includes('customerCommands.setPortalStatus(')&&managementCommands.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions through the customer command owner');
+assert(managementCommands.includes('UPDATE account_activation_tokens')&&managementCommands.includes('revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
+assert(managementCommands.includes("password_changed_at")&&managementCommands.includes('Use the onboarding link'),'portal accounts must not be enabled before onboarding has established a customer password');
+assert(managementCommands.includes("'admin.customer.portal.enrol'")&&managementCommands.includes("'admin.customer.account.update'")&&accessControlService.includes("'admin.customer.service.reconcile'"),'high-impact Customer 360 management changes must be audited by their canonical owners');
 assert(management.includes('activation.activeForUser')&&management.includes('/activate/${encodeURIComponent(row.raw)}'),'active onboarding links must be recoverable from Customer management');
 assert(management.includes('activation.create({userId')&&management.includes('A fresh onboarding link was generated'),'admins must be able to regenerate missed onboarding links');
 assert(management.includes('Generate / rotate installation URL')&&management.includes('Manifest / installation URL'),'Stremio install details must be visible and recoverable from Customer management');
