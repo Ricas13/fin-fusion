@@ -79,7 +79,7 @@ function freePendingUnblockedSql(subscriptionAlias,holdAlias='free_pending_hold'
   )`;
 }
 async function loadPlan(planId,db=query){
-  const result=await db(`SELECT id,capacity_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
+  const result=await db(`SELECT id,capacity_limit,media_user_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
   return result.rows[0];
 }
@@ -163,12 +163,11 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
       COALESCE(SUM(so.max_users),0)::int AS user_limit,
       COALESCE(SUM(so.managed_users),0)::int AS managed_users
     FROM server_occupancy so`,[plan.id,cls]);
-  const configuredServers=Number(configured.rows[0]?.configured_servers||0),userLimit=Number(configured.rows[0]?.user_limit||0),managedUsers=Number(configured.rows[0]?.managed_users||0);
+  const configuredServers=Number(configured.rows[0]?.configured_servers||0),physicalUserLimit=Number(configured.rows[0]?.user_limit||0),managedUsers=Number(configured.rows[0]?.managed_users||0);
   if(!configuredServers)return null;
 
-  // An already-entitled customer who has not yet received an enabled account
-  // owns one place. This prevents a failed setup from reopening that place to
-  // somebody else before the owed customer is repaired.
+  // Physical capacity is fleet-wide: every enabled managed account consumes a
+  // place on its actual server, irrespective of which product granted it.
   const pending=await db(`SELECT COUNT(DISTINCT s.customer_id)::int AS pending_users
     FROM subscriptions s
     JOIN plans p ON p.id=s.plan_id
@@ -217,9 +216,80 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
     WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
       AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
-  const pendingUsers=Number(pending.rows[0]?.pending_users||0),reservedUsers=Number(checkout.rows[0]?.reserved_users||0)+Number(freeHolds.rows[0]?.reserved_users||0),userUsed=managedUsers+pendingUsers,userRemaining=Math.max(0,userLimit-userUsed-reservedUsers);
-  return{pool:cls||'jellyfin',configuredServers,userLimit,userUsed,managedUsers,pendingUsers,reservedUsers,userRemaining,healthMode};
+
+  const pendingUsers=Number(pending.rows[0]?.pending_users||0);
+  const fleetReservedUsers=Number(checkout.rows[0]?.reserved_users||0)+Number(freeHolds.rows[0]?.reserved_users||0);
+  const physicalUsed=managedUsers+pendingUsers;
+  const physicalRemaining=Math.max(0,physicalUserLimit-physicalUsed-fleetReservedUsers);
+
+  // Product capacity is independent from infrastructure capacity. A plan can
+  // deliberately expose only part of the eligible fleet (for example 50 Free
+  // places on a server that can physically host 200 managed customers).
+  const planUsage=await db(`SELECT
+      (
+        SELECT COUNT(DISTINCT s.customer_id)::int
+        FROM subscriptions s
+        LEFT JOIN customer_entitlement_overrides o
+          ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+        WHERE s.plan_id=$1
+          AND s.superseded_by IS NULL
+          AND s.starts_at<=NOW()
+          AND (
+            (o.permanent_access=TRUE AND o.revoked_at IS NULL)
+            OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+            OR (
+              COALESCE(s.service_extension_days,0)>0
+              AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+              AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+            )
+          )
+          AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
+          AND (
+            COALESCE($5::boolean,FALSE)=FALSE
+            OR ${freePendingUnblockedSql('s','plan_free_hold')}
+          )
+      ) AS used,
+      (
+        (SELECT COUNT(*)::int
+         FROM free_access_registration_reservations r
+         WHERE r.plan_id=$1 AND ${RESERVATION_SQL}
+           AND ($3::uuid IS NULL OR r.id<>$3::uuid))
+        +
+        (SELECT COUNT(*)::int
+         FROM billing_checkout_intents i
+         WHERE i.plan_id=$1 AND ${checkoutHold}
+           AND ($4::uuid IS NULL OR i.id<>$4::uuid))
+      ) AS reserved`,[
+        plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,Boolean(plan.is_free_tier)
+      ]);
+  const planUsed=Number(planUsage.rows[0]?.used||0);
+  const planReserved=Number(planUsage.rows[0]?.reserved||0);
+  const planLimit=plan.media_user_limit==null?null:Math.max(0,Number(plan.media_user_limit)||0);
+  const planRemaining=planLimit==null?null:Math.max(0,planLimit-planUsed-planReserved);
+  const userRemaining=planRemaining==null?physicalRemaining:Math.min(physicalRemaining,planRemaining);
+  const effectiveLimit=planLimit==null?physicalUserLimit:Math.min(physicalUserLimit,planLimit);
+
+  return{
+    pool:cls||'jellyfin',
+    configuredServers,
+    userLimit:effectiveLimit,
+    physicalUserLimit,
+    planUserLimit:planLimit,
+    userUsed:planUsed,
+    managedUsers,
+    pendingUsers,
+    reservedUsers:planReserved,
+    fleetReservedUsers,
+    physicalUsed,
+    physicalRemaining,
+    planUsed,
+    planReserved,
+    planRemaining,
+    userRemaining,
+    healthMode
+  };
 }
+
 async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
   if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
@@ -229,7 +299,7 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
     const state={planId:plan.id,plan,model:'fleet_users',pool:serverClass(plan)||'jellyfin',configuredServers:0,userLimit:0,userUsed:0,managedUsers:0,pendingUsers:0,reservedUsers:0,userRemaining:0,healthMode:null,limit:0,used:0,reserved:0,remaining:0,soldOut:true,manualLimit:null,manualUsed:0,manualReserved:0,fallbackReason:'No Jellyfin server user capacity is configured for this plan.'};
     return{...state,...scarcity(state)};
   }
-  const state={planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,configuredServers:fleet.configuredServers,userLimit:fleet.userLimit,userUsed:fleet.userUsed,managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,healthMode:fleet.healthMode,limit:fleet.userLimit,used:fleet.userUsed,reserved:fleet.reservedUsers,remaining:fleet.userRemaining,soldOut:fleet.userRemaining===0,manualLimit:null,manualUsed:0,manualReserved:0};
+  const state={planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,configuredServers:fleet.configuredServers,userLimit:fleet.userLimit,physicalUserLimit:fleet.physicalUserLimit,planUserLimit:fleet.planUserLimit,userUsed:fleet.userUsed,managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,reservedUsers:fleet.reservedUsers,fleetReservedUsers:fleet.fleetReservedUsers,physicalUsed:fleet.physicalUsed,physicalRemaining:fleet.physicalRemaining,planUsed:fleet.planUsed,planReserved:fleet.planReserved,planRemaining:fleet.planRemaining,userRemaining:fleet.userRemaining,healthMode:fleet.healthMode,limit:fleet.userLimit,used:fleet.userUsed,reserved:fleet.reservedUsers,remaining:fleet.userRemaining,soldOut:fleet.userRemaining===0,manualLimit:null,manualUsed:0,manualReserved:0};
   return{...state,...scarcity(state)};
 }
 
@@ -389,9 +459,31 @@ function fleetAvailableSql(alias='p'){
   )`;
   return `(${userCapacity} >= (${managedUsers} + ${pendingUsers} + ${checkoutHolds} + ${freeHolds} + 1))`;
 }
+function mediaPlanLimitAvailableSql(alias='p'){
+  const checkoutHold=checkoutReservationSql('plan_capacity_checkout');
+  return `(${alias}.media_user_limit IS NULL OR ${alias}.media_user_limit > ((
+    SELECT COUNT(DISTINCT plan_capacity_subscription.customer_id)
+    FROM subscriptions plan_capacity_subscription
+    WHERE plan_capacity_subscription.plan_id=${alias}.id
+      AND plan_capacity_subscription.superseded_by IS NULL
+      AND plan_capacity_subscription.status IN ('active','trialing','past_due','paused')
+      AND plan_capacity_subscription.starts_at<=NOW()
+      AND plan_capacity_subscription.current_period_end>NOW()
+  ) + (
+    SELECT COUNT(*) FROM free_access_registration_reservations plan_capacity_free
+    WHERE plan_capacity_free.plan_id=${alias}.id
+      AND plan_capacity_free.consumed_at IS NULL
+      AND plan_capacity_free.released_at IS NULL
+      AND plan_capacity_free.expires_at>NOW()
+  ) + (
+    SELECT COUNT(*) FROM billing_checkout_intents plan_capacity_checkout
+    WHERE plan_capacity_checkout.plan_id=${alias}.id
+      AND ${checkoutHold}
+  )))`;
+}
 function acquisitionSql(alias='p'){
   const fleetPlan=`(${alias}.service_type IN('jellyfin','bundle'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
-  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}))`;
+  const planLimitAvailable=mediaPlanLimitAvailableSql(alias);return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${planLimitAvailable}))`;
 }
 
 module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
