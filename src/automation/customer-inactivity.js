@@ -21,29 +21,44 @@ function boundedInt(value, min, max, fallback) {
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
+function configuredPlanPolicy(row = {}) {
+    const value = row.inactivity_policy;
+    if (!value || typeof value !== 'object' || value.owner !== 'free_plan') return null;
+    const firstPlaybackGraceDays = boundedInt(value.firstPlaybackGraceDays, 1, 3650, null);
+    const playbackWindowDays = boundedInt(value.playbackWindowDays, 1, 365, null);
+    const minimumPlaybackMinutes = boundedInt(value.minimumPlaybackMinutes, 1, 1000000, null);
+    if (firstPlaybackGraceDays == null || playbackWindowDays == null || minimumPlaybackMinutes == null) return null;
+    return { firstPlaybackGraceDays, playbackWindowDays, minimumPlaybackMinutes };
+}
+
 function serverPolicy(row = {}, globalCfg = {}) {
+    // Compatibility is intentional: existing production Free automation keeps
+    // the assigned-server thresholds until an administrator explicitly saves a
+    // valid plan-owned policy. This avoids changing removal behaviour merely by
+    // deploying the ownership refactor.
+    const planPolicy = configuredPlanPolicy(row);
     return {
         enabled: Boolean(globalCfg.enabled),
         dryRun: Boolean(globalCfg.dryRun),
-        firstPlaybackGraceDays: boundedInt(
+        firstPlaybackGraceDays: planPolicy?.firstPlaybackGraceDays ?? boundedInt(
             row.free_first_playback_grace_days,
             1,
             3650,
             FREE_POLICY_DEFAULTS.firstPlaybackGraceDays
         ),
-        playbackWindowDays: boundedInt(
+        playbackWindowDays: planPolicy?.playbackWindowDays ?? boundedInt(
             row.free_playback_window_days,
             1,
             365,
             FREE_POLICY_DEFAULTS.playbackWindowDays
         ),
-        minimumPlaybackMinutes: boundedInt(
+        minimumPlaybackMinutes: planPolicy?.minimumPlaybackMinutes ?? boundedInt(
             row.free_minimum_playback_minutes,
             1,
             1000000,
             FREE_POLICY_DEFAULTS.minimumPlaybackMinutes
         ),
-        thresholdOwner: 'free_server'
+        thresholdOwner: planPolicy ? 'free_plan' : 'free_server_compat'
     };
 }
 
@@ -123,7 +138,8 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.current_period_end,
             s.created_at subscription_created_at,
             p.code plan_code,
-            p.name plan_name
+            p.name plan_name,
+            p.inactivity_policy
           FROM subscriptions s
           JOIN plans p ON p.id=s.plan_id
           WHERE s.superseded_by IS NULL
@@ -161,6 +177,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
           js.free_first_playback_grace_days,
           js.free_playback_window_days,
           js.free_minimum_playback_minutes,
+          fa.inactivity_policy,
           COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,
           COALESCE(c.email,u.email) email,
           c.automation_protected,
@@ -207,6 +224,420 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
          AND ja.access_lane='free'
          AND ja.disabled=FALSE
         JOIN jellyfin_servers js ON js.id=ja.server_id
+        LEFT JOIN LATERAL (
+          SELECT (
+            fa.inactivity_policy->>'owner'='free_plan'
+            AND CASE WHEN COALESCE(fa.inactivity_policy->>'firstPlaybackGraceDays','') ~ '^[0-9]{1,7}
+          FROM customer_entitlement_overrides ceo
+          WHERE ceo.customer_id=fa.customer_id
+            AND ceo.subscription_id=fa.subscription_id
+            AND ceo.permanent_access=FALSE
+            AND ceo.revoked_at IS NOT NULL
+            AND ceo.revoked_at<=NOW()
+        ) automation_resume ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT GREATEST(
+            fa.starts_at,
+            ja.created_at,
+            ja.access_lane_changed_at,
+            COALESCE(automation_resume.resumed_at,'-infinity'::timestamptz)
+          ) allocation_start_at
+        ) allocation ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            MIN(ph.started_at) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND ph.started_at<NOW()
+            ) first_playback_at,
+            MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND ph.started_at<NOW()
+            ) last_playback_at,
+            COALESCE(SUM(
+              GREATEST(
+                0,
+                EXTRACT(EPOCH FROM (
+                  LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
+                  - GREATEST(
+                      ph.started_at,
+                      NOW()-(inactivity_window.playback_window_days||' days')::interval
+                    )
+                ))
+              )
+            ) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(inactivity_window.playback_window_days||' days')::interval
+                AND ph.started_at<NOW()
+            ),0)::bigint playback_seconds
+          FROM playback_history ph
+          WHERE ph.customer_id=fa.customer_id
+            AND ph.server_id=ja.server_id
+            AND (
+              ph.jellyfin_account_id=ja.id
+              OR (
+                ph.jellyfin_account_id IS NULL
+                AND (
+                  ph.access_lane_snapshot='free'
+                  OR ph.access_lane_snapshot IS NULL
+                )
+              )
+            )
+        ) us ON TRUE
+        WHERE NOT EXISTS(
+          SELECT 1 FROM customer_bans b
+          WHERE b.customer_id=fa.customer_id
+            AND b.revoked_at IS NULL
+            AND b.blocks_service_access=TRUE
+        )
+        ORDER BY COALESCE(us.last_playback_at,allocation.allocation_start_at),customer_name
+    `, [HOLD_TYPE, customerId || null]);
+
+    return result.rows.map(row => {
+        const policy = serverPolicy(row, globalCfg);
+        const assessment = assessUsage(row, policy);
+        const usageTriggered = assessment.firstPlaybackEligible || assessment.usageEligible;
+        const adminProtected = Boolean(
+            row.automation_protected
+            || row.permanent_access
+            || String(row.admin_jellyfin_mode || '') === 'admin_present'
+        );
+        const adminRemoved = String(row.admin_jellyfin_mode || '') === 'admin_removed';
+        const eligible = policy.enabled
+            && !row.currently_playing
+            && !adminProtected
+            && !adminRemoved
+            && usageTriggered;
+        const triggers = [];
+
+        if (assessment.firstPlaybackEligible) {
+            triggers.push(`no first Free Server playback within ${policy.firstPlaybackGraceDays} day(s) of this allocation`);
+        }
+        if (assessment.usageEligible) {
+            triggers.push(
+                `${Math.floor(assessment.seconds / 60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`
+            );
+        }
+
+        const reasons = [];
+        if (!policy.enabled) reasons.push('Free Server inactivity automation is paused');
+        if (row.currently_playing) reasons.push('currently playing on Free Server');
+        if (adminProtected) reasons.push(row.automation_protected ? 'automatic cleanup protection' : 'explicit admin/permanent protection');
+        if (adminRemoved) reasons.push('Jellyfin access already marked removed by administrator');
+        if (policy.enabled && !usageTriggered) {
+            reasons.push(
+                assessment.hasPlayback
+                    ? 'rolling Free Server playback requirement is satisfied or the first playback is still inside its initial window'
+                    : 'first-play grace period has not expired'
+            );
+        }
+
+        return {
+            ...row,
+            policy,
+            first_playback_at: assessment.firstPlaybackAt,
+            last_playback_at: assessment.lastPlaybackAt,
+            last_activity_at: assessment.lastActivityAt,
+            allocation_start_at: assessment.allocationStartAt,
+            playback_seconds: assessment.seconds,
+            inactive_reference_at: assessment.referenceAt,
+            observation_started_at: assessment.observationStartedAt,
+            has_playback: assessment.hasPlayback,
+            first_playback_on_time: assessment.firstPlaybackOnTime,
+            admin_protected: adminProtected,
+            eligible,
+            repairExistingHold: Boolean(row.already_held && eligible),
+            triggers,
+            reasons
+        };
+    });
+}
+
+module.exports = {
+    HOLD_TYPE,
+    FREE_POLICY_DEFAULTS,
+    configuredPlanPolicy,
+    serverPolicy,
+    assessUsage,
+    candidates
+};
+
+                     THEN (fa.inactivity_policy->>'firstPlaybackGraceDays')::int BETWEEN 1 AND 3650 ELSE FALSE END
+            AND CASE WHEN COALESCE(fa.inactivity_policy->>'playbackWindowDays','') ~ '^[0-9]{1,7}
+          FROM customer_entitlement_overrides ceo
+          WHERE ceo.customer_id=fa.customer_id
+            AND ceo.subscription_id=fa.subscription_id
+            AND ceo.permanent_access=FALSE
+            AND ceo.revoked_at IS NOT NULL
+            AND ceo.revoked_at<=NOW()
+        ) automation_resume ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT GREATEST(
+            fa.starts_at,
+            ja.created_at,
+            ja.access_lane_changed_at,
+            COALESCE(automation_resume.resumed_at,'-infinity'::timestamptz)
+          ) allocation_start_at
+        ) allocation ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            MIN(ph.started_at) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND ph.started_at<NOW()
+            ) first_playback_at,
+            MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND ph.started_at<NOW()
+            ) last_playback_at,
+            COALESCE(SUM(
+              GREATEST(
+                0,
+                EXTRACT(EPOCH FROM (
+                  LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
+                  - GREATEST(
+                      ph.started_at,
+                      NOW()-(js.free_playback_window_days||' days')::interval
+                    )
+                ))
+              )
+            ) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(js.free_playback_window_days||' days')::interval
+                AND ph.started_at<NOW()
+            ),0)::bigint playback_seconds
+          FROM playback_history ph
+          WHERE ph.customer_id=fa.customer_id
+            AND ph.server_id=ja.server_id
+            AND (
+              ph.jellyfin_account_id=ja.id
+              OR (
+                ph.jellyfin_account_id IS NULL
+                AND (
+                  ph.access_lane_snapshot='free'
+                  OR ph.access_lane_snapshot IS NULL
+                )
+              )
+            )
+        ) us ON TRUE
+        WHERE NOT EXISTS(
+          SELECT 1 FROM customer_bans b
+          WHERE b.customer_id=fa.customer_id
+            AND b.revoked_at IS NULL
+            AND b.blocks_service_access=TRUE
+        )
+        ORDER BY COALESCE(us.last_playback_at,allocation.allocation_start_at),customer_name
+    `, [HOLD_TYPE, customerId || null]);
+
+    return result.rows.map(row => {
+        const policy = serverPolicy(row, globalCfg);
+        const assessment = assessUsage(row, policy);
+        const usageTriggered = assessment.firstPlaybackEligible || assessment.usageEligible;
+        const adminProtected = Boolean(
+            row.automation_protected
+            || row.permanent_access
+            || String(row.admin_jellyfin_mode || '') === 'admin_present'
+        );
+        const adminRemoved = String(row.admin_jellyfin_mode || '') === 'admin_removed';
+        const eligible = policy.enabled
+            && !row.currently_playing
+            && !adminProtected
+            && !adminRemoved
+            && usageTriggered;
+        const triggers = [];
+
+        if (assessment.firstPlaybackEligible) {
+            triggers.push(`no first Free Server playback within ${policy.firstPlaybackGraceDays} day(s) of this allocation`);
+        }
+        if (assessment.usageEligible) {
+            triggers.push(
+                `${Math.floor(assessment.seconds / 60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`
+            );
+        }
+
+        const reasons = [];
+        if (!policy.enabled) reasons.push('Free Server inactivity automation is paused');
+        if (row.currently_playing) reasons.push('currently playing on Free Server');
+        if (adminProtected) reasons.push(row.automation_protected ? 'automatic cleanup protection' : 'explicit admin/permanent protection');
+        if (adminRemoved) reasons.push('Jellyfin access already marked removed by administrator');
+        if (policy.enabled && !usageTriggered) {
+            reasons.push(
+                assessment.hasPlayback
+                    ? 'rolling Free Server playback requirement is satisfied or the first playback is still inside its initial window'
+                    : 'first-play grace period has not expired'
+            );
+        }
+
+        return {
+            ...row,
+            policy,
+            first_playback_at: assessment.firstPlaybackAt,
+            last_playback_at: assessment.lastPlaybackAt,
+            last_activity_at: assessment.lastActivityAt,
+            allocation_start_at: assessment.allocationStartAt,
+            playback_seconds: assessment.seconds,
+            inactive_reference_at: assessment.referenceAt,
+            observation_started_at: assessment.observationStartedAt,
+            has_playback: assessment.hasPlayback,
+            first_playback_on_time: assessment.firstPlaybackOnTime,
+            admin_protected: adminProtected,
+            eligible,
+            repairExistingHold: Boolean(row.already_held && eligible),
+            triggers,
+            reasons
+        };
+    });
+}
+
+module.exports = {
+    HOLD_TYPE,
+    FREE_POLICY_DEFAULTS,
+    serverPolicy,
+    assessUsage,
+    candidates
+};
+
+                     THEN (fa.inactivity_policy->>'playbackWindowDays')::int BETWEEN 1 AND 365 ELSE FALSE END
+            AND CASE WHEN COALESCE(fa.inactivity_policy->>'minimumPlaybackMinutes','') ~ '^[0-9]{1,7}
+          FROM customer_entitlement_overrides ceo
+          WHERE ceo.customer_id=fa.customer_id
+            AND ceo.subscription_id=fa.subscription_id
+            AND ceo.permanent_access=FALSE
+            AND ceo.revoked_at IS NOT NULL
+            AND ceo.revoked_at<=NOW()
+        ) automation_resume ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT GREATEST(
+            fa.starts_at,
+            ja.created_at,
+            ja.access_lane_changed_at,
+            COALESCE(automation_resume.resumed_at,'-infinity'::timestamptz)
+          ) allocation_start_at
+        ) allocation ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            MIN(ph.started_at) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND ph.started_at<NOW()
+            ) first_playback_at,
+            MAX(COALESCE(ph.ended_at,ph.last_seen_at,ph.started_at)) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND ph.started_at<NOW()
+            ) last_playback_at,
+            COALESCE(SUM(
+              GREATEST(
+                0,
+                EXTRACT(EPOCH FROM (
+                  LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
+                  - GREATEST(
+                      ph.started_at,
+                      NOW()-(js.free_playback_window_days||' days')::interval
+                    )
+                ))
+              )
+            ) FILTER (
+              WHERE ph.started_at>=allocation.allocation_start_at
+                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(js.free_playback_window_days||' days')::interval
+                AND ph.started_at<NOW()
+            ),0)::bigint playback_seconds
+          FROM playback_history ph
+          WHERE ph.customer_id=fa.customer_id
+            AND ph.server_id=ja.server_id
+            AND (
+              ph.jellyfin_account_id=ja.id
+              OR (
+                ph.jellyfin_account_id IS NULL
+                AND (
+                  ph.access_lane_snapshot='free'
+                  OR ph.access_lane_snapshot IS NULL
+                )
+              )
+            )
+        ) us ON TRUE
+        WHERE NOT EXISTS(
+          SELECT 1 FROM customer_bans b
+          WHERE b.customer_id=fa.customer_id
+            AND b.revoked_at IS NULL
+            AND b.blocks_service_access=TRUE
+        )
+        ORDER BY COALESCE(us.last_playback_at,allocation.allocation_start_at),customer_name
+    `, [HOLD_TYPE, customerId || null]);
+
+    return result.rows.map(row => {
+        const policy = serverPolicy(row, globalCfg);
+        const assessment = assessUsage(row, policy);
+        const usageTriggered = assessment.firstPlaybackEligible || assessment.usageEligible;
+        const adminProtected = Boolean(
+            row.automation_protected
+            || row.permanent_access
+            || String(row.admin_jellyfin_mode || '') === 'admin_present'
+        );
+        const adminRemoved = String(row.admin_jellyfin_mode || '') === 'admin_removed';
+        const eligible = policy.enabled
+            && !row.currently_playing
+            && !adminProtected
+            && !adminRemoved
+            && usageTriggered;
+        const triggers = [];
+
+        if (assessment.firstPlaybackEligible) {
+            triggers.push(`no first Free Server playback within ${policy.firstPlaybackGraceDays} day(s) of this allocation`);
+        }
+        if (assessment.usageEligible) {
+            triggers.push(
+                `${Math.floor(assessment.seconds / 60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`
+            );
+        }
+
+        const reasons = [];
+        if (!policy.enabled) reasons.push('Free Server inactivity automation is paused');
+        if (row.currently_playing) reasons.push('currently playing on Free Server');
+        if (adminProtected) reasons.push(row.automation_protected ? 'automatic cleanup protection' : 'explicit admin/permanent protection');
+        if (adminRemoved) reasons.push('Jellyfin access already marked removed by administrator');
+        if (policy.enabled && !usageTriggered) {
+            reasons.push(
+                assessment.hasPlayback
+                    ? 'rolling Free Server playback requirement is satisfied or the first playback is still inside its initial window'
+                    : 'first-play grace period has not expired'
+            );
+        }
+
+        return {
+            ...row,
+            policy,
+            first_playback_at: assessment.firstPlaybackAt,
+            last_playback_at: assessment.lastPlaybackAt,
+            last_activity_at: assessment.lastActivityAt,
+            allocation_start_at: assessment.allocationStartAt,
+            playback_seconds: assessment.seconds,
+            inactive_reference_at: assessment.referenceAt,
+            observation_started_at: assessment.observationStartedAt,
+            has_playback: assessment.hasPlayback,
+            first_playback_on_time: assessment.firstPlaybackOnTime,
+            admin_protected: adminProtected,
+            eligible,
+            repairExistingHold: Boolean(row.already_held && eligible),
+            triggers,
+            reasons
+        };
+    });
+}
+
+module.exports = {
+    HOLD_TYPE,
+    FREE_POLICY_DEFAULTS,
+    serverPolicy,
+    assessUsage,
+    candidates
+};
+
+                     THEN (fa.inactivity_policy->>'minimumPlaybackMinutes')::int BETWEEN 1 AND 1000000 ELSE FALSE END
+          ) use_plan_policy
+        ) inactivity_source ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT CASE
+            WHEN inactivity_source.use_plan_policy THEN (fa.inactivity_policy->>'playbackWindowDays')::int
+            ELSE js.free_playback_window_days
+          END playback_window_days
+        ) inactivity_window ON TRUE
         LEFT JOIN LATERAL (
           SELECT MAX(revoked_at) resumed_at
           FROM customer_entitlement_overrides ceo

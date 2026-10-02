@@ -1341,6 +1341,61 @@ async function updateStorefrontOrder({
   });
 }
 
+async function updateFreeInactivityPolicy({
+  planId,
+  firstPlaybackGraceDays,
+  playbackWindowDays,
+  minimumPlaybackMinutes,
+  actorUserId = null
+}) {
+  const fields = [
+    ['Initial playback grace', firstPlaybackGraceDays, 1, 3650],
+    ['Playback window', playbackWindowDays, 1, 365],
+    ['Minimum playback minutes', minimumPlaybackMinutes, 1, 1000000]
+  ];
+  for (const [label, value, min, max] of fields) {
+    if (!Number.isInteger(value) || value < min || value > max) {
+      throw new Error(`${label} must be between ${min} and ${max}.`);
+    }
+  }
+  return transaction(async client => {
+    const found = await client.query(
+      `SELECT id,name,service_type,is_free_tier,price_minor,billing_interval,server_class,inactivity_policy
+       FROM plans WHERE id=$1 FOR UPDATE`,
+      [planId]
+    );
+    if (!found.rowCount) throw new Error('Plan not found.');
+    const plan = found.rows[0];
+    const freeJellyfin = ['jellyfin','bundle'].includes(String(plan.service_type || 'jellyfin'))
+      && (plan.is_free_tier === true || (
+        Number(plan.price_minor || 0) === 0
+        && String(plan.billing_interval || '') !== 'trial'
+        && String(plan.server_class || '') === 'free'
+      ));
+    if (!freeJellyfin) throw new Error('Inactivity thresholds can only be configured on the Free Jellyfin plan.');
+
+    const policy = {
+      owner: 'free_plan',
+      firstPlaybackGraceDays,
+      playbackWindowDays,
+      minimumPlaybackMinutes
+    };
+    const updated = await client.query(
+      `UPDATE plans
+       SET inactivity_policy=COALESCE(inactivity_policy,'{}'::jsonb)||$2::jsonb,updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, JSON.stringify(policy)]
+    );
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.free_inactivity_policy','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(policy)]
+    );
+    return updated.rows[0];
+  });
+}
+
 async function updateRequestPolicy({
   planId,
   movieLimit,
@@ -1480,6 +1535,7 @@ module.exports = {
   unarchivePlan,
   updateDeliveryService,
   updateStorefrontOrder,
+  updateFreeInactivityPolicy,
   updateRequestPolicy,
   updateFourKTranscodePolicy
 };

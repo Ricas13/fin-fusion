@@ -57,9 +57,8 @@ function freeInactivityPolicy(server) {
     };
 }
 function freeInactivitySummary(server) {
-    const policy = freeInactivityPolicy(server);
-    if (!policy) return '';
-    return `<small class="serverFreePolicy"><strong>Free inactivity:</strong> first playback within ${esc(policy.firstPlaybackGraceDays)}d · ${esc(policy.minimumPlaybackMinutes)} min / rolling ${esc(policy.playbackWindowDays)}d</small>`;
+    if (String(server?.server_class || '').toLowerCase() !== 'free') return '';
+    return '<small class="serverFreePolicy"><strong>Free inactivity:</strong> thresholds are configured on the Free plan.</small>';
 }
 
 async function dashboardRows() {

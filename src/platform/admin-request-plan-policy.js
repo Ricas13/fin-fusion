@@ -51,9 +51,27 @@ function freeJellyfinPlan(plan){
   if(!['jellyfin','bundle'].includes(service))return false;
   return Boolean(plan?.is_free_tier)||(Number(plan?.price_minor||0)===0&&String(plan?.billing_interval||'')!=='trial'&&String(plan?.server_class||'')==='free');
 }
-function freeInactivityCard(_req,plan){
+function inactivityNumber(value,min,max,fallback){
+  const n=Number(value);
+  return Number.isInteger(n)&&n>=min&&n<=max?n:fallback;
+}
+function freePlanInactivityPolicy(plan){
+  const value=plan?.inactivity_policy&&typeof plan.inactivity_policy==='object'?plan.inactivity_policy:{};
+  const configured=value.owner==='free_plan';
+  return {
+    configured,
+    firstPlaybackGraceDays:inactivityNumber(value.firstPlaybackGraceDays,1,3650,3),
+    playbackWindowDays:inactivityNumber(value.playbackWindowDays,1,365,7),
+    minimumPlaybackMinutes:inactivityNumber(value.minimumPlaybackMinutes,1,1000000,30)
+  };
+}
+function freeInactivityCard(req,plan){
   if(!freeJellyfinPlan(plan))return'';
-  return `<section class="planConfigCard freeInactivityPlanCard" id="free-activity"><div class="planConfigHead"><div><h2>Free Server activity rules</h2><p>Inactivity thresholds are owned by the Free media server that hosts the customer, not by this plan.</p></div><span class="pill">Server-owned</span></div><div class="planConfigBody"><div class="securityNote standalone"><strong>Where to change them:</strong> open Servers, edit each Free-class media server, then use Advanced settings → Free server inactivity policy. Each server can have its own first-playback grace, rolling playback window and minimum playback requirement. Existing safety checks and the global automation enabled/dry-run switch still apply.</div><div class="buttonRow"><a class="button secondary" href="/admin/servers">Manage Free servers</a></div><div class="planSaveHint">Legacy per-plan inactivity values are retained only for compatibility and are no longer used by inactivity enforcement.</div></div></section>`;
+  const cfg=freePlanInactivityPolicy(plan);
+  const compatibility=cfg.configured
+    ? '<div class="securityNote standalone"><strong>Plan-owned policy active.</strong> Every customer on this Free plan uses these same thresholds regardless of which eligible Free server hosts them. Server-level legacy values are no longer consulted for this plan.</div>'
+    : '<div class="notice warn"><strong>Compatibility mode is active.</strong> To avoid changing working automation during this migration, existing customers still use the legacy thresholds stored on their assigned Free server until you save this card. Saving switches the whole Free plan to the values below.</div>';
+  return `<section class="planConfigCard freeInactivityPlanCard" id="free-activity"><div class="planConfigHead"><div><h2>Free Server activity rules</h2><p>The Free plan owns inactivity thresholds; server pages only own physical capacity and placement.</p></div><span class="pill ${cfg.configured?'good':'warn'}">${cfg.configured?'Plan-owned':'Compatibility mode'}</span></div><form class="planConfigBody" method="post" action="/admin/request-plan-policy/${esc(plan.id)}/free-inactivity">${csrfInput(req)}${compatibility}<div class="formGrid"><div class="formGroup"><label>Initial playback grace</label><div class="inputUnit"><input class="input" type="number" min="1" max="3650" name="firstPlaybackGraceDays" value="${esc(cfg.firstPlaybackGraceDays)}" required><span>days</span></div><div class="inlineHelp">A new Free allocation must play something before this deadline.</div></div><div class="formGroup"><label>Rolling playback window</label><div class="inputUnit"><input class="input" type="number" min="1" max="365" name="playbackWindowDays" value="${esc(cfg.playbackWindowDays)}" required><span>days</span></div><div class="inlineHelp">After activation, watched time is counted only inside this rolling window.</div></div><div class="formGroup"><label>Minimum playback</label><div class="inputUnit"><input class="input" type="number" min="1" max="1000000" name="minimumPlaybackMinutes" value="${esc(cfg.minimumPlaybackMinutes)}" required><span>minutes</span></div><div class="inlineHelp">Once a full window has elapsed, customers below this amount are eligible for the existing inactivity-removal workflow.</div></div></div><div class="buttonRow"><button class="button" type="submit">Save Free inactivity rules</button><a class="button secondary" href="/admin/settings/jellyfin-lifecycle">Automation mode</a></div><div class="planSaveHint">Saving thresholds does not remove anyone immediately or alter the deletion safety checks. The existing worker, holds, live-playback guard and final entitlement recheck remain unchanged.</div></form></section>`;
 }
 function planCard(req, plan, { variant = 'jellyfin' } = {}) {
   const managed = plan.request_permissions !== null && plan.request_permissions !== undefined;
@@ -90,12 +108,26 @@ function createAdminRequestPlanPolicyRouter() {
   const router = express.Router();
   router.use('/admin/request-plan-policy', gate, noStore);
   router.get('/admin/request-plan-policy', (_req, res) => res.redirect(302, '/admin/plans'));
-  // Compatibility endpoint for stale browser tabs/bookmarks from releases where
-  // inactivity thresholds were edited on the plan. It deliberately performs no
-  // mutation: server-owned settings are now the only enforcement authority.
-  router.post('/admin/request-plan-policy/:planId/free-inactivity',writeLimit,(req,res)=>{
+  router.post('/admin/request-plan-policy/:planId/free-inactivity',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid security token');
-    return res.redirect(legacyInactivityRedirect(req.params.planId,'Free Server inactivity rules are now configured on each Free server under Servers. No plan-level threshold was changed.'));
+    try{
+      const firstPlaybackGraceDays=inactivityNumber(req.body.firstPlaybackGraceDays,1,3650,null);
+      const playbackWindowDays=inactivityNumber(req.body.playbackWindowDays,1,365,null);
+      const minimumPlaybackMinutes=inactivityNumber(req.body.minimumPlaybackMinutes,1,1000000,null);
+      if(firstPlaybackGraceDays==null)throw new Error('Initial playback grace must be between 1 and 3,650 days.');
+      if(playbackWindowDays==null)throw new Error('Playback window must be between 1 and 365 days.');
+      if(minimumPlaybackMinutes==null)throw new Error('Minimum playback must be between 1 and 1,000,000 minutes.');
+      await planCommands.updateFreeInactivityPolicy({
+        planId:req.params.planId,
+        firstPlaybackGraceDays,
+        playbackWindowDays,
+        minimumPlaybackMinutes,
+        actorUserId:req.session.authUserId
+      });
+      return res.redirect(legacyInactivityRedirect(req.params.planId,'Free Server inactivity rules saved on this plan. Existing Free automation safety checks remain unchanged.'));
+    }catch(error){
+      return res.redirect(`/admin/plans/${encodeURIComponent(req.params.planId)}/edit?error=${encodeURIComponent(error.message||'Free inactivity rules could not be saved.')}#free-activity`);
+    }
   });
   router.post('/admin/request-plan-policy/:planId', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
@@ -138,4 +170,4 @@ function createAdminRequestPlanPolicyRouter() {
   return router;
 }
 
-module.exports = { createAdminRequestPlanPolicyRouter, planCard, freeInactivityCard, optionalLimit, days };
+module.exports = { createAdminRequestPlanPolicyRouter, planCard, freeInactivityCard, freePlanInactivityPolicy, optionalLimit, days };
