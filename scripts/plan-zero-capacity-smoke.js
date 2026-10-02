@@ -34,7 +34,7 @@ const freeCapacityBackfill=read('src/automation/free-capacity-backfill.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
 // Jellyfin capacity has two independent ceilings: server max_users protects
-// infrastructure, while plans.media_user_limit controls how many customers a
+// infrastructure, while an explicitly managed plans.capacity_limit controls how many customers a
 // product is allowed to allocate within its selected fleet.
 assert(create.includes('name="mediaUserLimit" required')&&create.includes('name="capacityLimit" required'),'plan creation must expose a Jellyfin media customer limit while retaining Stremio inventory');
 assert(createBrowser.includes('setVisible(mediaCapacity,jellyfin)')&&createBrowser.includes('setVisible(stremioCapacity,stremio)'),'adaptive plan creation must show the correct product-owned capacity field');
@@ -52,7 +52,7 @@ assert(freeCapacityBackfill.includes("NOT public.subscription_admin_removed(s.cu
 assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'capacity must not depend on plan streams or raw Jellyfin total-user metrics');
 assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource.includes('COUNT(DISTINCT customer_id)')&&userCapacitySource.includes("ja.account_purpose='jellyfin'")&&userCapacitySource.includes('ja.disabled=FALSE')&&userCapacitySource.includes('jellyfin_account_creation_intents')&&userCapacitySource.includes('jellyfin_server_placement_leases'),'canonical server capacity must count each managed customer exactly once across persisted accounts, creation intents and active placement leases');
 assert(capacitySource.includes("key=model==='fleet_users'?`fleet-users:${serverClass(plan)||'unclassified'}`"),'all Jellyfin plans sharing a server class must serialize acquisition against the same user-capacity lock');
-assert(capacitySource.includes('media_user_limit')&&capacitySource.includes('mediaPlanLimitAvailableSql'),'storefront acquisition SQL must enforce the plan-owned media customer ceiling as well as physical fleet capacity');
+assert(capacitySource.includes('mediaCapacityManaged')&&capacitySource.includes('mediaPlanLimitAvailableSql')&&capacitySource.includes('capacity_limit'),'storefront acquisition SQL must enforce an explicitly opted-in plan customer ceiling without activating stale legacy Jellyfin capacity values');
 assert(capacitySource.includes('Math.min(physicalRemaining,planRemaining)'),'effective Jellyfin availability must be the lower of physical fleet capacity and the plan-owned limit');
 const planEditor=read('src/platform/admin-jellyfin-plan-editor.js');
 assert(planEditor.includes('name="mediaUserLimit"')&&planEditor.includes('Maximum customers on this plan'),'Jellyfin plan editor must expose an independent product customer limit');
