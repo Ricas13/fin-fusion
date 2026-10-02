@@ -61,13 +61,17 @@
     "check:db:concurrency": "node scripts/state-machine-invariants-db-smoke.js && node scripts/adversarial-concurrency-smoke.js && node scripts/provisioning-control-db-smoke.js && node scripts/jellyfin-account-creation-recovery-db-smoke.js && npm run check:discount-checkout-db && npm run check:post443-payment-db && npm run check:post441-ten-bug-db && npm run check:post451-ten-bug-db",
     "check:db": "npm run check:db:integrity && npm run check:db:access && npm run check:db:commerce && npm run check:db:concurrency",
     "check:release": "npm run check:fast && npm run check:db",
-    "check": "npm run check:ci-fast",
+    "check": "npm run check:tag -- fast",
     "verify:deployment": "node scripts/verify-deployment.js",
     "check:customer-access-state": "node scripts/customer-access-state-smoke.js",
     "check:access-integrity-db": "node scripts/access-integrity-db-smoke.js",
     "check:unpaid-access-activation": "node scripts/unpaid-access-activation-smoke.js",
     "check:automation-job-registry": "node scripts/automation-job-registry-smoke.js && node scripts/automation-job-definition-smoke.js",
-    "check:access-repair": "node scripts/access-repair-behavior-smoke.js && node scripts/access-repair-ownership-smoke.js"
+    "check:access-repair": "node scripts/access-repair-behavior-smoke.js && node scripts/access-repair-ownership-smoke.js",
+    "check:billing": "npm run check:tag -- billing",
+    "check:access": "npm run check:tag -- access",
+    "check:browser": "npm run check:tag -- browser",
+    "check:security": "npm run check:tag -- security"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
