@@ -44,10 +44,10 @@ assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard m
 assert.deepStrictEqual(pageKeys.customers,['users','tickets'],'Customers must expose All customers and Support');
 assert.deepStrictEqual(pageKeys.servers,['servers','stremio-sources','activity'],'Servers must expose Jellyfin, Stremio and Playback');
 assert.strictEqual(pageKeys[`${retiredProduct}s`],undefined,'Retired product routes must not appear as a shipped primary sidebar module');
-assert.deepStrictEqual(pageKeys.commerce,['plans','orders','billing','payments','discounts','referrals'],'Commerce must expose Plans, Orders, Billing, Providers, Discounts and Affiliates in the canonical ownership order');
+assert.deepStrictEqual(pageKeys.commerce,['plans','orders','billing','payments','expenses','discounts','referrals'],'Commerce must expose Plans, Orders, Billing, Providers, Expenses, Discounts and Affiliates in the canonical ownership order');
 assert.deepStrictEqual(pageKeys.operations,['provisioning','automation-jobs','backups'],'Operations must expose Provisioning, Automation and Backups');
 assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security','settings-integrations','system'],'Settings must expose General, Security, Connections and System');
-assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),20,'Permanent rail must expose twenty destinations');
+assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),21,'Permanent rail must expose twenty-one destinations');
 for(const group of nav.groups)for(const page of group.pages)assert.deepStrictEqual(nav.childPages(page[0]),[],`${page[1]} must not manufacture a third rail level`);
 
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a rail slot');
