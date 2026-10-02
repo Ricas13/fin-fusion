@@ -1,10 +1,10 @@
 'use strict';
 
 const express = require('express');
-const { transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const policy = require('../integrations/request-plan-policy');
+const planCommands = require('../catalog/plan-command-service');
 const { queuePlanRequestReconciliation } = require('./bulk-jobs');
 const { esc } = require('./admin-html');
 
@@ -110,20 +110,26 @@ function createAdminRequestPlanPolicyRouter() {
       const discoverRegion = policy.optionalText(req.body.discoverRegion, 16);
       const streamingRegion = policy.optionalText(req.body.streamingRegion, 16);
       const originalLanguage = policy.optionalText(req.body.originalLanguage, 32);
-      let updated;
-      await transaction(async client => {
-        const current = await client.query('SELECT id,name,service_type,COALESCE(request_access_enabled,TRUE) AS request_access_enabled FROM plans WHERE id=$1 FOR UPDATE', [req.params.planId]);
-        if (!current.rowCount) throw new Error('Plan not found.');
-        const disabling = current.rows[0].request_access_enabled === true && requestAccessEnabled === false;
-        if (disabling && String(req.body.confirmRequestDeletion || '') !== 'yes') {
-          throw new Error('Confirm that disabling request access will delete managed Seerr accounts and their Seerr request history.');
-        }
-        updated = await client.query(`UPDATE plans SET request_movie_quota_limit=$2,request_movie_quota_days=$3,request_tv_quota_limit=$4,request_tv_quota_days=$5,request_access_enabled=$6,request_permissions=$7,request_watchlist_sync_movies=$8,request_watchlist_sync_tv=$9,request_locale=$10,request_discover_region=$11,request_streaming_region=$12,request_original_language=$13,updated_at=NOW() WHERE id=$1 RETURNING name,service_type`, [req.params.planId, movieLimit, movieDays, tvLimit, tvDays, requestAccessEnabled, requestPermissions, watchlistSyncMovies, watchlistSyncTv, locale, discoverRegion, streamingRegion, originalLanguage]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'plan.request_policy.update','plan',$2,$3::jsonb)`, [req.session.authUserId, req.params.planId, JSON.stringify({ movieLimit, movieDays, tvLimit, tvDays, requestAccessEnabled, destructiveDisableConfirmed: disabling, permissionMode: requestPermissions == null ? 'preserve' : 'managed', requestPermissions, watchlistSyncMovies, watchlistSyncTv, locale, discoverRegion, streamingRegion, originalLanguage })]);
+      const updated = await planCommands.updateRequestPolicy({
+        planId: req.params.planId,
+        movieLimit,
+        movieDays,
+        tvLimit,
+        tvDays,
+        requestAccessEnabled,
+        requestPermissions,
+        watchlistSyncMovies,
+        watchlistSyncTv,
+        locale,
+        discoverRegion,
+        streamingRegion,
+        originalLanguage,
+        confirmDestructiveDisable: String(req.body.confirmRequestDeletion || '') === 'yes',
+        actorUserId: req.session.authUserId
       });
       const job = await queuePlanRequestReconciliation(req.params.planId, req.session.authUserId);
       const fanout = job ? ` ${Number(job.total_items || 0)} current member${Number(job.total_items || 0) === 1 ? '' : 's'} queued for Jellyseerr sync.` : ' No current plan members needed syncing.';
-      const message = `${updated.rows[0].name} request policy saved.${fanout}`;
+      const message = `${updated.plan.name} request policy saved.${fanout}`;
       return res.redirect(redirectTarget(req, req.params.planId, 'message', message));
     } catch (error) {
       return res.redirect(redirectTarget(req, req.params.planId, 'error', error.message || 'Request policy could not be saved.'));
