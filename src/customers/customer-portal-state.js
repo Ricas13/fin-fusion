@@ -27,8 +27,26 @@ function subscriptionsFromAccessSnapshot(snapshot = {}, addons = []) {
   return Array.from(byId.values());
 }
 
-function hasCurrentServiceAccess(snapshot = {}) {
-  return ['primary', 'free', 'stremio', 'emby'].some(key => Boolean(snapshot?.[key]?.entitlement));
+function currentAccessFlags(snapshot = {}, subscriptions = []) {
+  const primary = Boolean(snapshot?.primary?.entitlement);
+  const free = Boolean(snapshot?.free?.entitlement);
+  const stremio = Boolean(snapshot?.stremio?.entitlement);
+  const emby = Boolean(snapshot?.emby?.entitlement);
+  const mainAccess = primary || free || stremio || emby;
+  const addonServices = new Set((Array.isArray(subscriptions) ? subscriptions : [])
+    .filter(subscription => subscription?.is_addon)
+    .map(subscription => String(subscription?.service_type_snapshot || subscription?.service_type || 'jellyfin').toLowerCase()));
+  const addonServiceAccess = ['jellyfin', 'emby', 'stremio', 'bundle'].some(service => addonServices.has(service));
+  const addonJellyfinAccess = addonServices.has('jellyfin') || addonServices.has('bundle');
+  return {
+    hasServiceAccess: mainAccess || addonServiceAccess,
+    hasRequestAccess: mainAccess,
+    hasJellyfinAccess: primary || free || addonJellyfinAccess
+  };
+}
+
+function hasCurrentServiceAccess(snapshot = {}, subscriptions = []) {
+  return currentAccessFlags(snapshot, subscriptions).hasServiceAccess;
 }
 
 async function current(customerId, {
@@ -69,12 +87,14 @@ async function current(customerId, {
     })
   ]);
 
+  const subscriptions = subscriptionsFromAccessSnapshot(accessSnapshot, addons);
   return {
     customer: customerResult.rows[0],
-    subscriptions: subscriptionsFromAccessSnapshot(accessSnapshot, addons),
+    subscriptions,
     accounts,
     providers: providerResult.rows,
     accessSnapshot,
+    accessFlags: currentAccessFlags(accessSnapshot, subscriptions),
     referralCode: null,
     referralsEnabled: Boolean(referralSettings?.enabled)
   };
@@ -84,5 +104,6 @@ module.exports = {
   current,
   subscriptionId,
   subscriptionsFromAccessSnapshot,
+  currentAccessFlags,
   hasCurrentServiceAccess
 };
