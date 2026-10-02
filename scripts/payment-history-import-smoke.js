@@ -129,6 +129,7 @@ assert.strictEqual(profitability.basisFor(splitCoverage,from,to).feeCoverageInco
 const classifierSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-transaction-classifier.js'), 'utf8');
 const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'dashboard-ledger.js'), 'utf8');
 const accountingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'history-accounting.js'), 'utf8');
+const financialStateSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-financial-state.js'), 'utf8');
 const reconciliationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-payment-reconciliation.js'), 'utf8');
 assert.ok(dashboardSource.includes("require('./provider-transaction-classifier')"), 'Commerce ledger must import the canonical classifier');
 assert.ok(accountingSource.includes("require('./provider-transaction-classifier')"), 'Payment History must import the canonical classifier');
@@ -137,7 +138,8 @@ assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(dashboardSource), 'Comme
 assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(accountingSource), 'Payment History must not define a second PayPal code list');
 assert.ok(/T0004[\s\S]*T0021/.test(classifierSource) && /T1106[\s\S]*T1201/.test(classifierSource), 'canonical classifier must retain the complete PayPal accounting code lists');
 assert.ok(/partial_capture_reversal/.test(classifierSource), 'canonical Stripe refunds must include partial capture reversals');
-assert.ok(dashboardSource.includes('transaction_status'), 'Commerce imported-history query must include provider transaction status');
+assert.ok(financialStateSource.includes('transaction_status'), 'Canonical provider transaction reader must include provider transaction status used by Commerce accounting');
+assert.ok(dashboardSource.includes('financialState.scanTransactionsInRange'), 'Commerce imported-history scans must use the canonical provider financial reader');
 assert.ok(dashboardSource.includes('paymentEventsInRange(range)'), 'Commerce webhook fallback must use the paginated reader');
 assert.ok(dashboardSource.includes('EVENT_PAGE_SIZE') && dashboardSource.includes('cursor?.created_at'), 'webhook fallback must keyset paginate provider events');
 assert.ok(!dashboardSource.includes('LIMIT 25000'), 'Commerce financial totals must never silently stop at 25,000 payment events');
