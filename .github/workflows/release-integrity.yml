@@ -63,7 +63,7 @@ jobs:
             test ! -e /app/scripts/check-js-syntax.js
             test ! -e /app/scripts/dead-code-audit.js
             test -f /app/scripts/runtime-db-privileges.js
-            node -e "require('./scripts/configure-runtime-db-roles.js')"
+            node -e "require(\"./scripts/configure-runtime-db-roles.js\")"
           '
           docker image inspect captainfin:image-contract --format 'runtime_image_size_bytes={{.Size}}'
 
