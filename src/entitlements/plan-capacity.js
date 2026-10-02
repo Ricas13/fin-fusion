@@ -466,7 +466,7 @@ function fleetAvailableSql(alias='p'){
 }
 function mediaPlanLimitAvailableSql(alias='p'){
   const checkoutHold=checkoutReservationSql('plan_capacity_checkout');
-  return `(${alias}.inactivity_policy->>'mediaCapacityManaged'<>'true' OR ${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
+  return `(COALESCE(${alias}.inactivity_policy->>'mediaCapacityManaged','false')<>'true' OR ${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT plan_capacity_subscription.customer_id)
     FROM subscriptions plan_capacity_subscription
     WHERE plan_capacity_subscription.plan_id=${alias}.id
