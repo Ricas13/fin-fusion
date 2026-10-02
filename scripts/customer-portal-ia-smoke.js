@@ -157,18 +157,19 @@ assert(publicAuth.includes('reserved Free Access place expired before verificati
   const future=new Date(Date.now()+86400000).toISOString();
   const inactivePast=new Date(Date.now()-86400000).toISOString();
   const portal={subscriptions:[
-    {id:'free-sub',subscription_id:'free-sub',plan_id:'free-plan',status:'active',current_period_end:null,is_free_tier:true,service_type:'jellyfin',billing_interval:'month',created_at:'2026-01-01T00:00:00.000Z'},
-    {id:'paid-sub',subscription_id:'paid-sub',plan_id:'paid-plan',status:'expired',current_period_end:inactivePast,service_extension_days:14,access_expires_at:future,is_free_tier:false,service_type:'jellyfin',billing_interval:'month',created_at:'2026-01-02T00:00:00.000Z'},
-    {id:'trial-sub',subscription_id:'trial-sub',plan_id:'trial-plan',status:'trialing',current_period_end:future,is_free_tier:false,service_type:'jellyfin',billing_interval:'trial',created_at:'2026-01-03T00:00:00.000Z'},
-    {id:'stremio-sub',subscription_id:'stremio-sub',plan_id:'stremio-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'stremio',billing_interval:'month',created_at:'2026-01-04T00:00:00.000Z'},
-    {id:'emby-sub',subscription_id:'emby-sub',plan_id:'emby-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'emby',billing_interval:'month',created_at:'2026-01-05T00:00:00.000Z'},
-    {id:'addon-sub',subscription_id:'addon-sub',plan_id:'addon-plan',status:'active',current_period_end:future,is_addon:true,service_type:'stremio',billing_interval:'month',created_at:'2026-01-06T00:00:00.000Z'}
+    {id:'ignored-trial',subscription_id:'ignored-trial',plan_id:'trial-plan',status:'trialing',current_period_end:future,is_free_tier:false,service_type:'jellyfin',billing_interval:'trial'},
+    {id:'ignored-addon',subscription_id:'ignored-addon',plan_id:'addon-plan',status:'active',current_period_end:future,is_addon:true,service_type:'stremio',billing_interval:'month'},
+    {id:'ignored-blocked',subscription_id:'ignored-blocked',plan_id:'blocked-plan',status:'active',current_period_end:future,blocked:true,service_type:'stremio',billing_interval:'month'}
   ]};
-  const rows=dashboardModule.canonicalAccessRows(portal,{freePlan:{...portal.subscriptions[0],blocked:true},currentPlan:portal.subscriptions[1]});
+  const freePlan={id:'free-sub',subscription_id:'free-sub',plan_id:'free-plan',status:'active',current_period_end:null,is_free_tier:true,service_type:'jellyfin',billing_interval:'month'};
+  const currentPlan={id:'paid-sub',subscription_id:'paid-sub',plan_id:'paid-plan',status:'expired',current_period_end:inactivePast,service_extension_days:14,access_expires_at:future,is_free_tier:false,service_type:'jellyfin',billing_interval:'month'};
+  const stremioPlan={id:'stremio-sub',subscription_id:'stremio-sub',plan_id:'stremio-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'stremio',billing_interval:'month'};
+  const embyPlan={id:'emby-sub',subscription_id:'emby-sub',plan_id:'emby-plan',status:'active',current_period_end:future,is_free_tier:false,service_type:'emby',billing_interval:'month'};
+  const rows=dashboardModule.canonicalAccessRows(portal,{freePlan,currentPlan,stremioPlan,embyPlan});
   const ids=new Set(rows.map(row=>row.id));
-  for(const id of ['free-sub','paid-sub','trial-sub','stremio-sub','emby-sub'])assert(ids.has(id),`customer Home must keep canonical current access row ${id}`);
-  assert(!ids.has('addon-sub'),'customer Home access summary must not promote add-ons as independent service lanes');
-  assert(ids.has('paid-sub'),'extension-backed access supplied by the canonical projection must not be dropped because the raw subscription status is expired');
+  for(const id of ['free-sub','paid-sub','stremio-sub','emby-sub'])assert(ids.has(id),`customer Home must keep server-approved canonical access row ${id}`);
+  for(const id of ['ignored-trial','ignored-addon','ignored-blocked'])assert(!ids.has(id),`customer Home must not rebuild active access from full portal projection row ${id}`);
+  assert(ids.has('paid-sub'),'extension-backed access supplied by the canonical lane selection must not be dropped because the raw subscription status is expired');
   const canonicalized=dashboardModule.canonicalizePortalSubscriptions({subscriptions:[]},rows);
   assert.deepStrictEqual(new Set(canonicalized.subscriptions.map(row=>row.id)),ids,'portal canonicalization compatibility helper must not re-filter canonical current rows');
 }
