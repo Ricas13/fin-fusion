@@ -66,6 +66,8 @@ async function main() {
   const router = fs.readFileSync(path.join(root, 'src/platform/router.js'), 'utf8');
   const customerLogin = fs.readFileSync(path.join(root, 'src/platform/customer-login.js'), 'utf8');
   const customerSecurity = fs.readFileSync(path.join(root, 'src/platform/customer-security.js'), 'utf8');
+  const customerSecurityCommands = fs.readFileSync(path.join(root, 'src/security/customer-security-commands.js'), 'utf8');
+  const customerPasswordPolicy = fs.readFileSync(path.join(root, 'src/security/customer-password-policy.js'), 'utf8');
   const portalCredentials = fs.readFileSync(path.join(root, 'src/platform/portal-credential-confirmation.js'), 'utf8');
   const adminPortalRecovery = fs.readFileSync(path.join(root, 'src/platform/admin-portal-credential-recovery.js'), 'utf8');
   const adminPrimaryActions = fs.readFileSync(path.join(root, 'src/platform/admin-customer-primary-actions.js'), 'utf8');
@@ -102,8 +104,9 @@ async function main() {
   assert(customerRateLimit.includes("crypto.createHmac('sha256'"), 'raw login identities must remain HMAC-pseudonymized before persistence');
   assert(customerRateLimit.includes('const storageKey = bucketStorageKey(bucketKey)'), 'database writes must use the pseudonymous storage key');
 
-  const validationCalls = customers.match(/await validateNewPassword\(/g) || [];
-  assert(validationCalls.length >= 3, 'registration, password change and password reset must all screen new passwords');
+  assert(customers.includes('await validateNewPassword(password)') && customers.includes('await validateNewPassword(newPassword)'), 'registration and password reset must use the canonical new-password policy');
+  assert(customerSecurityCommands.includes('await passwordPolicy.validateNewPassword(newPassword)'), 'password change must use the canonical new-password policy');
+  assert(customerPasswordPolicy.includes("await passwordBreach.assertNotBreached(password)"), 'canonical new-password policy must retain breach screening');
   assert(customers.includes('async function registerCustomer') && customers.includes('async function changePortalPassword') && customers.includes('async function resetSitePassword'), 'customer password write paths must remain present');
   assert(!customers.includes('async function consumeAccountToken'), 'account tokens must not be consumed by a standalone transaction before their account mutation');
   assert.match(customers,/async function accountTokenForUpdate\(client,rawToken,tokenType\)/,'account-token lookup must require the caller transaction client');
