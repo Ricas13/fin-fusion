@@ -113,6 +113,14 @@ function authoritativeLivePaypal(row) {
         && classifier.historyKind(row) === 'payment';
 }
 
+function authoritativePlisio(row) {
+    if (String(row?.provider || '').toLowerCase() !== 'plisio') return false;
+    const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    return metadata.providerAuthoritative === true
+        && metadata.providerVerified === true
+        && Boolean(classifier.historyKind(row));
+}
+
 function paypalCaptureIdFromEvent(row) {
     if (String(row?.provider || '').toLowerCase() !== 'paypal' || row?.event_type !== 'PAYMENT.CAPTURE.COMPLETED') return null;
     const id = row?.payload?.resource?.id;
@@ -221,10 +229,15 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     // exactly once regardless of which successful checkout path ran first.
     const historyRowsScanned = await scanHistoryInRange(range, async row => {
         const livePaypal = authoritativeLivePaypal(row);
+        const verifiedPlisio = authoritativePlisio(row);
         if (livePaypal) authoritativePaypalCaptures.add(String(row.provider_transaction_id || ''));
-        if (!livePaypal && !isCovered(coverage, row.provider, row.occurred_at)) return;
+        if (!livePaypal && !verifiedPlisio && !isCovered(coverage, row.provider, row.occurred_at)) return;
         const kind = classifier.historyKind(row);
-        if (kind) await visit(historyRecord(row, kind));
+        if (!kind) return;
+        if (verifiedPlisio && row?.metadata?.feeDataAvailable !== true) {
+            addWarning(warnings, 'Plisio provider payments are included from verified settlement data, but exact provider fee data is unavailable; profit/net figures may overstate Plisio proceeds until fee accounting is supplied.');
+        }
+        await visit(historyRecord(row, kind));
     }, queryFn);
 
     // Events are keyset-scanned oldest-first so cumulative Stripe refund state
@@ -372,6 +385,7 @@ module.exports = {
     coverageFromRuns,
     isCovered,
     authoritativeLivePaypal,
+    authoritativePlisio,
     paypalCaptureIdFromEvent,
     historyKind: classifier.historyKind,
     coverageRunsInRange,
