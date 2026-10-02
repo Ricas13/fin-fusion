@@ -60,7 +60,7 @@
   const jellyfinProvisioned=provisionedAccounts.length>0,jellyfinReady=readyAccounts.length>0,jellyfinNeedsPassword=passwordAccounts.length>0,jellyfinPending=Boolean(hasJellyfin&&!jellyfinProvisioned);
   const embyProvisioned=embyProvisionedAccounts.length>0,embyReady=embyReadyAccounts.length>0,embyNeedsPassword=embyPasswordAccounts.length>0,embyPending=Boolean(hasEmby&&!embyProvisioned);
   const anyReady=Boolean(jellyfinReady||embyReady||hasStremio);
-  const referralsEnabled=Boolean(portal.referralsEnabled&&portal.referralCode);
+  const referralsEnabled=Boolean(portal.referralsEnabled);
   function stripeChangeCopy(plan){const subscription=subscriptionForPlan(plan);if(!isRecurring(subscription)||subscription.source!=='stripe')return'Starts after Stripe confirms payment.';if(!sameCurrency(plan,subscription))return`Currency change: scheduled for your next renewal${subscription.current_period_end?' on '+formatDate(subscription.current_period_end):''}.`;const upgrade=monthlyValue(plan)>monthlyValue(subscription);return upgrade?'Upgrade: changes immediately. Stripe may charge a prorated amount today.':`Change: scheduled for your next renewal${subscription.current_period_end?' on '+formatDate(subscription.current_period_end):''}.`;}
   function stripeButtonCopy(plan){const subscription=subscriptionForPlan(plan);if(!isRecurring(subscription)||subscription.source!=='stripe')return'Continue with Stripe';if(!sameCurrency(plan,subscription))return'Change currency at next renewal';return monthlyValue(plan)>monthlyValue(subscription)?'Upgrade with Stripe':'Change at next renewal';}
 %>
