@@ -184,12 +184,13 @@ assert(customer360.includes("require('../access/customer-access-state')")
   && !customer360.includes("require('../jellyfin/resilient-provisioning')")
   && !customer360.includes('currentEntitlementTruth(customerId)'),
   'Customer 360 must load one canonical cross-service access snapshot without a parallel current-entitlement reader');
-assert(dashboard.includes("customerAccessState.snapshot(customerId,{includeBlocked:{primary:false,free:false,stremio:false,emby:true}})")
+assert(dashboard.includes('customers.getCurrentCustomerPortal(customerId)')
+  && dashboard.includes('const accessSnapshot=portal.accessSnapshot')
   && dashboard.includes('primaryAccess=accessSnapshot.primary')
   && dashboard.includes('freeAccess=accessSnapshot.free')
   && dashboard.includes('stremioAccess=accessSnapshot.stremio')
   && dashboard.includes('embyAccess=accessSnapshot.emby'),
-  'Account Home must derive all current service lanes from one canonical snapshot while preserving its blocked-state policy');
+  'Account Home must derive all current service lanes from the canonical customer portal projection');
 assert(customer360Truth.includes('canonical.emby?.entitlement')
   && customer360Truth.includes('canonical.stremio?.entitlement'),
   'Customer 360 service truth must consume canonical Emby/Stremio entitlement selection instead of re-deciding it');
@@ -239,8 +240,8 @@ assert(
   'My Access route must not own customer media account/server SQL'
 );
 assert(
-  myAccess.includes('customerMediaAccess.incompleteFreeSubscriptionId(customerId)'),
-  'My Access must delegate incomplete Free-state interpretation to the access domain'
+  myAccess.includes('customerMediaAccess.incompleteFreeSubscriptionIdFromState(portal.accessSnapshot?.free)'),
+  'My Access must reuse the canonical portal snapshot for incomplete Free-state interpretation'
 );
 
 const freeIncomplete = accessState.ACCESS_STATES.INCONSISTENT_UNPAID;
