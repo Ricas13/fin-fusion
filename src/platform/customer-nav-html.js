@@ -44,9 +44,15 @@ function canonicalAccessFlags(portal){
   const free=Boolean(snapshot.free?.entitlement);
   const stremio=Boolean(snapshot.stremio?.entitlement);
   const emby=Boolean(snapshot.emby?.entitlement);
+  const mainAccess=primary||free||stremio||emby;
+  const addons=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[]).filter(subscription=>subscription?.is_addon);
+  const addonServices=new Set(addons.map(subscription=>String(subscription?.service_type_snapshot||subscription?.service_type||'jellyfin').toLowerCase()));
+  const addonServiceAccess=['jellyfin','emby','stremio','bundle'].some(service=>addonServices.has(service));
+  const addonJellyfinAccess=addonServices.has('jellyfin')||addonServices.has('bundle');
   return{
-    hasServiceAccess:primary||free||stremio||emby,
-    hasJellyfinAccess:primary||free
+    hasServiceAccess:mainAccess||addonServiceAccess,
+    hasRequestAccess:mainAccess,
+    hasJellyfinAccess:primary||free||addonJellyfinAccess
   };
 }
 
@@ -54,7 +60,7 @@ function optionsFromPortal(portal){
   const canonical=canonicalAccessFlags(portal);
   const subscriptions=Array.isArray(portal?.subscriptions)?portal.subscriptions:[];
   const hasServiceAccess=canonical?.hasServiceAccess??subscriptions.some(liveServiceSubscription);
-  const hasRequestAccess=canonical?canonical.hasServiceAccess:liveRequestEntitlement(portal);
+  const hasRequestAccess=canonical?.hasRequestAccess??liveRequestEntitlement(portal);
   const hasJellyfinAccess=canonical?.hasJellyfinAccess??liveJellyfinEntitlement(portal);
   return{
     showBenefits:Boolean(portal&&portal.referralsEnabled),
