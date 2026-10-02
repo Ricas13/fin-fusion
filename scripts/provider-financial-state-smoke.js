@@ -14,6 +14,7 @@ const dashboard=read('src/payments/dashboard-ledger.js');
 const dataExport=read('src/payments/data-export.js');
 const stripeHistory=read('src/payments/live-stripe-payment-history.js');
 const reconciliation=read('src/payments/provider-financial-reconciliation.js');
+const paypal=read('src/payments/paypal.js');
 const jobs=read('src/automation/jobs.js');
 
 assert(state.includes('FROM payment_history_transactions')&&state.includes('INSERT INTO payment_history_transactions'),
@@ -48,6 +49,8 @@ assert(state.includes('legacy_subscription_imports'),
   'legacy Stripe transaction identity must remain valid ownership evidence');
 assert(stripeHistory.includes('financialState.resolveCustomerId'),
   'Stripe history catch-up must reuse canonical customer ownership resolution');
+assert(paypal.includes('financialState.recordTransaction')&&paypal.includes('recordPaypalLivePayment')&&paypal.includes('recordPaypalLiveRefund'),
+  'PayPal webhook payments and refunds must enter the canonical customer financial ledger');
 
 assert(reconciliation.includes("liveStripeHistory.syncRecent")&&reconciliation.includes("syncRecentPayPalHistory")&&reconciliation.includes('reconcileLocalEvidence'),
   'unified reconciliation must converge Stripe, PayPal and local/Plisio evidence');
