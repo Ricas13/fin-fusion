@@ -6,7 +6,8 @@ const bulk=read('src/platform/admin-bulk-customers.js');
 const bulkOperations=read('src/customers/bulk-operations.js');
 const plans=read('src/platform/admin-plans.js');
 const customer=read('views/customer/dashboard.ejs');
-const customer360=read('src/platform/customer-360-view-v2.js');
+const customer360=read('src/platform/customer-360-view.js');
+const customer360Compact=read('src/platform/customer-360-compact.js');
 const settings=read('src/platform/settings-registry.js');
 const permanent=read('src/entitlements/permanent-access.js');
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'bulk workflows must use human-readable selectors');
@@ -14,7 +15,7 @@ assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'bulk 
 assert(/applyLocalPlanContract/.test(bulkOperations)&&/planChange\.contractSnapshot/.test(bulkOperations)&&/commercial_snapshot=\$10::jsonb/.test(bulkOperations),'local admin plan changes must refresh the subscription contract snapshot before reconciliation');
 assert(/service_type/.test(plans)&&/planSubnav/.test(plans),'plan editor must derive workflow from service type');
 assert(/Open Jellyfin|Open Stremio/.test(customer),'customer home must surface a primary watch action');
-assert(/Administrator overrides|Permanent/.test(customer360),'Customer 360 must expose explicit admin override controls');
+assert(/Remove Permanent User|Permanent User/.test(customer360)&&/Access \/ Holds|service-authority/.test(customer360Compact),'Customer 360 must expose explicit admin override controls');
 assert(/owner|href|description/.test(settings),'settings registry must declare ownership metadata');
 assert(/permanent/i.test(permanent),'permanent access lifecycle module missing');
 console.log('ux release contract: ok');
