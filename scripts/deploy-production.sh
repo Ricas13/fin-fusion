@@ -64,8 +64,8 @@ rollback_runtime() {
     allowed=1
   fi
   if [[ "$allowed" != 1 ]]; then
-    printf '\nAutomatic runtime rollback suppressed: database migrations changed in this release.\n' >&2
-    printf 'Use the encrypted pre-deploy backup and recovery tooling if database rollback is required.\n' >&2
+    printf '\nAutomatic runtime rollback suppressed: migrated schema compatibility with the previous runtime was not proven.\n' >&2
+    printf 'The existing web container was never intentionally stopped; use the encrypted pre-deploy backup and recovery tooling if database recovery is required.\n' >&2
     return 0
   fi
 
@@ -89,9 +89,17 @@ services:
 YAML
 
   printf '\nAttempting runtime rollback after %s...\n' "$reason" >&2
+  rollback_services=(automation-worker activity-worker backup-worker)
+  if [[ "$app_recreated" == 1 ]]; then
+    rollback_services=(app "${rollback_services[@]}")
+  fi
   docker compose -f docker-compose.yml -f "$rollback_override" up -d --no-deps --no-build --force-recreate \
-    app automation-worker activity-worker backup-worker
-  printf 'Previous runtime images restored. Database contents were not rolled back.\n' >&2
+    "${rollback_services[@]}"
+  if [[ "$app_recreated" == 1 ]]; then
+    printf 'Previous web and worker images restored. Database contents were not rolled back.\n' >&2
+  else
+    printf 'Previous worker images restored; the previous web application remained serving throughout. Database contents were not rolled back.\n' >&2
+  fi
 }
 
 on_error() {
