@@ -96,8 +96,8 @@ jobs:
             curl -fsS http://127.0.0.1:3031/health/ready >/dev/null
             sleep 2
           done
-          kill "$(cat /tmp/captainfin-base-app.pid)"
-          wait "$(cat /tmp/captainfin-base-app.pid)" 2>/dev/null || true
+          # Keep the previous generation alive through candidate boot. The
+          # overlap is the core zero-downtime invariant and is checked below.
 
       - name: Build exact production image
         run: |
@@ -168,9 +168,17 @@ jobs:
           done
           for _ in 1 2 3 4 5; do
             curl -fsS http://127.0.0.1:3030/health/ready >/dev/null
+            curl -fsS http://127.0.0.1:3031/health/ready >/dev/null
             test "$(docker inspect -f '{{.State.Running}}' merge-safety-app)" = true
+            kill -0 "$(cat /tmp/captainfin-base-app.pid)"
             sleep 3
           done
+
+          # Only after both generations overlap successfully may the previous
+          # generation be retired.
+          kill "$(cat /tmp/captainfin-base-app.pid)"
+          wait "$(cat /tmp/captainfin-base-app.pid)" 2>/dev/null || true
+          rm -f /tmp/captainfin-base-app.pid
 
       - name: Dump candidate runtime logs on failure
         if: failure()
