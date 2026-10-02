@@ -35,7 +35,7 @@ for (const file of files) {
   const pushesEveryAgentBranch = source.includes('agent/**');
   if (hasPullRequest && pushesEveryAgentBranch) duplicateTriggerFiles.push(file);
 
-  if (/\bnpm run check:fast\b/.test(source) || /\brun:\s*npm run check\s*$/m.test(source)) fastSuiteOwners.push(file);
+  if (/\bnpm run check:fast\b/.test(source) || /\brun:\s*npm run check\s*$/m.test(source) || /\brun:\s*npm run check:tag -- fast\s*$/m.test(source)) fastSuiteOwners.push(file);
   if (/\bnpm run check:release\b/.test(source)) releaseSuiteOwners.push(file);
 }
 
@@ -46,7 +46,7 @@ if (duplicateTriggerFiles.length) {
   );
 }
 if (JSON.stringify(fastSuiteOwners) !== JSON.stringify(['ci.yml'])) {
-  throw new Error(`check:fast must have exactly one workflow owner (ci.yml); found: ${fastSuiteOwners.join(', ') || 'none'}`);
+  throw new Error(`fast checks must have exactly one workflow owner (ci.yml); found: ${fastSuiteOwners.join(', ') || 'none'}`);
 }
 if (releaseSuiteOwners.length) {
   throw new Error(`Workflows must not rerun check:fast transitively through check:release: ${releaseSuiteOwners.join(', ')}`);
@@ -105,8 +105,8 @@ if (!releaseWorkflow.includes('npm run check:db')) {
 if (!releaseWorkflow.includes('lifecycle-upgrade-smoke.js')) {
   throw new Error('Release Integrity must retain the previous-schema lifecycle upgrade contract.');
 }
-if (!ciWorkflow.includes('npm run check')) {
-  throw new Error('CI must remain the canonical check:fast owner through npm run check.');
+if (!ciWorkflow.includes('npm run check:tag -- fast') && !ciWorkflow.includes('npm run check')) {
+  throw new Error('CI must remain the canonical owner of the fast tagged check suite.');
 }
 if (!integrationWorkflow.includes('node scripts/ci-integration-suite.js')) {
   throw new Error('Integration workflow must execute the centralized database integration suite.');
