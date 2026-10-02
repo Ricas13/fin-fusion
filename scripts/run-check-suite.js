@@ -6,23 +6,40 @@ const { spawn } = require('child_process');
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const scripts = packageJson.scripts || {};
+const suiteManifest = require('./check-suites');
 const scriptName = process.argv[2] || 'check:fast';
 const timeoutArg = process.argv.find(arg => arg.startsWith('--timeout-ms='));
 const timeoutMs = Math.max(1000, Number(timeoutArg?.split('=')[1] || process.env.CHECK_COMMAND_TIMEOUT_MS || 180000));
 const failureFile = process.env.CHECK_FAILURE_FILE || '.check-failure.txt';
 
+function manifestEntries(name, stack) {
+  const entries = suiteManifest.suites?.[name] || suiteManifest.aliases?.[name];
+  if (!entries) return null;
+  if (stack.includes(name)) throw new Error(`Recursive check suite reference: ${[...stack, name].join(' -> ')}`);
+  return entries.flatMap(entry => expandEntry(entry, [...stack, name]));
+}
+
+function expandEntry(entry, stack = []) {
+  const suite = manifestEntries(entry, stack);
+  if (suite) return suite;
+  const match = String(entry || '').match(/^npm run ([\w:-]+)$/);
+  if (!match) return [entry];
+  const name = match[1];
+  if (stack.includes(name)) throw new Error(`Recursive npm script reference: ${[...stack, name].join(' -> ')}`);
+  if (suiteManifest.suites?.[name] || suiteManifest.aliases?.[name]) return manifestEntries(name, stack);
+  if (!scripts[name]) throw new Error(`Unknown npm script: ${name}`);
+  return expand(scripts[name], [...stack, name]);
+}
+
 function expand(command, stack = []) {
   return String(command || '').split(/\s+&&\s+/).flatMap(part => {
-    const match = part.match(/^npm run ([\w:-]+)$/);
-    if (!match) return [part];
-    const name = match[1];
-    if (stack.includes(name)) throw new Error(`Recursive npm script reference: ${[...stack, name].join(' -> ')}`);
-    if (!scripts[name]) throw new Error(`Unknown npm script: ${name}`);
-    return expand(scripts[name], [...stack, name]);
+    return expandEntry(part, stack);
   });
 }
 
 function expandedScript(name) {
+  const suite = manifestEntries(name, []);
+  if (suite) return suite;
   if (!scripts[name]) throw new Error(`Unknown npm script: ${name}`);
   return expand(scripts[name], [name]);
 }
@@ -124,7 +141,7 @@ async function main() {
   }
 }
 
-module.exports = { expand, expandedScript, run };
+module.exports = { expand, expandedScript, run, suiteManifest };
 
 if (require.main === module) {
   main().catch(error => {

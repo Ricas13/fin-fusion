@@ -1,22 +1,9 @@
 'use strict';
 
-const { expandedScript } = require('./run-check-suite');
+const { expandedScript, suiteManifest } = require('./run-check-suite');
 
-const TAGS = Object.freeze({
-  fast: Object.freeze(['check:fast']),
-  db: Object.freeze(['check:db']),
-  billing: Object.freeze(['check:fast:commerce-support', 'check:db:commerce']),
-  access: Object.freeze([
-    'check:fast:foundation',
-    'check:fast:customer-access',
-    'check:fast:service-access',
-    'check:db:integrity',
-    'check:db:access',
-    'check:db:concurrency'
-  ]),
-  browser: Object.freeze(['check:fast:admin-ux', 'check:fast:dashboards', 'check:fast:operations']),
-  security: Object.freeze(['check:fast:foundation'])
-});
+const TAGS = Object.freeze(Object.fromEntries(Object.entries(suiteManifest.tags || {})
+  .map(([tag, suites]) => [tag, Object.freeze([...suites])])));
 
 function normalizeTags(values = []) {
   const tags = [...new Set((Array.isArray(values) ? values : [values])

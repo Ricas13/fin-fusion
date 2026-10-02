@@ -50,7 +50,7 @@ function localDependencies(file){
     while((match=pattern.exec(text)))specs.push(match[1]);
   }
   dependencies.push(...specs.map(spec=>resolveLocal(file,spec)).filter(Boolean));
-  for(const match of text.matchAll(/['"`]((?:src|scripts)\/[A-Za-z0-9._/-]+\.js)['"`]/g))if(jsSet.has(match[1]))dependencies.push(match[1]);
+  for(const match of text.matchAll(/(?:['"`]|\bnode\s+)((?:src|scripts)\/[A-Za-z0-9._/-]+\.js)\b/g))if(jsSet.has(match[1]))dependencies.push(match[1]);
   return [...new Set(dependencies)];
 }
 

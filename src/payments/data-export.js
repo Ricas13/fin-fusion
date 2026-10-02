@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const historyAccounting = require('./history-accounting');
 const financialState = require('./provider-financial-state');
+const moneyFormat = require('../platform/money-format');
 
 const MAX_TRANSACTION_EXPORT_ROWS = 250000;
 const UTF8_BOM = '\uFEFF';
@@ -28,21 +29,11 @@ function iso(value) {
     const d = value instanceof Date ? value : new Date(value);
     return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
-function currencyDigits(currency) {
-    try { return new Intl.NumberFormat('en', { style: 'currency', currency: String(currency || 'USD').toUpperCase(), currencyDisplay: 'narrowSymbol' }).resolvedOptions().maximumFractionDigits; }
-    catch (_) { return 2; }
-}
 function major(minor, currency) {
-    const digits = currencyDigits(currency);
-    return (Number(minor || 0) / (10 ** digits)).toFixed(digits);
+    return moneyFormat.currencyMinorDecimal(minor,currency || 'USD');
 }
 function portableAmount(minor, currency) {
-    const code = String(currency || 'USD').toUpperCase();
-    const amount = major(minor, code);
-    if (code === 'USD') return `$${amount}`;
-    if (code === 'GBP') return `£${amount}`;
-    if (code === 'EUR') return `€${amount}`;
-    return `${code} ${amount}`;
+    return moneyFormat.portableAmount(minor,currency || 'USD');
 }
 function snapshotObject(value) {
     if (!value) return {};

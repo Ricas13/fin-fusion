@@ -6,10 +6,11 @@ const accessCards=require('./customer-360-access-cards');
 const serviceDesiredState=require('../entitlements/service-desired-state');
 const customerInactivityStatus=require('../automation/customer-inactivity-status');
 const financialState=require('../payments/provider-financial-state');
+const moneyFormat=require('./money-format');
 const {esc,csrfHidden}=require('./html-primitives');
 
 function dt(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});}
-function money(minor,currency='GBP'){const raw=String(currency||'GBP').toUpperCase(),code=/^[A-Z]{3}$/.test(raw)?raw:'GBP';return new Intl.NumberFormat('en-GB',{style:'currency',currency:code,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}
+function money(minor,currency='GBP'){return moneyFormat.formatMinor(minor,currency);}
 function pill(text,tone=''){return `<span class="pill ${tone}">${esc(text)}</span>`;}
 function buttonForm(token,action,label,{tone='secondary',fields={}}={}){return `<form class="plainForm" method="post" action="${esc(action)}" data-native-submit="true">${csrfHidden(token)}${Object.entries(fields).map(([name,value])=>`<input type="hidden" name="${esc(name)}" value="${esc(value)}">`).join('')}<button class="button ${esc(tone)} sm" type="submit">${esc(label)}</button></form>`;}
 function actionLink(customerId,action,label,{tone='secondary',params={}}={}){const queryString=new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined&&value!==null&&String(value)!=='').map(([key,value])=>[key,String(value)])).toString();const href=`/admin/users/${encodeURIComponent(customerId)}/actions/${encodeURIComponent(action)}${queryString?`?${queryString}`:''}`;return `<a class="button ${esc(tone)} sm" href="${esc(href)}">${esc(label)}</a>`;}
