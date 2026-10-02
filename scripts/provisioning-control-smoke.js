@@ -12,7 +12,6 @@ const stremioRequeue=read('db/migrations/031_requeue_legacy_stremio_provisioning
 const paidRequeue=read('db/migrations/20260902211500_requeue_live_paid_jellyfin.sql');
 const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
-const provisioningFacade=read('src/jellyfin/provisioning.js');
 const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
@@ -78,14 +77,12 @@ assert(reconciliationLock.includes('metricsSnapshot')&&reconciliationLock.includ
 assert(reconciliationLock.includes('lockTimeouts')&&reconciliationLock.includes('cleanupFailures')&&reconciliationLock.includes('lastErrorCode'),'reconciliation diagnostics must retain failure, timeout and cleanup health signals');
 assert(reconciliationLock.includes('Customer reconciliation database connection cleanup failed.')&&!reconciliationLock.includes('client.end().catch(() => {})'),'dedicated reconciliation connection cleanup failures must be observable rather than silently discarded');
 assert(/async function reconcileCustomer\(customerId\)\s*\{[\s\S]{0,160}withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
-assert(provisioningFacade.includes("require('./provisioning-helpers')"),'legacy provisioning imports must use the dependency-safe helper surface');
 assert(provisioningHelpers.includes("require('./provisioning-engine')"),'helper surface must be the only low-level provisioning engine owner');
 assert(resilientProvisioning.includes("require('./provisioning-helpers')")&&!resilientProvisioning.includes("require('./provisioning')"),'canonical reconciler must depend directly on helpers without a compatibility-facade cycle');
-assert(provisioningFacade.includes("return require('./resilient-provisioning')"),'legacy provisioning imports must resolve mutations through the resilient owner');
-assert(provisioningFacade.includes('canonicalReconciler().reconcileCustomer(customerId)'),'legacy customer reconciliation must delegate instead of invoking the single-lane engine');
-assert(provisioningFacade.includes('canonicalReconciler().reconcileAccount(accountId)'),'legacy account reconciliation must delegate through the same multi-lane owner');
-assert(provisioningFacade.includes('canonicalReconciler().holdAccess(customerId, reason, actorUserId)')&&provisioningFacade.includes('canonicalReconciler().releaseAccess(customerId, actorUserId)'),'legacy hold mutations must delegate to the canonical owner');
-assert(provisioningFacade.includes('canonicalReconciler().expireSubscriptionsAndReconcile()'),'legacy expiry composition must delegate to the canonical owner');
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning.js')),
+  'retired provisioning compatibility facade must stay removed so customer mutations have one owner');
+assert(resilientProvisioning.includes("require('./provisioning-helpers')"),
+  'canonical resilient provisioning must consume the dependency-safe helper surface directly');
 assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId)')&&resilientProvisioning.includes('accessHolds.syncLegacySummary(customerId)'),'multi-lane reconciliation must canonicalize stale free-tier holds before resolving a newly paid entitlement');
 assert(resilientProvisioning.includes("RECONCILIATION_POSTCONDITION_FAILED")&&/assertLanePostcondition\('Primary',\s*primaryEntitlement,\s*primary\)/.test(resilientProvisioning),'reconciliation must not record a healthy result unless the entitled primary lane converged to an enabled account');
 assert(resilientProvisioning.includes('errorCode: error.code || null'),'failed provisioning runs must preserve stable machine-readable error codes for support diagnostics');
