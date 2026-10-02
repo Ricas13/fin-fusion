@@ -13,8 +13,6 @@ function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts
 function liveSubscriptions(detail){return (detail.subscriptions||[]).filter(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()));}
 function activeSubscription(detail){return liveSubscriptions(detail)[0]||detail.subscriptions?.[0]||null;}
 function isBanned(detail){return (detail?.activeHolds||[]).some(hold=>String(hold?.hold_type||'')==='administrative_ban'&&!hold?.released_at);}
-function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
-function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${escapeHtml(token)}">`;}
 function nav(id,token,appUserId){
   const impersonate=appUserId?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate">${csrfHidden(token)}<button class="detailTab" type="submit">Portal view</button></form>`:'';
   return `<nav class="detailTabs"><a class="detailTab active" href="/admin/users/${encodeURIComponent(id)}">Customer record</a>${impersonate}</nav>`;
