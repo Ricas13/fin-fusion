@@ -7,6 +7,7 @@
 
 const { query } = require('../db');
 const tableSort = require('./admin-table-sort');
+const financialState = require('../payments/provider-financial-state');
 
 const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 'expired'];
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
@@ -112,9 +113,7 @@ function baseJoins() {
             JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id
             WHERE ja2.customer_id=c.id AND ja2.account_purpose='jellyfin'
         ) recon ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT provider FROM payment_customers pc WHERE pc.customer_id=c.id ORDER BY pc.updated_at DESC LIMIT 1
-        ) pay ON TRUE
+        ${financialState.latestProviderIdentityJoinSql('c.id','pay')}
         LEFT JOIN LATERAL (
             SELECT cps.status,cps.last_error
             FROM customer_provisioning_state cps WHERE cps.customer_id=c.id
