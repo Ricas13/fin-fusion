@@ -27,8 +27,6 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-actions.js::subscriptions',
   'src/platform/admin-actions.js::customers',
   'src/platform/admin-actions.js::app_users',
-  'src/platform/admin-catalog-shell.js::plans',
-  'src/platform/admin-customer-jellyfin-password.js::jellyfin_accounts',
   'src/platform/admin-customer-management.js::customers',
   'src/platform/admin-customer-management.js::app_users',
   'src/platform/admin-media-controls.js::plans',
@@ -40,13 +38,8 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-profile-account.js::app_users',
   'src/platform/admin-request-plan-policy.js::plans',
   'src/platform/admin-service-authority.js::customers',
-  'src/platform/catalog-versioning.js::plans',
-  'src/platform/customer-communications.js::customers',
-  'src/platform/customer-jellyfin.js::jellyfin_accounts',
-  'src/platform/customer-password-sync.js::jellyfin_accounts',
   'src/platform/portal-credential-confirmation.js::customers',
   'src/platform/portal-credential-confirmation.js::app_users',
-  'src/platform/reporting-currency.js::plans'
 ]);
 
 
