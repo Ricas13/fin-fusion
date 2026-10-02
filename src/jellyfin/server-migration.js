@@ -2,7 +2,7 @@
 
 const { query, transaction } = require('../db');
 const planServers = require('./plan-servers');
-const provisioning = require('./provisioning');
+const provisioning = require('./resilient-provisioning');
 
 const RUNNING_STALE_MINUTES = 45;
 
