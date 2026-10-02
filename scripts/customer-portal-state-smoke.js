@@ -89,7 +89,12 @@ const addonOnlyNav = customerNav.optionsFromPortal(addonOnlyPortal);
 assert.strictEqual(addonOnlyNav.showAccess, true, 'a canonical service add-on must keep My Access visible even without a primary service lane');
 assert.strictEqual(addonOnlyNav.showServicePasswords, false, 'a service add-on alone must not invent non-add-on request access');
 
-const homeRows = dashboard.canonicalAccessRows(portal);
+const homeRows = dashboard.canonicalAccessRows(portal, {
+  currentPlan: extensionEntitlement,
+  freePlan: freeEntitlement,
+  stremioPlan: null,
+  embyPlan: embyEntitlement
+});
 assert(
   subscriptions.some(row => row.subscription_id === 'stremio-addon'),
   'My Access projection must retain canonical current service add-ons'
@@ -103,8 +108,8 @@ assert(
   'Account Home must keep canonical extension-backed access without rechecking raw status/current_period_end'
 );
 assert(
-  homeRows.some(row => row.subscription_id === 'stremio-blocked'),
-  'Account Home must preserve canonical blocked service state for truthful presentation'
+  !homeRows.some(row => row.subscription_id === 'stremio-blocked'),
+  'Account Home active-access rows must not leak a blocked lane retained in the full canonical portal projection'
 );
 
 const dashboardSource = read('src/platform/customer-dashboard.js');
@@ -127,7 +132,8 @@ assert(
 );
 assert(
   !dashboardView.includes('function isLive(')
-    && dashboardView.includes('const currentSubscriptions=Array.isArray(portal.subscriptions)?portal.subscriptions.filter(s=>!s.is_addon):[]')
+    && dashboardSource.includes('currentAccessRows:accessRows')
+    && dashboardView.includes("typeof currentAccessRows!=='undefined'&&Array.isArray(currentAccessRows)")
     && dashboardView.includes('entitlementEnd(s)'),
   'Account Home rendering must trust canonical current subscriptions and use canonical access expiry rather than raw status/current-period filtering'
 );
