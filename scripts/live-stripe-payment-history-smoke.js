@@ -81,13 +81,43 @@ assert.strictEqual(settlement.grossMinor, 296);
 assert.strictEqual(settlement.feeMinor, 36);
 assert.strictEqual(settlement.netMinor, 260);
 
+const refund = live.refundHistoryValues(charge, {
+  id: 're_refund',
+  amount: 200,
+  currency: 'usd',
+  status: 'succeeded',
+  created: 1788582400
+}, {
+  id: 'txn_refund',
+  amount: -200,
+  fee: 0,
+  net: -200,
+  currency: 'usd',
+  status: 'available',
+  created: 1788582400
+}, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+assert.strictEqual(refund.providerTransactionId, 'txn_refund');
+assert.strictEqual(refund.providerReferenceId, 're_refund');
+assert.strictEqual(refund.providerSourceId, 'ch_resub_6');
+assert.strictEqual(refund.grossMinor, -200);
+assert.strictEqual(refund.customerId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+assert.strictEqual(classifier.historyKind({
+  provider: 'stripe',
+  transaction_type: 'refund',
+  transaction_status: refund.status,
+  gross_amount_minor: refund.grossMinor
+}), 'refund');
+
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src/payments/live-stripe-payment-history.js'), 'utf8');
 const page = fs.readFileSync(path.join(root, 'src/platform/admin-transactions.js'), 'utf8');
 
-assert(source.includes("ON CONFLICT(provider,provider_transaction_id) DO UPDATE"));
-assert(source.includes("transaction_type='charge'"));
+assert(source.includes("require('./provider-financial-truth')"));
+assert(source.includes('financialTruth.upsertTransaction'));
+assert(source.includes("transactionType: 'charge'"));
+assert(source.includes("transactionType: 'refund'"));
 assert(source.includes("expand: ['data.balance_transaction','data.payment_intent','data.invoice']"));
+assert(source.includes("expand: ['data.balance_transaction']"));
 assert(source.includes('balanceTransactions.retrieve'));
 assert(source.includes('providerAuthoritative: true'));
 assert(source.includes('providerTransactionId: String(balanceTransaction.id)'));
@@ -95,8 +125,10 @@ assert(source.includes('providerSourceId: String(charge.id)'));
 assert(source.includes('FROM legacy_subscription_imports'));
 assert(!/INSERT\s+INTO\s+subscriptions/i.test(source));
 assert(!/UPDATE\s+subscriptions/i.test(source));
-assert(page.includes("require('../payments/live-stripe-payment-history')"));
-assert(page.indexOf('await liveStripeHistory.syncRecent()') < page.indexOf('browser.listTransactions'));
+assert(!page.includes("require('../payments/live-stripe-payment-history')"),
+  'opening Transactions must not be what causes Stripe provider reconciliation');
+assert(!page.includes('await liveStripeHistory.syncRecent()'),
+  'Transactions must remain a read-only view over the canonical ledger');
 
 const sequence = [
   { provider: 'stripe', transaction_type: 'charge', gross_amount_minor: 500 },
