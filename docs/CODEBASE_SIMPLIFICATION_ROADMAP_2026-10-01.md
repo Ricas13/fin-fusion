@@ -344,8 +344,8 @@ Tasks:
   - pills/status tones
   - admin form rows/buttons/cards
 - [x] Establish canonical helpers/components.
-- [ ] Migrate modules gradually.
-- [ ] Keep feature-specific rendering local where abstraction would make code harder to read.
+- [x] Migrate modules gradually.
+- [x] Keep feature-specific rendering local where abstraction would make code harder to read.
 - [x] Add tests preventing unsafe raw HTML interpolation in canonical form helpers.
 
 **Done when:** common UI mechanics have one implementation while domain-specific presentation remains explicit.
@@ -356,20 +356,20 @@ Do not split files solely because they are large. Split only where the module cu
 
 Initial review candidates:
 
-- [ ] `src/platform/admin-customers-list.js`
-- [ ] `src/platform/admin-orders.js`
-- [ ] `src/platform/admin-billing.js`
-- [ ] `src/platform/admin-stremio-sources.js`
-- [ ] `src/integrations/request-user-sync.js`
-- [ ] `src/payments/customer-plan-change.js`
-- [ ] `src/payments/lifecycle.js`
-- [ ] `src/jellyfin/activity.js`
+- [x] `src/platform/admin-customers-list.js`
+- [x] `src/platform/admin-orders.js`
+- [x] `src/platform/admin-billing.js`
+- [x] `src/platform/admin-stremio-sources.js`
+- [x] `src/integrations/request-user-sync.js`
+- [x] `src/payments/customer-plan-change.js`
+- [x] `src/payments/lifecycle.js`
+- [x] `src/jellyfin/activity.js`
 
 For each candidate:
 
-- [ ] identify read model vs command vs rendering vs transport responsibilities,
+- [x] identify read model vs command vs rendering vs transport responsibilities,
 - [ ] remove duplicated business decisions,
-- [ ] leave cohesive modules intact when splitting adds indirection without ownership benefit.
+- [x] leave cohesive modules intact when splitting adds indirection without ownership benefit.
 
 ---
 
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Oversized-module ownership review completed in `docs/OVERSIZED_MODULE_REVIEW_2026-10-02.md`. Large payment state machines are intentionally kept cohesive; platform read/render modules are not split for size alone; Stremio source admin, lifecycle policy configuration and activity read models are identified as future split candidates only where ownership becomes clearer. `admin-orders.js` already shed duplicate date/CSRF mechanics during the review.
 
 - 2026-10-02 — Added concrete `scripts/ci/`, `scripts/runtime/` and `scripts/ops/` conventions with compatibility rules. Existing entrypoint paths are intentionally not bulk-moved; new/migrated script families can adopt the directories incrementally, and CI-only directory/docs are excluded from the runtime image.
 
