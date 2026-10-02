@@ -33,6 +33,7 @@ const dataRetention=require('./data-retention');
 const creationIntentRecovery=require('./jellyfin-creation-intent-recovery');
 const customerServiceRecovery=require('./customer-service-recovery');
 const revenueIntegrity=require('./revenue-integrity');
+const revenueIntegrityRepair=require('./revenue-integrity-repair');
 const pendingRegistrations=require('../security/pending-registration');
 const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
@@ -100,8 +101,20 @@ function transientIntegrityFinding(item){
 }
 
 async function revenueIntegritySafeRun(){
- const scanned=await revenueIntegrity.scan();
- const findings=scanned.filter(item=>!transientIntegrityFinding(item));
+ let scanned=await revenueIntegrity.scan();
+ let findings=scanned.filter(item=>!transientIntegrityFinding(item));
+
+ // The watchdog remains independent from reconciliation when deciding what is
+ // wrong, but findings already approved by Access Integrity as auto-repairable
+ // get one exact, revalidated repair attempt before we page an operator.
+ // We always scan again afterwards; repair code never gets to declare itself
+ // successful without the independent scanner agreeing that the invariant is gone.
+ const autoRepair=await revenueIntegrityRepair.repairFindings(findings);
+ if(autoRepair.attempted){
+  scanned=await revenueIntegrity.scan();
+  findings=scanned.filter(item=>!transientIntegrityFinding(item));
+ }
+
  const suppressed=scanned.length-findings.length;
  let notification=null;
  if(findings.length){
@@ -117,6 +130,7 @@ async function revenueIntegritySafeRun(){
   failed:findings.length,
   findings,
   notification,
+  autoRepair,
   infrastructureSuppressed:suppressed,
   ...(warning?{warning}:{})
  };
