@@ -6,6 +6,7 @@ const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
 const incidents = require('./incidents');
 const providerLifecycleState = require('./provider-lifecycle-state');
+const financialTruth = require('./provider-financial-truth');
 
 const API_BASE = 'https://api.plisio.net';
 const WAITING_STATUSES = providerLifecycleState.PLISIO_WAITING;
@@ -241,6 +242,27 @@ async function activateCompleted(remote, fields, intent) {
         providerSubscriptionId: fields.id,
         providerStatus: 'completed',
         commercialSnapshot: contract.snapshot
+    });
+    await financialTruth.upsertTransaction({
+        provider: 'plisio',
+        providerTransactionId: fields.id,
+        transactionType: 'payment',
+        transactionStatus: 'completed',
+        occurredAt: remote?.created_at || remote?.updated_at || remote?.date || new Date(),
+        currency: fields.sourceCurrency,
+        grossMinor: amountMinor,
+        feeMinor: 0,
+        netMinor: amountMinor,
+        providerBillingReference: fields.id,
+        providerCheckoutId: fields.id,
+        customerId: intent.customer_id,
+        metadata: {
+            providerAuthoritative: true,
+            feeDataAvailable: false,
+            plisioOperation: true,
+            checkoutIntentId: String(intent.id)
+        },
+        identitySource: 'plisio_completed_operation'
     });
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
     return { status: 'completed', completed: true };
