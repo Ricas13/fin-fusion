@@ -6,7 +6,7 @@ const {query,transaction}=require('../db');
 const totp=require('../auth/totp');
 const {keyFromEnv,encryptWithEnv,decryptWithEnv}=require('./purpose-crypto');
 const emailChange=require('./customer-email-change');
-const passwordBreach=require('./password-breach');
+const passwordPolicy=require('./customer-password-policy');
 
 function normalizeRecovery(code){
   return String(code||'').toUpperCase().replace(/[^A-Z2-7]/g,'');
@@ -216,10 +216,7 @@ async function revokeOtherSessions(userId,currentSessionId){
 }
 
 async function changePassword(userId,currentPassword,newPassword,currentSessionId){
-  if(typeof newPassword!=='string'||newPassword.length<8||newPassword.length>200){
-    throw new Error('Password must be between 8 and 200 characters');
-  }
-  await passwordBreach.assertNotBreached(newPassword);
+  await passwordPolicy.validateNewPassword(newPassword);
   const found=await query(
     `SELECT password_hash FROM app_users
      WHERE id=$1 AND role='customer' AND active=TRUE`,
