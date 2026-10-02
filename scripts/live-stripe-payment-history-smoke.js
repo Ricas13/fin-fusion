@@ -95,8 +95,8 @@ assert(source.includes('providerSourceId: String(charge.id)'));
 assert(source.includes('FROM legacy_subscription_imports'));
 assert(!/INSERT\s+INTO\s+subscriptions/i.test(source));
 assert(!/UPDATE\s+subscriptions/i.test(source));
-assert(page.includes("require('../payments/live-stripe-payment-history')"));
-assert(page.indexOf('await liveStripeHistory.syncRecent()') < page.indexOf('browser.listTransactions'));
+assert(page.includes("require('../payments/provider-financial-reconciliation')"));
+assert(page.indexOf('providerFinancialReconciliation.syncRecent') < page.indexOf('browser.listTransactions'));
 
 const sequence = [
   { provider: 'stripe', transaction_type: 'charge', gross_amount_minor: 500 },
