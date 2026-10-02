@@ -4,6 +4,7 @@ const helpers = require('./provisioning-helpers');
 const reconciliationLock = require('./reconciliation-lock');
 const subscriptionExpiry = require('../entitlements/subscription-expiry');
 
+// @compatibility-facade retirement: remove when production importer count reaches zero.
 // Compatibility facade: older platform code imports ./provisioning for helper
 // functions as well as customer mutations. Low-level helper ownership lives in
 // provisioning-helpers, while every customer mutation delegates to the canonical
