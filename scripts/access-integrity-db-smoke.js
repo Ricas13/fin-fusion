@@ -127,8 +127,12 @@ function kindsFor(findings, customerId) {
       customerId: migratedBlockedFreeMissing,
       type: 'inactivity_policy',
       sourceKey: `plan:${freePlanId}`,
-      reason: 'access integrity migrated Free inactivity smoke',
-      metadata: { subscriptionId: migratedBlockedSubscription }
+      reason: 'Free Server inactivity restore pending successful reprovisioning',
+      metadata: {
+        subscriptionId: migratedBlockedSubscription,
+        restoreReconcileFailed: true,
+        error: 'synthetic restore failure'
+      }
     });
 
     const claimedBlockedFreeMissing = await makeCustomer('free-claimed-blocked-missing');
@@ -212,9 +216,13 @@ function kindsFor(findings, customerId) {
     assert(!kindsFor(findings, freeReady).has('free_plan_without_ready_server'),
       'ready Free plan+server must not be reported as inconsistent');
     assert(!kindsFor(findings, migratedBlockedFreeMissing).has('free_plan_without_ready_server'),
-      'migrated Free entitlement under its exact inactivity hold must be treated as intentionally blocked, not stranded');
+      'failed migrated Free restore must not be misclassified as a generic stranded entitlement');
+    assert(kindsFor(findings, migratedBlockedFreeMissing).has('free_restore_reprovision_failed'),
+      'failed migrated Free restore must remain visible as its own operator-attention finding');
     assert(!kindsFor(findings, claimedBlockedFreeMissing).has('free_plan_without_ready_server'),
       'Free claim under its exact inactivity hold must be treated as intentionally blocked, not stranded');
+    assert(!kindsFor(findings, claimedBlockedFreeMissing).has('free_restore_reprovision_failed'),
+      'ordinary inactivity removal must not be reported as a failed explicit restore');
     assert(kindsFor(findings, protectedFreeMissing).has('free_plan_without_ready_server'),
       'explicit administrator-present access must remain visible to the integrity scanner even when an automatic hold exists');
     assert(kindsFor(findings, permanentFreeMissing).has('free_plan_without_ready_server'),
