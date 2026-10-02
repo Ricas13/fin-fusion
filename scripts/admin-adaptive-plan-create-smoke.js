@@ -7,6 +7,7 @@ const { parse, form, values } = require('../src/platform/admin-plan-create-v2');
 
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src/platform/admin-plan-create-v2.js'), 'utf8');
+const planCommands = fs.readFileSync(path.join(root, 'src/catalog/plan-command-service.js'), 'utf8');
 const browser = fs.readFileSync(path.join(root, 'public/js/admin-plan-create-v2.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'public/css/admin-adaptive-plans.css'), 'utf8');
 const capabilityCss = fs.readFileSync(path.join(root, 'public/css/admin-capability.css'), 'utf8');
@@ -70,9 +71,10 @@ assert.match(stremioHtml, /name="stremioHouseholdNetworkLimit"/);
 assert.match(stremioHtml, /Unlimited streams/);
 assert.match(stremioHtml, /data-stremio-access/);
 
-assert.match(source, /stremio_household_network_limit/);
-assert.match(source, /stremio_ip_replacement_policy/);
-assert.match(source, /stremio_ip_replacement_cooldown_minutes/);
+assert.match(source, /planCommands\.createPlan\(plan, actorUserId\)/, 'plan creation must delegate persistence to the canonical plan command service');
+assert.match(planCommands, /stremio_household_network_limit/);
+assert.match(planCommands, /stremio_ip_replacement_policy/);
+assert.match(planCommands, /stremio_ip_replacement_cooldown_minutes/);
 assert.doesNotMatch(source, /data-free-lifecycle|inactivityEnabled|inactivityDryRun|deleteAfterDisableDays/, 'new-plan source must not reintroduce a disabled-user lifecycle configuration');
 assert.doesNotMatch(source, /child_process|execSync|spawnSync/);
 assert.match(browser, /free_jellyfin/);
