@@ -29,9 +29,6 @@ const documentedLegacyExceptions = new Set([
   'src/platform/admin-actions.js::app_users',
   'src/platform/admin-customer-management.js::customers',
   'src/platform/admin-customer-management.js::app_users',
-  'src/platform/admin-profile-account.js::subscriptions',
-  'src/platform/admin-profile-account.js::customers',
-  'src/platform/admin-profile-account.js::app_users',
   'src/platform/portal-credential-confirmation.js::customers',
   'src/platform/portal-credential-confirmation.js::app_users',
 ]);
@@ -167,5 +164,26 @@ assert(accessControlOwner.includes('async function clearAutomationProtection')
     && accessControlOwner.includes('UPDATE customers')
     && accessControlOwner.includes('automation_protected=FALSE'),
   'access domain must own automation-protection reset persistence');
+
+
+
+const adminProfileRoute=fs.readFileSync(path.join(root,'src/platform/admin-profile-account.js'),'utf8');
+const adminProfileSecurity=fs.readFileSync(path.join(root,'src/security/admin-profile-account.js'),'utf8');
+const adminLinkedProfile=fs.readFileSync(path.join(root,'src/customers/admin-linked-profile.js'),'utf8');
+assert(adminProfileRoute.includes("require('../security/admin-profile-account')")
+    && adminProfileRoute.includes("require('../customers/admin-personal-media-profile')")
+    && !adminProfileRoute.includes('UPDATE app_users')
+    && !adminProfileRoute.includes('UPDATE customers')
+    && !adminProfileRoute.includes('INSERT INTO customers')
+    && !adminProfileRoute.includes('INSERT INTO subscriptions'),
+  'admin profile route must delegate identity, customer and entitlement persistence');
+assert(adminProfileSecurity.includes('async function updateAdminEmail')
+    && adminProfileSecurity.includes('UPDATE app_users')
+    && adminProfileSecurity.includes('linkedProfile.syncLinkedEmailTx'),
+  'security domain must own administrator identity email persistence');
+assert(adminLinkedProfile.includes('UPDATE customers')
+    && adminLinkedProfile.includes('INSERT INTO customers')
+    && adminLinkedProfile.includes('manualSubscriptions.createManualSubscriptionTx'),
+  'customer profile owner must own linked customer persistence and delegate subscription creation to entitlements');
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
