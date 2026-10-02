@@ -86,8 +86,9 @@ const source = fs.readFileSync(path.join(root, 'src/payments/live-stripe-payment
 const page = fs.readFileSync(path.join(root, 'src/platform/admin-transactions.js'), 'utf8');
 const financialState = fs.readFileSync(path.join(root, 'src/payments/provider-financial-state.js'), 'utf8');
 
-assert(source.includes("ON CONFLICT(provider,provider_transaction_id) DO UPDATE"));
-assert(source.includes("transaction_type='charge'"));
+assert(source.includes('financialState.recordTransaction'),'Stripe settlement sync must write through canonical provider financial state');
+assert(source.includes("transactionType:'charge'"),'Stripe charge sync must classify the canonical ledger row as a charge');
+assert(financialState.includes("ON CONFLICT(provider,provider_transaction_id) DO UPDATE"),'canonical provider financial state must own idempotent transaction upserts');
 assert(source.includes("expand: ['data.balance_transaction','data.payment_intent','data.invoice']"));
 assert(source.includes('balanceTransactions.retrieve'));
 assert(source.includes('providerAuthoritative: true'));
