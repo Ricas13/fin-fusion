@@ -44,6 +44,16 @@ assert.strictEqual(historyAccounting.historyKind({ provider: 'paypal', transacti
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'S', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'paypal', transaction_type: 'T0006', transaction_status: 'D', gross_amount_minor: 1000 }), null, 'dashboard must reject denied PayPal revenue too');
 
+assert.strictEqual(dashboardLedger.authoritativePlisio({
+    provider:'plisio',transaction_type:'payment',transaction_status:'completed',gross_amount_minor:600,
+    metadata:{providerAuthoritative:true,providerVerified:true,feeDataAvailable:false}
+}),true,'verified Plisio settlements must be usable by Commerce accounting without Stripe/PayPal import coverage');
+assert.strictEqual(dashboardLedger.authoritativePlisio({
+    provider:'plisio',transaction_type:'payment',transaction_status:'completed',gross_amount_minor:600,
+    metadata:{providerAuthoritative:true,providerVerified:false}
+}),false,'unverified Plisio history must never be booked into Commerce accounting');
+
+
 const delayedStripeRevenue = dashboardAnalytics.revenueFromEvent({
     provider: 'stripe',
     event_type: 'checkout.session.async_payment_succeeded',
