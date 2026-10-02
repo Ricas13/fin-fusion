@@ -5,15 +5,6 @@ const fs=require('fs');
 const path=require('path');
 
 const root=path.join(__dirname,'..');
-const retired=[
-  'src/automation/job-metadata.js',
-  'src/automation/critical-jobs.js'
-];
-
-for(const file of retired){
-  assert(!fs.existsSync(path.join(root,file)),`retired automation compatibility module returned: ${file}`);
-}
-
 const roots=['src','scripts'];
 const offenders=[];
 function walk(dir){
@@ -24,12 +15,19 @@ function walk(dir){
       const rel=path.relative(root,full).replace(/\\/g,'/');
       if(rel==='scripts/automation-registry-ownership-smoke.js')continue;
       const source=fs.readFileSync(full,'utf8');
-      if(/require\(\s*['"][^'"]*(?:job-metadata|critical-jobs)['"]\s*\)/.test(source))offenders.push(rel);
+      if(/require\(\s*['"][^'"]*(?:job-metadata|critical-jobs)['"]\s*\)/.test(source)
+        && !['src/automation/job-metadata.js','src/automation/critical-jobs.js'].includes(rel))offenders.push(rel);
     }
   }
 }
 for(const folder of roots)walk(path.join(root,folder));
-assert.deepStrictEqual(offenders,[],'production/tests must not retain retired automation metadata/facade imports');
+assert.deepStrictEqual(offenders,[],'production/tests must consume the canonical jobs registry rather than compatibility facades');
+const metadataFacade=fs.readFileSync(path.join(root,'src','automation','job-metadata.js'),'utf8');
+const criticalFacade=fs.readFileSync(path.join(root,'src','automation','critical-jobs.js'),'utf8');
+assert(metadataFacade.includes("require('./jobs')")&&!metadataFacade.includes('health: { defaultIntervalSeconds'),
+  'job-metadata compatibility must delegate to jobs.js without recreating scheduling truth');
+assert(criticalFacade.includes("require('./jobs')")&&!criticalFacade.includes("require('./job-metadata')"),
+  'critical-jobs compatibility must delegate directly to jobs.js');
 
 const registry=fs.readFileSync(path.join(root,'src','automation','jobs.js'),'utf8');
 assert(registry.includes('const JOB_METADATA=Object.freeze({'),'executable job registry must own scheduling metadata');
