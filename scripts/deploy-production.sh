@@ -34,8 +34,9 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || fail 'another CAPTAiNFiN production deployment is already running'
 fi
 
-services_stopped=0
-services_recreated=0
+workers_stopped=0
+workers_recreated=0
+app_recreated=0
 migration_started=0
 rollback_safe=0
 rollback_override=''
@@ -55,10 +56,10 @@ rollback_runtime() {
   local reason="${1:-deployment failure}"
   local allowed=0
 
-  # Before migrations begin the old containers are always safe to resume. Once
-  # migrations have started, automatic runtime rollback is only allowed when the
-  # deployed-to-current source diff contains no migration changes. Database
-  # rollback remains a separate, explicit recovery operation.
+  # Before migrations begin the previous runtime is always safe to resume.
+  # After migrations begin, rollback is allowed only after either source
+  # comparison proved no schema change or the still-running previous web
+  # application proved the migrated schema remains N-1 compatible in production.
   if [[ "$migration_started" == 0 || "$rollback_safe" == 1 ]]; then
     allowed=1
   fi
@@ -96,7 +97,7 @@ YAML
 on_error() {
   local rc=$?
   trap - ERR
-  if [[ "$services_stopped" == 1 || "$services_recreated" == 1 ]]; then
+  if [[ "$workers_stopped" == 1 || "$workers_recreated" == 1 || "$app_recreated" == 1 ]]; then
     rollback_runtime "deployment exit $rc" || printf 'Automatic runtime rollback attempt failed; manual recovery is required.\n' >&2
   fi
   printf '\nDeployment failed (exit %s). Current service state:\n' "$rc" >&2
@@ -222,25 +223,41 @@ if [[ "$existing_database" == 1 ]]; then
   log 'Creating encrypted pre-deploy PostgreSQL backup'
   docker compose --profile recovery run --rm --no-deps -e BACKUP_DIR=/backups/predeploy recovery-tools npm run db:backup
 
-  # Keep the existing containers intact but stopped until the new schema and
-  # runtime roles are ready. This removes the old-app/new-schema write race and
-  # preserves their image IDs for a safe application-only rollback.
-  log 'Draining runtime services before database migration'
-  docker compose stop --timeout 45 app automation-worker activity-worker backup-worker
-  services_stopped=1
+  # Keep the customer-facing web application serving while the release is
+  # prepared. Mutation-capable background workers are drained before migration,
+  # but the portal itself is not stopped merely because a deployment is running.
+  log 'Draining background workers before database migration; keeping the current portal live'
+  docker compose stop --timeout 45 automation-worker activity-worker backup-worker
+  workers_stopped=1
 fi
 
 log 'Applying migrations, runtime DB roles and administrator bootstrap'
 migration_started=1
 docker compose run --rm --no-deps migrate
 
-log 'Recreating long-running services only after migration/role bootstrap succeeded'
-docker compose up -d --no-deps app automation-worker activity-worker backup-worker
-services_recreated=1
+if [[ "$existing_database" == 1 && -n "$(compose_service_container app)" ]]; then
+  log 'Proving the currently serving portal remains healthy on the migrated schema'
+  previous_app_ready=0
+  for _ in $(seq 1 30); do
+    health="$(compose_service_health app)"
+    if [[ "$health" == 'healthy' || "$health" == 'running' ]]; then
+      previous_app_ready=1
+      break
+    fi
+    [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
+    sleep 2
+  done
+  [[ "$previous_app_ready" == 1 ]] || fail 'previous web application did not remain healthy after migration'
+  rollback_safe=1
+  log 'Previous web runtime is compatible with the migrated schema; rollback remains available'
+fi
 
-log 'Waiting for application and worker health checks'
-services=(app automation-worker activity-worker backup-worker)
-for service in "${services[@]}"; do
+log 'Starting candidate background workers while the previous portal remains live'
+docker compose up -d --no-deps automation-worker activity-worker backup-worker
+workers_recreated=1
+
+log 'Waiting for candidate worker health checks'
+for service in automation-worker activity-worker backup-worker; do
   ready=0
   for _ in $(seq 1 90); do
     health="$(compose_service_health "$service")"
@@ -252,22 +269,40 @@ for service in "${services[@]}"; do
     sleep 2
   done
   [[ "$ready" == 1 ]] || fail "$service did not become healthy"
-done
-
-log 'Verifying runtime build identity'
-for service in app automation-worker activity-worker backup-worker; do
   runtime_sha="$(compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA)"
   [[ "$runtime_sha" == "$CAPTAINFIN_BUILD_SHA" ]] || fail "$service is running build ${runtime_sha:-unknown}, expected $CAPTAINFIN_BUILD_SHA"
 done
 
-log 'Running application-level deployment verification'
-docker compose exec -T app npm run verify:deployment
+log 'Running candidate deployment verification before touching the live web application'
+docker compose run --rm --no-deps app npm run verify:deployment
+
+log 'Candidate verified; switching the customer-facing web application'
+docker compose up -d --no-deps app
+app_recreated=1
+
+app_ready=0
+for _ in $(seq 1 90); do
+  health="$(compose_service_health app)"
+  if [[ "$health" == 'healthy' || "$health" == 'running' ]]; then
+    app_ready=1
+    break
+  fi
+  [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
+  sleep 2
+done
+[[ "$app_ready" == 1 ]] || fail 'app did not become healthy after verified cutover'
+
+runtime_sha="$(compose_service_env_value app CAPTAINFIN_BUILD_SHA)"
+[[ "$runtime_sha" == "$CAPTAINFIN_BUILD_SHA" ]] || fail "app is running build ${runtime_sha:-unknown}, expected $CAPTAINFIN_BUILD_SHA"
+
+docker compose exec -T app node -e "fetch('http://127.0.0.1:3030/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 log 'Publishing verified runtime alias'
 docker image tag "$CAPTAINFIN_IMAGE" captainfin:current
 
-services_stopped=0
-services_recreated=0
+workers_stopped=0
+workers_recreated=0
+app_recreated=0
 log 'Deployment complete'
 docker compose ps
 printf '\nCAPTAiNFiN is running from commit %s.\n' "${CAPTAINFIN_BUILD_SHA:0:8}"
