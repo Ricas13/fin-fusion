@@ -11,6 +11,7 @@ const renewalCredits = require('./service-credit-renewals');
 const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
 const providerLifecycleState = require('./provider-lifecycle-state');
+const liveStripeHistory = require('./live-stripe-payment-history');
 const referrals = require('../referrals');
 const { query } = require('../db');
 
@@ -273,7 +274,9 @@ async function incidentContextForCharge(stripe,charge) {
 async function reverseReferralForDirectIdentity(identity,incidentResult,reason,options={}){if(identity?.scope!=='direct'||!identity.customerId)return null;return referrals.revisitRewardAfterAdversePayment({referredCustomerId:identity.customerId,incidentId:incidentResult?.incident?.id||null,reason,...options});}
 async function recordStripeRefund(event,stripe,charge) {
     const ctx=await incidentContextForCharge(stripe,charge),amount=Number(charge?.amount||0),refunded=Number(charge?.amount_refunded||0),fullRefund=amount>0&&refunded>=amount,recorded=await incidents.record({provider:'stripe',eventId:event.id,caseId:charge?.id||ctx.paymentIntentId,kind:'refund',status:'recorded',identity:ctx.identity,providerSubscriptionId:ctx.providerSubscriptionId,amountMinor:refunded,currency:charge?.currency,metadata:{...ctx.metadata,chargeId:charge?.id||null,fullRefund,originalAmountMinor:amount}});
-    await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:refund:${event.id}`,{amountMinor:refunded,fullLoss:fullRefund});return recorded;
+    await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:refund:${event.id}`,{amountMinor:refunded,fullLoss:fullRefund});
+    await liveStripeHistory.syncChargeRefunds(stripe,charge,ctx.identity?.scope==='direct'?ctx.identity.customerId:null);
+    return recorded;
 }
 async function recordStripeDispute(event,stripe,dispute) {
     const charge=typeof dispute?.charge==='string'?await stripe.charges.retrieve(dispute.charge):dispute?.charge||null;
