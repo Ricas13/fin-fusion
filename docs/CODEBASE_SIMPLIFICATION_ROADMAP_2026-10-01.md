@@ -398,16 +398,16 @@ For each candidate:
 
 These are principles to apply opportunistically while completing the prioritized work, not excuses for unrelated rewrites.
 
-- [ ] One canonical current customer access snapshot.
+- [x] One canonical current customer access snapshot.
 - [ ] One owner for each destructive mutation.
 - [ ] One provider capability/transport boundary.
-- [ ] One durable external-notification path.
-- [ ] One plan mutation contract.
-- [ ] One automation registry.
-- [ ] One runtime Compose service-resolution mechanism.
+- [x] One durable external-notification path.
+- [x] One plan mutation contract.
+- [x] One automation registry.
+- [x] One runtime Compose service-resolution mechanism.
 - [x] One date/time boundary convention.
 - [ ] One test fixture layer for shared database/provider scenarios.
-- [ ] One explicit UI component/helper for repeated mechanics.
+- [x] One explicit UI component/helper for repeated mechanics.
 - [ ] No new direct business SQL in `src/platform` without a documented exception.
 - [x] No new compatibility facade without a retirement condition.
 
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Reconciled cross-cutting completion markers with the implemented contracts already enforced elsewhere in this branch: canonical customer access state, durable notification outboxes, plan mutation ownership, automation registry ownership, Compose service resolution and shared UI primitives are now marked complete. Broader destructive-mutation/provider/test-fixture boundaries remain open where the roadmap still has real work.
 
 - 2026-10-02 — Test entrypoints now converge on the tagged manifest without removing any underlying checks: CI runs the explicit `fast` tag, `npm test`-style `check` resolves through the same tag runner, and stable `check:billing`, `check:access`, `check:browser` and `check:security` aliases expose intent without another bespoke command graph. Existing granular suites remain available during the incremental migration.
 
