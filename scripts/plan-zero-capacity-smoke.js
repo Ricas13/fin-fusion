@@ -36,10 +36,10 @@ const migration=read('db/migrations/000_database_baseline.sql');
 // Jellyfin capacity has two independent ceilings: server max_users protects
 // infrastructure, while plans.media_user_limit controls how many customers a
 // product is allowed to allocate within its selected fleet.
-assert(create.includes('name="capacityLimit" required'),'legacy plan storage field must remain available for compatible plan creation');
-assert(createBrowser.includes("if(availability)availability.hidden=!stremio")&&createBrowser.includes("if(jellyfin)capacityLimit.value='0'"),'Jellyfin plan creation must hide the duplicate plan inventory field and keep it neutral internally');
+assert(create.includes('name="mediaUserLimit" required')&&create.includes('name="capacityLimit" required'),'plan creation must expose a Jellyfin media customer limit while retaining Stremio inventory');
+assert(createBrowser.includes('setVisible(mediaCapacity,jellyfin)')&&createBrowser.includes('setVisible(stremioCapacity,stremio)'),'adaptive plan creation must show the correct product-owned capacity field');
 assert(inventory.includes("usage.model==='fleet_users'")&&inventory.includes('One managed Jellyfin customer = one place'),'Jellyfin plan inventory must still expose fleet customer capacity');
-assert(inventory.includes('managed users:')&&inventory.includes('customers still owed an account:')&&inventory.includes('temporary reservations:'),'Jellyfin availability must explain managed, owed and held customer places');
+assert(inventory.includes('Selected servers provide')&&inventory.includes('physical places')&&inventory.includes('Maximum customers on this plan'),'Jellyfin availability must explain the plan ceiling versus physical server capacity');
 assert(!inventory.includes('server stream capacity')&&!inventory.includes('Fleet stream capacity')&&!inventory.includes('Sold / held streams'),'admin plan inventory must not expose retired stream-weighted capacity language');
 assert(serverForm.includes('Customer capacity')&&serverForm.includes('Every Jellyfin customer uses exactly one place'),'server configuration must define max_users as customer-user capacity');
 assert(!serverForm.includes('Sellable stream capacity')&&!serverForm.includes('3-stream plan consumes'),'server configuration must not describe capacity as stream inventory');
@@ -58,7 +58,7 @@ const planEditor=read('src/platform/admin-jellyfin-plan-editor.js');
 assert(planEditor.includes('name="mediaUserLimit"')&&planEditor.includes('Maximum customers on this plan'),'Jellyfin plan editor must expose an independent product customer limit');
 assert(planEditor.includes('Eligible servers currently provide')&&planEditor.includes('physical customer places'),'Jellyfin plan editor must explain the distinction between plan slots and server capacity');
 assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'server user capacity must still honor automatic placement health/state');
-assert(plansList.includes("state.model==='fleet_users'")&&plansList.includes('View server user capacity'),'Plans must continue exposing the physical fleet capacity view alongside plan limits');
+assert(plansList.includes("state.model==='fleet_users'")&&plansList.includes('Manage plan & server capacity'),'Plans must expose plan allocation and physical fleet capacity together');
 assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative capacity recheck');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must continue to admit explicit zero capacity for non-Jellyfin/manual inventory');
 assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'free'}),'fleet_users');
