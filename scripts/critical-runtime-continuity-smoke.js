@@ -35,8 +35,8 @@ assert(worker.includes('jobRegistry.run(jobKey)')&&worker.includes('jobRegistry.
   'automation scheduler and deployment health must execute/read the same registry');
 
 for(const service of ['app','automation-worker','activity-worker','backup-worker']){
-  const needle=`  ${service}:\n    image: \${CAPTAINFIN_IMAGE:-captainfin:current}`;
-  assert(compose.includes(needle),`${service} must use the same immutable CAPTAiNFiN release image`);
+  const block=compose.match(new RegExp(`^  ${service}:[\\s\\S]*?(?=^  [A-Za-z0-9_-]+:|\\Z)`,'m'))?.[0]||'';
+  assert(/^\s+image:\s*\$\{CAPTAINFIN_IMAGE:-captainfin:current\}\s*$/m.test(block),`${service} must use the same immutable CAPTAiNFiN release image`);
 }
 assert(deploy.includes('docker compose exec -T app npm run verify:deployment'),
   'production deployment must execute application-level verification before completion');
