@@ -1,18 +1,13 @@
 'use strict';
 
-const {skipIfNoDatabase}=require('./smoke-db');
-if(skipIfNoDatabase('business expense calendar date DB smoke'))process.exit(0);
-
 const assert=require('assert');
 const expenses=require('../src/platform/business-expenses');
-const {getPool}=require('../src/db');
+const {runDbSmoke,withTimezones}=require('./db-test-fixture');
 
-async function main(){
-  const originalTimezone=process.env.TZ;
+runDbSmoke('business expense calendar date DB smoke',async()=>{
   const createdIds=[];
   try{
-    for(const zone of ['UTC','Europe/London','America/New_York','Asia/Kolkata']){
-      process.env.TZ=zone;
+    await withTimezones(['UTC','Europe/London','America/New_York','Asia/Kolkata'],async zone=>{
       const created=await expenses.create({
         name:`Calendar date ${zone}`,
         supplier:'Test',
@@ -50,19 +45,10 @@ async function main(){
       });
       assert.strictEqual(updated.start_date,'2001-12-31',`${zone}: update must return DATE as calendar text`);
       assert.strictEqual(updated.end_date,null,`${zone}: nullable DATE must remain null`);
-    }
+    });
   }finally{
     for(const id of createdIds){
       try{await expenses.remove(id);}catch(_){}
     }
-    if(originalTimezone===undefined)delete process.env.TZ;
-    else process.env.TZ=originalTimezone;
-    await getPool().end();
   }
-  console.log('business expense calendar date DB smoke: ok (UTC, London, New York, Kolkata)');
-}
-
-main().catch(error=>{
-  console.error(error);
-  process.exit(1);
 });
