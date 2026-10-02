@@ -207,7 +207,7 @@ Current concern: Docker currently uses `COPY . .`; the runtime image therefore c
 Tasks:
 
 - [x] Classify scripts as runtime/operator/recovery vs CI/test-only.
-- [ ] Introduce a clear directory convention such as:
+- [x] Introduce a clear directory convention such as:
   - `scripts/runtime/`
   - `scripts/ops/`
   - `scripts/ci/`
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Added concrete `scripts/ci/`, `scripts/runtime/` and `scripts/ops/` conventions with compatibility rules. Existing entrypoint paths are intentionally not bulk-moved; new/migrated script families can adopt the directories incrementally, and CI-only directory/docs are excluded from the runtime image.
 
 - 2026-10-02 — Compatibility debt now has an executable importer report (`scripts/compatibility-importer-report.js`). `src/jellyfin/provisioning.js` is explicitly marked with its retirement condition, and the report is part of operations checks while remaining excluded from the runtime image. No facade will be deleted until the report proves production importer count reaches zero.
 
