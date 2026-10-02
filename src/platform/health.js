@@ -17,7 +17,7 @@ async function readinessChecks(){
  checks.databasePool=!pool.overloaded;
  detail.databasePool=pool;
  if(checks.database){
-  try{const expected=latestMigration(),r=await query('SELECT filename FROM schema_migrations WHERE filename=$1 LIMIT 1',[expected]),latest=await query('SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1'),applied=latest.rows[0]?.filename||null;checks.migrations=Boolean(expected&&r.rowCount);detail.migrations={expected,applied}}catch(e){detail.migrations={error:e.message}}
+  try{const expected=latestMigration(),r=await query('SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1'),applied=r.rows[0]?.filename||null;checks.migrations=Boolean(expected&&applied===expected);detail.migrations={expected,applied}}catch(e){detail.migrations={error:e.message}}
   try{const ops=await operationsSettings.get();checks.publicOrigin=!IS_PRODUCTION||validPublicOrigin(ops.publicBaseUrl);if(!checks.publicOrigin)detail.publicOrigin='Production external links/OAuth require a canonical HTTPS public base URL.'}catch(e){detail.publicOrigin=e.message}
  }
  try{await runtimeSettings.ensureLoaded();checks.runtimeSettings=true}catch(e){detail.runtimeSettings=e.message}
