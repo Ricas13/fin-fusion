@@ -45,10 +45,18 @@ previous_app_image=''
 previous_automation_image=''
 previous_activity_image=''
 previous_backup_image=''
+previous_app_container=''
+runtime_labels_override=''
+candidate_container='captainfin-candidate'
+candidate_started=0
+candidate_attached=0
 
 cleanup() {
   if [[ -n "$rollback_override" && -f "$rollback_override" ]]; then
     rm -f "$rollback_override" || true
+  fi
+  if [[ -n "$runtime_labels_override" && -f "$runtime_labels_override" ]]; then
+    rm -f "$runtime_labels_override" || true
   fi
 }
 
@@ -93,12 +101,33 @@ YAML
   if [[ "$app_recreated" == 1 ]]; then
     rollback_services=(app "${rollback_services[@]}")
   fi
-  docker compose -f docker-compose.yml -f "$rollback_override" up -d --no-deps --no-build --force-recreate \
+
+  compose_files=(-f docker-compose.yml)
+  if [[ -n "$runtime_labels_override" && -f "$runtime_labels_override" ]]; then
+    compose_files+=(-f "$runtime_labels_override")
+  fi
+  compose_files+=(-f "$rollback_override")
+
+  docker compose "${compose_files[@]}" up -d --no-deps --no-build --force-recreate \
     "${rollback_services[@]}"
+
   if [[ "$app_recreated" == 1 ]]; then
+    restored_app="$(compose_service_container app)"
+    [[ -n "$restored_app" ]] || return 1
+    wait_container_http_ready "$restored_app" 90 2 || return 1
+    verify_portal_routes_in_container "$restored_app" || return 1
+    if docker inspect "$candidate_container" >/dev/null 2>&1; then
+      connect_missing_container_networks "$candidate_container" "$restored_app"
+      sleep 2
+      verify_portal_routes_in_container "$restored_app" || return 1
+    fi
     printf 'Previous web and worker images restored. Database contents were not rolled back.\n' >&2
   else
     printf 'Previous worker images restored; the previous web application remained serving throughout. Database contents were not rolled back.\n' >&2
+  fi
+
+  if docker inspect "$candidate_container" >/dev/null 2>&1; then
+    docker rm -f "$candidate_container" >/dev/null
   fi
 }
 
@@ -198,6 +227,7 @@ done
 # immutable image IDs make application-only rollback possible without touching
 # the database when a release has no migration changes.
 if [[ "$existing_database" == 1 && -n "$(compose_service_container app)" ]]; then
+  previous_app_container="$(compose_service_container app)"
   previous_app_image="$(compose_service_image_id app)"
   previous_automation_image="$(compose_service_image_id automation-worker)"
   previous_activity_image="$(compose_service_image_id activity-worker)"
@@ -284,29 +314,65 @@ done
 log 'Running candidate deployment verification before touching the live web application'
 docker compose run --rm --no-deps app npm run verify:deployment
 
+if [[ -n "$previous_app_container" ]]; then
+  runtime_labels_override="$(mktemp /tmp/captainfin-runtime-labels.XXXXXX.yml)"
+  chmod 600 "$runtime_labels_override"
+  compose_capture_runtime_labels "$previous_app_container" "$runtime_labels_override"
+
+  if docker inspect "$candidate_container" >/dev/null 2>&1; then
+    fail "candidate container $candidate_container already exists; preserve it for inspection or remove it explicitly before deploying"
+  fi
+
+  log 'Starting isolated candidate portal while the current portal continues serving'
+  docker compose -f docker-compose.yml -f "$runtime_labels_override" run -d --no-deps \
+    --name "$candidate_container" app >/dev/null
+  candidate_started=1
+
+  wait_container_http_ready "$candidate_container" 90 2 || fail 'candidate portal did not become ready'
+  verify_portal_routes_in_container "$candidate_container" || fail 'candidate portal failed storefront/login route verification'
+
+  log 'Attaching verified candidate alongside the current portal for zero-downtime handoff'
+  connect_missing_container_networks "$previous_app_container" "$candidate_container"
+  candidate_attached=1
+  sleep 2
+  wait_container_http_ready "$candidate_container" 10 1 || fail 'candidate portal lost readiness after production attachment'
+  verify_portal_routes_in_container "$candidate_container" || fail 'candidate portal failed after production attachment'
+fi
+
 log 'Candidate verified; switching the customer-facing web application'
-docker compose up -d --no-deps app
+log 'Verified overlap candidate keeps customer traffic live during canonical replacement'
+if [[ -n "$runtime_labels_override" ]]; then
+  docker compose -f docker-compose.yml -f "$runtime_labels_override" up -d --no-deps app
+else
+  docker compose up -d --no-deps app
+fi
 app_recreated=1
 
-app_ready=0
-for _ in $(seq 1 90); do
-  health="$(compose_service_health app)"
-  if [[ "$health" == 'healthy' || "$health" == 'running' ]]; then
-    app_ready=1
-    break
-  fi
-  [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
-  sleep 2
-done
-[[ "$app_ready" == 1 ]] || fail 'app did not become healthy after verified cutover'
+new_app_container="$(compose_service_container app)"
+[[ -n "$new_app_container" ]] || fail 'replacement app container was not created'
+wait_container_http_ready "$new_app_container" 90 2 || fail 'replacement app did not become ready'
+verify_portal_routes_in_container "$new_app_container" || fail 'replacement app failed storefront/login route verification'
 
 runtime_sha="$(compose_service_env_value app CAPTAINFIN_BUILD_SHA)"
 [[ "$runtime_sha" == "$CAPTAINFIN_BUILD_SHA" ]] || fail "app is running build ${runtime_sha:-unknown}, expected $CAPTAINFIN_BUILD_SHA"
 
-docker compose exec -T app node -e "fetch('http://127.0.0.1:3030/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+if [[ "$candidate_attached" == 1 ]]; then
+  log 'Attaching replacement portal before retiring overlap candidate'
+  connect_missing_container_networks "$candidate_container" "$new_app_container"
+  sleep 2
+  wait_container_http_ready "$new_app_container" 10 1 || fail 'replacement app lost readiness after production attachment'
+  verify_portal_routes_in_container "$new_app_container" || fail 'replacement app failed after production attachment'
+fi
 
 log 'Running live post-cutover deployment verification'
 docker compose exec -T app npm run verify:deployment
+
+if [[ "$candidate_attached" == 1 ]]; then
+  log 'Replacement verified; retiring overlap candidate'
+  docker rm -f "$candidate_container" >/dev/null
+  candidate_started=0
+  candidate_attached=0
+fi
 
 log 'Publishing verified runtime alias'
 docker image tag "$CAPTAINFIN_IMAGE" captainfin:current
