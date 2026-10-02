@@ -6,6 +6,7 @@ const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
 const checkoutIntents = require('./checkout-intents');
 const livePaypalHistory = require('./live-paypal-payment-history');
+const financialState = require('./provider-financial-state');
 const { classifyProviderTransaction } = require('./provider-transaction-classifier');
 
 const DEFAULT_HOURS = 72;
@@ -127,16 +128,13 @@ async function paypalRecent(since) {
 
 async function authoritativePayPalCaptureIds(ids) {
     if (!ids.length) return new Set();
-    const result = await query(`
-        SELECT provider_transaction_id,transaction_type,transaction_status,gross_amount_minor,customer_id,metadata
-        FROM payment_history_transactions
-        WHERE provider='paypal'
-          AND provider_transaction_id = ANY($1::text[])
-          AND customer_id IS NOT NULL
-          AND metadata->>'providerAuthoritative'='true'
-          AND metadata->>'feeDataAvailable'='true'
-    `, [ids]);
-    return new Set(result.rows.filter(row => classifyProviderTransaction({
+    const result = await financialState.queryTransactions({
+        provider:'paypal',
+        providerTransactionIds:ids,
+        providerAuthoritative:true,
+        feeDataAvailable:true
+    },{limit:Math.max(1,ids.length),order:'desc'});
+    return new Set(result.rows.filter(row => row.customer_id && classifyProviderTransaction({
         provider: 'paypal',
         type: row.transaction_type,
         status: row.transaction_status,
