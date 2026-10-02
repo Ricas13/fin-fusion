@@ -59,6 +59,52 @@ async function expandedBalanceTransaction(stripe, charge) {
     return stripe.balanceTransactions.retrieve(String(value));
 }
 
+async function expandedRefundBalanceTransaction(stripe, refund) {
+    const value=refund?.balance_transaction;
+    if(!value)return null;
+    if(typeof value==='object')return value;
+    return stripe.balanceTransactions.retrieve(String(value));
+}
+function refundOccurredAt(refund,balanceTransaction){
+    const balanceCreated=Number(balanceTransaction?.created);
+    if(Number.isFinite(balanceCreated)&&balanceCreated>0)return new Date(balanceCreated*1000);
+    const refundCreated=Number(refund?.created);
+    return Number.isFinite(refundCreated)&&refundCreated>0?new Date(refundCreated*1000):new Date();
+}
+function refundHistoryValues(charge,refund,balanceTransaction,customerId){
+    const amount=Number(balanceTransaction?.amount);
+    const fee=Number(balanceTransaction?.fee);
+    const net=Number(balanceTransaction?.net);
+    if(!charge?.id||!refund?.id||String(refund.status||'').toLowerCase()!=='succeeded'||!balanceTransaction?.id
+      ||!Number.isFinite(amount)||amount>=0||!Number.isFinite(fee)||!Number.isFinite(net))return null;
+    const metadata=mergedMetadata(charge);
+    return{
+      providerTransactionId:String(balanceTransaction.id),
+      status:String(balanceTransaction.status||refund.status||'available'),
+      occurredAt:refundOccurredAt(refund,balanceTransaction),
+      currency:String(balanceTransaction.currency||refund.currency||charge.currency||'').toUpperCase(),
+      grossMinor:Math.round(amount),
+      feeMinor:Math.round(fee),
+      netMinor:Math.round(net),
+      providerCustomerId:customerReference(charge),
+      providerReferenceId:String(refund.id),
+      providerSourceId:String(charge.id),
+      customerId:customerId||null,
+      metadata:{
+        liveStripeSync:true,
+        providerAuthoritative:true,
+        feeDataAvailable:true,
+        balanceTransactionId:String(balanceTransaction.id),
+        refundId:String(refund.id),
+        chargeId:String(charge.id),
+        paymentIntentId:paymentIntentReference(charge),
+        invoiceId:invoiceReference(charge),
+        checkoutIntentId:metadata.internal_checkout_intent_id||null,
+        planId:metadata.internal_plan_id||null
+      }
+    };
+}
+
 function historyValues(charge, balanceTransaction, customerId) {
     // This is an accounting ledger. Stripe's balance transaction is the
     // canonical identity and monetary source because it owns settlement
@@ -103,34 +149,77 @@ async function upsertCharge(stripe, charge) {
     const customerId = await resolveCustomerId(charge);
     const values = historyValues(charge, balanceTransaction, customerId);
     if (!values || !values.currency) return { skipped: true, id: charge?.id || null };
-    await query(`
-        INSERT INTO payment_history_transactions(
-            provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
-            gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,
-            provider_reference_id,provider_source_id,customer_id,metadata
-        ) VALUES(
-            'stripe',$1,'charge',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb
-        )
-        ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
-            transaction_type='charge',
-            transaction_status=EXCLUDED.transaction_status,
-            occurred_at=EXCLUDED.occurred_at,
-            currency=EXCLUDED.currency,
-            gross_amount_minor=EXCLUDED.gross_amount_minor,
-            fee_amount_minor=EXCLUDED.fee_amount_minor,
-            net_amount_minor=EXCLUDED.net_amount_minor,
-            provider_customer_id=COALESCE(EXCLUDED.provider_customer_id,payment_history_transactions.provider_customer_id),
-            provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
-            provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
-            customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-            metadata=payment_history_transactions.metadata || EXCLUDED.metadata,
-            updated_at=NOW()
-    `, [
-        values.providerTransactionId, values.status, values.occurredAt, values.currency,
-        values.grossMinor, values.feeMinor, values.netMinor, values.providerCustomerId,
-        values.providerReferenceId, values.providerSourceId, values.customerId, JSON.stringify(values.metadata)
-    ]);
-    return { skipped: false, id: values.providerTransactionId, customerId: values.customerId };
+    const row=await financialState.recordTransaction({
+        provider:'stripe',
+        providerTransactionId:values.providerTransactionId,
+        transactionType:'charge',
+        transactionStatus:values.status,
+        occurredAt:values.occurredAt,
+        currency:values.currency,
+        grossMinor:values.grossMinor,
+        feeMinor:values.feeMinor,
+        netMinor:values.netMinor,
+        providerCustomerId:values.providerCustomerId,
+        providerReferenceId:values.providerReferenceId,
+        providerSourceId:values.providerSourceId,
+        customerId:values.customerId,
+        metadata:values.metadata
+    });
+    return { skipped: false, id: row.provider_transaction_id, customerId: row.customer_id || values.customerId };
+}
+
+async function upsertRefund(stripe, charge, refund, {customerId=null}={}) {
+    const balanceTransaction=await expandedRefundBalanceTransaction(stripe,refund);
+    const owner=customerId||await resolveCustomerId(charge);
+    const values=refundHistoryValues(charge,refund,balanceTransaction,owner);
+    if(!values||!values.currency)return{skipped:true,id:refund?.id||null};
+    const row=await financialState.recordTransaction({
+        provider:'stripe',
+        providerTransactionId:values.providerTransactionId,
+        transactionType:'refund',
+        transactionStatus:values.status,
+        occurredAt:values.occurredAt,
+        currency:values.currency,
+        grossMinor:values.grossMinor,
+        feeMinor:values.feeMinor,
+        netMinor:values.netMinor,
+        providerCustomerId:values.providerCustomerId,
+        providerReferenceId:values.providerReferenceId,
+        providerSourceId:values.providerSourceId,
+        customerId:values.customerId,
+        metadata:values.metadata
+    });
+    return{skipped:false,id:row.provider_transaction_id,customerId:row.customer_id||values.customerId};
+}
+
+async function syncRecentRefunds(stripe,since){
+    let startingAfter=null,pages=0,seen=0,recorded=0,skipped=0;
+    while(true){
+      const response=await stripe.refunds.list({
+        limit:100,
+        created:{gte:since},
+        expand:['data.balance_transaction','data.charge'],
+        ...(startingAfter?{starting_after:startingAfter}:{})
+      });
+      for(const refund of response.data||[]){
+        seen+=1;
+        if(String(refund?.status||'').toLowerCase()!=='succeeded'){skipped+=1;continue;}
+        let charge=refund?.charge||null;
+        if(typeof charge==='string'){
+          charge=await stripe.charges.retrieve(charge,{expand:['payment_intent','invoice']});
+        }
+        if(!charge?.id){skipped+=1;continue;}
+        const out=await upsertRefund(stripe,charge,refund);
+        if(out.skipped)skipped+=1;else recorded+=1;
+      }
+      pages+=1;
+      if(!response.has_more)break;
+      if(pages>=MAX_PAGES)throw new Error('Stripe refund-history sync exceeded its safe pagination limit.');
+      const last=(response.data||[])[response.data.length-1];
+      if(!last?.id)throw new Error('Stripe refund-history sync could not continue pagination safely.');
+      startingAfter=last.id;
+    }
+    return{seen,recorded,skipped,pages};
 }
 
 async function runSync({ hours = DEFAULT_HOURS } = {}) {
@@ -164,7 +253,11 @@ async function runSync({ hours = DEFAULT_HOURS } = {}) {
         if (!last?.id) throw new Error('Stripe payment-history sync could not continue pagination safely.');
         startingAfter = last.id;
     }
-    return { configured: true, seen, recorded, skipped, hours: boundedHours };
+    const refunds=await syncRecentRefunds(stripe,since);
+    return {
+        configured:true,seen,recorded,skipped,hours:boundedHours,
+        refundSeen:refunds.seen,refundRecorded:refunds.recorded,refundSkipped:refunds.skipped
+    };
 }
 
 async function syncRecent(options = {}) {
@@ -179,6 +272,7 @@ async function syncRecent(options = {}) {
 
 module.exports = {
     DEFAULT_HOURS, MAX_HOURS, MAX_PAGES, MIN_SYNC_INTERVAL_MS,
-    objectId, mergedMetadata, historyValues, resolveCustomerId, expandedBalanceTransaction,
-    upsertCharge, runSync, syncRecent
+    objectId, mergedMetadata, historyValues, refundHistoryValues, resolveCustomerId,
+    expandedBalanceTransaction, expandedRefundBalanceTransaction, upsertCharge, upsertRefund,
+    syncRecentRefunds, runSync, syncRecent
 };
