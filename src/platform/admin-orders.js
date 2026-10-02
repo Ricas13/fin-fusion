@@ -15,6 +15,8 @@ const reportingCurrency=require('./reporting-currency');
 const profitability=require('./business-profitability');
 const incidents=require('../payments/incidents');
 const commercialPolicies=require('./admin-commercial-policies');
+const calendarDate=require('../finance/calendar-date');
+const {csrfHidden}=require('./html-primitives');
 
 const ORDERS_PATH='/admin/commerce/orders';
 const LEGACY_ORDERS_PATH='/admin/orders';
@@ -23,11 +25,11 @@ const RANGE_OPTIONS=[['7d','Weekly'],['30d','Monthly'],['90d','3 months'],['180d
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
-function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
+function csrfInput(req){return csrfHidden(csrf.token(req));}
 function when(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});}
 function day(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 function iso(value){const d=new Date(value);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);}
-function parseIsoDate(value){const text=String(value||'');if(!/^\d{4}-\d{2}-\d{2}$/.test(text))return null;const d=new Date(`${text}T00:00:00.000Z`);return Number.isNaN(d.getTime())?null:d;}
+function parseIsoDate(value){return calendarDate.startUtc(value);}
 function number(value){return Number(value||0).toLocaleString('en-GB');}
 function statusKind(status){return status==='past_due'?'warn':['active','trialing','completed','succeeded'].includes(status)?'good':['cancelled','expired','failed'].includes(status)?'bad':'';}
 function titleCase(value){return String(value||'').replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase());}
