@@ -122,6 +122,10 @@ function validateCreatePlan(plan){
     priceMinor:plan.priceMinor
   });
   validateAvailability({capacityLimit:plan.capacityLimit,active:plan.active,visible:plan.visible});
+  if(plan.mediaUserLimit!==undefined&&plan.mediaUserLimit!==null)integer(plan.mediaUserLimit,0,1000000,'Media customer limit');
+  if(plan.freeFirstPlaybackGraceDays!==undefined&&plan.freeFirstPlaybackGraceDays!==null)integer(plan.freeFirstPlaybackGraceDays,1,3650,'Free initial playback grace');
+  if(plan.freePlaybackWindowDays!==undefined&&plan.freePlaybackWindowDays!==null)integer(plan.freePlaybackWindowDays,1,365,'Free playback window');
+  if(plan.freeMinimumPlaybackMinutes!==undefined&&plan.freeMinimumPlaybackMinutes!==null)integer(plan.freeMinimumPlaybackMinutes,1,1000000,'Free minimum playback');
   member(plan.serverClass,SERVER_CLASSES,'Server class');
   member(plan.jellyfinAccessModel,ACCESS_MODELS,'Jellyfin access model');
   integer(plan.jellyfinHouseholdNetworkLimit,1,10,'Jellyfin household connections');
@@ -143,6 +147,7 @@ function validateImportedPlan(plan){
   integer(plan.price_minor,0,100000000,'Price');
   currency(plan.currency);
   if(plan.capacity_limit!==undefined&&plan.capacity_limit!==null)integer(plan.capacity_limit,0,1000000,'Capacity');
+  if(plan.media_user_limit!==undefined&&plan.media_user_limit!==null)integer(plan.media_user_limit,0,1000000,'Media customer limit');
   if(plan.server_class!==undefined)member(plan.server_class,SERVER_CLASSES,'Server class');
   if(plan.jellyfin_access_model!==undefined)member(plan.jellyfin_access_model,ACCESS_MODELS,'Jellyfin access model');
   if(plan.streams!==undefined)integer(plan.streams,0,50,'Concurrent streams',{nullable:true});
