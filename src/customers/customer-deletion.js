@@ -2,7 +2,7 @@
 
 const {query}=require('../db');
 const registry=require('../jellyfin/registry');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 const externalDeletion=require('./customer-external-deletion');
 
 const RUNNING_STALE_MINUTES=15;
