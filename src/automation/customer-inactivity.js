@@ -21,29 +21,29 @@ function boundedInt(value, min, max, fallback) {
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
-function serverPolicy(row = {}, globalCfg = {}) {
+function planPolicy(row = {}, globalCfg = {}) {
     return {
         enabled: Boolean(globalCfg.enabled),
         dryRun: Boolean(globalCfg.dryRun),
         firstPlaybackGraceDays: boundedInt(
-            row.free_first_playback_grace_days,
+            row.plan_free_first_playback_grace_days ?? row.free_first_playback_grace_days,
             1,
             3650,
             FREE_POLICY_DEFAULTS.firstPlaybackGraceDays
         ),
         playbackWindowDays: boundedInt(
-            row.free_playback_window_days,
+            row.plan_free_playback_window_days ?? row.free_playback_window_days,
             1,
             365,
             FREE_POLICY_DEFAULTS.playbackWindowDays
         ),
         minimumPlaybackMinutes: boundedInt(
-            row.free_minimum_playback_minutes,
+            row.plan_free_minimum_playback_minutes ?? row.free_minimum_playback_minutes,
             1,
             1000000,
             FREE_POLICY_DEFAULTS.minimumPlaybackMinutes
         ),
-        thresholdOwner: 'free_server'
+        thresholdOwner: row.plan_free_first_playback_grace_days != null && row.plan_free_playback_window_days != null && row.plan_free_minimum_playback_minutes != null ? 'free_plan' : 'free_server_legacy_fallback'
     };
 }
 
@@ -123,7 +123,10 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.current_period_end,
             s.created_at subscription_created_at,
             p.code plan_code,
-            p.name plan_name
+            p.name plan_name,
+            p.free_first_playback_grace_days AS plan_free_first_playback_grace_days,
+            p.free_playback_window_days AS plan_free_playback_window_days,
+            p.free_minimum_playback_minutes AS plan_free_minimum_playback_minutes
           FROM subscriptions s
           JOIN plans p ON p.id=s.plan_id
           WHERE s.superseded_by IS NULL
@@ -241,7 +244,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
                   LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
                   - GREATEST(
                       ph.started_at,
-                      NOW()-(js.free_playback_window_days||' days')::interval
+                      NOW()-(COALESCE(fa.plan_free_playback_window_days,js.free_playback_window_days,7)||' days')::interval
                     )
                 ))
               )
@@ -274,7 +277,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
     `, [HOLD_TYPE, customerId || null]);
 
     return result.rows.map(row => {
-        const policy = serverPolicy(row, globalCfg);
+        const policy = planPolicy(row, globalCfg);
         const assessment = assessUsage(row, policy);
         const usageTriggered = assessment.firstPlaybackEligible || assessment.usageEligible;
         const adminProtected = Boolean(
@@ -336,7 +339,8 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
 module.exports = {
     HOLD_TYPE,
     FREE_POLICY_DEFAULTS,
-    serverPolicy,
+    planPolicy,
+    serverPolicy: planPolicy,
     assessUsage,
     candidates
 };
