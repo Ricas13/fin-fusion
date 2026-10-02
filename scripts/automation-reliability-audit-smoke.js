@@ -112,7 +112,11 @@ assert(integritySource.includes("status='sending'"), 'integrity watchdog must de
 
 const deploymentVerification = source('scripts/verify-deployment.js');
 assert(deploymentVerification.includes("'degraded'"), 'deployment verification must reject degraded critical automation jobs');
-assert(deploymentVerification.includes('badStates.has(deploymentCriticalState(job, automationWorker?.started_at))'), 'critical deployment verification must evaluate the hardened bad-state set through restart-aware warm-up policy');
+assert(deploymentVerification.includes('const state = deploymentCriticalState(job, automationWorker?.started_at)')
+    && deploymentVerification.includes('deploymentJobBlocks(job.job_key, state)'),
+    'critical deployment verification must evaluate restart-aware state through the deployment blocking policy');
+assert(deploymentVerification.includes("jobKey === 'revenue_integrity' && state === 'degraded'"),
+    'revenue integrity degraded findings must be routed to production acceptance rather than rollback');
 assert(deploymentVerification.includes('DEPLOYMENT_PROBE_JOBS'), 'deployment verification must define the live recovery automation probe set');
 assert(deploymentVerification.includes('jobHealth.requestRun(jobKey)'), 'deployment verification must force the recovery probe through the real automation worker');
 assert(deploymentVerification.includes("SELECT NOW() AS marker"), 'deployment automation probe must compare completion using the database clock');

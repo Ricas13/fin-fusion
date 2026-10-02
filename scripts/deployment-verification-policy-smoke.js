@@ -23,6 +23,33 @@ assert.strictEqual(verifier.probeSucceededSince({
     last_success_at: '2026-09-13T12:00:05.000Z'
 }, workerStartedAt), false, 'a later degraded outcome must fail closed even when an earlier success is recent');
 
+assert.strictEqual(verifier.probeSatisfiedSince('revenue_integrity', {
+    last_outcome: 'degraded',
+    last_completed_at: '2026-09-13T12:00:05.000Z',
+    last_success_at: '2026-09-12T12:00:05.000Z'
+}, workerStartedAt), true,
+'revenue integrity degraded means the scanner completed under this release and must be handed to operator acceptance rather than treated as an execution failure');
+
+assert.strictEqual(verifier.probeSatisfiedSince('customer_service_recovery', {
+    last_outcome: 'degraded',
+    last_completed_at: '2026-09-13T12:00:05.000Z',
+    last_success_at: '2026-09-13T12:00:05.000Z'
+}, workerStartedAt), false,
+'other critical recovery jobs must continue to fail closed on degraded outcomes');
+
+assert.strictEqual(verifier.probeSatisfiedSince('revenue_integrity', {
+    last_outcome: 'failed',
+    last_completed_at: '2026-09-13T12:00:05.000Z'
+}, workerStartedAt), false,
+'a failed revenue integrity execution must still block deployment');
+
+assert.strictEqual(verifier.deploymentJobBlocks('revenue_integrity', 'degraded'), false,
+'revenue integrity findings belong to production acceptance rather than deployment rollback');
+assert.strictEqual(verifier.deploymentJobBlocks('revenue_integrity', 'failed'), true,
+'revenue integrity execution failures must still block deployment');
+assert.strictEqual(verifier.deploymentJobBlocks('billing', 'degraded'), true,
+'degraded non-integrity critical jobs must remain deployment blockers');
+
 const diagnostic = verifier.formatProbeSnapshot({
     jobKey: 'revenue_integrity',
     state: 'healthy',
@@ -68,6 +95,8 @@ assert(source.includes('AND draining_at IS NULL'),
     'deployment verification must ignore worker instances that are already draining');
 assert(source.includes("add('critical automation job enablement'"),
     'deployment verification must distinguish missing critical jobs from unexpected disablement');
+assert(source.includes("add('revenue integrity execution'"),
+    'deployment verification must report revenue integrity as an explicit operator-attention lane');
 assert(source.includes("add('Free Server inactivity cleanup policy'"),
     'inactivity cleanup must be reported as an operator policy rather than the whole Free Server lifecycle');
 assert(!source.includes("add('Free Server lifecycle job'"),
