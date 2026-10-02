@@ -55,7 +55,8 @@ function parse(body = {}, forcedCurrency = null) {
   const currency = text(forcedCurrency || body.currency || 'GBP', 3).toUpperCase();
   if (!CURRENCIES.includes(currency)) throw new Error('Currency must be GBP, USD or EUR.');
   const duration = freeJellyfin ? 30 : (BILLING[billing].days ?? int(body.durationDays, 1, 3650, 'Duration'));
-  const capacityLimit = int(body.capacityLimit, 0, 1000000, 'Available slots');
+  const capacityLimit = stremio ? int(body.capacityLimit, 0, 1000000, 'Available slots') : 0;
+  const mediaUserLimit = jellyfin ? int(body.mediaUserLimit ?? '0', 0, 1000000, 'Maximum plan customers') : null;
   if (b(body.isAddon)) throw new Error('Add-ons are retired. Create a standalone Stremio plan instead.');
   const isAddon = false;
   const jellyfinAccessModel = jellyfin && JELLYFIN_ACCESS_MODELS.includes(body.jellyfinAccessModel) ? body.jellyfinAccessModel : 'concurrent_streams';
@@ -70,7 +71,7 @@ function parse(body = {}, forcedCurrency = null) {
   const libraries = libraryNames(body.libraryNames);
   if (jellyfin && libraryMode !== 'all' && !libraries.length) throw new Error('Enter at least one library name when using Include only or Exclude selected libraries.');
   const plan = {
-    code, name, description, planKind, serviceType, audience, billing, duration, priceMinor, currency, capacityLimit, streams, isAddon,
+    code, name, description, planKind, serviceType, audience, billing, duration, priceMinor, currency, capacityLimit, mediaUserLimit, streams, isAddon,
     jellyfinAccessModel, jellyfinHouseholdNetworkLimit, jellyfinHouseholdLeaseMinutes,
     stremioHouseholdNetworkLimit, stremioHouseholdLeaseMinutes, stremioIpReplacementPolicy, stremioIpReplacementCooldownMinutes,
     serverClass: freeJellyfin ? 'free' : (jellyfin && ['premium', 'free', 'custom'].includes(body.serverClass) ? body.serverClass : 'premium'),
@@ -79,7 +80,10 @@ function parse(body = {}, forcedCurrency = null) {
     liveManagement: jellyfin && b(body.allowLiveTvManagement), remote: jellyfin && b(body.allowRemoteAccess), fourk: jellyfin && b(body.allow4k),
     subtitles: jellyfin && b(body.allowSubtitleEditing),
     libraryMode: jellyfin ? libraryMode : 'all', libraries: jellyfin ? libraries : [],
-    inactivityPolicy: {}
+    inactivityPolicy: {},
+    freeFirstPlaybackGraceDays: freeJellyfin ? 3 : null,
+    freePlaybackWindowDays: freeJellyfin ? 7 : null,
+    freeMinimumPlaybackMinutes: freeJellyfin ? 30 : null
   };
   return plan;
 }
@@ -105,6 +109,7 @@ function values(req, input = {}, currency = 'GBP') {
     price: planKind === 'free_jellyfin' ? '0.00' : (input.price ?? '0.00'),
     durationDays: planKind === 'free_jellyfin' ? 30 : (input.durationDays ?? BILLING[billing].days ?? 30),
     capacityLimit: input.capacityLimit ?? '0',
+    mediaUserLimit: input.mediaUserLimit ?? '0',
     jellyfinAccessModel: JELLYFIN_ACCESS_MODELS.includes(input.jellyfinAccessModel) ? input.jellyfinAccessModel : 'concurrent_streams',
     streams: input.streams ?? '1',
     jellyfinHouseholdNetworkLimit: input.jellyfinHouseholdNetworkLimit ?? '1',
@@ -147,7 +152,7 @@ function form(req, input = {}, error = '', currency = 'GBP') {
 
       <section class="section adaptivePlanCard" data-commercial-card ${freeJellyfin ? 'hidden' : ''}><div class="sectionHead"><div><span class="uiEyebrow">Commercial</span><h3>Pricing & term</h3></div><span class="pill">${esc(v.currency)}</span></div><div class="formGrid adaptiveTwo"><div class="formGroup"><label>Price</label><div class="inputUnit"><input class="input" type="number" step="0.01" min="0" max="100000" name="price" value="${esc(v.price)}" data-plan-price><span>${esc(v.currency)}</span></div><div class="inlineHelp">Currency is portal-wide and not configurable per plan. Change it in Settings.</div></div><div class="formGroup"><label>Billing / access frequency</label><select class="input" name="billingInterval" data-plan-frequency>${Object.entries(BILLING).map(([x, d]) => `<option value="${x}" data-days="${d.days ?? ''}" ${selected(x, v.billingInterval)}>${esc(d.label)}</option>`).join('')}</select></div><div class="formGroup" data-plan-duration-group><label>Duration</label><div class="inputUnit"><input class="input" type="number" name="durationDays" min="1" max="3650" value="${esc(v.durationDays)}" data-plan-duration><span>days</span></div></div><div class="formGroup" data-paid-jellyfin-only ${paidJellyfin ? '' : 'hidden'}><label>Server class</label><select class="input" name="serverClass"><option value="premium" ${selected('premium', v.serverClass)}>Premium</option><option value="free" ${selected('free', v.serverClass)}>Free</option><option value="custom" ${selected('custom', v.serverClass)}>Custom</option></select><div class="inlineHelp">Use Custom only when explicit placement rules are required.</div></div></div></section>
 
-      <section class="section adaptivePlanCard" data-availability-card><div class="sectionHead"><div><span class="uiEyebrow">Availability</span><h3>Sales state</h3></div></div><div class="formGroup"><label>Available slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" required value="${esc(v.capacityLimit)}"><div class="inlineHelp">Start at 0 while configuring the plan. Increase when it is ready to accept customers.</div></div><div class="toggleGrid compactToggles">${toggle('visible', 'Visible on storefront', v.visible)}${toggle('active', 'Active', v.active)}</div><div class="operatorCallout statusInfo compactCallout"><strong>Storefront order</strong><span> New plans are appended automatically. Reorder them later from Plans → Storefront order.</span></div></section>
+      <section class="section adaptivePlanCard" data-availability-card><div class="sectionHead"><div><span class="uiEyebrow">Availability</span><h3>Sales state</h3></div></div><div class="formGroup" data-media-plan-capacity ${jellyfin ? '' : 'hidden'}><label>Maximum customers on this plan</label><input class="input" type="number" min="0" max="1000000" name="mediaUserLimit" required value="${esc(v.mediaUserLimit)}"><div class="inlineHelp">This is the product allocation ceiling. The selected servers' physical max-users capacity is still a hard upper bound. Start at 0 while configuring the plan.</div></div><div class="formGroup" data-stremio-plan-capacity ${stremio ? '' : 'hidden'}><label>Available slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" required value="${esc(v.capacityLimit)}"><div class="inlineHelp">Start at 0 while configuring the plan. Increase when it is ready to accept customers.</div></div><div class="toggleGrid compactToggles">${toggle('visible', 'Visible on storefront', v.visible)}${toggle('active', 'Active', v.active)}</div><div class="operatorCallout statusInfo compactCallout"><strong>Storefront order</strong><span> New plans are appended automatically. Reorder them later from Plans → Storefront order.</span></div></section>
 
       <section class="section adaptivePlanCard" data-jellyfin-access ${jellyfin ? '' : 'hidden'}><div class="sectionHead"><div><span class="uiEyebrow">Jellyfin</span><h3>Access model</h3></div></div><div class="formGroup"><label>Playback enforcement</label><select class="input" name="jellyfinAccessModel" data-jellyfin-access-model><option value="concurrent_streams" ${selected('concurrent_streams', v.jellyfinAccessModel)}>Concurrent streams</option><option value="household_network" ${selected('household_network', v.jellyfinAccessModel)}>Household connections</option></select><div class="inlineHelp">Choose the limit customers understand; internal network identity handling remains automatic.</div></div><div class="formGroup" data-jellyfin-stream-fields ${householdJellyfin ? 'hidden' : ''}><label>Concurrent streams</label><input class="input" type="number" name="streams" min="1" max="50" value="${esc(v.streams)}"></div><div data-jellyfin-household-fields ${householdJellyfin ? '' : 'hidden'}><div class="formGroup"><label>Household connections</label><input class="input" type="number" name="jellyfinHouseholdNetworkLimit" min="1" max="10" value="${esc(v.jellyfinHouseholdNetworkLimit)}"><div class="inlineHelp">How many different household internet connections may be active for this subscription.</div></div><details class="advancedCard"><summary>Advanced lease timing</summary><div class="formGroup"><label>Household lease</label><div class="inputUnit"><input class="input" type="number" name="jellyfinHouseholdLeaseMinutes" min="15" max="1440" value="${esc(v.jellyfinHouseholdLeaseMinutes)}"><span>minutes</span></div></div></details></div></section>
 
@@ -157,7 +162,7 @@ function form(req, input = {}, error = '', currency = 'GBP') {
 
       <section class="section adaptivePlanCard" data-jellyfin-libraries ${jellyfin ? '' : 'hidden'}><div class="sectionHead"><div><span class="uiEyebrow">Jellyfin</span><h3>Libraries</h3></div></div><div class="formGroup"><label>Library access</label><select class="input" name="libraryAccessMode"><option value="all" ${selected('all', v.libraryAccessMode)}>All libraries</option><option value="include" ${selected('include', v.libraryAccessMode)}>Only named libraries</option><option value="exclude" ${selected('exclude', v.libraryAccessMode)}>All except named libraries</option></select></div><div class="formGroup"><label>Library names</label><textarea class="input" name="libraryNames" rows="4" placeholder="Movies\nTV\n4K Movies">${esc(v.libraryNames || '')}</textarea><div class="inlineHelp">One per line or comma-separated. Live-discovered libraries can be refined after creation.</div></div></section>
 
-      ${freeJellyfin ? '<div class="operatorCallout statusInfo adaptivePlanSpan"><strong>Free Server lifecycle is automatic.</strong><span> New Free Server plans inherit the global inactivity policy. Jellyfin users are removed when the inactivity rule is met; there is no disabled-user state.</span></div>' : ''}
+      ${freeJellyfin ? '<div class="operatorCallout statusInfo adaptivePlanSpan"><strong>Free Server lifecycle is automatic.</strong><span> New Free Server plans start with the 3-day initial grace, 7-day rolling window and 30-minute minimum. Edit the plan after creation to change these thresholds. Jellyfin users are removed when the inactivity rule is met; there is no disabled-user state.</span></div>' : ''}
     </div>
     <div class="adaptivePlanSaveBar"><div><strong data-plan-save-summary>${freeJellyfin ? 'Free Jellyfin plan' : paidJellyfin ? 'Paid Jellyfin plan' : 'Stremio plan'}</strong><span class="muted"> · availability starts closed when slots are 0</span></div><div class="buttonRow"><a class="button secondary" href="/admin/plans">Cancel</a><button class="button" type="submit">Create plan</button></div></div>
   </form><script src="/js/admin-plan-create-v2.js" defer></script>`;
