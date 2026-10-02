@@ -110,6 +110,7 @@ async function scan({ limit = 100 } = {}) {
 
   const [
     freePlanWithoutServer,
+    failedFreeRestores,
     freeServerWithoutPlan,
     unpaidTrialWithoutServer,
     primaryServerWithoutPlan,
@@ -134,6 +135,38 @@ async function scan({ limit = 100 } = {}) {
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
         )
       ORDER BY s.created_at
+      LIMIT $1
+    `, [bounded]),
+    query(`
+      SELECT h.id,h.customer_id,s.id AS subscription_id,h.reason,
+             NULLIF(h.metadata->>'error','') AS restore_error,h.created_at
+      FROM customer_access_holds h
+      JOIN subscriptions s
+        ON s.customer_id=h.customer_id
+       AND h.metadata->>'subscriptionId'=s.id::text
+      JOIN plans p ON p.id=s.plan_id
+      LEFT JOIN customer_entitlement_overrides o
+        ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+      WHERE h.hold_type='inactivity_policy'
+        AND h.released_at IS NULL
+        AND COALESCE((h.metadata->>'restoreReconcileFailed')::boolean,FALSE)=TRUE
+        AND h.source_key=('plan:'||p.id::text)
+        ${freeLive}
+        AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
+        AND NOT public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+        AND NOT (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+        AND NOT EXISTS(
+          SELECT 1
+          FROM jellyfin_accounts ja
+          JOIN jellyfin_servers js ON js.id=ja.server_id
+          WHERE ja.customer_id=s.customer_id
+            AND ja.account_purpose='jellyfin'
+            AND ja.access_lane='free'
+            AND ja.disabled=FALSE
+            AND js.enabled=TRUE
+            AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+        )
+      ORDER BY h.created_at
       LIMIT $1
     `, [bounded]),
     query(`
@@ -225,6 +258,13 @@ async function scan({ limit = 100 } = {}) {
       'free_plan_without_ready_server',
       row,
       `Live Free subscription ${row.subscription_id} has no enabled Free-lane Jellyfin account. Free access must converge to plan+server or no-plan+no-server.`
+    ));
+  }
+  for (const row of failedFreeRestores.rows) {
+    findings.push(finding(
+      'free_restore_reprovision_failed',
+      row,
+      `Free Server restore for subscription ${row.subscription_id} remains fail-closed after reprovisioning failed${row.restore_error ? `: ${row.restore_error}` : '.'}`
     ));
   }
   for (const row of freeServerWithoutPlan.rows) {
