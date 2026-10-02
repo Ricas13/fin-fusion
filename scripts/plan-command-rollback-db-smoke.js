@@ -2,7 +2,7 @@
 
 const assert=require('assert');
 const {query}=require('../src/db');
-const {runDbSmoke}=require('./db-test-fixture');
+const {runDbSmoke}=require('./test-fixture');
 const planCommands=require('../src/catalog/plan-command-service');
 
 const CODE='audit-plan-command-rollback';
