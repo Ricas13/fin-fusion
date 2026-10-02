@@ -26,10 +26,6 @@ function cleanEmail(value){
   if(email.length>254||!/^\S+@\S+\.\S+$/.test(email))throw new Error('Enter a valid email address.');
   return email;
 }
-function cleanName(value,fallback){
-  const name=String(value||'').trim().slice(0,100);
-  return name||String(fallback||'Administrator').slice(0,100);
-}
 function dt(value){return value?new Date(value).toLocaleString('en-GB'):'—';}
 
 async function profileData(userId){
