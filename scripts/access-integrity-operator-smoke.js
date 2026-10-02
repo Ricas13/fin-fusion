@@ -105,6 +105,27 @@ const { ACCESS_STATES } = require('../src/access/customer-access-state');
   }
 
   {
+    let scanned = false;
+    let repaired = false;
+    const operator = createOperator({
+      scan: async () => { scanned = true; return []; },
+      repair: async () => { repaired = true; }
+    });
+    assert.strictEqual(operator.label('free_restore_reprovision_failed'), 'Free restore reprovisioning failed');
+    assert.strictEqual(operator.canRepair('free_restore_reprovision_failed'), false);
+    await assert.rejects(
+      operator.repairCurrent({
+        kind: 'free_restore_reprovision_failed',
+        id: 'restore-hold',
+        customerId: 'restore-customer'
+      }),
+      error => error.code === 'ACCESS_INTEGRITY_REPAIR_MANUAL_REVIEW'
+    );
+    assert.strictEqual(scanned, false, 'failed explicit restore must require operator review before any repair scan');
+    assert.strictEqual(repaired, false, 'failed explicit restore must never enter generic automatic repair');
+  }
+
+  {
     const operator = createOperator({
       scan: async ({ limit }) => [{ id: String(limit) }],
       repair: async () => ({})
