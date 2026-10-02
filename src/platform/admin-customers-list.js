@@ -156,10 +156,12 @@ function rowState(x){
     const jellyfinRequired=['jellyfin','bundle',null,undefined].includes(x.service_type);
     const jfCount=Number(x.customer_account_count||0);
     const missing=current&&jellyfinRequired&&jfCount===0;
+    const freeRecovery=missing&&x.is_free_tier===true;
     const provisioning=['pending','running'].includes(String(x.provisioning_status||''));
     const failed=['failed','blocked'].includes(String(x.provisioning_status||''));
     const reconFailed=Number(x.recon_rank||0)===1;
     if(missing&&provisioning)return{access:'Provisioning',tone:'warn',reason:'Creating Jellyfin access',action:'Open'};
+    if(freeRecovery)return{access:'Recovering',tone:'warn',reason:'Free access is being reconciled automatically',action:'Open'};
     if(missing)return{access:'Needs access',tone:'bad',reason:failed?'Jellyfin provisioning failed':'Jellyfin account missing',action:'Fix access'};
     if(current){
         if(x.subscription_status==='past_due')return{access:'Ready',tone:'good',reason:'Access present · payment past due',action:'Billing'};
@@ -180,6 +182,15 @@ function rowState(x){
         return{access:'Expired',tone:stale?'bad':'warn',reason:stale?'Jellyfin access still present':'No current entitlement',action:stale?'Remove access':'Open'};
     }
     return{access:'No entitlement',tone:'',reason:'No active subscription',action:'Open'};
+}
+function operatorAttentionRow(x){
+    if(x.login_active===false)return false;
+    const missingFree=Boolean(x.is_free_tier)
+        && x.has_current_entitlement===true
+        && ['jellyfin','bundle',null,undefined].includes(x.service_type)
+        && Number(x.customer_account_count||0)===0;
+    if(missingFree)return false;
+    return true;
 }
 function serviceCell(x,state){
     const current=x.has_current_entitlement===true;
@@ -268,13 +279,14 @@ async function customerOverview(){
                   AND EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=e.customer_id AND cps.status IN('pending','running'))) provisioning_pending,
             (SELECT COUNT(DISTINCT c.id)::int FROM customers c
                 LEFT JOIN app_users au ON au.id=c.user_id
-                WHERE au.active=FALSE
-                   OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
+                WHERE COALESCE(au.active,TRUE)=TRUE
+                  AND (EXISTS(SELECT 1 FROM effective_customer_entitlements e
                        WHERE e.customer_id=c.id AND COALESCE(e.blocked,FALSE)=FALSE AND e.status='past_due')
                    OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
                        WHERE e.customer_id=c.id
                          AND COALESCE(e.blocked,FALSE)=FALSE
                          AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                         AND NOT EXISTS(SELECT 1 FROM plans p_attention WHERE p_attention.id=e.plan_id AND COALESCE(p_attention.is_free_tier,FALSE)=TRUE)
                          AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')
                          AND NOT EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=c.id AND cps.status IN('pending','running')))
                    OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
@@ -284,7 +296,7 @@ async function customerOverview(){
                          AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')
                          AND EXISTS(SELECT 1 FROM jellyfin_accounts ja2 JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id WHERE ja2.customer_id=c.id AND ja2.account_purpose='jellyfin' AND jpr.status='failed'))
                    OR (NOT EXISTS(SELECT 1 FROM effective_customer_entitlements e WHERE e.customer_id=c.id AND COALESCE(e.blocked,FALSE)=FALSE)
-                       AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin'))) attention,
+                       AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')))) attention,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE p.billing_interval='trial' OR e.status='trialing') trials,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE COALESCE(p.is_free_tier,FALSE)=TRUE OR COALESCE(p.price_minor,0)=0) free,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(p.price_minor,0)>0) paid,
@@ -323,10 +335,12 @@ async function listPage(req){
     const filters=parseFilters(req.query),page=Math.max(parseInt(req.query.page,10)||1,1),pageSize=[25,50,100].includes(parseInt(req.query.pageSize,10))?parseInt(req.query.pageSize,10):100;
     const requestedSort=req.query.sort?req.query:{sort:'recent',dir:'desc'},sort=customerFilters.normalizeCustomerSort(requestedSort);
     const [options,result,overview,previousSeen]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize,sort}),filters.service?Promise.resolve(null):customerOverview(),readCursors.list(req.session?.authUserId).then(seen=>seen.customers||null).catch(()=>null)]);
-    const rows=result.rows,sortState=result.sort,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users',counts=overview?.presets||{};
+    const attentionView=filters.access==='attention';
+    const rows=attentionView?result.rows.filter(operatorAttentionRow):result.rows,sortState=result.sort,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users',counts=overview?.presets||{};
     const headers=`<th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th>${sortHeader(filters,sortState,'Customer','name',pageSize)}${sortHeader(filters,sortState,'Plan','plan',pageSize)}${sortHeader(filters,sortState,'Access','access',pageSize)}<th>Jellyfin</th>${sortHeader(filters,sortState,'Server','server',pageSize)}${sortHeader(filters,sortState,'Renews / expires','expiring',pageSize)}${sortHeader(filters,sortState,'Last active','recent',pageSize)}<th>Action</th>`;
-    const resultMeta=`Showing ${rows.length?((result.page-1)*result.pageSize)+1:0}–${Math.min(result.page*result.pageSize,result.total)} of ${number(result.total)} customers`;
-    const body=`<link rel="stylesheet" href="/css/admin-customers-list.css">${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options,sortState,counts)}<section class="section customerResults">${tableToolbar(filters,sortState,result.pageSize,result.total)}${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable customerTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr>${headers}</tr></thead><tbody>${rows.map(x=>row(x,previousSeen)).join('')}</tbody></table></div><div class="customerTableFooter"><span class="muted">${esc(resultMeta)}</span>${pagination(filters,sortState,result.page,result.pageSize,result.total)}</div>`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-customers-bulk.js" defer></script>`;
+    const visibleTotal=attentionView&&result.page===1&&result.total<=result.pageSize?rows.length:result.total;
+    const resultMeta=`Showing ${rows.length?((result.page-1)*result.pageSize)+1:0}–${Math.min((result.page-1)*result.pageSize+rows.length,visibleTotal)} of ${number(visibleTotal)} customers`;
+    const body=`<link rel="stylesheet" href="/css/admin-customers-list.css">${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options,sortState,counts)}<section class="section customerResults">${tableToolbar(filters,sortState,result.pageSize,visibleTotal)}${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable customerTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr>${headers}</tr></thead><tbody>${rows.map(x=>row(x,previousSeen)).join('')}</tbody></table></div><div class="customerTableFooter"><span class="muted">${esc(resultMeta)}</span>${pagination(filters,sortState,result.page,result.pageSize,visibleTotal)}</div>`:'<div class="empty">No customers match these filters.</div>'}</section>${visibleTotal?bulkBar(req,filters,visibleTotal):''}<script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-customers-bulk.js" defer></script>`;
     const common='<a class="button" href="/admin/users/new">+ Add customer</a>',jellyfinAction=filters.service==='stremio'?'':` <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a>`;
     return layout({siteName:site(),active,title:context?`${context} customers`:'Customers',subtitle:context?`Shared customer records in ${context} context`:'Manage customers, subscriptions and service access',body,action:`${common}${jellyfinAction} <a class="button secondary" href="/admin/users/export?${queryStringFor(filters)}">Export CSV</a>`});
 }
@@ -336,4 +350,4 @@ async function markCustomersSeen(req,seenThrough){if(!seenThrough)return null;tr
 function createAdminCustomersListRouter(){
     const r=express.Router();r.use('/admin/users',gate,noStore);r.get('/admin/users',async(req,res,next)=>{try{const seenThrough=await captureCustomersSeenThrough();const html=await listPage(req);await markCustomersSeen(req,seenThrough);return res.send(html)}catch(e){next(e)}});r.get('/admin/users/export',async(req,res,next)=>{try{const filters=parseFilters(req.query),rows=await customerFilters.exportRows(filters,null);return sendCsv(res,'customers.csv',[{key:'display_name',label:'Name'},{key:'login_username',label:'Username'},{key:'email',label:'Email'},{key:'plan_name',label:'Plan'},{key:'subscription_status',label:'Status'},{key:'service_type',label:'Service'},{label:'Expires',value:x=>x.access_expires_at||x.current_period_end||''},{key:'server_names',label:'Server'},{key:'last_activity_at',label:'Last activity'}],rows)}catch(e){next(e)}});return r;
 }
-module.exports={createAdminCustomersListRouter,parseFilters,queryStringFor,filterHiddenFields,sortHeader};
+module.exports={createAdminCustomersListRouter,parseFilters,queryStringFor,filterHiddenFields,sortHeader,operatorAttentionRow,rowState};

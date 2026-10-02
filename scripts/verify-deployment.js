@@ -51,6 +51,17 @@ function probeSnapshot(jobKey, row, requiredSince) {
     };
 }
 
+function deploymentCriticalState(row, workerStartedAt, now = Date.now()) {
+    const state = jobHealth.healthState(row, now);
+    if (state !== 'stale') return state;
+    const workerStartMs = timestamp(workerStartedAt);
+    if (workerStartMs == null) return state;
+    const intervalMs = Math.max(30, Number(row?.interval_seconds || 300)) * 1000;
+    const warmupMs = Math.max(120000, intervalMs + 30000);
+    if (now - workerStartMs < warmupMs) return 'warming';
+    return state;
+}
+
 function formatProbeSnapshot(snapshot) {
     const format = value => value ? new Date(value).toISOString() : 'never';
     return `${snapshot.jobKey}:state=${snapshot.state}`
@@ -211,7 +222,7 @@ async function main() {
             const bad = jobs.filter(job =>
                 critical.has(job.job_key)
                 && job.enabled !== false
-                && badStates.has(jobHealth.healthState(job))
+                && badStates.has(deploymentCriticalState(job, automationWorker?.started_at))
             );
 
             const inactivityJob = jobsByKey.get('customer_inactivity');
@@ -247,7 +258,7 @@ async function main() {
                 disabledCritical.length
                     ? `unexpectedly disabled=${disabledCritical.join(',')}`
                     : 'all required-enabled jobs enabled; operator-controlled disablements allowed');
-            add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${jobHealth.healthState(job)}`).join(', '));
+            add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${deploymentCriticalState(job, automationWorker?.started_at)}`).join(', '));
 
             const lifecycleTable = (await query(`SELECT to_regclass('public.jellyfin_account_lifecycle') AS table_name`)).rows[0]?.table_name;
             add('Free Server lifecycle ledger', Boolean(lifecycleTable), lifecycleTable || 'table missing');
@@ -290,6 +301,7 @@ module.exports = {
     probeSucceededSince,
     probeSnapshot,
     formatProbeSnapshot,
+    deploymentCriticalState,
     proveAutomationRecoveryPass,
     main
 };

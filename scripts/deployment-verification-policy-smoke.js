@@ -43,6 +43,24 @@ assert.strictEqual(jobRegistry.mayBeDisabled('customer_inactivity'), true,
 assert.strictEqual(jobRegistry.mayBeDisabled('revenue_integrity'), false,
     'revenue integrity must remain required-enabled');
 
+const staleBeforeRestart={
+    enabled:true,
+    interval_seconds:300,
+    last_started_at:'2026-09-13T11:30:00.000Z',
+    last_completed_at:'2026-09-13T11:30:01.000Z',
+    last_outcome:'success'
+};
+assert.strictEqual(
+    verifier.deploymentCriticalState(staleBeforeRestart,'2026-09-13T12:00:00.000Z',new Date('2026-09-13T12:02:00.000Z').getTime()),
+    'warming',
+    'old stale state must get one scheduler interval to warm up after a fresh worker starts'
+);
+assert.strictEqual(
+    verifier.deploymentCriticalState(staleBeforeRestart,'2026-09-13T12:00:00.000Z',new Date('2026-09-13T12:06:00.000Z').getTime()),
+    'stale',
+    'a critical job that remains stale beyond worker warm-up must still block deployment'
+);
+
 const source = fs.readFileSync(path.join(__dirname, 'verify-deployment.js'), 'utf8');
 assert(source.includes('workerStartedAt: automationWorker.started_at'),
     'deployment recovery proof must be anchored to the current automation worker start');
