@@ -29,3 +29,6 @@ scripts/dead-code-audit.js
 scripts/compatibility-importer-report.js
 scripts/run-check-suite.js
 scripts/run-tagged-checks.js
+
+scripts/ci
+scripts/*/README.md
