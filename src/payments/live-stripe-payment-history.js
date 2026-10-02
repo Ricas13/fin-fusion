@@ -4,6 +4,7 @@ const Stripe = require('stripe');
 const { query } = require('../db');
 const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
+const financialState = require('./provider-financial-state');
 
 const DEFAULT_HOURS = 24 * 7;
 const MAX_HOURS = 24 * 30;
@@ -34,51 +35,21 @@ function paymentIntentReference(charge) { return objectId(charge?.payment_intent
 function invoiceReference(charge) { return objectId(charge?.invoice); }
 
 async function resolveCustomerId(charge) {
-    const metadata = mergedMetadata(charge);
-    const claimed = String(metadata.internal_customer_id || '').trim();
-    if (claimed) {
-        const direct = await query('SELECT id FROM customers WHERE id=$1 LIMIT 1', [claimed]);
-        if (direct.rowCount === 1) return direct.rows[0].id;
-    }
-
-    const providerCustomerId = customerReference(charge);
-    if (providerCustomerId) {
-        const mapped = await query(`
-            SELECT customer_id
-              FROM subscriptions
-             WHERE source='stripe' AND provider_customer_id=$1
-             ORDER BY created_at DESC
-             LIMIT 2
-        `, [providerCustomerId]);
-        const ids = [...new Set(mapped.rows.map(row => String(row.customer_id || '')).filter(Boolean))];
-        if (ids.length === 1) return ids[0];
-    }
-
-    const paymentIntentId = paymentIntentReference(charge);
-    if (paymentIntentId) {
-        const legacy = await query(`
-            SELECT DISTINCT customer_id
-              FROM legacy_subscription_imports
-             WHERE provider='stripe'
-               AND provider_transaction_id=$1
-               AND customer_id IS NOT NULL
-             LIMIT 2
-        `, [paymentIntentId]);
-        if (legacy.rowCount === 1) return legacy.rows[0].customer_id;
-    }
-
-    const email = String(charge?.billing_details?.email || '').trim().toLowerCase();
-    if (email) {
-        const matched = await query(`
-            SELECT c.id
-              FROM customers c
-              LEFT JOIN app_users u ON u.id=c.user_id
-             WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=$1
-             LIMIT 2
-        `, [email]);
-        if (matched.rowCount === 1) return matched.rows[0].id;
-    }
-    return null;
+    const metadata=mergedMetadata(charge);
+    const invoice=charge?.invoice&&typeof charge.invoice==='object'?charge.invoice:null;
+    const subscriptionRef=invoice?.parent?.subscription_details?.subscription;
+    const subscriptionId=objectId(subscriptionRef);
+    return financialState.resolveCustomerId({
+        provider:'stripe',
+        internalCustomerId:metadata.internal_customer_id,
+        checkoutIntentId:metadata.internal_checkout_intent_id,
+        providerCustomerId:customerReference(charge),
+        providerTransactionId:paymentIntentReference(charge),
+        providerReferenceId:paymentIntentReference(charge),
+        providerSourceId:charge?.id||null,
+        providerReferences:[subscriptionId,invoiceReference(charge)],
+        email:charge?.billing_details?.email||null
+    });
 }
 
 async function expandedBalanceTransaction(stripe, charge) {
