@@ -155,7 +155,7 @@ function ownershipDecision(local, remote, ownerIds = []) {
         return { verified: true, reason: 'Provider customer ID is already mapped to this portal customer.' };
     }
     if (remote.provider === 'stripe' && owners.size) {
-        throw new Error('This Stripe customer identity is already mapped to another CAPTAINFIN customer.');
+        throw new Error('This Stripe customer identity is already mapped to another CAPTAiNFiN customer.');
     }
     const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
     if (sameEmail) return { verified: true, reason: 'Provider email matches the portal customer.' };
