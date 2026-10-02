@@ -118,6 +118,78 @@ async function scanTransactionsInRange(range,visit,{queryFn=query,pageSize=5000,
     throw new Error(overflowMessage||`Provider transaction scan exceeded ${size*pages} rows.`);
 }
 
+async function resolveCustomerId(evidence={}) {
+    const provider=providerName(evidence.provider);
+    const claimed=text(evidence.internalCustomerId);
+    if(claimed){
+        const direct=await query('SELECT id FROM customers WHERE id=$1 LIMIT 1',[claimed]);
+        if(direct.rowCount===1)return direct.rows[0].id;
+    }
+
+    const checkoutIntentId=text(evidence.checkoutIntentId);
+    if(checkoutIntentId){
+        const checkout=await query(`
+          SELECT DISTINCT customer_id
+          FROM billing_checkout_intents
+          WHERE provider=$1 AND (id::text=$2 OR provider_checkout_id=$2)
+          LIMIT 2
+        `,[provider,checkoutIntentId]);
+        const ids=[...new Set(checkout.rows.map(row=>String(row.customer_id||'')).filter(Boolean))];
+        if(ids.length===1)return ids[0];
+    }
+
+    const references=[...(evidence.providerReferences||[]),evidence.providerReferenceId,evidence.providerSourceId,evidence.providerTransactionId]
+      .map(value=>text(value)).filter(Boolean);
+    if(references.length){
+        const subscription=await query(`
+          SELECT DISTINCT customer_id
+          FROM subscriptions
+          WHERE source=$1 AND provider_subscription_id=ANY($2::text[])
+          LIMIT 2
+        `,[provider,[...new Set(references)]]);
+        const ids=[...new Set(subscription.rows.map(row=>String(row.customer_id||'')).filter(Boolean))];
+        if(ids.length===1)return ids[0];
+
+        if(provider==='stripe'){
+            const legacy=await query(`
+              SELECT DISTINCT customer_id
+              FROM legacy_subscription_imports
+              WHERE provider='stripe' AND provider_transaction_id=ANY($1::text[]) AND customer_id IS NOT NULL
+              LIMIT 2
+            `,[[...new Set(references)]]);
+            const legacyIds=[...new Set(legacy.rows.map(row=>String(row.customer_id||'')).filter(Boolean))];
+            if(legacyIds.length===1)return legacyIds[0];
+        }
+    }
+
+    const providerCustomerId=text(evidence.providerCustomerId);
+    if(providerCustomerId){
+        const mapped=await query(`
+          SELECT DISTINCT customer_id FROM (
+            SELECT customer_id FROM payment_customers WHERE provider=$1 AND provider_customer_id=$2
+            UNION ALL
+            SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_customer_id=$2
+          ) candidates
+          LIMIT 2
+        `,[provider,providerCustomerId]);
+        const ids=[...new Set(mapped.rows.map(row=>String(row.customer_id||'')).filter(Boolean))];
+        if(ids.length===1)return ids[0];
+    }
+
+    const email=String(evidence.email||'').trim().toLowerCase();
+    if(email){
+        const matched=await query(`
+          SELECT c.id
+          FROM customers c
+          LEFT JOIN app_users u ON u.id=c.user_id
+          WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=$1
+          LIMIT 2
+        `,[email]);
+        if(matched.rowCount===1)return matched.rows[0].id;
+    }
+    return null;
+}
+
 async function recordTransaction(input) {
     const provider=providerName(input.provider);
     const providerTransactionId=text(input.providerTransactionId);
@@ -215,8 +287,13 @@ async function backfillPlisioTransactions() {
         provider_reference_id=COALESCE(payment_history_transactions.provider_reference_id,EXCLUDED.provider_reference_id),
         metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)||EXCLUDED.metadata,
         updated_at=NOW()
-      WHERE payment_history_transactions.customer_id IS NULL
-         OR payment_history_transactions.customer_id=EXCLUDED.customer_id
+      WHERE (payment_history_transactions.customer_id IS NULL OR payment_history_transactions.customer_id=EXCLUDED.customer_id)
+        AND (
+          (payment_history_transactions.customer_id IS NULL AND EXCLUDED.customer_id IS NOT NULL)
+          OR (payment_history_transactions.provider_reference_id IS NULL AND EXCLUDED.provider_reference_id IS NOT NULL)
+          OR COALESCE(payment_history_transactions.metadata->>'providerAuthoritative','false')<>'true'
+          OR COALESCE(payment_history_transactions.metadata->>'providerVerified','false')<>'true'
+        )
       RETURNING id
     `);
     return result.rowCount;
@@ -245,6 +322,12 @@ async function repairLinks({limit=5000}={}) {
           JOIN subscriptions s ON s.source=t.provider
            AND s.provider_subscription_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
          WHERE t.customer_id IS NULL AND s.provider_subscription_id IS NOT NULL
+        UNION ALL
+        SELECT t.id,lsi.customer_id
+          FROM payment_history_transactions t
+          JOIN legacy_subscription_imports lsi ON lsi.provider=t.provider
+           AND lsi.provider_transaction_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
+         WHERE t.customer_id IS NULL AND lsi.customer_id IS NOT NULL
       ),
       strong_summary AS (
         SELECT id,MIN(customer_id::text)::uuid customer_id,COUNT(DISTINCT customer_id) candidate_count
@@ -376,7 +459,7 @@ async function customerSnapshot(customerId) {
 }
 
 module.exports={
-    PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,
+    PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
     transactionCoverage,exportTransactions,scanTransactionsInRange,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
