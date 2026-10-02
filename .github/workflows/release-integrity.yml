@@ -51,6 +51,7 @@ jobs:
       - name: Production image content
         run: |
           docker build --build-arg CAPTAINFIN_BUILD_SHA="$GITHUB_SHA" -t captainfin:image-contract .
+          docker image inspect captainfin:image-contract --format 'pre_cleanup_runtime_image_size_bytes={{.Size}}'
           docker run --rm --entrypoint sh captainfin:image-contract -c '
             test -f /app/src/application.js
             test -f /app/scripts/automation-worker.js
