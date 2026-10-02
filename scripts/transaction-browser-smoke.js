@@ -5,8 +5,13 @@ const path=require('path');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const browser=require('../src/payments/transaction-browser');
+const moneyFormat=require('../src/platform/money-format');
 
 assert.deepStrictEqual(browser.normalizeFilters({provider:'STRIPE',kind:'refund',currency:'usd',page:'2'}),{provider:'stripe',kind:'refund',currency:'USD',status:'',q:'',startDate:'',endDate:'',page:2});
+assert.strictEqual(moneyFormat.providerFractionDigits('ISK'),2,'Provider ledger must preserve Stripe-compatible two-decimal ISK integer units');
+assert.strictEqual(moneyFormat.providerMajorFromMinor(500,'ISK'),5,'ISK provider minor units must not display 100x too high');
+assert.strictEqual(moneyFormat.providerFractionDigits('JPY'),0,'Provider zero-decimal currencies must stay zero-decimal');
+assert.strictEqual(moneyFormat.providerFractionDigits('BHD'),3,'Provider three-decimal currencies must stay three-decimal');
 assert.strictEqual(browser.classify({provider:'stripe',transaction_type:'charge',gross_amount_minor:1000}),'payment');
 assert.strictEqual(browser.classify({provider:'stripe',transaction_type:'refund',gross_amount_minor:-500}),'refund');
 assert.strictEqual(browser.classify({provider:'stripe',transaction_type:'payout',gross_amount_minor:-500}),'ignored');
@@ -25,6 +30,7 @@ assert(service.includes('MAX_CLASSIFIED_SCAN')&&service.includes('truncated'),'L
 const admin=read('src/platform/admin-transactions.js');
 assert(admin.includes("/admin/payments/transactions")&&admin.includes("active:'transactions'"),'Transactions archive must remain a routable specialist Payments destination');
 assert(admin.includes('reportingCurrency.convertMinor'),'Visible transaction amounts must normalize into the configured portal currency');
+assert(admin.includes('moneyFormat.formatProviderMinor'),'Original provider amounts must render with provider API minor-unit semantics');
 assert(admin.includes('Original'),'Original currency must remain visible');
 assert(admin.includes("providerFinancialReconciliation.syncRecent"),'Transactions must use unified provider financial reconciliation rather than a Stripe-only page refresh.');
 assert(!admin.includes('/admin/payments/history'),'Import history was removed; Transactions must not link to a deleted page');
