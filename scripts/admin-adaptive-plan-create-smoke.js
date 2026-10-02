@@ -17,6 +17,7 @@ function base(overrides = {}) {
     code: 'test-plan',
     name: 'Test plan',
     capacityLimit: '0',
+    mediaUserLimit: '0',
     visible: 'on',
     active: 'on',
     jellyfinAccessModel: 'concurrent_streams',
@@ -33,7 +34,11 @@ assert.equal(free.priceMinor, 0, 'free Jellyfin must force a zero price');
 assert.equal(free.billing, 'month', 'free Jellyfin keeps a canonical internal billing value');
 assert.equal(free.duration, 30, 'free Jellyfin keeps a canonical internal duration');
 assert.equal(free.serverClass, 'free', 'free Jellyfin must force free placement class');
-assert.deepStrictEqual(free.inactivityPolicy, {}, 'new Free plans must inherit the global activity policy rather than store lifecycle controls');
+assert.deepStrictEqual(free.inactivityPolicy, {}, 'legacy inactivity-policy JSON must stay neutral');
+assert.equal(free.mediaUserLimit, 0, 'new Free Jellyfin plans must start closed at a plan-owned customer ceiling of zero');
+assert.equal(free.freeFirstPlaybackGraceDays, 3);
+assert.equal(free.freePlaybackWindowDays, 7);
+assert.equal(free.freeMinimumPlaybackMinutes, 30);
 
 const paid = parse(base({ planKind: 'paid_jellyfin', price: '6.00', billingInterval: 'month', serverClass: 'premium' }), 'GBP');
 assert.equal(paid.planKind, 'paid_jellyfin');
@@ -64,7 +69,8 @@ assert.match(freeHtml, /Free Jellyfin/);
 assert.match(freeHtml, /Paid Jellyfin/);
 assert.match(freeHtml, /Household connections/);
 assert.match(freeHtml, /data-commercial-card hidden/, 'free plan should render commercial card hidden');
-assert.doesNotMatch(freeHtml, /data-free-lifecycle|inactivityEnabled|inactivityDryRun|noPlaybackDays|minimumPlaybackMinutes/, 'plan creation must not expose configurable Jellyfin lifecycle controls');
+assert.match(freeHtml, /name="mediaUserLimit"/, 'Jellyfin plan creation must expose its own allocation ceiling');
+assert.doesNotMatch(freeHtml, /data-free-lifecycle|inactivityEnabled|inactivityDryRun|noPlaybackDays|deleteAfterDisableDays/, 'plan creation must not reintroduce the retired lifecycle state machine controls');
 
 const stremioHtml = form({ session: {}, query: { type: 'stremio' } }, {}, '', 'GBP');
 assert.match(stremioHtml, /name="stremioHouseholdNetworkLimit"/);
