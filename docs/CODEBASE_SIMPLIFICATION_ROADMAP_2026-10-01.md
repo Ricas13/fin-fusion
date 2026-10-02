@@ -285,15 +285,15 @@ Tasks:
 
 Tasks:
 
-- [ ] Define application conventions:
+- [x] Define application conventions:
   - PostgreSQL `DATE` -> ISO `YYYY-MM-DD` string
   - instant -> UTC timestamp / Date
   - duration -> explicit seconds/milliseconds/interval contract
-- [ ] Apply the convention at DB reader boundaries.
-- [ ] Audit expense dates, import ranges, accounting periods and report filters.
-- [ ] Extend timezone test matrices to UTC, Europe/London, America/New_York and a positive-offset timezone.
-- [ ] Search for `new Date()` or implicit pg date conversion on calendar-date fields.
-- [ ] Keep elapsed-duration arithmetic separate from calendar-duration arithmetic.
+- [x] Apply the convention at DB reader boundaries.
+- [x] Audit expense dates, import ranges, accounting periods and report filters.
+- [x] Extend timezone test matrices to UTC, Europe/London, America/New_York and a positive-offset timezone.
+- [x] Search for `new Date()` or implicit pg date conversion on calendar-date fields.
+- [x] Keep elapsed-duration arithmetic separate from calendar-duration arithmetic.
 
 **Done when:** changing the Node process timezone cannot alter financial coverage dates or prepaid elapsed duration.
 
@@ -384,7 +384,7 @@ These are principles to apply opportunistically while completing the prioritized
 - [ ] One plan mutation contract.
 - [ ] One automation registry.
 - [ ] One runtime Compose service-resolution mechanism.
-- [ ] One date/time boundary convention.
+- [x] One date/time boundary convention.
 - [ ] One test fixture layer for shared database/provider scenarios.
 - [ ] One explicit UI component/helper for repeated mechanics.
 - [ ] No new direct business SQL in `src/platform` without a documented exception.
@@ -448,6 +448,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Financial/calendar-date boundary completed: PostgreSQL `DATE` values are treated as canonical `YYYY-MM-DD` text, expense and payment-history readers cast DATE columns to text, expense rendering now uses the shared UTC calendar-date helper, four-timezone DB regressions cover expense/history ranges, elapsed prepaid duration remains epoch-based, and a static boundary check prevents implicit `new Date(row.<calendar_date>)` regressions.
 
 - 2026-10-01 — Began production-image slimming: Docker build context now omits docs plus CI smoke/check runners while retaining runtime/backup/migration/recovery verification tools. Release Integrity builds the actual image and asserts required/forbidden paths. Current exclusions remove about 2.76 MB across 349 repository files before layer compression.
 
