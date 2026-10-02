@@ -75,6 +75,20 @@ assert.strictEqual(nav.showAccess, true, 'navigation must expose My Access from 
 assert.strictEqual(nav.showJellyfin, true, 'navigation must expose Jellyfin access from canonical primary/free lanes');
 assert.strictEqual(nav.showBenefits, true, 'Affiliate navigation depends on programme availability, not eager referral-code creation');
 
+const addonOnlyPortal = {
+  subscriptions: [addonEntitlement],
+  accessSnapshot: {
+    primary: { entitlement: null },
+    free: { entitlement: null },
+    stremio: { entitlement: null },
+    emby: { entitlement: null }
+  },
+  referralsEnabled: false
+};
+const addonOnlyNav = customerNav.optionsFromPortal(addonOnlyPortal);
+assert.strictEqual(addonOnlyNav.showAccess, true, 'a canonical service add-on must keep My Access visible even without a primary service lane');
+assert.strictEqual(addonOnlyNav.showServicePasswords, false, 'a service add-on alone must not invent non-add-on request access');
+
 const homeRows = dashboard.canonicalAccessRows(portal);
 assert(
   subscriptions.some(row => row.subscription_id === 'stremio-addon'),
@@ -94,6 +108,7 @@ assert(
 );
 
 const dashboardSource = read('src/platform/customer-dashboard.js');
+const dashboardView = read('views/customer/dashboard.ejs');
 const accessSource = read('src/platform/customer-jellyfin.js');
 const navSource = read('src/platform/customer-nav-html.js');
 const customerSource = read('src/customers.js');
@@ -107,7 +122,13 @@ assert(
 assert(
   !dashboardSource.includes('function liveSubscription(')
     && !dashboardSource.includes('customerAccessState.snapshot(customerId,{includeBlocked:'),
-  'Account Home must not maintain or reload a second current-subscription interpretation'
+  'Account Home route must not maintain or reload a second current-subscription interpretation'
+);
+assert(
+  !dashboardView.includes('function isLive(')
+    && dashboardView.includes('const currentSubscriptions=Array.isArray(portal.subscriptions)?portal.subscriptions.filter(s=>!s.is_addon):[]')
+    && dashboardView.includes('entitlementEnd(s)'),
+  'Account Home rendering must trust canonical current subscriptions and use canonical access expiry rather than raw status/current-period filtering'
 );
 assert(
   accessSource.includes('customers.getCurrentCustomerPortal(customerId)')
