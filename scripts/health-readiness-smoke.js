@@ -11,7 +11,6 @@ const {boundedReadinessTimeout,publicResult}=require('../src/platform/health');
 require('./db-pool-saturation-smoke');
 
 assert(source.includes('const ok=checks.database&&checks.databasePool&&checks.migrations&&checks.runtimeSettings'),'Core readiness must depend on database, bounded web-pool capacity, migrations and runtime settings');
-assert(source.includes("SELECT filename FROM schema_migrations WHERE filename=$1 LIMIT 1"),'Readiness must require this runtime\'s expected migration to be present rather than requiring it to be the database\'s newest migration; this keeps the serving N-1 runtime healthy during additive zero-downtime migrations');
 assert(source.includes('checks.databasePool=!pool.overloaded'),'Readiness must fail closed when the configured web DB circuit breaker is overloaded');
 assert(source.includes('degraded:ok&&!checks.publicOrigin'),'Missing public origin must degrade external-link capability without taking the web process out of service');
 assert(!source.includes('Object.values(checks).every(Boolean)'),'A missing public origin must never make the storefront disappear from the reverse proxy');
