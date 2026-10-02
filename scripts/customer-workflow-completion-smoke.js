@@ -88,8 +88,10 @@ assert(localAccessHtml.includes('/server-placement/reset')&&localAccessHtml.incl
 assert(localAccessHtml.includes('/expiry/reset'),'locally controlled expiry must have a direct reset-to-plan action');
 assert(customer360Source.includes("/admin/users/:customerId/server-placement/reset'")&&customer360Source.includes('lifecycleService.resetAutomaticPlacement(req.params.customerId'), 'server reset route must delegate automatic placement and guarded migration orchestration to the canonical customer lifecycle service');
 assert(customer360Source.includes("String(req.body.confirmation||'').trim().toUpperCase()!=='PLACE'"),'automatic placement must require typed PLACE confirmation before a possible server move');
-assert(customer360Source.includes("/admin/users/:customerId/expiry/reset'")&&customer360Source.includes('planExpiry.endForPlan(entitlement)'),'expiry reset must compute the current plan term through the canonical plan-expiry owner');
-assert(customer360Source.includes('if(recurringProviderSubscription(sub))throw new Error'),'expiry reset must refuse provider-controlled recurring billing periods');
+assert(customer360Source.includes("/admin/users/:customerId/expiry/reset'")&&customer360Source.includes('individualActions.resetExpiryToPlan({customerId:req.params.customerId'),'expiry reset route must delegate plan-term computation and mutation to the canonical individual action service');
+const individualActionSource=fs.readFileSync(path.join(root,'src/access/admin-customer-individual-action-service.js'),'utf8');
+assert(individualActionSource.includes('const end=planExpiry.endForPlan(entitlement)'),'canonical expiry-reset owner must compute the current plan term through plan-expiry');
+assert(individualActionSource.includes('if(subscriptionState.recurringProvider(entitlement))throw new Error'),'canonical expiry-reset owner must refuse provider-controlled recurring billing periods');
 
 const recurringAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[subscription(false)],accounts:[]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
 assert(recurringAccessHtml.includes('Manage renewal')&&!recurringAccessHtml.includes('Change expiry')&&!recurringAccessHtml.includes('Reset expiry to plan term'),'provider-controlled recurring expiry must stay a Billing fact/action rather than pretending a local expiry mutation is provider-safe');
