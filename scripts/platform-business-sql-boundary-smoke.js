@@ -24,9 +24,6 @@ const domainOwnedTables = Object.freeze([
 ]);
 
 const documentedLegacyExceptions = new Set([
-  'src/platform/admin-actions.js::subscriptions',
-  'src/platform/admin-actions.js::customers',
-  'src/platform/admin-actions.js::app_users',
   'src/platform/admin-customer-management.js::customers',
   'src/platform/admin-customer-management.js::app_users',
   'src/platform/portal-credential-confirmation.js::customers',
@@ -185,5 +182,26 @@ assert(adminLinkedProfile.includes('UPDATE customers')
     && adminLinkedProfile.includes('INSERT INTO customers')
     && adminLinkedProfile.includes('manualSubscriptions.createManualSubscriptionTx'),
   'customer profile owner must own linked customer persistence and delegate subscription creation to entitlements');
+
+
+
+const adminActionsRoute=fs.readFileSync(path.join(root,'src/platform/admin-actions.js'),'utf8');
+const adminCustomerCreation=fs.readFileSync(path.join(root,'src/customers/admin-customer-creation.js'),'utf8');
+const customerAccountProvisioning=fs.readFileSync(path.join(root,'src/security/customer-account-provisioning.js'),'utf8');
+assert(adminActionsRoute.includes("require('../customers/admin-customer-creation')")
+    && adminActionsRoute.includes('adminCustomerCreation.create({')
+    && adminActionsRoute.includes('adminCustomerCreation.setActivationDeadline(')
+    && !adminActionsRoute.includes('INSERT INTO app_users')
+    && !adminActionsRoute.includes('INSERT INTO customers')
+    && !adminActionsRoute.includes('INSERT INTO subscriptions')
+    && !adminActionsRoute.includes('UPDATE customers SET activation_deadline'),
+  'admin customer creation route must delegate business persistence to domain owners');
+assert(customerAccountProvisioning.includes('INSERT INTO app_users')
+    && customerAccountProvisioning.includes("role,active,email_verified_at"),
+  'security domain must own pending customer login creation');
+assert(adminCustomerCreation.includes('INSERT INTO customers')
+    && adminCustomerCreation.includes('manualSubscriptions.createManualSubscriptionTx')
+    && adminCustomerCreation.includes('UPDATE customers SET activation_deadline'),
+  'customer domain must own customer record/activation state and delegate entitlement creation');
 
 console.log(`platform business SQL boundary: ok (${observed.length} frozen legacy file/table exceptions; no new direct mutations)`);
