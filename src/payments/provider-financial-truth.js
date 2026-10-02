@@ -297,7 +297,7 @@ async function upsertTransaction(values = {}) {
             JSON.stringify({ ...metadata, providerAuthoritative: incomingAuthoritative })
         ]);
         if (result.rowCount !== 1) {
-            const error = new Error(`Provider transaction ${provider}:${providerTransactionId} is already owned by another customer.`);
+            const error = new Error(`Provider transaction ${provider}:${providerTransactionId} has an existing customer owner and is already owned by another customer.`);
             error.code = 'PROVIDER_TRANSACTION_OWNER_CONFLICT';
             throw error;
         }

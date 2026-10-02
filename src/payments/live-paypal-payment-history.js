@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const financialTruth = require('./provider-financial-truth');
+const { PAYPAL_PAYMENT_CODES } = require('./provider-transaction-classifier');
 
 // PayPal Transaction Search classifies Express Checkout / one-time checkout
 // receipts as customer payments. Live captures use the same canonical type.
@@ -159,6 +160,7 @@ async function recordCapture(capture, {
 module.exports = {
     LIVE_CAPTURE_PAYMENT_TYPE,
     ZERO_DECIMAL_CURRENCIES,
+    PAYPAL_PAYMENT_CODES,
     currencyExponent,
     moneyMinor,
     moneyCurrency,
