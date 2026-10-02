@@ -7,6 +7,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const registry = require('../jellyfin/registry');
 const mediaProvider = require('../media-servers/provider');
 const mediaPlanPolicy = require('../jellyfin/media-plan-policy-settings');
+const planCommands = require('../catalog/plan-command-service');
 const deviceAccessPolicy = require('../jellyfin/device-access-policy');
 const { POLICY_REASON } = require('../jellyfin/four-k-transcode-policy');
 const { IDENTITY_ADVISORY_LOCK_ID, IP_REASON, DEVICE_REASON, COMBINED_REASON } = require('../jellyfin/media-identity-policy');
@@ -256,13 +257,12 @@ function createAdminMediaControlsRouter() {
       if (changing && Number(state.live_entitlements || 0) > 0 && String(req.body.confirmation || '').trim() !== String(state.code)) {
         throw new Error(`This plan has ${Number(state.live_entitlements)} live entitlement${Number(state.live_entitlements) === 1 ? '' : 's'}. Type ${state.code} exactly to confirm the 4K transcode policy change.`);
       }
-      await transaction(async client => {
-        await client.query('UPDATE plans SET kick_4k_transcodes=$2,updated_at=NOW() WHERE id=$1', [req.params.planId, enabled]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.4k_transcode_policy','plan',$2,$3::jsonb)`, [
-          req.session.authUserId,
-          req.params.planId,
-          JSON.stringify({ enabled, previous: Boolean(state.kick_4k_transcodes), liveEntitlements: Number(state.live_entitlements || 0) })
-        ]);
+      await planCommands.updateFourKTranscodePolicy({
+        planId: req.params.planId,
+        enabled,
+        previous: Boolean(state.kick_4k_transcodes),
+        liveEntitlements: Number(state.live_entitlements || 0),
+        actorUserId: req.session.authUserId
       });
       return redirectWith(res, back, 'message', `4K video transcoding kick ${enabled ? 'enabled' : 'disabled'} for ${state.name}. Direct-play 4K is unaffected.`, 'access-advanced-settings');
     } catch (error) {
