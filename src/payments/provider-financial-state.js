@@ -218,6 +218,46 @@ async function scanAllTransactions(visit,{queryFn=query,pageSize=5000,maxPages=1
     throw new Error(`Provider transaction scan exceeded ${size*pages} rows.`);
 }
 
+async function transactionsForCustomers(customerIds,{limit=MAX_QUERY_ROWS,order='desc'}={}) {
+    const ids=[...new Set((customerIds||[]).map(value=>String(value||'').trim()).filter(Boolean))];
+    if(!ids.length)return[];
+    const safe=boundedInt(limit,{min:1,max:MAX_QUERY_ROWS,fallback:MAX_QUERY_ROWS});
+    const direction=String(order||'desc').toLowerCase()==='asc'?'ASC':'DESC';
+    const result=await query(`
+      SELECT customer_id,provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
+             gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,provider_reference_id,provider_source_id,metadata
+      FROM payment_history_transactions
+      WHERE customer_id=ANY($1::uuid[])
+      ORDER BY occurred_at ${direction},id ${direction}
+      LIMIT $2
+    `,[ids,safe]);
+    return result.rows;
+}
+
+async function providerIdentityCounts() {
+    const result=await query(`
+      SELECT provider,COUNT(*)::int count
+      FROM payment_customers
+      GROUP BY provider
+      ORDER BY provider
+    `);
+    return result.rows;
+}
+
+function latestProviderIdentityJoinSql(customerExpression='c.id',alias='pay') {
+    const customer=String(customerExpression||'').trim();
+    const joinAlias=String(alias||'pay').trim();
+    if(!/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(customer))throw new Error('Invalid customer SQL expression.');
+    if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(joinAlias))throw new Error('Invalid provider identity SQL alias.');
+    return `LEFT JOIN LATERAL (
+        SELECT provider
+        FROM payment_customers pc
+        WHERE pc.customer_id=${customer}
+        ORDER BY pc.updated_at DESC
+        LIMIT 1
+    ) ${joinAlias} ON TRUE`;
+}
+
 async function ensureProviderIdentity({customerId,provider,providerCustomerId}) {
     const id=text(providerCustomerId);
     if(!id)return null;
@@ -600,7 +640,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
+    transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
