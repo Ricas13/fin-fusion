@@ -47,6 +47,7 @@ expect(moduleSource.includes('source_currency')&&moduleSource.includes('source_a
 expect(moduleSource.includes("callback.searchParams.set('json', 'true')"),'Plisio callback must request JSON mode.');
 expect(moduleSource.includes('getOperation(providerId)'),'Plisio callback must independently fetch the remote operation.');
 expect(moduleSource.includes('verifiedProviderContract'),'Plisio completion must verify amount/currency against immutable local checkout terms.');
+expect(moduleSource.includes('financialState.recordTransaction'),'Verified Plisio completion must enter the canonical provider financial ledger.');
 expect(moduleSource.includes("fields.status === 'completed'"),'Only completed Plisio operations may activate access.');
 expect(moduleSource.includes('timingSafeEqual'),'Plisio callback comparison must use timingSafeEqual.');
 expect(!moduleSource.includes('.sort('),'Plisio callback signing must not reorder JSON keys before JSON.stringify.');
@@ -83,6 +84,8 @@ expect(returnRoutes.some(route=>route.includes('/stripe/return'))&&returns.inclu
 const migration=source('db/migrations/035_plisio_only_payment_provider.sql');
 for(const constraint of ['payment_provider_credentials_provider_check','billing_checkout_intents_provider_check','payment_events_provider_check','payment_incidents_provider_check','subscriptions_source_check'])expect(migration.includes(constraint),`Plisio migration is missing ${constraint}.`);
 expect(migration.includes("'plisio'::text")&&migration.includes("'legacy_crypto'::text"),'Migration must keep Plisio active while neutralising unsupported historical crypto records.');
+const ledgerMigration=source('db/migrations/20261002090000_unify_provider_financial_ledger.sql');
+expect(ledgerMigration.includes("provider IN ('stripe','paypal','plisio')"),'Canonical provider ledger must accept Plisio transactions.');
 
 // Plisio checkout is exposed on the two live customer plan surfaces. The old
 // standalone Stremio dashboard was retired when Stremio management moved Home.

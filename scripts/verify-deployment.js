@@ -7,7 +7,7 @@ const { query, getPool } = require('../src/db');
 const buildInfo = require('../src/build-info');
 const runtimeSettings = require('../src/platform/runtime-settings');
 const jobHealth = require('../src/automation/job-health');
-const criticalJobs = require('../src/automation/critical-jobs');
+const jobRegistry = require('../src/automation/jobs');
 
 const DEPLOYMENT_PROBE_JOBS = Object.freeze([
     'creation_intent_recovery',
@@ -155,7 +155,7 @@ async function main() {
             const registeredJobs = Array.isArray(automationWorker?.metadata?.registeredJobs)
                 ? automationWorker.metadata.registeredJobs.map(String)
                 : [];
-            const requiredJobs = criticalJobs.names();
+            const requiredJobs = jobRegistry.criticalNames();
             const missingRegisteredJobs = requiredJobs.filter(jobKey => !registeredJobs.includes(jobKey));
             add('automation worker registry', missingRegisteredJobs.length === 0,
                 missingRegisteredJobs.length
@@ -218,7 +218,7 @@ async function main() {
             const inactivityState = inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing';
             const inactivityAllowed = Boolean(inactivityJob) && (
                 inactivityJob.enabled === false
-                    ? criticalJobs.mayBeDisabled('customer_inactivity')
+                    ? jobRegistry.mayBeDisabled('customer_inactivity')
                     : !badStates.has(inactivityState)
             );
             add('Free Server inactivity cleanup policy', inactivityAllowed,
@@ -241,7 +241,7 @@ async function main() {
 
             const disabledCritical = requiredJobs.filter(jobKey => {
                 const row = jobsByKey.get(jobKey);
-                return row?.enabled === false && !criticalJobs.mayBeDisabled(jobKey);
+                return row?.enabled === false && !jobRegistry.mayBeDisabled(jobKey);
             });
             add('critical automation job enablement', disabledCritical.length === 0,
                 disabledCritical.length

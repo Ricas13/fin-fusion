@@ -2,7 +2,7 @@
 const express=require('express');
 const csrf=require('../auth/csrf');
 const drift=require('../jellyfin/drift-control');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 const runtimeSettings=require('./runtime-settings');
 const ui=require('./admin-ui');
 const {esc,layout}=require('./admin-html');

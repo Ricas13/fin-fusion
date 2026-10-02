@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const historyAccounting = require('./history-accounting');
+const financialState = require('./provider-financial-state');
 
 const MAX_TRANSACTION_EXPORT_ROWS = 250000;
 const UTF8_BOM = '\uFEFF';
@@ -64,7 +65,7 @@ function portableProcessor(row) {
 }
 function providerLabel(value) {
     const provider = String(value || '').toLowerCase();
-    return provider === 'stripe' ? 'Stripe' : provider === 'paypal' ? 'PayPal' : 'Manual';
+    return provider === 'stripe' ? 'Stripe' : provider === 'paypal' ? 'PayPal' : provider === 'plisio' ? 'Plisio' : 'Manual';
 }
 
 async function loadUsers() {
@@ -119,21 +120,11 @@ async function loadPortablePayments() {
 }
 
 async function loadTransactions() {
-    const result = await query(`
-        SELECT t.id::text,t.provider,t.provider_transaction_id,t.transaction_type,t.transaction_status,t.occurred_at,t.currency,
-               t.gross_amount_minor,t.fee_amount_minor,t.net_amount_minor,t.provider_customer_id,t.provider_reference_id,t.provider_source_id,
-               t.customer_id::text,COALESCE(NULLIF(c.email,''),NULLIF(u.email,''),'') AS customer_email,
-               COALESCE(u.username,'') AS portal_username,COALESCE(c.display_name,'') AS display_name
-          FROM payment_history_transactions t
-          LEFT JOIN customers c ON c.id=t.customer_id
-          LEFT JOIN app_users u ON u.id=c.user_id
-         ORDER BY t.occurred_at,t.id
-         LIMIT $1
-    `, [MAX_TRANSACTION_EXPORT_ROWS + 1]);
-    if (result.rows.length > MAX_TRANSACTION_EXPORT_ROWS) {
+    const rows = await financialState.exportTransactions(MAX_TRANSACTION_EXPORT_ROWS + 1);
+    if (rows.length > MAX_TRANSACTION_EXPORT_ROWS) {
         throw new Error(`Transaction export exceeds the ${MAX_TRANSACTION_EXPORT_ROWS.toLocaleString('en-GB')} row safety limit. Export a narrower provider history dataset or archive older accounting records first.`);
     }
-    return result.rows;
+    return rows;
 }
 
 function usersCsv(rows) {
@@ -211,9 +202,9 @@ async function summary() {
     const [customers, payments, transactions] = await Promise.all([
         query(`SELECT COUNT(*)::bigint AS total FROM customers`),
         query(`SELECT COUNT(*)::bigint AS total FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.superseded_by IS NULL AND s.current_period_end>NOW() AND s.status IN ('active','trialing','past_due','paused') AND COALESCE(s.price_minor_snapshot,p.price_minor,0)>0`),
-        query(`SELECT COUNT(*)::bigint AS total FROM payment_history_transactions`)
+        financialState.countTransactions()
     ]);
-    return { customers: Number(customers.rows[0]?.total || 0), portablePayments: Number(payments.rows[0]?.total || 0), transactions: Number(transactions.rows[0]?.total || 0) };
+    return { customers: Number(customers.rows[0]?.total || 0), portablePayments: Number(payments.rows[0]?.total || 0), transactions: Number(transactions || 0) };
 }
 
 async function auditExport(actorUserId, kind, counts = {}) {

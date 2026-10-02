@@ -145,6 +145,25 @@ async function update(jobKey, { enabled, intervalSeconds }) {
     return result.rows[0];
 }
 
+async function applyImportedState(client, { jobKey, enabled, intervalSeconds }) {
+    const seconds = Math.max(30, Math.min(86400, Number(intervalSeconds) || 300));
+    const result = await client.query(
+        `UPDATE automation_job_state
+         SET enabled=$2,
+             interval_seconds=$3,
+             next_run_at=CASE
+                 WHEN $2 THEN LEAST(COALESCE(next_run_at,NOW()),NOW())
+                 ELSE next_run_at
+             END,
+             force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,
+             updated_at=NOW()
+         WHERE job_key=$1
+         RETURNING *`,
+        [jobKey, Boolean(enabled), seconds]
+    );
+    return result.rows[0] || null;
+}
+
 async function requestRun(jobKey) {
     const result = await query(`UPDATE automation_job_state
         SET next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()
@@ -176,6 +195,7 @@ module.exports = {
     runSingleton,
     list,
     update,
+    applyImportedState,
     requestRun,
     countFromResult,
     failedCountFromResult,

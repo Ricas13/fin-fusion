@@ -1,18 +1,20 @@
 'use strict';
 
 const express=require('express');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
 const discordRoles=require('../integrations/discord-roles');
+const planCommands=require('../catalog/plan-command-service');
+const planInput=require('../catalog/plan-input');
 const {esc,layout}=require('./admin-html');
 const {sendCsv}=require('./export');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
-function b(v){return v==='on'||v==='true'||v===true}
+const b=planInput.bool;
 function n(v,min,max,f){const x=parseInt(v,10);return Number.isFinite(x)&&x>=min&&x<=max?x:f}
-function t(v,max){return String(v||'').trim().slice(0,max)}
+const t=planInput.text;
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
 function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
 function confirmField(plan,count,label='live customer entitlements'){return Number(count)>0?`<div class="notice warn"><strong>Impact preview:</strong> this plan currently affects ${esc(count)} ${esc(label)}. Type <strong>${esc(plan.code)}</strong> below to confirm this change.</div><div class="formGroup"><label>Impact confirmation</label><input class="input" name="impactConfirmation" autocomplete="off" required placeholder="${esc(plan.code)}"></div>`:''}
@@ -120,11 +122,11 @@ function createAdminPlansRouter(){
       const plan=await planById(req.params.id);if(!plan)throw new Error('Plan not found.');
       const impact=await planImpact(plan.id);requireImpact(plan,impact.live,req.body.impactConfirmation);
       const p=overviewInput(req.body,plan);if(!p.active&&plan.active)await assertNotAutomaticFreeTarget(plan);
-      await transaction(async client=>{
-        const before=await client.query('SELECT server_class FROM plans WHERE id=$1 FOR UPDATE',[plan.id]),classChanged=before.rows[0].server_class!==p.serverClass;
-        await client.query(`UPDATE plans SET name=$2,description=$3,audience=$4,billing_interval=$5,duration_days=$6,server_class=$7,visible=$8,active=$9,sort_order=$10,marketing_features=$11::text[],discord_role_id=$12,updated_at=NOW() WHERE id=$1`,[plan.id,p.name,p.description,p.audience,p.billing,p.duration,p.serverClass,p.visible,p.active,p.sort,p.features,p.discordRoleId]);
-        if(classChanged)await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1',[plan.id]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.update','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify({...p,permanentFreeTier:Boolean(plan.is_free_tier),impact,classChanged})]);
+      await planCommands.updatePlanOverview({
+        planId:plan.id,
+        input:p,
+        actorUserId:req.session.authUserId,
+        auditMetadata:{...p,permanentFreeTier:Boolean(plan.is_free_tier),impact}
       });
       return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?message=${encodeURIComponent(plan.is_free_tier?'Free Access overview saved. The plan remains permanently active and visible.':'Overview saved. Existing subscription contracts are unaffected by catalogue availability.')}`);
     }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message)}`)}
@@ -139,8 +141,7 @@ function createAdminPlansRouter(){
       if(plan.is_free_tier)throw new Error('The Free Access plan cannot be archived. Set Availability to 0 instead.');
       if(String(req.body.impactConfirmation||'').trim()!==String(plan.code))throw new Error(`Type ${plan.code} exactly to archive this plan.`);
       await assertNotAutomaticFreeTarget(plan);
-      await query(`UPDATE plans SET active=FALSE,visible=FALSE,archived_at=NOW(),archived_by=$2,updated_at=NOW() WHERE id=$1`,[plan.id,req.session.authUserId]);
-      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.archive','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify(await planImpact(plan.id))]);
+      await planCommands.archivePlan({planId:plan.id,actorUserId:req.session.authUserId,auditMetadata:await planImpact(plan.id)});
       return res.redirect('/admin/plans?message='+encodeURIComponent('Plan archived from new sales. Existing paid-through contracts remain active.'));
     }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message)}`)}
   });
@@ -150,8 +151,7 @@ function createAdminPlansRouter(){
     try{
       const plan=await planById(req.params.id);if(!plan)throw new Error('Plan not found.');
       if(plan.is_free_tier)throw new Error('Free Access is permanently part of the catalogue and does not need restoring.');
-      await query(`UPDATE plans SET archived_at=NULL,archived_by=NULL,active=TRUE,visible=FALSE,updated_at=NOW() WHERE id=$1`,[plan.id]);
-      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.unarchive','plan',$2,'{}'::jsonb)`,[req.session.authUserId,plan.id]);
+      await planCommands.unarchivePlan({planId:plan.id,actorUserId:req.session.authUserId});
       return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?message=${encodeURIComponent('Plan restored to the catalogue as active but hidden. Review it, then enable storefront visibility when ready.')}`);
     }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message)}`)}
   });

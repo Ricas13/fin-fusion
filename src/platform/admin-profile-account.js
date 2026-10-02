@@ -4,7 +4,7 @@ const express=require('express');
 const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 const {page:emailInfrastructurePage}=require('./admin-email');
 const {layout,esc}=require('./admin-html');
 

@@ -5,6 +5,7 @@ const lifecycle = require('./lifecycle');
 const billingMode = require('./subscription-billing-mode');
 const providerOps = require('./provider-operations');
 const providerContract = require('./provider-contract');
+const subscriptionState = require('../entitlements/subscription-state');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -133,6 +134,12 @@ async function syncDue({ all = false, limit = 100, adapters = {} } = {}) {
     for (const row of rows) { const result = await syncSubscription(row.id, { adapter:adapters[row.source] || null }); summary.results.push(result); if (result.ok) summary.succeeded += 1; else summary.failed += 1; }
     return summary;
 }
+async function setCustomerRenewal(customerId, enabled, actorUserId = null, options = {}) {
+    const current = await subscriptionState.effectiveSubscription(customerId, { includeBlocked: true });
+    if (!current) throw new Error('This customer has no subscription to change renewal for.');
+    return setRenewal(current.subscription_id || current.id, enabled, actorUserId, options);
+}
+
 async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter = null } = {}) {
     const row = await subscriptionById(subscriptionId);
     if (!row) throw new Error('Subscription not found.');
@@ -209,4 +216,4 @@ async function dashboardData() {
     return { subscriptions:rows,events:events.rows,stats:{recurring:rows.filter(row=>row.recurring).length,active:rows.filter(row=>row.recurring&&['active','trialing'].includes(row.status)).length,pastDue:rows.filter(row=>row.recurring&&row.status==='past_due').length,cancelling:rows.filter(row=>row.recurring&&row.cancel_at_period_end).length,syncProblems:rows.filter(row=>row.recurring&&row.last_error).length} };
 }
 
-module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,validRecurringProviderReference,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,recoverProviderOperation,dashboardData,recurringProviderCounts,subscriptionById,stripePeriod,stripePriceId,remoteStateForPolicy,applyRemoteState,verifyExpectedRemote };
+module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,validRecurringProviderReference,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,setCustomerRenewal,recoverProviderOperation,dashboardData,recurringProviderCounts,subscriptionById,stripePeriod,stripePriceId,remoteStateForPolicy,applyRemoteState,verifyExpectedRemote };

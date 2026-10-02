@@ -6,6 +6,7 @@ const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
 const discovery = require('./subscription-discovery');
 const lifecycle = require('./lifecycle');
+const financialState = require('./provider-financial-state');
 
 function clean(value, max = 500) { return String(value == null ? '' : value).trim().slice(0, max); }
 function emailKey(value) { return clean(value, 320).toLowerCase(); }
@@ -148,19 +149,29 @@ async function verifyPlan(local, remote) {
     return { mapping: mapping.rows[0], externalPlanIds };
 }
 
+function ownershipDecision(local, remote, ownerIds = []) {
+    const owners = new Set((ownerIds || []).map(value => String(value)));
+    if (owners.has(String(local.customer_id))) {
+        return { verified: true, reason: 'Provider customer ID is already mapped to this portal customer.' };
+    }
+    if (remote.provider === 'stripe' && owners.size) {
+        throw new Error('This Stripe customer identity is already mapped to another CAPTAiNFiN customer.');
+    }
+    const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
+    if (sameEmail) return { verified: true, reason: 'Provider email matches the portal customer.' };
+    if (remote.provider === 'paypal' && owners.size) {
+        return { verified: false, reason: 'This PayPal payer ID is shared with another local customer; use the exact I- subscription ID and explicit operator confirmation.' };
+    }
+    return { verified: false, reason: 'Provider identity is not yet mapped; confirm ownership manually.' };
+}
+
 async function verifyOwnership(local, remote) {
     if (!remote.providerCustomerId) {
         const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
         return { verified: Boolean(sameEmail), reason: sameEmail ? 'Provider email matches the portal customer.' : 'Provider returned no customer ID; confirm ownership manually.' };
     }
-    const existing = await query(`SELECT customer_id FROM payment_customers WHERE provider=$1 AND provider_customer_id=$2`, [remote.provider, remote.providerCustomerId]);
-    if (existing.rowCount) {
-        const owners = new Set(existing.rows.map(row => String(row.customer_id)));
-        if (!owners.has(String(local.customer_id))) throw new Error('This provider customer identity is already mapped to another CAPTAiNFiN customer.');
-        return { verified: true, reason: 'Provider customer ID is already mapped to this portal customer.' };
-    }
-    const sameEmail = emailKey(remote.email) && emailKey(remote.email) === emailKey(local.email);
-    return { verified: Boolean(sameEmail), reason: sameEmail ? 'Provider email matches the portal customer.' : 'Provider identity is not yet mapped; confirm ownership manually.' };
+    const owners = await financialState.providerIdentityOwners(remote.provider, remote.providerCustomerId);
+    return ownershipDecision(local, remote, owners);
 }
 
 async function preview({ subscriptionId, provider, providerSubscriptionId }) {
@@ -198,4 +209,4 @@ async function apply({ subscriptionId, provider, providerSubscriptionId, actorUs
     });
 }
 
-module.exports = { preview, apply, remoteSubscription, localPremium, providerLabel, normalizeLegacyPayPalAgreement };
+module.exports = { preview, apply, remoteSubscription, localPremium, providerLabel, normalizeLegacyPayPalAgreement, ownershipDecision, verifyOwnership };

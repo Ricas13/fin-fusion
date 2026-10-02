@@ -15,7 +15,6 @@ const expirySource = read('src/entitlements/subscription-expiry.js');
 const jobs = read('src/automation/jobs.js');
 const lifecycleNotifications = read('src/automation/notification-lifecycle.js');
 const retirementMigration = read('db/migrations/037_notification_catalogue_runtime.sql');
-const provisioning = read('src/jellyfin/provisioning.js');
 const resilientProvisioning = read('src/jellyfin/resilient-provisioning.js');
 const emailOutbox = read('src/integrations/email-outbox.js');
 const secondaryOutbox = read('src/integrations/notification-outbox.js');
@@ -69,10 +68,10 @@ assert(expirySource.includes("s.status='cancelled' OR COALESCE(s.cancel_at_perio
 assert(!/s\.billing_mode='payment'\s+OR\s+s\.status='cancelled'/.test(expirySource), 'cancelled manual/non-recurring rows must not bypass the billing-mode eligibility boundary');
 assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.includes('o.permanent_access=TRUE AND o.revoked_at IS NULL'), 'active Permanent Access must suppress expiry warnings for its pinned subscription');
 assert(expirySource.includes('subscription_admin_present'), 'an admin-granted goodwill/authority present state must also suppress expiry warnings, since that access will not actually lapse');
-assert(/async function notifyExpiringSubscriptions\(\)\s*\{\s*return subscriptionExpiry\.notifyExpiringSubscriptions\(\);\s*\}/.test(provisioning), 'subscription-expiry notification behavior must remain behind the provisioning facade');
+assert(expirySource.includes('async function notifyExpiringSubscriptions(')&&expirySource.includes('notifyExpiringSubscriptions,'), 'subscription-expiry notification behavior must remain owned and exported by the canonical subscription-expiry module');
 assert(/async function expireSubscriptionsAndReconcile\(\)\s*\{\s*return subscriptionExpiry\.expireAndReconcile\(\{\s*reconcileCustomer\b/.test(resilientProvisioning), 'resilient provisioning must own lane-aware expiry reconciliation');
 assert(jobs.includes("const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioning');"), 'automation must consume lane-aware expiry reconciliation through resilient provisioning');
-assert(jobs.includes("const{notifyExpiringSubscriptions}=require('../jellyfin/provisioning');"), 'automation must consume expiry notifications through the provisioning compatibility facade');
+assert(jobs.includes("const{notifyExpiringSubscriptions}=require('../entitlements/subscription-expiry');"), 'automation must consume expiry notifications directly from the canonical subscription-expiry owner');
 assert(jobs.includes('warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
 assert(jobs.indexOf('notifyExpiringSubscriptions()') < jobs.indexOf('expireSubscriptionsAndReconcile()'), 'warnings must be checked before due subscriptions are expired');
 

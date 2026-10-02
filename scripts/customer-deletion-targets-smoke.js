@@ -61,7 +61,7 @@ async function scenarioE(){
   assert(calls>=2,'E: cleanup should be safely rechecked/retried');
 }
 async function scenarioF(){
-  const dbPath=require.resolve('../src/db'),registryPath=require.resolve('../src/jellyfin/registry'),provisioningPath=require.resolve('../src/jellyfin/provisioning'),externalPath=require.resolve('../src/customers/customer-external-deletion'),deletionPath=require.resolve('../src/customers/customer-deletion');
+  const dbPath=require.resolve('../src/db'),registryPath=require.resolve('../src/jellyfin/registry'),provisioningPath=require.resolve('../src/jellyfin/resilient-provisioning'),externalPath=require.resolve('../src/customers/customer-external-deletion'),deletionPath=require.resolve('../src/customers/customer-deletion');
   const saved=new Map([dbPath,registryPath,provisioningPath,externalPath,deletionPath].map(key=>[key,require.cache[key]]));
   const succeeded={id:'job-succeeded',customer_id:'customer-gone',status:'succeeded',result:{deleted:true,jobId:'job-succeeded'}};let queries=0;
   try{

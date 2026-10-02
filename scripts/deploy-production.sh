@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/compose-runtime.sh"
 
 log() { printf '\n==> %s\n' "$*"; }
 fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
@@ -123,6 +124,11 @@ if command -v git >/dev/null 2>&1 && [[ -d .git ]]; then
   log "Deploying commit $(git rev-parse --short HEAD)"
 fi
 
+# Every application/worker/operator service in this deployment uses one
+# immutable image tag. The stable captainfin:current alias is advanced only
+# after live verification succeeds.
+export CAPTAINFIN_IMAGE="captainfin:${CAPTAINFIN_BUILD_SHA}"
+
 log 'Preparing isolated runtime database credentials'
 if command -v node >/dev/null 2>&1; then
   node scripts/prepare-production-env.js --write
@@ -159,34 +165,35 @@ adopt_legacy_container captainfin-backup steam-fusion-backup
 adopt_legacy_container captainfin-postgres steam-fusion-postgres
 
 existing_database=0
-if docker inspect captainfin-postgres >/dev/null 2>&1; then
+postgres_container="$(compose_service_container postgres)"
+if [[ -n "$postgres_container" ]]; then
   existing_database=1
-  if [[ "$(docker inspect -f '{{.State.Running}}' captainfin-postgres)" != 'true' ]]; then
-    log 'Starting existing PostgreSQL container'
-    docker start captainfin-postgres >/dev/null
+  if [[ "$(compose_service_state postgres)" != 'running' ]]; then
+    log 'Starting existing PostgreSQL service container'
+    docker start "$postgres_container" >/dev/null
   fi
 else
-  log 'No existing PostgreSQL container found; treating this as a fresh installation'
+  log 'No existing PostgreSQL service container found; treating this as a fresh installation'
   docker compose up -d postgres
 fi
 
 log 'Waiting for PostgreSQL readiness'
 for _ in $(seq 1 60); do
-  status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' captainfin-postgres 2>/dev/null || true)"
+  status="$(compose_service_health postgres)"
   [[ "$status" == 'healthy' ]] && break
   sleep 2
 done
-[[ "$(docker inspect -f '{{.State.Health.Status}}' captainfin-postgres 2>/dev/null || true)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
+[[ "$(compose_service_health postgres)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
 
 # Capture the currently running release before builds retag Compose images. These
 # immutable image IDs make application-only rollback possible without touching
 # the database when a release has no migration changes.
-if [[ "$existing_database" == 1 ]] && docker inspect captainfin >/dev/null 2>&1; then
-  previous_app_image="$(docker inspect -f '{{.Image}}' captainfin 2>/dev/null || true)"
-  previous_automation_image="$(docker inspect -f '{{.Image}}' captainfin-automation 2>/dev/null || true)"
-  previous_activity_image="$(docker inspect -f '{{.Image}}' captainfin-activity 2>/dev/null || true)"
-  previous_backup_image="$(docker inspect -f '{{.Image}}' captainfin-backup 2>/dev/null || true)"
-  previous_deploy_sha="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' captainfin 2>/dev/null | sed -n 's/^CAPTAINFIN_BUILD_SHA=//p' | head -1 || true)"
+if [[ "$existing_database" == 1 && -n "$(compose_service_container app)" ]]; then
+  previous_app_image="$(compose_service_image_id app)"
+  previous_automation_image="$(compose_service_image_id automation-worker)"
+  previous_activity_image="$(compose_service_image_id activity-worker)"
+  previous_backup_image="$(compose_service_image_id backup-worker)"
+  previous_deploy_sha="$(compose_service_env_value app CAPTAINFIN_BUILD_SHA)"
 
   if command -v git >/dev/null 2>&1 \
      && [[ "$previous_deploy_sha" =~ ^[0-9a-fA-F]{40}$ ]] \
@@ -202,11 +209,12 @@ fi
 # Compose/BuildKit may otherwise build identical service images concurrently.
 # Serialising those builds substantially lowers peak RAM/CPU on small VPS hosts.
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
-log "Building the release images conservatively (COMPOSE_PARALLEL_LIMIT=$COMPOSE_PARALLEL_LIMIT)"
-docker compose --profile recovery build \
+log "Building one immutable release image (COMPOSE_PARALLEL_LIMIT=$COMPOSE_PARALLEL_LIMIT)"
+docker compose build \
   --build-arg CAPTAINFIN_BUILD_SHA="$CAPTAINFIN_BUILD_SHA" \
   --build-arg CAPTAINFIN_BUILD_TIME="$CAPTAINFIN_BUILD_TIME" \
-  app automation-worker activity-worker backup-worker migrate recovery-tools
+  app
+docker image inspect "$CAPTAINFIN_IMAGE" >/dev/null 2>&1 || fail "release image was not created: $CAPTAINFIN_IMAGE"
 
 if [[ "$existing_database" == 1 ]]; then
   mkdir -p backups/predeploy
@@ -231,11 +239,11 @@ docker compose up -d --no-deps app automation-worker activity-worker backup-work
 services_recreated=1
 
 log 'Waiting for application and worker health checks'
-services=(captainfin captainfin-automation captainfin-activity captainfin-backup)
-for container in "${services[@]}"; do
+services=(app automation-worker activity-worker backup-worker)
+for service in "${services[@]}"; do
   ready=0
   for _ in $(seq 1 90); do
-    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+    health="$(compose_service_health "$service")"
     if [[ "$health" == 'healthy' || "$health" == 'running' ]]; then
       ready=1
       break
@@ -243,11 +251,20 @@ for container in "${services[@]}"; do
     [[ "$health" == 'unhealthy' || "$health" == 'exited' || "$health" == 'dead' ]] && break
     sleep 2
   done
-  [[ "$ready" == 1 ]] || fail "$container did not become healthy"
+  [[ "$ready" == 1 ]] || fail "$service did not become healthy"
+done
+
+log 'Verifying runtime build identity'
+for service in app automation-worker activity-worker backup-worker; do
+  runtime_sha="$(compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA)"
+  [[ "$runtime_sha" == "$CAPTAINFIN_BUILD_SHA" ]] || fail "$service is running build ${runtime_sha:-unknown}, expected $CAPTAINFIN_BUILD_SHA"
 done
 
 log 'Running application-level deployment verification'
 docker compose exec -T app npm run verify:deployment
+
+log 'Publishing verified runtime alias'
+docker image tag "$CAPTAINFIN_IMAGE" captainfin:current
 
 services_stopped=0
 services_recreated=0

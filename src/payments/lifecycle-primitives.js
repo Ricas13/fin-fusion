@@ -10,6 +10,7 @@ const referrals = require('../referrals');
 const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
 const serviceCreditReservations = require('./service-credit-reservations');
+const financialState = require('./provider-financial-state');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -95,14 +96,11 @@ async function reconcileCommittedCustomerStrict(customerId) {
 }
 
 async function ensurePaymentCustomer({ customerId, provider, providerCustomerId }) {
-    if (!providerCustomerId) return null;
-    const result = await query(`INSERT INTO payment_customers(customer_id,provider,provider_customer_id) VALUES($1,$2,$3) ON CONFLICT(customer_id,provider) DO UPDATE SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW() RETURNING *`, [customerId, provider, providerCustomerId]);
-    return result.rows[0];
+    return financialState.ensureProviderIdentity({customerId,provider,providerCustomerId});
 }
 
 async function findPaymentCustomer(customerId, provider) {
-    const result = await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider=$2 LIMIT 1`, [customerId, provider]);
-    return result.rows[0] || null;
+    return financialState.findProviderIdentity(customerId,provider);
 }
 
 async function beginPaymentEvent({ provider, eventId, eventType, payload }) {

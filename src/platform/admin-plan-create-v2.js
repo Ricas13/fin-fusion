@@ -1,12 +1,12 @@
 'use strict';
 
 const express = require('express');
-const { transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const reportingCurrency = require('./reporting-currency');
-const planPricing = require('../payments/plan-pricing');
+const planCommands = require('../catalog/plan-command-service');
+const planInput = require('../catalog/plan-input');
 const { esc, layout } = require('./admin-html');
 
 const BILLING = { trial: { label: 'Trial', days: 1 }, month: { label: 'Monthly', days: 30 }, '6_months': { label: '6 months', days: 183 }, year: { label: 'Yearly', days: 365 }, custom: { label: 'Custom duration', days: null } };
@@ -19,11 +19,11 @@ const planCreateWriteLimit = routeRateLimit.middleware({ scope: 'admin-plan-crea
 
 function gate(req, res, next) { return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req, res, next) { res.setHeader('Cache-Control', 'no-store, private, max-age=0'); res.setHeader('Pragma', 'no-cache'); next(); }
-function b(v) { return v === true || ['on', 'true', '1', 'yes'].includes(String(v || '').toLowerCase()); }
-function text(v, max) { return String(v || '').trim().slice(0, max); }
-function int(v, min, max, label) { const raw = String(v ?? '').trim(), n = Number.parseInt(raw, 10); if (!Number.isInteger(n) || String(n) !== raw || n < min || n > max) throw new Error(`${label} must be a whole number from ${min} to ${max}.`); return n; }
-function money(v) { const raw = String(v ?? '').trim(); if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error('Enter a valid non-negative price with no more than two decimal places.'); const n = Number(raw); if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error('Price must be between 0 and 100,000.'); return Math.round(n * 100); }
-function libraryNames(v) { return [...new Set(String(v || '').split(/[\n,]/).map(x => x.trim()).filter(Boolean).map(x => x.slice(0, 200)))].slice(0, 500); }
+const b = planInput.bool;
+const text = planInput.text;
+const int = planInput.integer;
+const money = planInput.moneyMinor;
+function libraryNames(v) { return planInput.uniqueTextValues(v, { split: true }); }
 function selected(a, b) { return a === b ? 'selected' : ''; }
 function checked(v) { return v ? 'checked' : ''; }
 function notice(req) { return `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`; }
@@ -38,8 +38,7 @@ function kindFromLegacy(body = {}) {
 function serviceForKind(kind) { return kind === 'stremio' ? 'stremio' : 'jellyfin'; }
 
 function parse(body = {}, forcedCurrency = null) {
-  const code = text(body.code, 50).toLowerCase(), name = text(body.name, 80), description = text(body.description, 500);
-  if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code)) throw new Error('Code must be 2–50 characters using lowercase letters, numbers and hyphens.');
+  const code = planInput.planCode(body.code), name = text(body.name, 80), description = text(body.description, 500);
   if (!name) throw new Error('Enter a plan name.');
   const legacyServiceType = text(body.serviceType, 20).toLowerCase();
   if (!body.planKind && legacyServiceType && !SERVICE_TYPES.includes(legacyServiceType)) throw new Error('Choose Jellyfin or Stremio as the plan type.');
@@ -86,20 +85,7 @@ function parse(body = {}, forcedCurrency = null) {
 }
 
 async function create(plan, actorUserId) {
-  return transaction(async client => {
-    const nextOrder = Number((await client.query(`SELECT COALESCE(MAX(sort_order),0)+10 AS n FROM plans`)).rows[0]?.n || 10);
-    const result = await client.query(
-      `INSERT INTO plans(code,name,description,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,is_addon,server_class,visible,active,sort_order,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,stremio_household_network_limit,stremio_household_lease_minutes,stremio_ip_replacement_policy,stremio_ip_replacement_cooldown_minutes,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,allow_subtitle_editing,library_access_mode,library_names,inactivity_policy)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::text[],$35::jsonb) RETURNING *`,
-      [plan.code, plan.name, plan.description, plan.serviceType, plan.audience, plan.billing, plan.duration, plan.priceMinor, plan.currency, plan.capacityLimit, plan.isAddon, plan.serverClass, plan.visible, plan.active, nextOrder, plan.jellyfinAccessModel, plan.jellyfinHouseholdNetworkLimit, plan.jellyfinHouseholdLeaseMinutes, plan.stremioHouseholdNetworkLimit, plan.stremioHouseholdLeaseMinutes, plan.stremioIpReplacementPolicy, plan.stremioIpReplacementCooldownMinutes, plan.streams, plan.downloads, plan.video, plan.audio, plan.remux, plan.live, plan.liveManagement, plan.remote, plan.fourk, plan.subtitles, plan.libraryMode, plan.libraries, JSON.stringify(plan.inactivityPolicy)]
-    );
-    await planPricing.setPrice(client, result.rows[0].id, { currency: plan.currency, priceMinor: plan.priceMinor, active: true, isDefault: true });
-    await client.query(
-      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.create','plan',$2,$3::jsonb)`,
-      [actorUserId, result.rows[0].id, JSON.stringify({ code: plan.code, planKind: plan.planKind, serviceType: plan.serviceType, audience: 'direct', currency: plan.currency, priceMinor: plan.priceMinor, capacityLimit: plan.capacityLimit, jellyfinAccessModel: plan.jellyfinAccessModel, streams: plan.streams, jellyfinHouseholdNetworkLimit: plan.jellyfinHouseholdNetworkLimit, jellyfinHouseholdLeaseMinutes: plan.jellyfinHouseholdLeaseMinutes, stremioHouseholdNetworkLimit: plan.stremioHouseholdNetworkLimit, stremioHouseholdLeaseMinutes: plan.stremioHouseholdLeaseMinutes, stremioIpReplacementPolicy: plan.stremioIpReplacementPolicy, stremioIpReplacementCooldownMinutes: plan.stremioIpReplacementCooldownMinutes, jellyfinPolicy: { downloads: plan.downloads, videoTranscoding: plan.video, audioTranscoding: plan.audio, remuxing: plan.remux, liveTv: plan.live, liveTvManagement: plan.liveManagement, remoteAccess: plan.remote, allow4k: plan.fourk, subtitleEditing: plan.subtitles, libraryAccessMode: plan.libraryMode, libraryNames: plan.libraries }, inactivityPolicy: plan.inactivityPolicy })]
-    );
-    return result.rows[0];
-  });
+  return planCommands.createPlan(plan, actorUserId);
 }
 
 function values(req, input = {}, currency = 'GBP') {

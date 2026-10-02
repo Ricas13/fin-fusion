@@ -57,6 +57,34 @@ assert.deepStrictEqual(legacyPaypal.externalPlanIds, ['P-LEGACY']);
 assert.strictEqual(legacyPaypal.apiFamily, 'billing-agreements-v1');
 assert(discovery.currentRemote(legacyPaypal), 'active legacy PayPal billing agreements must be eligible for verified manual recovery');
 
+const sharedPayPalOwnership = manualLink.ownershipDecision(
+    { customer_id:'customer-paypal-b', email:'second@example.com' },
+    { provider:'paypal', providerCustomerId:'PAYER-SHARED', email:'different@example.com' },
+    ['customer-paypal-a']
+);
+assert.strictEqual(sharedPayPalOwnership.verified,false,
+    'a PayPal payer ID already used by another local customer must remain recoverable with exact subscription identity and operator confirmation');
+assert.match(sharedPayPalOwnership.reason,/shared with another local customer/,
+    'shared PayPal payer identity must be explained instead of treated as a Stripe-style ownership conflict');
+assert.throws(
+    ()=>manualLink.ownershipDecision(
+        { customer_id:'customer-stripe-b', email:'second@example.com' },
+        { provider:'stripe', providerCustomerId:'cus_shared', email:'different@example.com' },
+        ['customer-stripe-a']
+    ),
+    /already mapped to another CAPTAiNFiN customer/,
+    'a Stripe cus_ identity must remain strictly one-to-one'
+);
+assert.strictEqual(
+    manualLink.ownershipDecision(
+        { customer_id:'customer-paypal-b', email:'same@example.com' },
+        { provider:'paypal', providerCustomerId:'PAYER-SHARED', email:'same@example.com' },
+        ['customer-paypal-a']
+    ).verified,
+    true,
+    'matching provider email may verify a shared PayPal payer while the exact I- subscription remains the mutation target'
+);
+
 function baseContext() {
     return {
         providerIdentityToCustomers: new Map([
@@ -85,6 +113,27 @@ assert.strictEqual(matches.length, 1);
 assert.strictEqual(matches[0].state, 'safe');
 assert.strictEqual(matches[0].match.id, 'sub_live');
 assert(/Exact plan/.test(matches[0].reason));
+
+
+const sharedPayPalContext=baseContext();
+sharedPayPalContext.providerIdentityToCustomers.set('paypal:PAYER-1',new Set(['customer-2','customer-other']));
+const localPayPal={
+    ...local,
+    customer_id:'customer-2',
+    subscription_id:'local-paypal-2',
+    plan_id:'plan-premium-paypal',
+    email:'paypal@example.com'
+};
+matches=discovery.matchPremiumRows([localPayPal],[paypal],sharedPayPalContext);
+assert.strictEqual(matches[0].state,'safe',
+    'shared PayPal payer identity must fall through to unique customer email instead of blocking safe exact-plan discovery');
+assert.match(matches[0].reason,/unique customer email/);
+const sharedPayPalNoEmail=baseContext();
+sharedPayPalNoEmail.providerIdentityToCustomers.set('paypal:PAYER-1',new Set(['customer-2','customer-other']));
+sharedPayPalNoEmail.emailToCustomers.set('paypal@example.com',new Set(['customer-2','customer-other']));
+matches=discovery.matchPremiumRows([localPayPal],[paypal],sharedPayPalNoEmail);
+assert.strictEqual(matches[0].state,'unresolved',
+    'shared PayPal payer identity without unique customer-specific evidence must never be auto-linked');
 
 const duplicate = { ...stripe, id: 'sub_live_2' };
 matches = discovery.matchPremiumRows([local], [stripe, duplicate], baseContext());
@@ -139,6 +188,8 @@ assert.ok(!/async function coverageStats\(\)[\s\S]{0,200}premiumEntitlements\(\)
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
+assert.ok(discoverySource.includes("require('./provider-financial-state')") && discoverySource.includes("financialState.providerIdentityRows(['stripe','paypal'])"), 'subscription discovery must consume the canonical provider identity projection instead of querying payment_customers independently');
+assert.ok(discoverySource.includes('financialState.paypalSubscriptionReferences()'), 'stored PayPal subscription references must come from the canonical financial read model');
 assert.ok(discoverySource.includes('subscriptionIds:new Set()') && discoverySource.includes('owners.subscriptionIds.add') && discoverySource.includes('[...owner.subscriptionIds].some'), 'discovery must preserve every normalized provider-subscription owner so historical duplicates cannot be hidden by Map overwrite order');
 assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lifecycle must own discovered provider-subscription attachment');
 assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
@@ -148,6 +199,7 @@ assert.ok(/plan_id=\$2[\s\S]*external_id=ANY\(\$3::text\[\]\)/.test(lifecycleSou
 
 assert.ok(manualSource.includes("require('./subscription-discovery')"), 'manual recovery must reuse canonical premium/discovery normalization');
 assert.ok(manualSource.includes("require('./lifecycle')"), 'manual recovery must delegate the write to lifecycle');
+assert.ok(manualSource.includes("require('./provider-financial-state')") && manualSource.includes('financialState.providerIdentityOwners'), 'manual provider-link verification must reuse the canonical provider identity reader');
 assert.ok(manualSource.includes('attachDiscoveredProviderSubscription'), 'manual recovery must use the same canonical attachment owner as automatic discovery');
 assert.ok(manualSource.includes("checkout_mode='subscription' AND plan_id=$2"), 'manual recovery must verify exact local plan mapping');
 assert.ok(manualSource.includes("LOWER(BTRIM(COALESCE(source,'')))=$1") && manualSource.includes("BTRIM(COALESCE(provider_subscription_id,''))=$2"), 'manual recovery preview must reject normalized provider-ID ownership conflicts before mutation');

@@ -1,11 +1,13 @@
 'use strict';
 
 const express = require('express');
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const planPricing = require('../payments/plan-pricing');
+const planCommands = require('../catalog/plan-command-service');
+const planInput=require('../catalog/plan-input');
 const paymentOptions = require('./admin-plan-payment-options');
 const requestPlanPolicy = require('./admin-request-plan-policy');
 const sourcePool = require('../stremio/source-pool');
@@ -20,10 +22,10 @@ const BILLING = new Set(['trial', 'month', '6_months', 'year', 'custom']);
 
 function gate(req, res, next) { return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req, res, next) { res.setHeader('Cache-Control', 'no-store, private, max-age=0'); res.setHeader('Pragma', 'no-cache'); next(); }
-function text(value, max = 500) { return String(value || '').trim().slice(0, max); }
-function bool(value) { return value === true || ['1', 'true', 'on', 'yes'].includes(String(value || '').toLowerCase()); }
-function int(value, min, max, label) { const raw = String(value ?? '').trim(), parsed = Number.parseInt(raw, 10); if (!Number.isInteger(parsed) || String(parsed) !== raw || parsed < min || parsed > max) throw new Error(`${label} must be a whole number from ${min} to ${max}.`); return parsed; }
-function money(value) { const raw = String(value ?? '').trim(); if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error('Enter a valid non-negative price with no more than two decimal places.'); const amount = Number(raw); if (!Number.isFinite(amount) || amount < 0 || amount > 100000) throw new Error('Price must be between 0 and 100,000.'); return Math.round(amount * 100); }
+const text=planInput.text;
+const bool=planInput.bool;
+const int=planInput.integer;
+const money=planInput.moneyMinor;
 function checked(value) { return value ? 'checked' : ''; }
 function selected(a, b) { return String(a) === String(b) ? 'selected' : ''; }
 function token(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
@@ -73,26 +75,129 @@ function availabilityCard(data, req) { const p = data.plan; return `<section cla
 function sourcesCard(data, req) { const p = data.plan, head = `<div class="planConfigHead"><div><h2>Stremio sources</h2><p>Managed CAPTAiNFiN sources are automatic; choose additional Jellyfin sources here.</p></div><a class="button secondary btn-sm" href="/admin/servers/stremio">Manage sources</a></div>`; if (!data.sources.length) return `<section class="planConfigCard" id="sources">${head}<div class="planConfigBody">${sourceControls(data.sources)}</div></section>`; return `<section class="planConfigCard" id="sources">${head}<form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/stremio-sources">${token(req)}${sourceControls(data.sources)}<div class="buttonRow"><button class="button" type="submit">Save sources</button></div></form></section>`; }
 function page(data, req) { const p = data.plan, component = planComponents.stremioHouseholdConfig(p), header = `<div class="planControlHeader"><div class="planControlIdentity"><strong>${esc(p.name)}</strong><span class="pill good">Stremio</span><span class="muted">${esc(data.live)} live subscriber${data.live === 1 ? '' : 's'} · ${esc(component.networkLimit)} household IP${component.networkLimit === 1 ? '' : 's'}</span></div><div class="planControlIdentity"><span class="pill ${p.active ? 'good' : 'warn'}">${p.active ? 'Live' : 'Inactive'}</span>${p.archived_at ? '<span class="pill warn">Archived</span>' : ''}</div></div>`, body = `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}<div class="planControlRoom stremioPlanReference">${header}<div class="planControlGrid">${productCommerceCard(data, req)}${availabilityCard(data, req)}${accessCard(data, req)}${sourcesCard(data, req)}${requestPlanPolicy.planCard(req, p, { variant: 'stremio' })}</div></div>`; return layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: p.name, subtitle: 'Stremio · unified product configuration', body, action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }); }
 
-async function updateTrackingSnapshots(client, plan, input, impact, _scope) { const refresh = Boolean(impact?.changed) || String(plan.stremio_ip_replacement_policy || 'auto_inactive') !== 'auto_inactive'; if (!refresh) return 0; const result = await client.query(`UPDATE subscriptions SET stremio_household_network_limit_snapshot=$2,stremio_ip_replacement_policy_snapshot='auto_inactive' WHERE ${activeSubscriptionSql()} RETURNING id`, [plan.id, input.householdLimit]), ids = result.rows.map(row => String(row.id)); if (ids.length) await client.query(`UPDATE access_network_leases SET expires_at=NOW() WHERE scope='stremio' AND subject_key=ANY($1::text[]) AND expires_at>NOW()`, [ids]); return ids.length; }
-async function audit(client, actor, planId, action, metadata) { await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'plan',$3,$4::jsonb)`, [actor, action, planId, JSON.stringify(metadata || {})]); }
+async function updateTrackingSnapshots(client, plan, input, impact, _scope) {
+  const refresh = Boolean(impact?.changed) || String(plan.stremio_ip_replacement_policy || 'auto_inactive') !== 'auto_inactive';
+  return planCommands.updateStremioTrackingSnapshots(client, {
+    planId: plan.id,
+    householdLimit: input.householdLimit,
+    refresh
+  });
+}
 async function saveCommerce(req, data) {
   const name = text(req.body.name, 80); if (!name) throw new Error('Enter a plan name.');
-  const { description, features } = storefrontValues(req.body), billingInterval = BILLING.has(String(req.body.billingInterval)) ? String(req.body.billingInterval) : 'month', durationDays = int(req.body.durationDays, 1, 3650, 'Duration'), priceMinor = money(req.body.price);
+  const { description, features } = storefrontValues(req.body);
+  const billingInterval = BILLING.has(String(req.body.billingInterval)) ? String(req.body.billingInterval) : 'month';
+  const durationDays = int(req.body.durationDays, 1, 3650, 'Duration');
+  const priceMinor = money(req.body.price);
   const previousDiscordRoleId = discordRoles.snowflake(data.plan.discord_role_id);
   const hasDiscordRoleField = Object.prototype.hasOwnProperty.call(req.body || {}, 'discordRoleId');
   const discordRoleId = hasDiscordRoleField ? discordRoleUi.parse(req.body.discordRoleId) : previousDiscordRoleId;
   const discordRoleChanged = previousDiscordRoleId !== discordRoleId;
-  await transaction(async client => {
-    await client.query(`UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],billing_interval=$5,duration_days=$6,discord_role_id=$7,updated_at=NOW() WHERE id=$1`, [data.plan.id, name, description, features, billingInterval, durationDays, discordRoleId]);
-    await planPricing.setPrice(client, data.plan.id, { currency: data.price.currency, priceMinor, active: true, isDefault: true });
-    await audit(client, req.session.authUserId, data.plan.id, 'admin.plan.stremio_commerce.update', { priceMinor, currency: data.price.currency, billingInterval, durationDays, features: features.length, discordRoleId, previousDiscordRoleId, discordRoleChanged });
+
+  await planCommands.updateStremioCommerce({
+    planId: data.plan.id,
+    name,
+    description,
+    features,
+    billingInterval,
+    durationDays,
+    discordRoleId,
+    currency: data.price.currency,
+    priceMinor,
+    actorUserId: req.session.authUserId,
+    auditMetadata: {
+      priceMinor,
+      currency: data.price.currency,
+      billingInterval,
+      durationDays,
+      features: features.length,
+      discordRoleId,
+      previousDiscordRoleId,
+      discordRoleChanged
+    }
   });
-  if (discordRoleChanged && data.live) await queuePlanDiscordReconciliation(data.plan.id, req.session.authUserId, { discordExtraManagedRoleIds: previousDiscordRoleId ? [previousDiscordRoleId] : [] });
+
+  if (discordRoleChanged && data.live) {
+    await queuePlanDiscordReconciliation(data.plan.id, req.session.authUserId, {
+      discordExtraManagedRoleIds: previousDiscordRoleId ? [previousDiscordRoleId] : []
+    });
+  }
 }
-async function saveStorefront(req, data) { const { description, features } = storefrontValues(req.body); await transaction(async client => { await client.query(`UPDATE plans SET description=$2,marketing_features=$3::text[],updated_at=NOW() WHERE id=$1`, [data.plan.id, description, features]); await audit(client, req.session.authUserId, data.plan.id, 'admin.plan.stremio_storefront_compat.update', { features: features.length }); }); }
-async function saveAccess(req, data) { const input = { householdLimit: int(req.body.householdLimit, 1, 10, 'Household IPs'), leaseMinutes: int(req.body.leaseMinutes ?? data.plan.stremio_household_lease_minutes ?? 240, 15, 1440, 'Connection lease') }, impact = householdImpact(data.plan, input), policyChanged = String(data.plan.stremio_ip_replacement_policy || 'auto_inactive') !== 'auto_inactive', refresh = impact.changed || policyChanged; if (impact.changed) requireImpact(data.plan, data.live, req.body.impactConfirmation); const result = await transaction(async client => { const updatedSubscriptions = await updateTrackingSnapshots(client, data.plan, input, impact, 'all_current'); await client.query(`UPDATE plans SET stremio_household_network_limit=$2,stremio_household_lease_minutes=$3,stremio_ip_replacement_policy='auto_inactive',updated_at=NOW() WHERE id=$1`, [data.plan.id, input.householdLimit, input.leaseMinutes]); await audit(client, req.session.authUserId, data.plan.id, 'admin.plan.stremio_access.update', { householdImpact: impact, replacementPolicy: 'auto_inactive', updatedSubscriptions }); return { impact, updatedSubscriptions }; }); if (refresh && data.live) result.requestJob = await queuePlanRequestReconciliation(data.plan.id, req.session.authUserId); return result; }
-async function saveAvailability(req, data) { const capacityLimit = int(req.body.capacityLimit, 0, 1000000, 'Capacity'), active = bool(req.body.active), visible = bool(req.body.visible); await transaction(async client => { await client.query(`UPDATE plans SET capacity_limit=$2,active=$3,visible=$4,updated_at=NOW() WHERE id=$1`, [data.plan.id, capacityLimit, active, visible]); await audit(client, req.session.authUserId, data.plan.id, 'admin.plan.stremio_availability.update', { capacityLimit, active, visible }); }); }
-async function savePayments(req, data) { const currency = await planPricing.platformDefaultCurrency(), price = await planPricing.resolvePrice(data.plan.id, currency, { allowFallback: false }); if (!price) throw new Error(`${currency} is not configured for this plan.`); const specs = [['stripe', 'payment'], ['stripe', 'subscription'], ['paypal', 'payment'], ['paypal', 'subscription']], validated = []; for (const [provider, mode] of specs) { const key = `${currency}_${provider}_${mode}`, enabled = bool(req.body[`${key}_enabled`]), externalId = text(req.body[`${key}_external_id`], 200); validated.push({ provider, mode, enabled, externalId, verification: await paymentOptions.verifyOption(data.plan, price, provider, mode, enabled, externalId) }); } await transaction(async client => { for (const spec of validated) await paymentOptions.saveOption(client, data.plan, price, spec.provider, spec.mode, spec.enabled, spec.externalId, spec.verification); await audit(client, req.session.authUserId, data.plan.id, 'admin.plan.stremio_payment_options', { currency }); }); }
+async function saveStorefront(req, data) {
+  const { description, features } = storefrontValues(req.body);
+  await planCommands.updateStremioStorefront({
+    planId: data.plan.id,
+    description,
+    features,
+    actorUserId: req.session.authUserId
+  });
+}
+async function saveAccess(req, data) {
+  const input = {
+    householdLimit: int(req.body.householdLimit, 1, 10, 'Household IPs'),
+    leaseMinutes: int(req.body.leaseMinutes ?? data.plan.stremio_household_lease_minutes ?? 240, 15, 1440, 'Connection lease')
+  };
+  const impact = householdImpact(data.plan, input);
+  const policyChanged = String(data.plan.stremio_ip_replacement_policy || 'auto_inactive') !== 'auto_inactive';
+  const refresh = impact.changed || policyChanged;
+  if (impact.changed) requireImpact(data.plan, data.live, req.body.impactConfirmation);
+
+  const result = await planCommands.updateStremioAccess({
+    planId: data.plan.id,
+    householdLimit: input.householdLimit,
+    leaseMinutes: input.leaseMinutes,
+    refreshTracking: refresh,
+    impact,
+    actorUserId: req.session.authUserId
+  });
+
+  if (refresh && data.live) {
+    result.requestJob = await queuePlanRequestReconciliation(data.plan.id, req.session.authUserId);
+  }
+  return { impact, ...result };
+}
+async function saveAvailability(req, data) {
+  const capacityLimit = int(req.body.capacityLimit, 0, 1000000, 'Capacity');
+  const active = bool(req.body.active);
+  const visible = bool(req.body.visible);
+  return planCommands.updateStremioAvailability({
+    planId: data.plan.id,
+    capacityLimit,
+    active,
+    visible,
+    actorUserId: req.session.authUserId
+  });
+}
+async function savePayments(req, data) {
+  const currency = await planPricing.platformDefaultCurrency();
+  const price = await planPricing.resolvePrice(data.plan.id, currency, { allowFallback: false });
+  if (!price) throw new Error(`${currency} is not configured for this plan.`);
+
+  const specs = [['stripe', 'payment'], ['stripe', 'subscription'], ['paypal', 'payment'], ['paypal', 'subscription']];
+  const validated = [];
+  for (const [provider, mode] of specs) {
+    const key = `${currency}_${provider}_${mode}`;
+    const enabled = bool(req.body[`${key}_enabled`]);
+    const externalId = text(req.body[`${key}_external_id`], 200);
+    validated.push({
+      provider,
+      mode,
+      enabled,
+      externalId,
+      verification: await paymentOptions.verifyOption(data.plan, price, provider, mode, enabled, externalId)
+    });
+  }
+
+  await planCommands.updatePaymentOptions({
+    planId: data.plan.id,
+    price,
+    items: validated,
+    actorUserId: req.session.authUserId,
+    auditAction: 'admin.plan.stremio_payment_options',
+    auditMetadata: { currency }
+  });
+}
+
 async function save(data, input, _scope, actorUserId) { const fakeReq = { body: { ...input, discordRoleId: input.discordRoleId === undefined ? (data.plan.discord_role_id || '') : input.discordRoleId, impactConfirmation: data.plan.code }, session: { authUserId: actorUserId } }; await saveCommerce(fakeReq, data); const access = await saveAccess(fakeReq, data); await saveAvailability(fakeReq, data); return access; }
 function parse(body) { return { name: text(body.name, 80), description: text(body.description, 500), priceMinor: money(body.price), billingInterval: BILLING.has(String(body.billingInterval)) ? String(body.billingInterval) : 'month', durationDays: int(body.durationDays, 1, 3650, 'Duration'), householdLimit: int(body.householdLimit, 1, 10, 'Household IPs'), leaseMinutes: int(body.leaseMinutes ?? '240', 15, 1440, 'Connection lease'), capacityLimit: int(body.capacityLimit, 0, 1000000, 'Capacity'), active: bool(body.active), visible: bool(body.visible), marketingFeatures: [1, 2, 3, 4].map(i => text(body[`feature${i}`], 90)).filter(Boolean), discordRoleId: body.discordRoleId === undefined ? undefined : discordRoleUi.parse(body.discordRoleId) }; }
 function viewValues(data) { return { ...data.plan, price: (Number(data.price?.price_minor || 0) / 100).toFixed(2), currency: data.price?.currency || data.plan.currency || 'GBP' }; }

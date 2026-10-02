@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/compose-runtime.sh"
 
 STATE_DIR="${CAPTAINFIN_WATCHDOG_STATE_DIR:-$ROOT/.runtime/availability-watchdog}"
 LOG_DIR="${CAPTAINFIN_WATCHDOG_LOG_DIR:-$ROOT/logs}"
@@ -91,18 +92,10 @@ http_ok() {
   curl -fsS --max-time "$CURL_TIMEOUT" "$1" >/dev/null 2>&1
 }
 
-container_state() {
-  docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || printf 'missing'
-}
-
-container_health() {
-  docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || printf 'missing'
-}
-
 wait_for_postgres() {
   local health
   for _ in $(seq 1 30); do
-    health="$(container_health captainfin-postgres)"
+    health="$(compose_service_health postgres)"
     [[ "$health" == 'healthy' ]] && return 0
     sleep 2
   done
@@ -144,7 +137,7 @@ recover_app() {
 # If the web container is absent/exited/dead, do not wait for an HTTP failure
 # threshold: Compose/Docker restart policy should normally recover it, but the
 # watchdog provides a second independent path.
-app_state="$(container_state captainfin)"
+app_state="$(compose_service_state app)"
 if [[ "$app_state" != 'running' ]]; then
   failures="$(increment "$STATE_DIR/live-failures")"
   log "Web container state=${app_state}; recovery count=${failures}."
@@ -183,8 +176,8 @@ if http_ok "$BASE_URL/health/ready"; then
 fi
 
 ready_failures="$(increment "$STATE_DIR/ready-failures")"
-postgres_state="$(container_state captainfin-postgres)"
-postgres_health="$(container_health captainfin-postgres)"
+postgres_state="$(compose_service_state postgres)"
+postgres_health="$(compose_service_health postgres)"
 log "Readiness probe failed (${ready_failures}/${FAILURE_THRESHOLD}); postgres=${postgres_state}/${postgres_health}."
 
 if [[ "$postgres_state" != 'running' ]]; then
@@ -211,7 +204,7 @@ fi
 # Non-critical maintenance is allowed to lose before storefront availability.
 # If backup itself is unhealthy while the web app cannot become ready, stop it
 # first and give PostgreSQL/storage pressure a chance to clear.
-backup_health="$(container_health captainfin-backup)"
+backup_health="$(compose_service_health backup-worker)"
 if [[ "$backup_health" == 'unhealthy' ]]; then
   if deployment_active; then
     log 'Production deployment became active; watchdog will not mutate worker state.'

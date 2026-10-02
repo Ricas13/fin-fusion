@@ -1,6 +1,7 @@
 services:
   migrate:
-    build: .
+    image: ${CAPTAINFIN_IMAGE:-captainfin:current}
+    pull_policy: never
     restart: "no"
     env_file: .env
     command: ["sh", "-c", "npm run db:migrate && npm run db:runtime-roles && npm run auth:bootstrap"]
@@ -18,6 +19,8 @@ services:
       - ALL
 
   app:
+    image: ${CAPTAINFIN_IMAGE:-captainfin:current}
+    pull_policy: never
     build: .
     container_name: captainfin
     restart: unless-stopped
@@ -125,7 +128,8 @@ services:
       - ALL
 
   automation-worker:
-    build: .
+    image: ${CAPTAINFIN_IMAGE:-captainfin:current}
+    pull_policy: never
     container_name: captainfin-automation
     restart: unless-stopped
     mem_limit: ${AUTOMATION_MEMORY_LIMIT:-2g}
@@ -195,7 +199,8 @@ services:
       - ALL
 
   activity-worker:
-    build: .
+    image: ${CAPTAINFIN_IMAGE:-captainfin:current}
+    pull_policy: never
     container_name: captainfin-activity
     restart: unless-stopped
     mem_limit: ${ACTIVITY_MEMORY_LIMIT:-1g}
@@ -244,7 +249,8 @@ services:
       - ALL
 
   backup-worker:
-    build: .
+    image: ${CAPTAINFIN_IMAGE:-captainfin:current}
+    pull_policy: never
     container_name: captainfin-backup
     restart: unless-stopped
     mem_limit: ${BACKUP_MEMORY_LIMIT:-1g}
@@ -299,7 +305,8 @@ services:
       - ALL
 
   recovery-tools:
-    build: .
+    image: ${CAPTAINFIN_IMAGE:-captainfin:current}
+    pull_policy: never
     profiles: ["recovery"]
     user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"
     depends_on:

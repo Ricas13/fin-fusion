@@ -2,7 +2,7 @@
 
 const { query } = require('../db');
 const policy = require('./policy');
-const provisioning = require('./provisioning');
+const provisioning = require('./provisioning-helpers');
 const laneOverrides = require('./lane-policy-overrides');
 
 async function scopedSelection(customerId, accountId) {

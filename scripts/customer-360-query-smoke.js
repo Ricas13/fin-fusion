@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const serviceTruth = require('../src/platform/customer-360-service-truth');
+const customer360Module = require('../src/platform/customer-360');
 
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src', 'platform', 'customer-360.js'), 'utf8');
@@ -13,19 +14,44 @@ const compactSource = fs.readFileSync(path.join(root, 'src', 'platform', 'custom
 const holdsSource = fs.readFileSync(path.join(root, 'src', 'platform', 'admin-customer-access-holds.js'), 'utf8');
 const accessControlSource = fs.readFileSync(path.join(root, 'src', 'access', 'admin-customer-access-control.js'), 'utf8');
 const primaryActionsSource = fs.readFileSync(path.join(root, 'public', 'js', 'admin-customer-primary-actions.js'), 'utf8');
+const financialStateSource = fs.readFileSync(path.join(root, 'src', 'payments', 'provider-financial-state.js'), 'utf8');
 
 assert(source.includes("entity_type='customer' AND entity_id::text=$1::text"), 'Customer 360 audit lookup must compare audit entity UUIDs through a consistent text cast');
 assert(source.includes("entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)"), 'Customer 360 subscription audit lookup must cast the route parameter explicitly before comparing it with subscriptions.customer_id');
 assert(!source.includes("entity_id=$1::text"), '360 audit queries must not compare a UUID column directly to text');
+
+assert(source.includes("customerAccessState=require('../access/customer-access-state')")
+    && source.includes('customerAccessState.snapshot(customerId)')
+    && !source.includes("require('../jellyfin/resilient-provisioning')")
+    && !source.includes('currentEntitlementTruth(customerId)'),
+  'Customer 360 current access must come from the canonical customer-access-state snapshot only');
+const paidEntitlement={subscription_id:'paid-1',is_free_tier:false};
+const freeEntitlement={subscription_id:'free-1',is_free_tier:true};
+assert.strictEqual(
+  customer360Module.primaryEntitlementFromAccessState({primary:{entitlement:paidEntitlement},free:{entitlement:freeEntitlement}}),
+  paidEntitlement,
+  'Customer 360 compatibility primary entitlement must prefer the canonical primary lane'
+);
+assert.strictEqual(
+  customer360Module.primaryEntitlementFromAccessState({primary:{entitlement:null},free:{entitlement:freeEntitlement}}),
+  freeEntitlement,
+  'Customer 360 compatibility primary entitlement must fall back to the canonical Free lane when no paid primary exists'
+);
+assert.strictEqual(
+  customer360Module.primaryEntitlementFromAccessState({primary:{entitlement:null},free:{entitlement:null}}),
+  null,
+  'Customer 360 compatibility primary entitlement must not invent access outside the canonical snapshot'
+);
 
 // The compact operator page has three deliberately separate concepts:
 // playback activity, financial/provider history, and operational logs.
 assert(compactSource.includes("const rows=(detail.playback||[]).slice(0,30)"), 'Customer 360 Activity must stay playback-specific while capping default diagnostic volume');
 assert(!compactSource.includes("function activityDisclosure(detail){const rows=(detail.timeline||[])"), 'generic customer/audit events must not be presented as playback Activity');
 assert(compactSource.includes('No playback activity recorded yet.'), 'Activity must use clear playback-specific empty copy');
-assert(compactSource.includes('provider_transaction_id,provider_reference_id,provider_source_id,provider_customer_id'), 'Payments must load provider identifiers needed for provider-side reconciliation');
-assert(compactSource.includes("s.source='plisio'"), 'Customer 360 Payments must include Plisio purchases as well as imported Stripe/PayPal history');
-assert(compactSource.includes('payment_incidents'), 'Payments must surface disputes, refunds, chargebacks and other payment incidents');
+assert(compactSource.includes("financialState=require('../payments/provider-financial-state')") && compactSource.includes('financialState.customerSnapshot(customerId)'), 'Customer 360 Payments must consume the canonical provider financial projection');
+assert(financialStateSource.includes('provider_transaction_id') && financialStateSource.includes('provider_reference_id') && financialStateSource.includes('provider_source_id') && financialStateSource.includes('provider_customer_id'), 'Canonical financial state must retain provider identifiers needed for provider-side reconciliation');
+assert(financialStateSource.includes("const PROVIDERS = Object.freeze(['stripe','paypal','plisio'])") && financialStateSource.includes("s.source='plisio'"), 'Canonical financial state must include Plisio alongside Stripe and PayPal');
+assert(financialStateSource.includes('payment_incidents'), 'Canonical financial projection must surface disputes, refunds, chargebacks and other payment incidents');
 assert(compactSource.includes("['Transaction',row.provider_transaction_id]"), 'Payments must label the provider transaction identifier');
 assert(compactSource.includes("['Reference',row.provider_reference_id]"), 'Payments must expose provider reference identifiers rather than collapsing to one ID');
 assert(compactSource.includes('<details class="providerRefs"><summary>Identifiers</summary>'),'raw provider identifiers must be hidden behind an explicit diagnostic disclosure by default');
@@ -99,6 +125,30 @@ assert.strictEqual(rows[0].target, 'acc-1 · srv-1');
 assert.strictEqual(rows[3].actual, 'active');
 assert.strictEqual(rows[4].actual, 'synced');
 assert.strictEqual(rows[0].reconciledAt, reconciledAt);
+
+const canonicalNoAccessRows = serviceTruth.resultRows({
+  subscriptions: [
+    { id: 'stale-paid', status: 'active', current_period_end: '2099-10-03T00:00:00.000Z', service_type: 'jellyfin', plan_code: 'stale-premium' }
+  ],
+  canonicalAccessState: {
+    primary: { entitlement: null },
+    free: { entitlement: null },
+    emby: { entitlement: null },
+    stremio: { entitlement: null }
+  },
+  accounts: [],
+  provisioningState: null
+});
+assert.strictEqual(canonicalNoAccessRows[0].desired, 'Not required',
+  'Customer 360 must not resurrect a stale/historical paid subscription when canonical access says no primary entitlement');
+assert.strictEqual(canonicalNoAccessRows[0].plan, '—',
+  'Customer 360 service truth must show no current plan when canonical primary access is empty');
+assert.strictEqual(canonicalNoAccessRows[4].desired, 'No active plan roles',
+  'Discord role intent must follow canonical current entitlements rather than historical subscription rows');
+assert(viewSource.includes('detail?.canonicalAccessState?')
+    && truthSource.includes('const primaryEntitlement = canonical')
+    && truthSource.includes('canonical.primary?.entitlement || null'),
+  'Customer 360 current-state presentation must explicitly prefer the canonical access snapshot');
 
 const unknownRows = serviceTruth.resultRows({ subscriptions: [], accounts: [], provisioningState: null });
 assert.strictEqual(unknownRows[0].actual, 'No reconciliation snapshot');

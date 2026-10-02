@@ -9,6 +9,8 @@ function read(rel) {
 }
 
 const accessState = require('../src/access/customer-access-state');
+const dashboardModule = require('../src/platform/customer-dashboard');
+const customer360Module = require('../src/platform/customer-360');
 const lifecycle = read('src/payments/lifecycle.js');
 const dashboard = read('src/platform/customer-dashboard.js');
 const myAccess = read('src/platform/customer-jellyfin.js');
@@ -178,11 +180,33 @@ assert(jobs.includes("require('../access/access-repair')"),
 assert(backfill.includes("require('../access/access-repair')"),
   'Free capacity repair must delegate repair decisions to the canonical access repair layer');
 assert(customer360.includes("require('../access/customer-access-state')")
-  && customer360.includes('customerAccessState.snapshot(customerId)'),
-  'Customer 360 must load one canonical cross-service access snapshot');
+  && customer360.includes('customerAccessState.snapshot(customerId)')
+  && !customer360.includes("require('../jellyfin/resilient-provisioning')")
+  && !customer360.includes('currentEntitlementTruth(customerId)'),
+  'Customer 360 must load one canonical cross-service access snapshot without a parallel current-entitlement reader');
+assert(dashboard.includes("customerAccessState.snapshot(customerId,{includeBlocked:{primary:false,free:false,stremio:false,emby:true}})")
+  && dashboard.includes('primaryAccess=accessSnapshot.primary')
+  && dashboard.includes('freeAccess=accessSnapshot.free')
+  && dashboard.includes('stremioAccess=accessSnapshot.stremio')
+  && dashboard.includes('embyAccess=accessSnapshot.emby'),
+  'Account Home must derive all current service lanes from one canonical snapshot while preserving its blocked-state policy');
 assert(customer360Truth.includes('canonical.emby?.entitlement')
   && customer360Truth.includes('canonical.stremio?.entitlement'),
   'Customer 360 service truth must consume canonical Emby/Stremio entitlement selection instead of re-deciding it');
+
+const sharedSnapshotFixture={
+  primary:{state:accessState.ACCESS_STATES.ACTIVE_READY,entitlement:{subscription_id:'paid-shared',is_free_tier:false}},
+  free:{state:accessState.ACCESS_STATES.ACTIVE_READY,entitlement:{subscription_id:'free-shared',is_free_tier:true}},
+  stremio:{state:accessState.ACCESS_STATES.ACTIVE_ENTITLED,entitlement:{subscription_id:'stremio-shared'}},
+  emby:{state:accessState.ACCESS_STATES.ACTIVE_ENTITLED,entitlement:{subscription_id:'emby-shared'}}
+};
+const homeProjection=dashboardModule.plansFromAccessSnapshot(sharedSnapshotFixture);
+assert.strictEqual(homeProjection.currentPlan,sharedSnapshotFixture.primary.entitlement,
+  'Account Home must project primary access from the shared canonical fixture');
+assert.strictEqual(homeProjection.freePlan,sharedSnapshotFixture.free.entitlement,
+  'Account Home must project Free access from the shared canonical fixture');
+assert.strictEqual(customer360Module.primaryEntitlementFromAccessState(sharedSnapshotFixture),sharedSnapshotFixture.primary.entitlement,
+  'Customer 360 must resolve the same primary entitlement from the shared canonical fixture');
 assert(!customerMediaAccess.includes("require('../entitlements/subscription-state')"),
   'customer media access domain must not maintain a separate Emby entitlement lookup');
 assert(customerMediaAccess.includes('accessSnapshot?.emby?.entitlement'),
@@ -221,6 +245,22 @@ assert(
 
 const freeIncomplete = accessState.ACCESS_STATES.INCONSISTENT_UNPAID;
 const mediaAccess = require('../src/access/customer-media-access');
+assert.strictEqual(
+  mediaAccess.entitlementForAccountFromContext(
+    { media_server_type:'jellyfin', access_lane:'primary' },
+    { accessSnapshot:sharedSnapshotFixture }
+  ),
+  sharedSnapshotFixture.primary.entitlement,
+  'My Access must resolve the same primary entitlement from the shared canonical fixture'
+);
+assert.strictEqual(
+  mediaAccess.entitlementForAccountFromContext(
+    { media_server_type:'jellyfin', access_lane:'free' },
+    { accessSnapshot:sharedSnapshotFixture }
+  ),
+  sharedSnapshotFixture.free.entitlement,
+  'My Access must resolve the same Free entitlement from the shared canonical fixture'
+);
 assert.strictEqual(
   mediaAccess.incompleteFreeSubscriptionIdFromState({
     state: freeIncomplete,

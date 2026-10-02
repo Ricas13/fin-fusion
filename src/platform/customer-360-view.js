@@ -1,47 +1,27 @@
 'use strict';
 
-const v2=require('./customer-360-view-v2');
 const accessCards=require('./customer-360-access-cards');
 const compact=require('./customer-360-compact');
 const primaryActions=require('./admin-customer-primary-actions');
 const desiredState=require('../entitlements/customer-access-desired-state');
 const serviceTruth=require('./customer-360-service-truth');
 const moneyFormat=require('./money-format');
+const {esc:escapeHtml,csrfHidden}=require('./html-primitives');
 
-function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
+function serviceType(detail){const canonical=detail?.canonicalAccessState;const entitlement=canonical?(canonical.primary?.entitlement||canonical.free?.entitlement||canonical.emby?.entitlement||canonical.stremio?.entitlement||null):(detail?.primaryEntitlement||null);return String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
 function liveSubscriptions(detail){return (detail.subscriptions||[]).filter(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()));}
 function activeSubscription(detail){return liveSubscriptions(detail)[0]||detail.subscriptions?.[0]||null;}
 function isBanned(detail){return (detail?.activeHolds||[]).some(hold=>String(hold?.hold_type||'')==='administrative_ban'&&!hold?.released_at);}
-function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
-function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${escapeHtml(token)}">`;}
+function nav(id,token,appUserId){
+  const impersonate=appUserId?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate">${csrfHidden(token)}<button class="detailTab" type="submit">Portal view</button></form>`:'';
+  return `<nav class="detailTabs"><a class="detailTab active" href="/admin/users/${encodeURIComponent(id)}">Customer record</a>${impersonate}</nav>`;
+}
 function fmtDate(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 function initials(value){const parts=String(value||'U').trim().split(/\s+/).filter(Boolean);if(parts.length>1)return(parts[0][0]+parts[parts.length-1][0]).toUpperCase();return String(parts[0]||'U').slice(0,2).toUpperCase();}
 
-function removeLegacyPlanRevoke(html){
-  return String(html||'').replace(
-    /<form class="plainForm" method="post" action="\/admin\/customers\/bulk\/preview">(?:(?!<\/form>)[\s\S])*?<input type="hidden" name="action" value="end_jellyfin_plan">(?:(?!<\/form>)[\s\S])*?<\/form>/g,
-    ''
-  );
-}
-
-function addPlanRevokeAction(actions){
-  return String(actions||'');
-}
-
-function movePlanRevokeIntoSubscriptions(main,detail){
-  const cleaned=removeLegacyPlanRevoke(main);
-  if(!liveSubscriptions(detail).length)return cleaned;
-  const id=detail.customer.id;
-  const button=`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/subscriptions/revoke" aria-label="Choose a specific plan or add-on to revoke">Revoke a plan…</a>`;
-  return cleaned.replace(
-    /(<section class="opCard "><div class="opCardHead"><h2>Plans &amp; Subscriptions<\/h2>[\s\S]*?<div class="opActions">)([\s\S]*?)(<\/div><\/section>)/,
-    (_match,open,actions,close)=>`${open}${actions}${button}${close}`
-  );
-}
-
 function accessWorkspaceSection(detail,token,accessDetail){
-  const sub=activeSubscription(detail);
+  const sub=detail?.canonicalAccessState?(detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null):(detail.primaryEntitlement||activeSubscription(detail));
   const accounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
   const ctx=sub?{entitlement:{planName:sub.plan_name,serverClass:sub.server_class,isFreeTier:Boolean(sub.is_free_tier),serviceType:sub.service_type},accounts,activeAccounts:accounts.filter(account=>!account.disabled),servers:[],adminControl:null,serviceKind:sub.service_type||'jellyfin'}:null;
   return accessCards.controlGrid(detail,token,ctx,accessDetail?.permanent||null);
@@ -64,7 +44,7 @@ function serviceTruthPanel(detail){
 }
 
 function accessTruthPanel(detail){
-  const entitlement=detail.primaryEntitlement||activeSubscription(detail)||null;
+  const entitlement=detail?.canonicalAccessState?(detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null):(detail.primaryEntitlement||activeSubscription(detail)||null);
   const accessIntent=desiredAccessForDetail(detail,entitlement);
   const holds=accessIntent.blockers;
   const ordinaryAccounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
@@ -115,11 +95,10 @@ async function body(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const safe=customerFacingDetail(detail);
   const heroSummary=mockHero(safe,token,options.permanent);
-  const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
+  const navBar=nav(safe.customer.id,token,safe.customer.app_user_id);
   const actions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const main=await compact.render(safe,token,options);
-  const plansWithRevoke=movePlanRevokeIntoSubscriptions(main,safe);
-  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${plansWithRevoke}`;
+  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${main}`;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,isBanned,removeLegacyPlanRevoke,addPlanRevokeAction,movePlanRevokeIntoSubscriptions,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,banAction,mockHero};
+module.exports={body,nav,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,isBanned,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,banAction,mockHero};

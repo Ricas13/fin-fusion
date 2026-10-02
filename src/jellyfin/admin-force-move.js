@@ -1,7 +1,7 @@
 'use strict';
 
 const {query}=require('../db');
-const provisioning=require('./provisioning');
+const provisioning=require('./provisioning-helpers');
 const adminControl=require('./admin-control');
 const userCapacity=require('./user-capacity');
 const reconciliationLock=require('./reconciliation-lock');

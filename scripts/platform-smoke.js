@@ -27,6 +27,7 @@ function assertPasswordPolicySurfaces() {
     const requestSync = fs.readFileSync('src/integrations/request-user-sync.js', 'utf8');
     const application = fs.readFileSync('src/application.js', 'utf8');
     const bootstrap = fs.readFileSync('scripts/bootstrap-admin.js', 'utf8');
+    const customerPasswordPolicy = fs.readFileSync('src/security/customer-password-policy.js', 'utf8');
     if (!register.includes('name="password" minlength="8"')) throw new Error('Registration form does not expose the 8-character portal password minimum');
     if ((reset.match(/minlength="8"/g) || []).length < 2) throw new Error('Password-reset form does not expose the 8-character portal password minimum');
     if ((security.match(/minlength="8"/g) || []).length < 2) throw new Error('Account-security form does not expose the 8-character portal password minimum');
@@ -42,7 +43,7 @@ function assertPasswordPolicySurfaces() {
         if ((source.match(/minlength="8"/g) || []).length < 2) throw new Error(`${name} does not expose the 8-character password minimum`);
     }
     for (const [name, source] of [
-        ['customer password core', fs.readFileSync('src/customers.js', 'utf8')],
+        ['customer password core', customerPasswordPolicy],
         ['first-run setup core', firstRunCore],
         ['activation core', activationCore],
         ['staff password core', staffAuth],

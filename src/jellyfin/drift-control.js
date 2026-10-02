@@ -3,7 +3,7 @@
 const crypto=require('crypto');
 const {query}=require('../db');
 const registry=require('./registry');
-const provisioning=require('./provisioning');
+const provisioning=require('./provisioning-helpers');
 const policy=require('./policy');
 const laneOverrides=require('./lane-policy-overrides');
 

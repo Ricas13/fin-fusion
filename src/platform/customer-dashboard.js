@@ -51,6 +51,14 @@ function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=
   }
   return Array.from(rowsById.values()).filter(row=>forcedIds.has(subscriptionId(row))||(!row.is_addon&&liveSubscription(row)));
 }
+function plansFromAccessSnapshot(snapshot={}) {
+  return {
+    currentPlan:snapshot?.primary?.entitlement||null,
+    freePlan:snapshot?.free?.entitlement||null,
+    stremioPlan:snapshot?.stremio?.entitlement||null,
+    embyPlan:snapshot?.emby?.entitlement||null
+  };
+}
 function canonicalizePortalSubscriptions(portal,accessRows){
   if(!portal)return portal;
   const canonical=Array.isArray(accessRows)?accessRows:[],ids=new Set(canonical.map(subscriptionId).filter(Boolean));
@@ -145,10 +153,11 @@ function createCustomerDashboardRouter(){
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
       const portalRaw=await customers.getCustomerPortal(customerId),currency=await planPricing.platformDefaultCurrency();
-      const [primaryAccess,freeAccess,stremioAccess,embyAccess,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
-        customerAccessState.primaryJellyfin(customerId,{includeBlocked:false}),customerAccessState.freeJellyfin(customerId,{includeBlocked:false}),customerAccessState.stremio(customerId,{includeBlocked:false}),customerAccessState.emby(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
+      const [accessSnapshot,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+        customerAccessState.snapshot(customerId,{includeBlocked:{primary:false,free:false,stremio:false,emby:true}}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
-      const currentPlan=primaryAccess.entitlement,freePlan=freeAccess.entitlement,stremioPlan=stremioAccess.entitlement,embyPlan=embyAccess.entitlement;
+      const primaryAccess=accessSnapshot.primary,freeAccess=accessSnapshot.free,stremioAccess=accessSnapshot.stremio,embyAccess=accessSnapshot.emby;
+      const {currentPlan,freePlan,stremioPlan,embyPlan}=plansFromAccessSnapshot(accessSnapshot);
       let effectiveFreePlan=freePlan,incompleteFreePlan=false,incompleteFreeSubscriptionId=null;
       if(effectiveFreePlan&&!effectiveFreePlan.blocked&&freeAccess.state!==customerAccessState.ACCESS_STATES.ACTIVE_READY){
         incompleteFreePlan=true;
@@ -177,4 +186,4 @@ function createCustomerDashboardRouter(){
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));const outcome=await provisioning.reconcileCustomer(customerId);if(outcome?.active&&(outcome?.account?.id||outcome?.emby?.account?.id||outcome?.stremio?.status==='active'))return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your streaming access has been refreshed.'));const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});
   return r;
 }
-module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,homeCataloguePlans,readySalePlans,customerVariantState,liveSubscription,recurringProvider,canonicalAccessRows,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,recentFreeInactivityRemoval,returningAccessPage};
+module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,homeCataloguePlans,readySalePlans,customerVariantState,liveSubscription,recurringProvider,canonicalAccessRows,plansFromAccessSnapshot,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,recentFreeInactivityRemoval,returningAccessPage};

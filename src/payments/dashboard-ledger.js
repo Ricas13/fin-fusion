@@ -3,6 +3,8 @@
 const { query } = require('../db');
 const { revenueFromEvent, bucketKey, fillSeries } = require('../platform/admin-dashboard-analytics');
 const classifier = require('./provider-transaction-classifier');
+const financialState = require('./provider-financial-state');
+const calendarDate = require('../finance/calendar-date');
 
 const EVENT_PAGE_SIZE = 5000;
 const HISTORY_PAGE_SIZE = 5000;
@@ -64,9 +66,7 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
 }
 
 function dateStart(value) {
-    const text = value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
-    const parsed = new Date(`${text}T00:00:00.000Z`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+    return calendarDate.startUtc(value);
 }
 
 function providersForScope(scope) {
@@ -111,6 +111,14 @@ function authoritativeLivePaypal(row) {
     return metadata.providerAuthoritative === true
         && metadata.feeDataAvailable === true
         && classifier.historyKind(row) === 'payment';
+}
+
+function authoritativePlisio(row) {
+    if (String(row?.provider || '').toLowerCase() !== 'plisio') return false;
+    const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    return metadata.providerAuthoritative === true
+        && metadata.providerVerified === true
+        && Boolean(classifier.historyKind(row));
 }
 
 function paypalCaptureIdFromEvent(row) {
@@ -199,26 +207,12 @@ async function scanPaymentEventsInRange(range, visit, queryFn = query) {
 }
 
 async function scanHistoryInRange(range, visit, queryFn = query) {
-    if (typeof visit !== 'function') throw new Error('Payment-history scan requires a visitor.');
-    let cursor = null;
-    let scanned = 0;
-    for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
-        const result = await queryFn(`
-            SELECT provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,customer_id,provider_customer_id,metadata
-            FROM payment_history_transactions
-            WHERE occurred_at >= $1 AND occurred_at < $2
-              AND ($3::timestamptz IS NULL OR (occurred_at,provider,provider_transaction_id) > ($3::timestamptz,$4::text,$5::text))
-            ORDER BY occurred_at ASC,provider ASC,provider_transaction_id ASC
-            LIMIT $6
-        `, [range.previousStart, range.end, cursor?.occurred_at || null, cursor?.provider || null, cursor?.provider_transaction_id || null, HISTORY_PAGE_SIZE]);
-        for (const row of result.rows) {
-            await visit(row);
-            scanned += 1;
-        }
-        if (result.rows.length < HISTORY_PAGE_SIZE) return scanned;
-        cursor = result.rows[result.rows.length - 1];
-    }
-    throw new Error(`Imported payment accounting exceeded ${HISTORY_PAGE_SIZE * MAX_HISTORY_PAGES} rows. Narrow the dashboard range; totals were not rendered as complete.`);
+    return financialState.scanTransactionsInRange(range, visit, {
+        queryFn,
+        pageSize: HISTORY_PAGE_SIZE,
+        maxPages: MAX_HISTORY_PAGES,
+        overflowMessage: `Imported payment accounting exceeded ${HISTORY_PAGE_SIZE * MAX_HISTORY_PAGES} rows. Narrow the dashboard range; totals were not rendered as complete.`
+    });
 }
 
 async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
@@ -235,10 +229,15 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
     // exactly once regardless of which successful checkout path ran first.
     const historyRowsScanned = await scanHistoryInRange(range, async row => {
         const livePaypal = authoritativeLivePaypal(row);
+        const verifiedPlisio = authoritativePlisio(row);
         if (livePaypal) authoritativePaypalCaptures.add(String(row.provider_transaction_id || ''));
-        if (!livePaypal && !isCovered(coverage, row.provider, row.occurred_at)) return;
+        if (!livePaypal && !verifiedPlisio && !isCovered(coverage, row.provider, row.occurred_at)) return;
         const kind = classifier.historyKind(row);
-        if (kind) await visit(historyRecord(row, kind));
+        if (!kind) return;
+        if (verifiedPlisio && row?.metadata?.feeDataAvailable !== true) {
+            addWarning(warnings, 'Plisio provider payments are included from verified settlement data, but exact provider fee data is unavailable; profit/net figures may overstate Plisio proceeds until fee accounting is supplied.');
+        }
+        await visit(historyRecord(row, kind));
     }, queryFn);
 
     // Events are keyset-scanned oldest-first so cumulative Stripe refund state
@@ -386,6 +385,7 @@ module.exports = {
     coverageFromRuns,
     isCovered,
     authoritativeLivePaypal,
+    authoritativePlisio,
     paypalCaptureIdFromEvent,
     historyKind: classifier.historyKind,
     coverageRunsInRange,

@@ -1,7 +1,7 @@
 'use strict';
 
-const { query } = require('../db');
 const classifier = require('./provider-transaction-classifier');
+const financialState = require('./provider-financial-state');
 
 function summarizeRows(rows) {
     const groups = new Map();
@@ -54,13 +54,9 @@ function summarizeRows(rows) {
 }
 
 async function storedRevenueSummary() {
-    const result = await query(`
-        SELECT provider,transaction_type,transaction_status,currency,
-               gross_amount_minor,fee_amount_minor,occurred_at
-        FROM payment_history_transactions
-        ORDER BY provider,currency,occurred_at
-    `);
-    return summarizeRows(result.rows);
+    const rows=[];
+    await financialState.scanAllTransactions(row=>rows.push(row));
+    return summarizeRows(rows);
 }
 
 module.exports = {

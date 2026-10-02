@@ -10,6 +10,7 @@ const revokeService=read('src/entitlements/admin-subscription-revoke-service.js'
 const composition=read('src/platform/admin-route-composition.js');
 const html=read('src/platform/admin-html-core.js');
 const customerView=read('src/platform/customer-360-view.js');
+const compactView=read('src/platform/customer-360-compact.js');
 
 assert(targeted.includes("r.get('/admin/users/:customerId/subscriptions/revoke',page)"),'admin must expose a plan picker for targeted revocation');
 assert(targeted.includes("r.post('/admin/users/:customerId/subscriptions/:subscriptionId/revoke'"),'admin must expose a subscription-bound revoke mutation');
@@ -24,12 +25,10 @@ assert(revokeService.includes('await managedStremio.revokeInactiveMappings()'),'
 assert(revokeService.includes("'admin.subscription.revoke_selected.completed'"),'targeted plan revocation must be auditable');
 assert(targeted.includes('Other plans were preserved.'),'operator feedback must state that unrelated plans were preserved');
 
-assert(customerView.includes('function addPlanRevokeAction'),'Customer 360 must add the per-plan revoke entry while rendering on the server');
-assert(customerView.includes('function removeLegacyPlanRevoke'),'Customer 360 must remove the legacy Jellyfin-only revoke form while rendering on the server');
-assert(customerView.includes('liveSubscriptions(detail).length'),'server-rendered revoke entry must be available for any customer with a live plan, including Stremio-only customers');
-assert(customerView.includes('Revoke a plan…'),'Customer 360 must present an unambiguous plan-specific revoke action');
-assert(customerView.includes('/subscriptions/revoke'),'Customer 360 revoke action must open the plan picker');
-assert(customerView.includes('value=\\"end_jellyfin_plan\\"')||customerView.includes('value="end_jellyfin_plan"'),'server renderer must explicitly identify the legacy Jellyfin-only revoke action for removal');
+for(const retired of ['removeLegacyPlanRevoke','addPlanRevokeAction','movePlanRevokeIntoSubscriptions'])assert(!customerView.includes(retired),`Customer 360 must not reintroduce post-render revoke-action HTML surgery: ${retired}`);
+assert(compactView.includes("actions.push(customerLink(id,'subscriptions/revoke','Revoke a plan'"),'server-rendered revoke entry must be available for any customer with a live plan, including Stremio-only customers');
+assert(compactView.includes('current.length'),'Customer 360 plan actions must be driven by any current live subscription rather than Jellyfin-only state');
+assert(compactView.includes("'subscriptions/revoke'"),'Customer 360 revoke action must open the canonical plan picker');
 assert(!html.includes('/js/admin-per-plan-revoke.js'),'plan revocation safety must not depend on a client-side rewrite shim');
 assert(!fs.existsSync('public/js/admin-per-plan-revoke.js'),'obsolete client-side plan revoke shim must be removed');
 assert(composition.includes("require('./admin-subscription-revoke')"),'targeted revoke router must be composed into admin routes');

@@ -55,7 +55,7 @@ async function main() {
     }
 
     for (const [name, source] of [
-        ['Customer password core', read('src/customers.js')],
+        ['Customer password policy', read('src/security/customer-password-policy.js')],
         ['First-run setup core', firstRunCore],
         ['Activation core', activationCore],
         ['Staff password core', staffAuth],

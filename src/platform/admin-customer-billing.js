@@ -15,9 +15,9 @@ function gate(req, res, next) {
 function path(customerId) {
     return `/admin/users/${encodeURIComponent(customerId)}?tab=billing`;
 }
-// Manual entries the admin recorded here, most recent first. Real provider
-// payments (Stripe/PayPal) are shown from the caller's already-loaded
-// `detail.subscriptions` -- this module only owns the manual ledger.
+// Manual entries remain a separate operator-entered ledger. Stripe, PayPal
+// and Plisio provider transactions are projected from provider-financial-state
+// by the customer/payment read models; this route owns manual entries only.
 async function manualPayments(customerId) {
     return manualPaymentLedger.list(customerId);
 }

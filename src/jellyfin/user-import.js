@@ -4,7 +4,7 @@ const { query, transaction } = require('../db');
 const planExpiry = require('../entitlements/plan-expiry');
 const registry = require('./registry');
 const planServers = require('./plan-servers');
-const provisioning = require('./provisioning');
+const provisioning = require('./resilient-provisioning');
 
 function asId(value) {
     const id = String(value || '').trim();

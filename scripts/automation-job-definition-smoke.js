@@ -4,7 +4,11 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const registry = require('../src/automation/jobs');
-const criticalJobs = require('../src/automation/critical-jobs');
+
+assert(!fs.existsSync(path.join(__dirname, '..', 'src', 'automation', 'job-metadata.js')),
+  'retired automation metadata side-table must stay removed');
+assert(!fs.existsSync(path.join(__dirname, '..', 'src', 'automation', 'critical-jobs.js')),
+  'retired critical-jobs compatibility facade must stay removed');
 
 const names = registry.names();
 assert(names.length > 0, 'automation registry must expose jobs');
@@ -16,18 +20,17 @@ for (const jobKey of names) {
   assert(Number.isFinite(Number(definition.defaultIntervalSeconds)) && Number(definition.defaultIntervalSeconds) >= 30,
     `${jobKey} must expose a bounded default interval`);
   assert.strictEqual(typeof definition.critical, 'boolean', `${jobKey} must declare whether it is critical`);
-  assert(Object.prototype.hasOwnProperty.call(definition, 'timeoutMs'), `${jobKey} must declare timeout policy explicitly`);
-  assert.strictEqual(typeof definition.concurrencyClass, 'string', `${jobKey} must declare a concurrency class`);
-  assert(definition.concurrencyClass.length > 0, `${jobKey} concurrency class must not be empty`);
+  assert(!Object.prototype.hasOwnProperty.call(definition, 'timeoutMs'), `${jobKey} must not expose an unenforced timeout placeholder`);
+  assert(!Object.prototype.hasOwnProperty.call(definition, 'concurrencyClass'), `${jobKey} must not expose an unenforced concurrency-class placeholder`);
   assert.strictEqual(registry.defaultIntervalSeconds(jobKey), Number(definition.defaultIntervalSeconds),
     `${jobKey} interval helper must derive from its definition`);
 }
 
-assert.deepStrictEqual(new Set(registry.criticalNames()), new Set(criticalJobs.names()),
-  'compatibility critical-job facade must derive from the canonical registry metadata');
 for (const jobKey of names) {
-  assert.strictEqual(criticalJobs.isCritical(jobKey), registry.definition(jobKey).critical,
+  assert.strictEqual(registry.isCritical(jobKey), registry.definition(jobKey).critical,
     `${jobKey} critical classification drifted`);
+  assert.strictEqual(registry.mayBeDisabled(jobKey), Boolean(registry.definition(jobKey).disableableCritical),
+    `${jobKey} disableable-critical classification drifted`);
 }
 
 const worker = fs.readFileSync(path.join(__dirname, 'automation-worker.js'), 'utf8');

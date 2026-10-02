@@ -1,12 +1,13 @@
 'use strict';
 
 const express=require('express');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const runtimeSettings=require('./runtime-settings');
 const productReadiness=require('./product-readiness');
 const sourcePool=require('../stremio/source-pool');
+const planCommands=require('../catalog/plan-command-service');
 const {layout,esc}=require('./admin-html');
 
 const mutationLimit=routeRateLimit.middleware({scope:'admin-plan-delivery',max:20,windowSeconds:300});
@@ -44,7 +45,19 @@ function createAdminPlanDeliveryRouter(){
   r.get('/admin/plans/:id/delivery',async(req,res,next)=>{try{const html=await page(req);return html?res.send(html):res.status(404).send('Plan not found');}catch(error){next(error);}});
   r.post('/admin/plans/:id/delivery',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{
     const nextType=['jellyfin','stremio'].includes(String(req.body.serviceType))?String(req.body.serviceType):null;if(!nextType)throw new Error('Choose Jellyfin or Stremio delivery. Bundle delivery is retired for new setup.');
-    await transaction(async client=>{const found=await client.query('SELECT * FROM plans WHERE id=$1 FOR UPDATE',[req.params.id]);if(!found.rowCount)throw new Error('Plan not found.');const plan=found.rows[0],live=await client.query(`SELECT COUNT(DISTINCT customer_id)::int n FROM subscriptions WHERE plan_id=$1 AND superseded_by IS NULL AND status IN ('active','trialing','past_due','paused') AND starts_at<=NOW() AND current_period_end>NOW()`,[plan.id]),count=Number(live.rows[0]?.n||0);if(count&&String(req.body.impactConfirmation||'').trim()!==String(plan.code))throw new Error(`Type ${plan.code} exactly to confirm this catalogue change.`);if(nextType!=='jellyfin'&&plan.active&&plan.visible){const readiness=await productReadiness.evaluatePlan({...plan,service_type:nextType},await productReadiness.context());if(!readiness.sellable)throw new Error(`Hide or disable this plan, or finish Stremio readiness first: ${readiness.label}.`);}await client.query('UPDATE plans SET service_type=$2,updated_at=NOW() WHERE id=$1',[plan.id,nextType]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.delivery.update','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify({from:productReadiness.serviceType(plan),to:nextType,liveSubscriptions:count,snapshotsPreserved:true})]);});
+    await planCommands.updateDeliveryService({
+      planId:req.params.id,
+      nextType,
+      actorUserId:req.session.authUserId,
+      validate:async({plan,liveSubscriptions})=>{
+        if(liveSubscriptions&&String(req.body.impactConfirmation||'').trim()!==String(plan.code))throw new Error(`Type ${plan.code} exactly to confirm this catalogue change.`);
+        if(nextType!=='jellyfin'&&plan.active&&plan.visible){
+          const readiness=await productReadiness.evaluatePlan({...plan,service_type:nextType},await productReadiness.context());
+          if(!readiness.sellable)throw new Error(`Hide or disable this plan, or finish Stremio readiness first: ${readiness.label}.`);
+        }
+        return{from:productReadiness.serviceType(plan)};
+      }
+    });
     return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/delivery?message=${encodeURIComponent('Delivery service updated for future subscriptions. Existing subscription snapshots were preserved.')}`);
   }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/delivery?error=${encodeURIComponent(error.message)}`);}});
   r.post('/admin/plans/:id/stremio-sources',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const ids=(Array.isArray(req.body.sourceId)?req.body.sourceId:[req.body.sourceId]).filter(Boolean).map(String),available=await sourcePool.planSources(req.params.id),allowed=new Set(available.map(s=>String(s.id)));if(ids.some(id=>!allowed.has(id)))throw new Error('One or more selected external Stremio sources no longer exist.');const selections=ids.map(id=>({sourceId:id,priority:Math.max(1,Math.min(10000,Number(req.body[`priority_${id}`])||100))}));await sourcePool.savePlanSources(req.params.id,selections,req.session.authUserId);return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/delivery?message=${encodeURIComponent(ids.length?'External Stremio source selection saved.':'External Stremio sources cleared; this plan will use only managed sources when available.')}`);}catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/delivery?error=${encodeURIComponent(error.message)}`);}});

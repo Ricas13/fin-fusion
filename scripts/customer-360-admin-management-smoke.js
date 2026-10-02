@@ -15,6 +15,15 @@ const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
 const accessHoldsAdmin=read('src/platform/admin-customer-access-holds.js');
 const accessControlService=read('src/access/admin-customer-access-control.js');
+const customer360Route=read('src/platform/admin-customer-360.js');
+const customerProfileService=read('src/customers/admin-customer-profile-service.js');
+const customerProfile=require('../src/customers/admin-customer-profile-service');
+const customerIdentityService=read('src/customers/admin-customer-identity-service.js');
+const automationProtectionService=read('src/access/admin-customer-automation-protection.js');
+const individualActionService=read('src/access/admin-customer-individual-action-service.js');
+const accessSettingsService=read('src/access/admin-customer-access-settings.js');
+const directLifecycleService=read('src/access/admin-customer-lifecycle-service.js');
+const billingControl=read('src/payments/billing-control.js');
 const deletion=read('src/customers/customer-deletion.js');
 const externalDeletion=read('src/customers/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -50,6 +59,115 @@ for(const route of [
 ])assert(management.includes(route),`customer management route missing: ${route}`);
 assert(accessHoldsAdmin.includes("router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute)")&&accessHoldsAdmin.includes("router.post('/admin/users/:customerId/reconcile',reconcileRoute)"),'canonical Customer 360 reconciliation routes must share one blocker-aware owner');
 assert(!management.includes("r.post('/admin/users/:customerId/manage/reconcile'"),'legacy customer-management router must not re-own reconciliation');
+
+assert(customer360Route.includes("require('../customers/admin-customer-profile-service')"),
+  'Customer 360 profile route must delegate profile/portal identity mutation to the customer domain');
+assert(!customer360Route.includes('UPDATE customers SET display_name')
+    && !customer360Route.includes('UPDATE app_users SET username=$2,email=$3'),
+  'Customer 360 router must not own profile or portal-identity persistence');
+assert(customerProfileService.includes('transaction(async client =>')
+    && customerProfileService.includes('SELECT user_id FROM customers WHERE id=$1 FOR UPDATE')
+    && customerProfileService.includes('UPDATE app_users')
+    && customerProfileService.includes('UPDATE customers')
+    && customerProfileService.includes("'admin.customer.profile.update'"),
+  'customer profile domain service must own the atomic profile/portal update and audit event');
+const normalizedProfile=customerProfile.normalizeProfileInput({
+  displayName:'  Alice  ',
+  countryCode:'gb',
+  discordUserId:'12345',
+  tags:' VIP, beta,VIP ',
+  username:'alice.user',
+  email:'ALICE@EXAMPLE.COM'
+});
+assert(normalizedProfile.displayName==='Alice'
+    && normalizedProfile.country==='GB'
+    && normalizedProfile.email==='alice@example.com'
+    && normalizedProfile.tags.join(',')==='VIP,beta'
+    && normalizedProfile.portalFieldsProvided===true,
+  'customer profile service must preserve existing normalization semantics');
+const truncatedCountry=customerProfile.normalizeProfileInput({countryCode:'GBR'});
+assert(truncatedCountry.country==='GB','customer profile service must preserve the existing two-character country-code normalization semantics');
+let invalidDiscordRejected=false;
+try{customerProfile.normalizeProfileInput({discordUserId:'abc'});}catch(error){invalidDiscordRejected=error.message==='discord';}
+assert(invalidDiscordRejected,'customer profile service must preserve Discord ID validation semantics');
+
+assert(customer360Route.includes("customerIdentity.verifyEmail(")
+    && !customer360Route.includes('UPDATE app_users SET email_verified_at=COALESCE'),
+  'Customer 360 email verification must delegate identity persistence out of the router');
+assert(customerIdentityService.includes('FOR UPDATE')
+    && customerIdentityService.includes('UPDATE app_users')
+    && customerIdentityService.includes("'admin.customer.email.verify'"),
+  'customer identity service must own manual email verification and its audit event');
+assert(customer360Route.includes('automationProtection.setAutomationProtection(')
+    && !customer360Route.includes('UPDATE customers SET automation_protected='),
+  'Customer 360 automation protection must delegate cleanup-authority persistence');
+assert(automationProtectionService.includes("require('../entitlements/permanent-access')")
+    && automationProtectionService.includes('Remove permanent access before disabling automatic cleanup protection.')
+    && automationProtectionService.includes('UPDATE customers')
+    && automationProtectionService.includes("'admin.customer.automation_protection'"),
+  'access domain must own automation-protection policy, mutation and audit');
+assert(customer360Route.includes('individualActions.resetExpiryToPlan(')
+    && !customer360Route.includes('UPDATE subscriptions SET current_period_end='),
+  'Customer 360 reset-to-plan expiry must delegate subscription mutation out of the router');
+assert(individualActionService.includes('async function resetExpiryToPlan')
+    && individualActionService.includes('subscriptionState.effectiveSubscription(customerId,{includeBlocked:true})')
+    && individualActionService.includes("'admin.customer.expiry.reset_to_plan'"),
+  'access-domain individual action service must own reset-to-plan expiry selection, mutation and audit');
+
+assert(customer360Route.includes('lifecycleService.resetAutomaticPlacement(')
+    && !customer360Route.includes("require('../jellyfin/server-migration')"),
+  'Customer 360 automatic placement must delegate migration orchestration to the access lifecycle service');
+assert(directLifecycleService.includes('async function resetAutomaticPlacement')
+    && directLifecycleService.includes("require('../jellyfin/server-migration')")
+    && directLifecycleService.includes('serverMigration.createMigration(')
+    && directLifecycleService.includes('serverMigration.executeMigration('),
+  'access lifecycle service must own automatic placement and migration orchestration');
+assert(customer360Route.includes('accessCommands.permanentAccessStatus('),
+  'Customer 360 must read permanent-access status through the access-domain command owner');
+assert(customer360Route.includes("require('../access/admin-customer-access-settings')")
+    && !customer360Route.includes("require('../db')")
+    && !/\b(?:INSERT INTO|UPDATE|DELETE FROM)\b/.test(customer360Route),
+  'Customer 360 router must remain free of direct database mutation ownership');
+for(const delegated of [
+  'accessSettings.savePolicyOverrides(',
+  'accessSettings.resetPolicyOverrides(',
+  'accessSettings.saveHouseholdOverrides(',
+  'accessSettings.resetHouseholdOverrides(',
+  'accessSettings.saveLibraryOverrides(',
+  'accessSettings.resetLibraryOverrides(',
+  'accessSettings.saveRequestPermissionOverrides(',
+  'accessSettings.resetRequestPermissionOverrides('
+]) assert(customer360Route.includes(delegated),`Customer 360 must delegate ${delegated}`);
+for(const action of [
+  'admin.customer.policy_override',
+  'admin.customer.policy_override_reset_all',
+  'admin.customer.household_override',
+  'admin.customer.household_override_reset_all',
+  'admin.customer.library_override',
+  'admin.customer.library_override_reset_all',
+  'admin.customer.request_permission_override',
+  'admin.customer.request_permission_override_reset_all'
+]) assert(accessSettingsService.includes(action),`access settings service must own audit action ${action}`);
+assert(accessSettingsService.includes("require('./customer-access-state')")
+    && accessSettingsService.includes('customerAccessState.snapshot(customerId)'),
+  'Customer 360 access settings must derive current lane entitlements from canonical customer access state');
+
+assert(customer360Route.includes('accessSettings.resetStremioHousehold(')
+    && !customer360Route.includes("require('../stremio/entitlements')")
+    && !customer360Route.includes("require('../stremio/household-access')"),
+  'Customer 360 Stremio household reset must delegate entitlement validation and lease release');
+assert(accessSettingsService.includes('async function resetStremioHousehold')
+    && accessSettingsService.includes('stremioEntitlements.current(customerId)')
+    && accessSettingsService.includes('stremioHouseholdAccess.release(entitlement'),
+  'access settings service must own Stremio household reset policy and mutation');
+assert(customer360Route.includes('billingControl.setCustomerRenewal(')
+    && !customer360Route.includes('function currentSubscription(')
+    && !customer360Route.includes('billingControl.setRenewal('),
+  'Customer 360 renewal must delegate canonical subscription selection to payments');
+assert(billingControl.includes('async function setCustomerRenewal')
+    && billingControl.includes("subscriptionState.effectiveSubscription(customerId, { includeBlocked: true })")
+    && billingControl.includes('return setRenewal(current.subscription_id || current.id, enabled, actorUserId, options)'),
+  'billing control must own Customer 360 renewal subscription selection before provider mutation');
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
 assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
@@ -92,7 +210,6 @@ const compact360=read('src/platform/customer-360-compact.js');
 const primaryActions=read('src/platform/admin-customer-primary-actions.js');
 const directIndividual=read('src/platform/admin-customer-individual-actions.js');
 const directLifecycle=read('src/platform/admin-customer-direct-lifecycle.js');
-const directLifecycleService=read('src/access/admin-customer-lifecycle-service.js');
 const accessCards=read('src/platform/customer-360-access-cards.js');
 assert(view360.includes("compact=require('./customer-360-compact')")&&view360.includes('compact.render(safe,token,options)'),'the focused Customer 360 renderer must own the default operator page');
 for(const title of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone'])assert(compact360.includes(title),`action-first Customer 360 is missing ${title}`);
@@ -133,8 +250,9 @@ assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-veri
 // Customer 360 remains one server-rendered page with only one record nav entry
 // plus the Portal view action. The retired multi-tab navigation stabilizer must
 // not return now that operational actions live directly in the eight cards.
-const viewV2=read('src/platform/customer-360-view-v2.js');
-assert(viewV2.includes('Customer record')&&viewV2.includes('detailTab active'),'Customer 360 must keep one active "Customer record" nav entry');
+const customer360View=read('src/platform/customer-360-view.js');
+assert(customer360View.includes('Customer record')&&customer360View.includes('detailTab active'),'Customer 360 must keep one active "Customer record" nav entry');
+assert(!fs.existsSync(path.join(root,'src/platform/customer-360-view-v2.js')),'retired Customer 360 V2 renderer must not return');
 assert(!fs.existsSync(path.join(root,'public/js/customer-360-navigation.js')),'the retired multi-tab navigation stabilizer must not be reintroduced');
 assert(!adminHtml.includes('/js/customer-360-navigation.js'),'admin pages must no longer load the retired Customer 360 navigation stabilizer');
 assert(customerOperatorClient.includes('relocatePortalAndTopActions'),'the impersonation relocation into the customer nav must remain available to the legacy enrichment layer');

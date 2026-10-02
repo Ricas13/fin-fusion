@@ -16,6 +16,7 @@ const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
 const composition=read('src/platform/admin-route-composition.js');
 const createPlan=read('src/platform/admin-plan-create-v2.js');
+const planCommands=read('src/catalog/plan-command-service.js');
 const lifecyclePolicySource=read('src/entitlements/jellyfin-lifecycle-policy.js');
 const inactivityScoped=read('src/automation/customer-inactivity-scoped.js');
 const inactivity=read('src/automation/customer-inactivity.js');
@@ -47,7 +48,7 @@ assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real
 // media policy surface. Lifecycle/inactivity is no longer a per-plan setting.
 for(const token of ['capacityLimit','streams','allowDownloads','allowVideoTranscoding','allowAudioTranscoding','allowRemuxing','allowLiveTv','allowLiveTvManagement','allowRemoteAccess','libraryAccessMode','libraryNames'])assert(createPlan.includes(token),`New plan is missing ${token}`);
-assert(createPlan.includes('allow_4k'),'New Jellyfin plans must persist the existing 4K catalogue flag');
+assert(createPlan.includes('allow4k')&&createPlan.includes('planCommands.createPlan')&&planCommands.includes('allow_4k'),'New Jellyfin plans must carry the 4K catalogue flag through the canonical plan command owner');
 assert(createPlan.includes('allowSubtitleEditing')&&createPlan.includes("'Edit subtitles'"),'New Jellyfin plans must expose the real Jellyfin subtitle-management permission');
 for(const retired of ['inactivityEnabled','minimumPlaybackMinutes','noPlaybackDays'])assert(!createPlan.includes(retired),`Plan creation must not expose retired lifecycle field ${retired}`);
 assert(!planLifecycleSource.includes('name="_lifecycleCheckboxes"'),'Unified plan editor must not render per-plan lifecycle controls');

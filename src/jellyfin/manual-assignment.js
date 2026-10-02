@@ -1,7 +1,7 @@
 'use strict';
 
 const {query}=require('../db');
-const provisioning=require('./provisioning');
+const provisioning=require('./provisioning-helpers');
 const placement=require('./placement');
 const adminControl=require('./admin-control');
 const subscriptionState=require('../entitlements/subscription-state');

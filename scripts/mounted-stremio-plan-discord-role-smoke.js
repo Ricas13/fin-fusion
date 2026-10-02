@@ -34,20 +34,20 @@ const db={
   },
   async transaction(fn){
     return fn({query:async(sql,params=[])=>{
-      if(sql.includes('UPDATE plans SET name=')){
+      if(sql.includes('UPDATE plans')&&sql.includes('name=$2')&&sql.includes('discord_role_id=$7')){
         savedRole=params[6]||null;
         plan.discord_role_id=savedRole;
         return rows([plan]);
       }
-      if(sql.includes('UPDATE subscriptions SET stremio_household_network_limit_snapshot=')){
+      if(sql.includes('UPDATE subscriptions')&&sql.includes('stremio_household_network_limit_snapshot=$2')){
         assert(sql.includes("stremio_ip_replacement_policy_snapshot='auto_inactive'"),'active Stremio subscriptions must use automatic lease expiry');
         return rows([{id:'subscription-live'}]);
       }
-      if(sql.includes('UPDATE access_network_leases SET expires_at=NOW()')){
+      if(sql.includes('UPDATE access_network_leases')&&sql.includes('SET expires_at=NOW()')){
         leaseReset=true;
         return rows([]);
       }
-      if(sql.includes('UPDATE plans SET stremio_household_network_limit=')){
+      if(sql.includes('UPDATE plans')&&sql.includes('stremio_household_network_limit=$2')&&sql.includes('stremio_household_lease_minutes=$3')){
         savedLease=Number(params[2]);
         plan.stremio_household_network_limit=Number(params[1]);
         plan.stremio_household_lease_minutes=savedLease;

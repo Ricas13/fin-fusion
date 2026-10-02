@@ -26,7 +26,7 @@ const FIELD_LABELS={
 const LANE_LABEL={primary:'Premium',free:'Free Server'};
 
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
-function activeSubscription(detail){return (detail.subscriptions||[]).find(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()))||detail.subscriptions?.[0]||null;}
+function currentSubscription(detail){if(detail?.canonicalAccessState)return detail.canonicalAccessState.primary?.entitlement||detail.canonicalAccessState.free?.entitlement||null;return detail?.primaryEntitlement||(detail.subscriptions||[]).find(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()))||detail?.subscriptions?.[0]||null;}
 function fmtDate(value){if(!value)return'—';if(value===Infinity||String(value).toLowerCase()==='infinity')return'Never';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});}
 function isRecurring(sub){const ref=String(sub?.provider_subscription_id||'');return (sub?.source==='stripe'&&/^sub_/i.test(ref))||(sub?.source==='paypal'&&/^I-/i.test(ref));}
 function booleanLabel(value){return value?'Allowed':'Blocked';}
@@ -154,7 +154,7 @@ function moreCard(num,token,customerId,ctx,permanent,sub){
 
 function controlGrid(detail,token,ctx,permanent){
   const customerId=detail.customer.id,plan=ctx?.entitlement?{plan_name:ctx.entitlement.planName,contract_plan_name:ctx.entitlement.planName,is_free_tier:ctx.entitlement.isFreeTier,server_class:ctx.entitlement.serverClass}:null;
-  const sub=activeSubscription(detail);
+  const sub=currentSubscription(detail);
   const safeCtx=ctx||{entitlement:null,accounts:[],activeAccounts:[],servers:[],adminControl:null,serviceKind:'none'};
   const cards=[
     planCard(1,token,customerId,plan||sub,permanent),

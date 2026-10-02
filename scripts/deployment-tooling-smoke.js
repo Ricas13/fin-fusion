@@ -18,6 +18,9 @@ const watchdogPath = path.join(root, 'scripts', 'availability-watchdog.sh');
 const watchdogInstallerPath = path.join(root, 'scripts', 'install-availability-watchdog.sh');
 const watchdog = fs.readFileSync(watchdogPath, 'utf8');
 const watchdogInstaller = fs.readFileSync(watchdogInstallerPath, 'utf8');
+const composeRuntimePath = path.join(root, 'scripts', 'lib', 'compose-runtime.sh');
+const composeRuntime = fs.readFileSync(composeRuntimePath, 'utf8');
+const recovery = fs.readFileSync(path.join(root, 'recovery.sh'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -41,7 +44,9 @@ function bashPath() {
 for (const scriptPath of [
   path.join(root, 'scripts', 'deploy-production.sh'),
   watchdogPath,
-  watchdogInstallerPath
+  watchdogInstallerPath,
+  composeRuntimePath,
+  path.join(root, 'recovery.sh')
 ]) {
   const syntax = spawnSync(bashPath(), ['-n', scriptPath], { encoding: 'utf8' });
   assert.strictEqual(syntax.status, 0, syntax.stderr || `${path.basename(scriptPath)} must pass bash -n`);
@@ -58,7 +63,7 @@ for (const token of [
   'prepare-production-env.js --write',
   '--user "$(id -u):$(id -g)"',
   'docker compose config',
-  'docker compose --profile recovery build',
+  'docker compose build',
   'BACKUP_DIR=/backups/predeploy',
   'recovery-tools npm run db:backup',
   'docker compose run --rm --no-deps migrate',
@@ -81,6 +86,20 @@ assert(!/container_name:\s*steam-fusion/.test(compose), 'legacy steam-fusion con
 assert(deployScript.includes('adopt_legacy_container captainfin steam-fusion')
   && deployScript.includes('adopt_legacy_container captainfin-postgres steam-fusion-postgres'),
   'deployment must adopt existing legacy containers before runtime recreation');
+assert(composeRuntime.includes('docker compose ps --all --quiet "$service"'), 'runtime resolver must derive physical containers from Compose service identity');
+for (const source of [deployScript, watchdog, recovery]) {
+  assert(source.includes('scripts/lib/compose-runtime.sh'), 'runtime shell tooling must source the canonical Compose service resolver');
+}
+for (const [name,source] of [['watchdog',watchdog],['recovery',recovery]]) {
+  assert(!/docker inspect[^\n]*(?:captainfin|steam-fusion)/.test(source), `${name} must not inspect branded physical container names`);
+}
+const deployWithoutAdoption=deployScript
+  .replace(/adopt_legacy_container captainfin steam-fusion[\s\S]*?adopt_legacy_container captainfin-postgres steam-fusion-postgres/,'');
+assert(!/docker inspect[^\n]*(?:captainfin|steam-fusion)/.test(deployWithoutAdoption), 'deployment health/rollback logic must resolve Compose services; branded names are allowed only in legacy adoption');
+assert(deployScript.includes('compose_service_image_id app') && deployScript.includes('compose_service_health postgres'), 'deployment must resolve release images and PostgreSQL health by Compose service');
+assert(watchdog.includes('compose_service_state app') && watchdog.includes('compose_service_health postgres'), 'watchdog must resolve app/PostgreSQL by Compose service');
+assert(recovery.includes('wait_service_health "$service"') && recovery.includes('compose_service_health postgres'), 'recovery must resolve service health by Compose service');
+
 assert(compose.includes('POSTGRES_DB: steamfusion')
   && compose.includes('POSTGRES_USER: steamfusion')
   && compose.includes('steamfusion_pgdata:/var/lib/postgresql/data')
@@ -90,6 +109,15 @@ assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'b
 assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
 assert((compose.match(/STREMIO_JELLYFIN_TOKEN_KEY: \$\{STREMIO_JELLYFIN_TOKEN_KEY:-\}/g) || []).length === 2, 'app and automation-worker must receive the same managed Stremio token key');
+assert((compose.match(/image: \$\{CAPTAINFIN_IMAGE:-captainfin:current\}/g) || []).length === 6, 'migrate/app/workers/recovery must share the canonical runtime image');
+assert.strictEqual((compose.match(/pull_policy:\s*never/g) || []).length, 6, 'internal runtime services must never pull the local verified runtime tag from a registry');
+assert.strictEqual((compose.match(/^\s+build:\s*\.\s*$/gm) || []).length, 1, 'only the app service may own the Docker build definition');
+assert(deployScript.includes('export CAPTAINFIN_IMAGE="captainfin:${CAPTAINFIN_BUILD_SHA}"'), 'production deployment must derive the release image tag only from build SHA');
+assert(deployScript.includes('docker compose build') && /docker compose build[\s\S]*?\n\s*app\b/.test(deployScript), 'deployment must build the shared application image once through app');
+assert(deployScript.includes('for service in app automation-worker activity-worker backup-worker'), 'deployment must verify every long-running runtime service build identity');
+assert(deployScript.includes('compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA'), 'runtime build verification must read the image-provided build SHA');
+assert(deployScript.indexOf('npm run verify:deployment') < deployScript.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'), 'known-good current image alias must advance only after deployment verification succeeds');
+
 assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must prove worker liveness');
 assert(verifyDeployment.includes("add('backup worker', backupWorkerAlive"), 'deployment verification must require backup worker liveness');
 assert(verifyDeployment.includes('degraded_error=${backupWorker.last_error}'), 'deployment verification must surface backup operation errors diagnostically');
@@ -146,7 +174,7 @@ assert(!customerRateLimit.includes('[String(bucketKey).slice(0,300), seconds]'),
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
   deployScript.indexOf('docker compose config'),
-  deployScript.indexOf('docker compose --profile recovery build'),
+  deployScript.indexOf('docker compose build'),
   deployScript.indexOf('recovery-tools npm run db:backup'),
   deployScript.indexOf('docker compose run --rm --no-deps migrate'),
   deployScript.indexOf('docker compose up -d --no-deps app automation-worker activity-worker backup-worker'),

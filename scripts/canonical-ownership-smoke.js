@@ -34,21 +34,21 @@ assert(adminSecurity.includes("require('./admin-security-routes')"),'canonical a
 assert(adminSecurity.includes('createAdminStepUpRouter')&&adminSecurity.includes('sensitiveMutationGuard'),'canonical admin security facade must retain step-up and sensitive mutation guards');
 assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/platform/admin-security.js'],'only the canonical admin security facade may import internal security routes');
 
-// Jellyfin provisioning: low-level helpers are dependency-safe, the legacy
-// facade delegates every customer mutation, and the resilient owner never imports
-// the compatibility facade. This keeps old callers working without a module cycle
-// or a path back into the retired single-lane mutation implementation.
-assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning compatibility facade must stay removed');
-const provisioning=read('src/jellyfin/provisioning.js');
+// Jellyfin provisioning: the historical compatibility facade is gone. Low-level
+// helpers are dependency-safe, and all customer reconciliation mutations belong
+// to the resilient multi-service owner. No source module may reintroduce the old
+// facade as a shortcut around that ownership boundary.
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning-core compatibility facade must stay removed');
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning.js')),'retired provisioning compatibility facade must stay removed');
 const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
 assert(provisioningHelpers.includes("require('./provisioning-engine')"),'dependency-safe helper surface must own the internal engine import');
-assert(provisioning.includes("require('./provisioning-helpers')"),'compatibility facade must consume the dependency-safe helper surface');
 assert(resilientProvisioning.includes("require('./provisioning-helpers')"),'canonical reconciler must consume helpers directly');
-assert(!resilientProvisioning.includes("require('./provisioning')"),'canonical reconciler must never depend on the compatibility facade');
-assert(!provisioning.includes("require('./provisioning-engine')"),'compatibility facade must not import the internal engine directly');
+assert(!resilientProvisioning.includes("require('./provisioning')"),'canonical reconciler must never depend on the retired compatibility facade');
+assert.deepStrictEqual(importers("require('./provisioning')"),[],'no source module may import the retired same-directory provisioning facade');
+assert.deepStrictEqual(importers("require('../jellyfin/provisioning')"),[],'no source module may import the retired Jellyfin provisioning facade');
 assert.deepStrictEqual(importers("require('./provisioning-engine')"),['src/jellyfin/provisioning-helpers.js'],'only the dependency-safe helper module may import provisioning-engine');
 assert(provisioningHelpers.includes('markPasswordSetupRequired'),'helper surface must retain password-setup state for created Jellyfin identities');
 for(const retired of ['reconcileCustomer','reconcileAccount','holdAccess','releaseAccess','expireSubscriptionsAndReconcile']){
@@ -61,18 +61,13 @@ for(const retired of ['selectServerForPlan','currentEntitlement']){
   assert(!new RegExp(`\\b${retired}\\b`).test(provisioningEngine.split('module.exports =')[1]||''),`low-level provisioning engine must not export canonical ownership helper ${retired}`);
 }
 assert(!provisioningEngine.includes("require('./placement')")&&!provisioningEngine.includes("require('../entitlements/subscription-state')"),'primitive provisioning engine must not regain placement or entitlement dependencies');
-assert(provisioning.includes("function canonicalReconciler() { return require('./resilient-provisioning'); }"),'legacy provisioning imports must route mutations through the resilient multi-lane owner');
-assert(provisioning.includes('canonicalReconciler().reconcileCustomer(customerId)')&&provisioning.includes('canonicalReconciler().reconcileAccount(accountId)'),'customer and account reconciliation must delegate to resilient provisioning');
-assert(provisioning.includes('canonicalReconciler().holdAccess(customerId, reason, actorUserId)')&&provisioning.includes('canonicalReconciler().releaseAccess(customerId, actorUserId)'),'access-hold mutations must delegate to the same canonical owner');
-assert(provisioning.includes('canonicalReconciler().expireSubscriptionsAndReconcile()'),'subscription expiry compatibility path must delegate to the canonical owner');
 assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical resilient provisioning must retain inactivity-hold reconciliation');
 assert(resilientProvisioning.includes('autoDowngradeEligibleCustomer'),'canonical resilient provisioning must retain automatic free-tier downgrade behavior');
-assert(provisioning.includes("require('../entitlements/subscription-expiry')")&&resilientProvisioning.includes("require('../entitlements/subscription-expiry')"),'notification compatibility and canonical mutation owner must both use the entitlement expiry helper');
-assert(!provisioning.includes('subscriptionExpiry.expireAndReconcile'),'compatibility facade must not own an independent expiry/reconcile callback');
+assert(resilientProvisioning.includes("require('../entitlements/subscription-expiry')"),'canonical mutation owner must use the entitlement expiry helper');
 assert(resilientProvisioning.includes('subscriptionExpiry.expireAndReconcile'),'canonical reconciler must own expiry/reconcile composition');
-assert(!provisioning.includes('WITH expired AS')&&!resilientProvisioning.includes('WITH expired AS'),'subscription expiry SQL must not be duplicated across provisioning layers');
+assert(!resilientProvisioning.includes('WITH expired AS'),'subscription expiry SQL must not be duplicated into resilient provisioning');
 assert(subscriptionExpiry.includes('WITH expired AS')&&subscriptionExpiry.includes("status IN('active','trialing','past_due','paused','cancelled')"),'canonical subscription expiry helper must own the expiry state transition');
-assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/jellyfin/provisioning.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry helper consumers must stay limited to provisioning surfaces');
+assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/automation/jobs.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry consumers must stay limited to the automation scheduler and canonical reconciler');
 
 
 // Access Integrity operator decisions belong to the access domain. The admin
@@ -286,6 +281,226 @@ assert(individualActionService.includes('UPDATE subscriptions')
     && individualActionService.includes('accessHolds.addHold(')
     && individualActionService.includes('serviceAdminControl.setRemoved('),
   'access-domain individual action service must own extension, expiry, suspension and Jellyfin-removal mutations');
+
+// Customer 360 access mutations must cross one access-domain command boundary.
+// The HTTP router can validate CSRF and map messages, but may not call the low-level
+// manual-assignment or permanent-access implementations directly.
+const customer360Route=read('src/platform/admin-customer-360.js');
+const customer360AccessCommands=read('src/access/admin-customer-access-commands.js');
+assert(customer360Route.includes("require('../access/admin-customer-access-commands')")
+    && customer360Route.includes('accessCommands.assignServer(')
+    && customer360Route.includes('accessCommands.setPermanentAccess('),
+  'Customer 360 access actions must delegate through the access-domain command service');
+for(const forbidden of [
+  "require('../jellyfin/manual-assignment')",
+  "require('../entitlements/permanent-access')",
+  'manualAssignment.assign(',
+  'permanentAccess.enable(',
+  'permanentAccess.revoke('
+]){
+  assert(!customer360Route.includes(forbidden),
+    `Customer 360 router must not bypass its access-domain command boundary: ${forbidden}`);
+}
+assert(customer360AccessCommands.includes("require('../jellyfin/manual-assignment')")
+    && customer360AccessCommands.includes("require('../entitlements/permanent-access')")
+    && customer360AccessCommands.includes('async function assignServer')
+    && customer360AccessCommands.includes('async function setPermanentAccess'),
+  'access-domain Customer 360 command service must own manual assignment and permanent-access dispatch');
+
+// Plan creation persistence belongs to the catalog domain. The adaptive plan
+// route may parse/render HTTP input, but must not own plan, price or audit writes.
+const planCreateRoute=read('src/platform/admin-plan-create-v2.js');
+const planCommandService=read('src/catalog/plan-command-service.js');
+assert(planCreateRoute.includes("require('../catalog/plan-command-service')")
+    && planCreateRoute.includes('planCommands.createPlan(plan, actorUserId)')
+    && !planCreateRoute.includes("require('../db')")
+    && !planCreateRoute.includes("require('../payments/plan-pricing')")
+    && !planCreateRoute.includes('INSERT INTO plans')
+    && !planCreateRoute.includes('INSERT INTO audit_log'),
+  'adaptive plan creation must delegate persistence to the catalog command service');
+assert(planCommandService.includes('async function createPlan')
+    && planCommandService.includes('INSERT INTO plans')
+    && planCommandService.includes('planPricing.setPrice(')
+    && planCommandService.includes("'admin.plan.create'"),
+  'catalog plan command service must own atomic plan creation, pricing and audit persistence');
+
+// Core Jellyfin plan editor persistence belongs to the catalog command service.
+// Provider-option verification is still handled separately, but product, availability,
+// delivery/pool, libraries and commerce writes must not return to the HTTP adapter.
+const jellyfinPlanEditor=read('src/platform/admin-jellyfin-plan-editor.js');
+assert(jellyfinPlanEditor.includes("require('../catalog/plan-command-service')")
+    && jellyfinPlanEditor.includes('planCommands.updateProduct({')
+    && jellyfinPlanEditor.includes('planCommands.updateAvailability({')
+    && jellyfinPlanEditor.includes('planCommands.updateDelivery({')
+    && jellyfinPlanEditor.includes('planCommands.updateLibraries({')
+    && jellyfinPlanEditor.includes('planCommands.updateCommerce({'),
+  'Jellyfin plan editor must delegate core persistence to catalog plan commands');
+for(const forbidden of [
+  'UPDATE plans SET name=',
+  'UPDATE plans SET capacity_limit=',
+  'DELETE FROM plan_server_eligibility',
+  'INSERT INTO plan_server_eligibility',
+  'UPDATE plans SET library_access_mode=',
+  'UPDATE plans SET billing_interval=',
+  "verification_error='Plan commercial schedule changed; re-verification required.'"
+]){
+  assert(!jellyfinPlanEditor.includes(forbidden),
+    `Jellyfin plan editor must not own catalog mutation SQL: ${forbidden}`);
+}
+for(const required of [
+  'async function updateProduct',
+  'async function updateAvailability',
+  'async function updateDelivery',
+  'async function updateLibraries',
+  'async function updateCommerce',
+  'DELETE FROM plan_server_eligibility',
+  'INSERT INTO plan_server_eligibility',
+  "verification_error='Plan commercial schedule changed; re-verification required.'"
+]){
+  assert(planCommandService.includes(required),
+    `catalog plan command service must own ${required}`);
+}
+
+// Plan access and payment-option persistence belong to the catalog domain.
+// Platform routes may validate/render/verify providers, but must not own the writes.
+const planAccessRoute=read('src/platform/admin-plan-access.js');
+const planPaymentOptionsRoute=read('src/platform/admin-plan-payment-options.js');
+assert(planAccessRoute.includes("require('../catalog/plan-command-service')")
+    && planAccessRoute.includes('planCommands.updateAccessPolicy({')
+    && !planAccessRoute.includes('UPDATE plans SET')
+    && !planAccessRoute.includes('DELETE FROM access_network_leases')
+    && !planAccessRoute.includes("'admin.plan.access_policy.update'"),
+  'plan access route must delegate access-policy mutation to the catalog command service');
+assert(planPaymentOptionsRoute.includes("require('../catalog/plan-command-service')")
+    && planPaymentOptionsRoute.includes('planCommands.updatePortalCurrencyPrice({')
+    && planPaymentOptionsRoute.includes('planCommands.updatePaymentOptions({')
+    && !planPaymentOptionsRoute.includes('UPDATE plan_provider_prices SET active=FALSE')
+    && !planPaymentOptionsRoute.includes("'admin.plan.portal_currency_price.update'")
+    && !planPaymentOptionsRoute.includes("'admin.plan.payment_options'"),
+  'plan payment-options route must delegate price/mapping persistence to the catalog command service');
+for(const required of [
+  'async function updateAccessPolicy',
+  'DELETE FROM access_network_leases',
+  "'admin.plan.access_policy.update'",
+  'async function saveProviderOption',
+  'async function updatePaymentOptions',
+  'async function updatePortalCurrencyPrice',
+  "'admin.plan.portal_currency_price.update'",
+  "'admin.plan.payment_options'"
+]){
+  assert(planCommandService.includes(required),
+    `catalog plan command service must own ${required}`);
+}
+
+// Stremio plan editing uses the same catalog mutation owner as Jellyfin.
+const stremioPlanEditor=read('src/platform/admin-stremio-plan-editor.js');
+assert(stremioPlanEditor.includes("require('../catalog/plan-command-service')")
+    && stremioPlanEditor.includes('planCommands.updateStremioCommerce({')
+    && stremioPlanEditor.includes('planCommands.updateStremioStorefront({')
+    && stremioPlanEditor.includes('planCommands.updateStremioAccess({')
+    && stremioPlanEditor.includes('planCommands.updateStremioAvailability({')
+    && stremioPlanEditor.includes('planCommands.updatePaymentOptions({'),
+  'Stremio plan editor must delegate all catalogue mutations through catalog plan commands');
+for(const forbidden of [
+  'UPDATE plans SET name=',
+  'UPDATE plans SET description=',
+  'UPDATE plans SET stremio_household_network_limit=',
+  'UPDATE plans SET capacity_limit=',
+  'UPDATE subscriptions SET stremio_household_network_limit_snapshot=',
+  'INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)'
+]){
+  assert(!stremioPlanEditor.includes(forbidden),
+    `Stremio plan editor must not own catalogue mutation SQL: ${forbidden}`);
+}
+for(const required of [
+  'async function updateStremioCommerce',
+  'async function updateStremioStorefront',
+  'async function updateStremioAccess',
+  'async function updateStremioAvailability',
+  "'admin.plan.stremio_commerce.update'",
+  "'admin.plan.stremio_access.update'",
+  "'admin.plan.stremio_availability.update'"
+]){
+  assert(planCommandService.includes(required),
+    `catalog plan command service must own Stremio mutation ${required}`);
+}
+
+// Emby plan creation/update uses the same catalog mutation owner.
+const embyPlanEditor=read('src/platform/admin-emby-plan-editor.js');
+assert(embyPlanEditor.includes("require('../catalog/plan-command-service')")
+    && embyPlanEditor.includes('planCommands.upsertEmbyPlan({')
+    && !embyPlanEditor.includes('UPDATE plans SET name=')
+    && !embyPlanEditor.includes('INSERT INTO plans(code,name,description,service_type')
+    && !embyPlanEditor.includes('DELETE FROM plan_server_eligibility')
+    && !embyPlanEditor.includes('INSERT INTO plan_server_eligibility'),
+  'Emby plan editor must delegate catalogue persistence to the shared plan command service');
+assert(planCommandService.includes('async function upsertEmbyPlan')
+    && planCommandService.includes("service_type='emby'")
+    && planCommandService.includes("'admin.emby_plan.update'")
+    && planCommandService.includes("'admin.emby_plan.create'"),
+  'catalog plan command service must own Emby plan create/update persistence and audit');
+
+// Portable configuration import stays an atomic orchestrator and delegates each
+// configuration class to its canonical write owner.
+const configurationTransfer=read('src/platform/configuration-transfer.js');
+assert(configurationTransfer.includes("require('../catalog/plan-command-service')")
+    && configurationTransfer.includes("require('../integrations/notification-preferences-command-service')")
+    && configurationTransfer.includes("require('../automation/job-health')")
+    && configurationTransfer.includes("require('../configuration/platform-settings-command-service')")
+    && configurationTransfer.includes('planCommands.applyImportedPlans(')
+    && configurationTransfer.includes('planCommands.applyImportedProviderMappings(')
+    && configurationTransfer.includes('notificationPreferenceCommands.applyImportedPreferences(')
+    && configurationTransfer.includes('jobHealth.applyImportedState(')
+    && configurationTransfer.includes('platformSettingsCommands.applyImportedSettings('),
+  'configuration transfer must orchestrate canonical domain commands');
+for(const forbidden of [
+  'INSERT INTO platform_settings(',
+  'INSERT INTO notification_preferences(',
+  'INSERT INTO plans(',
+  'UPDATE plans SET',
+  'DELETE FROM plan_server_eligibility',
+  'INSERT INTO plan_server_eligibility',
+  'INSERT INTO plan_provider_prices',
+  'UPDATE automation_job_state SET'
+]){
+  assert(!configurationTransfer.includes(forbidden),
+    `configuration transfer must not bypass canonical mutation owners: ${forbidden}`);
+}
+assert(configurationTransfer.includes('transaction(async client=>')
+    && configurationTransfer.includes("'admin.configuration.import.atomic'"),
+  'configuration transfer must preserve one outer atomic transaction and one import-level audit event');
+
+
+
+// Customer portal security mutations belong to the security domain. The platform
+// route may render forms, verify CSRF and persist the in-memory session update,
+// but password/TOTP/recovery/session database mutation must stay behind commands.
+const customerSecurityRoute=read('src/platform/customer-security.js');
+const customerSecurityCommands=read('src/security/customer-security-commands.js');
+assert(customerSecurityRoute.includes("require('../security/customer-security-commands')")
+    && customerSecurityRoute.includes('securityCommands.changePassword(')
+    && customerSecurityRoute.includes('securityCommands.revokeOtherSessions(')
+    && customerSecurityRoute.includes('securityCommands.disableTwoFactor(')
+    && customerSecurityRoute.includes('securityCommands.regenerateRecoveryCodes('),
+  'customer security routes must delegate password, session and 2FA mutations to the security domain');
+for(const forbidden of [
+  'customers.changePortalPassword(',
+  'customers.revokeOtherCustomerSessions(',
+  'UPDATE auth_sessions',
+  'UPDATE app_users SET password_hash',
+  'DELETE FROM auth_recovery_codes',
+  'DELETE FROM auth_totp_enrollments'
+]){
+  assert(!customerSecurityRoute.includes(forbidden),
+    `customer security platform route must not own security persistence: ${forbidden}`);
+}
+assert(customerSecurityCommands.includes('async function changePassword')
+    && customerSecurityCommands.includes('async function revokeOtherSessions')
+    && customerSecurityCommands.includes('async function disableTwoFactor')
+    && customerSecurityCommands.includes('async function regenerateRecoveryCodes')
+    && customerSecurityCommands.includes("'customer.password.change'")
+    && customerSecurityCommands.includes("'customer.2fa.disable'"),
+  'customer security command service must own password/session/2FA mutation and audit behavior');
 
 console.log('canonical ownership smoke: ok');
 

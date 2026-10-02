@@ -15,7 +15,6 @@ function between(body, start, end) {
     return body.slice(from, to < 0 ? body.length : to);
 }
 
-const critical = require('../src/automation/critical-jobs');
 const jobs = require('../src/automation/jobs');
 const attentionPolicy = require('../src/platform/actionable-attention-policy');
 const integrity = require('../src/automation/revenue-integrity');
@@ -28,7 +27,7 @@ const requiredCritical = [
     'discord_roles', 'activation_cleanup'
 ];
 for (const name of requiredCritical) {
-    assert(critical.isCritical(name), `${name} must be a critical automation job`);
+    assert(jobs.isCritical(name), `${name} must be a critical automation job`);
     assert.strictEqual(typeof jobs.jobs[name], 'function', `${name} must be registered in the automation worker registry`);
 }
 

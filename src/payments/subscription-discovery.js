@@ -6,6 +6,7 @@ const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
 const billingMode = require('./subscription-billing-mode');
 const unlinkedPaidTerm = require('./unlinked-paid-term');
+const financialState = require('./provider-financial-state');
 
 const MAX_REMOTE_SUBSCRIPTIONS = 5000;
 const MAX_PROVIDER_PAGES = 2000;
@@ -98,9 +99,8 @@ async function premiumEntitlements() {
 }
 
 async function identityContext(premiumRows) {
-    const [paymentCustomers, localProviderIds, mappings, existing] = await Promise.all([
-        query(`SELECT customer_id,provider,provider_customer_id FROM payment_customers WHERE provider IN ('stripe','paypal')`),
-        query(`SELECT customer_id,source AS provider,provider_customer_id FROM subscriptions WHERE source IN ('stripe','paypal') AND provider_customer_id IS NOT NULL`),
+    const [providerIdentities, mappings, existing] = await Promise.all([
+        financialState.providerIdentityRows(['stripe','paypal']),
         query(`SELECT provider,external_id,plan_id,active FROM plan_provider_prices WHERE provider IN ('stripe','paypal') AND checkout_mode='subscription' AND external_id IS NOT NULL`),
         query(`SELECT id,customer_id,source,provider_subscription_id,billing_mode FROM subscriptions WHERE source IN ('stripe','paypal') AND provider_subscription_id IS NOT NULL`)
     ]);
@@ -111,8 +111,7 @@ async function identityContext(premiumRows) {
         if (!providerIdentityToCustomers.has(key)) providerIdentityToCustomers.set(key, new Set());
         providerIdentityToCustomers.get(key).add(String(row.customer_id));
     };
-    paymentCustomers.rows.forEach(addIdentity);
-    localProviderIds.rows.forEach(addIdentity);
+    providerIdentities.forEach(addIdentity);
 
     const emailToCustomers = new Map();
     for (const row of premiumRows) {
@@ -159,11 +158,20 @@ function customerEvidence(remote, local, context) {
     if (remote.providerCustomerId) {
         const mapped = context.providerIdentityToCustomers.get(`${remote.provider}:${remote.providerCustomerId}`);
         if (mapped?.size) {
+            if (remote.provider === 'stripe') {
+                if (mapped.size === 1 && mapped.has(String(local.customer_id))) return ['provider customer ID'];
+                return [];
+            }
+            // A PayPal payer ID identifies a funding account, not a unique
+            // CAPTAiNFiN customer. It is useful when it currently maps only to
+            // this customer, but once shared it must fall through to stronger
+            // customer-specific evidence such as a unique provider email.
             if (mapped.size === 1 && mapped.has(String(local.customer_id))) return ['provider customer ID'];
-            return [];
-        }
-        if (clean(local.provider_customer_id)) {
-            return clean(local.provider_customer_id) === remote.providerCustomerId ? ['subscription customer ID'] : [];
+        } else if (clean(local.provider_customer_id)) {
+            if (remote.provider === 'stripe') {
+                return clean(local.provider_customer_id) === remote.providerCustomerId ? ['subscription customer ID'] : [];
+            }
+            if (clean(local.provider_customer_id) === remote.providerCustomerId) reasons.push('subscription payer ID');
         }
     }
     const remoteEmail = emailKey(remote.email), localEmail = emailKey(local.email);
@@ -281,14 +289,7 @@ function paypalWindows(start, end) {
     return windows;
 }
 async function storedPayPalSubscriptionRefs() {
-    const result = await query(`
-        SELECT DISTINCT provider_reference_id
-          FROM payment_history_transactions
-         WHERE provider='paypal'
-           AND provider_reference_id IS NOT NULL
-           AND metadata->>'referenceType'='SUB'
-    `);
-    return new Set(result.rows.map(row => clean(row.provider_reference_id, 255)).filter(id => /^I-/i.test(id)));
+    return financialState.paypalSubscriptionReferences();
 }
 async function discoverPayPalRefs(cfg, token, refs, warnings) {
     const end = new Date();

@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const criticalJobs = require('../src/automation/critical-jobs');
+const criticalJobs = require('../src/automation/jobs');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -119,17 +119,17 @@ assert(reconciliationControl.includes('reconcile_requested_at=NULL')
     && (reconciliationControl.match(/await requeueIfRequestedDuringRun\(customerId\)/g) || []).length >= 2,
     'reconciliation completion must requeue an entitlement change that arrived during an in-flight run');
 
-assert(deploymentVerify.includes("require('../src/automation/critical-jobs')")
+assert(deploymentVerify.includes("require('../src/automation/jobs')")
     && deploymentVerify.includes("'Free Server recovery job'"),
-    'deployment verification must consume the canonical critical registry and explicitly verify Free Server recovery');
+    'deployment verification must consume the canonical automation registry and explicitly verify Free Server recovery');
 assert(deploymentVerify.includes("'automation worker release'")
     && deploymentVerify.includes('automationWorker?.commit_sha'),
     'deployment verification must compare the running automation release to the application release');
-assert(deploymentVerify.includes('missingRegisteredJobs') && deploymentVerify.includes('requiredJobs = criticalJobs.names()'),
+assert(deploymentVerify.includes('missingRegisteredJobs') && deploymentVerify.includes('requiredJobs = jobRegistry.criticalNames()'),
     'deployment verification must prove the running worker registered every access-critical job');
 
-assert(adminAutomation.includes("require('../automation/critical-jobs')")
-    && adminAutomation.includes('const CORE_JOBS=new Set(criticalJobs.names())'),
+assert(adminAutomation.includes("require('../automation/jobs')")
+    && adminAutomation.includes('const CORE_JOBS=new Set(jobRegistry.criticalNames())'),
     'operator controls must use the same canonical critical-job list as worker and deployment verification');
 assert(adminAutomation.includes("CORE_JOBS.has(req.params.job)") && adminAutomation.includes("Type DISABLE"),
     'core recovery jobs must require explicit confirmation before an operator can disable them');

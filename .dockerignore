@@ -15,3 +15,21 @@ coverage
 db/branding
 db/data.json
 db/*.tmp
+
+
+# CI/test/documentation material is validated from the checkout, not executed by
+# production services. Keep runtime/operator/recovery scripts in the image.
+docs
+scripts/*-smoke.js
+scripts/db-test-fixture.js
+scripts/test-fixture.js
+scripts/smoke-db.js
+scripts/*-audit.js
+scripts/check-*.js
+scripts/dead-code-audit.js
+scripts/compatibility-importer-report.js
+scripts/run-check-suite.js
+scripts/run-tagged-checks.js
+
+scripts/ci
+scripts/*/README.md

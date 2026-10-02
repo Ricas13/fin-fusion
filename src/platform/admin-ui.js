@@ -1,11 +1,7 @@
 'use strict';
 
-// Keep shared UI primitives independent from the page-shell renderer. The
-// shell itself consumes workflow-card helpers, so importing admin-html here
-// would create a circular dependency during application startup.
-function esc(value) {
-    return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
-}
+// Keep shared UI primitives independent from the page-shell renderer.
+const {esc,csrfHidden}=require('./html-primitives');
 
 const KINDS = new Set(['good', 'warn', 'bad', 'accent']);
 const PAGE_STATUS_HERO_ENABLED = false;
@@ -71,4 +67,4 @@ function detailDisclosure({ title, summary = 'Advanced details', bodyHtml = '' }
     return `<details class="operatorDetails"><summary><span>${esc(title || summary)}</span><small>${esc(summary)}</small></summary><div class="operatorDetailsBody">${bodyHtml}</div></details>`;
 }
 
-module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, workflowCards, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };
+module.exports = { esc, csrfHidden, safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, workflowCards, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };

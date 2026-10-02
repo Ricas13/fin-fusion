@@ -4,6 +4,7 @@ const express=require('express');
 const csrf=require('../auth/csrf');
 const {query}=require('../db');
 const expenses=require('./business-expenses');
+const calendarDate=require('../finance/calendar-date');
 const reportingCurrency=require('./reporting-currency');
 const profitability=require('./business-profitability');
 const runtimeSettings=require('./runtime-settings');
@@ -22,7 +23,7 @@ function recurrence(value){const v=String(value||'one_time');if(!expenses.RECURR
 function expenseDate(value,label){const v=expenses.isoDate(value);if(!v)throw new Error(`${label} is required.`);return v;}
 function parseInput(body){const startDate=expenseDate(body.startDate,'Start / expense date'),endDate=body.endDate?expenseDate(body.endDate,'End date'):null;if(endDate&&endDate<startDate)throw new Error('End date cannot be before the start date.');return{name:text(body.name,160),supplier:text(body.supplier,160),category:text(body.category,80)||'Other',amountMinor:amountMinor(body.amount),currency:currency(body.currency),recurrence:recurrence(body.recurrence),startDate,endDate,active:checked(body.active),reference:text(body.reference,500),notes:text(body.notes,4000)};}
 function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c,currencyDisplay:'narrowSymbol',minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${c} ${(Number(minor||0)/100).toFixed(2)}`;}}
-function date(value){if(!value)return'—';const d=value instanceof Date?value:new Date(`${String(value).slice(0,10)}T00:00:00Z`);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric',timeZone:'UTC'});}
+function date(value){if(!value)return'—';const d=calendarDate.startUtc(value);return d?d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric',timeZone:'UTC'}):'—';}
 function recurrenceLabel(value){return({one_time:'One-off',monthly:'Monthly',quarterly:'Quarterly',yearly:'Yearly'})[value]||value;}
 async function audit(req,action,id,metadata={}){await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'business_expense',$3,$4::jsonb)`,[req.session.authUserId,action,String(id),JSON.stringify(metadata)]).catch(()=>{});}
 

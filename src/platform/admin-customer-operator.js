@@ -11,6 +11,7 @@ const adminControl=require('../jellyfin/admin-control');
 const userCapacity=require('../jellyfin/user-capacity');
 const permanentAccess=require('../entitlements/permanent-access');
 const {historyKind}=require('../payments/history-accounting');
+const financialState=require('../payments/provider-financial-state');
 
 const surfaceLimit=rateLimit({windowMs:60000,limit:300,standardHeaders:'draft-8',legacyHeaders:false,message:'Too many customer-management requests. Try again shortly.'});
 const readLimit=routeRateLimit.middleware({scope:'admin-customer-operator-read',max:120,windowSeconds:60,reason:'admin_customer_operator_read'});
@@ -49,13 +50,13 @@ async function metricsFor(ids){
       WHERE c.id=ANY($1::uuid[])
       GROUP BY c.id
     `,[ids]),
-    query(`SELECT customer_id,provider,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor FROM payment_history_transactions WHERE customer_id=ANY($1::uuid[]) ORDER BY occurred_at DESC`,[ids]).catch(()=>({rows:[]})),
+    financialState.transactionsForCustomers(ids).then(rows=>({rows})).catch(()=>({rows:[]})),
     query(`SELECT customer_id,TRUE AS permanent FROM customer_entitlement_overrides WHERE customer_id=ANY($1::uuid[]) AND permanent_access=TRUE AND revoked_at IS NULL`,[ids]),
     query(`SELECT DISTINCT ON(customer_id) customer_id,mode,server_id,reason FROM customer_jellyfin_admin_control WHERE customer_id=ANY($1::uuid[]) ORDER BY customer_id,updated_at DESC`,[ids]).catch(()=>({rows:[]}))
   ]);
   const out=new Map(ids.map(id=>[String(id),{activeStreams:0,watchSeconds30d:0,lastPlaybackAt:null,permanent:false,adminMode:null,payment:{totals:{},lastPayment:null}}]));
   for(const row of usage.rows){const item=out.get(String(row.id));if(!item)continue;item.activeStreams=Number(row.active_streams||0);item.watchSeconds30d=Number(row.watch_seconds_30d||0);item.lastPlaybackAt=row.last_playback_at||null;}
-  const transactionGroups=new Map();for(const row of transactions.rows){if(!row.customer_id)continue;const key=String(row.customer_id),list=transactionGroups.get(key)||[];list.push(row);transactionGroups.set(key,list);}
+  const transactionGroups=new Map();for(const row of transactions){if(!row.customer_id)continue;const key=String(row.customer_id),list=transactionGroups.get(key)||[];list.push(row);transactionGroups.set(key,list);}
   for(const [id,rows] of transactionGroups){const item=out.get(id);if(item)item.payment=moneySummary(rows);}
   for(const row of permanent.rows){const item=out.get(String(row.customer_id));if(item)item.permanent=true;}
   for(const row of controls.rows){const item=out.get(String(row.customer_id));if(!item)continue;item.adminMode=row.mode;item.adminServerId=row.server_id||null;item.adminReason=row.reason||null;}

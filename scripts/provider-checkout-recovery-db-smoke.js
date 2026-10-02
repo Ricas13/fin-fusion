@@ -2,35 +2,41 @@
 
 require('dotenv').config();
 const assert = require('assert');
-const crypto = require('crypto');
-const { query, getPool } = require('../src/db');
+const { query } = require('../src/db');
+const { runDbSmoke, unique: fixtureUnique, fixtureCustomer, fixturePlan } = require('./test-fixture');
 const intents = require('../src/payments/checkout-intents');
 const recovery = require('../src/payments/provider-checkout-recovery');
 
-const suffix = crypto.randomBytes(6).toString('hex');
+const suffix = fixtureUnique('checkout-recovery');
 const createdCustomers = [];
 const createdPlans = [];
 const createdIntents = [];
 
-function unique(label) { return `${label}-${suffix}-${crypto.randomBytes(3).toString('hex')}`; }
+function unique(label) { return `${label}-${suffix}-${fixtureUnique('case')}`; }
 
 async function customer(label) {
-    const row = (await query(
-        `INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,
-        [label, `${unique(label)}@example.invalid`]
-    )).rows[0];
+    const row = await fixtureCustomer({ query }, {
+        displayName: label,
+        email: `${unique(label)}@example.invalid`
+    });
     createdCustomers.push(row.id);
     return row;
 }
 
 async function plan(label) {
-    const row = (await query(`
-        INSERT INTO plans(
-            code,name,service_type,audience,billing_interval,duration_days,
-            price_minor,currency,capacity_limit,visible,active,streams,server_class
-        ) VALUES($1,$2,'jellyfin','direct','month',30,1000,'GBP',100,TRUE,TRUE,1,'premium')
-        RETURNING *
-    `, [unique(label), label])).rows[0];
+    const row = await fixturePlan({ query }, {
+        code: unique(label),
+        name: label,
+        serviceType: 'jellyfin',
+        audience: 'direct',
+        billingInterval: 'month',
+        durationDays: 30,
+        priceMinor: 1000,
+        currency: 'GBP',
+        capacityLimit: 100,
+        streams: 1,
+        serverClass: 'premium'
+    });
     createdPlans.push(row.id);
     return row;
 }
@@ -229,10 +235,13 @@ async function main() {
     console.log('provider checkout recovery DB smoke: retry isolation, pending safety and terminal convergence ok');
 }
 
-main().catch(error => {
+runDbSmoke('provider checkout recovery DB smoke', async () => {
+    try {
+        await main();
+    } finally {
+        await cleanup();
+    }
+}).catch(error => {
     console.error(error.stack || error);
     process.exitCode = 1;
-}).finally(async () => {
-    await cleanup();
-    await getPool().end();
 });

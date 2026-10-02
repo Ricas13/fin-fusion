@@ -1,10 +1,11 @@
 'use strict';
 
 const express = require('express');
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const placement = require('../jellyfin/placement');
 const serviceCatalog=require('../catalog/service-catalog');
+const planCommands=require('../catalog/plan-command-service');
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -53,16 +54,13 @@ async function savePlacement(req, plan) {
     }
 
     const configured = selected.map(server => ({ id: server.id, weight: weight(req.body[`weight_${server.id}`]) }));
-    await transaction(async client => {
-        await client.query('UPDATE plans SET placement_strategy=$2,updated_at=NOW() WHERE id=$1', [plan.id, strategy]);
-        await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [plan.id]);
-        if (poolMode === 'selected') {
-            for (const server of configured) {
-                await client.query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,$3)', [plan.id, server.id, server.weight]);
-            }
-        }
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-            VALUES($1,'admin.plan.server_placement','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ strategy, poolMode, mediaServerType:mediaType, servers: poolMode === 'selected' ? configured : [] })]);
+    await planCommands.updatePlanPlacement({
+        planId: plan.id,
+        strategy,
+        poolMode,
+        servers: configured,
+        actorUserId: req.session.authUserId,
+        auditMetadata: { strategy, poolMode, mediaServerType: mediaType, servers: poolMode === 'selected' ? configured : [] }
     });
 }
 

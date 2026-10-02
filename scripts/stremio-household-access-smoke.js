@@ -21,6 +21,7 @@ const managedEntitlements=read('src/stremio/managed-entitlements.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const jellyfinActivity=read('src/jellyfin/activity.js');
 const stremioPlanEditor=read('src/platform/admin-stremio-plan-editor.js');
+const planCommandSource=read('src/catalog/plan-command-service.js');
 const plansList=read('src/platform/admin-plans-list.js');
 const storefront=read('src/platform/storefront-core.js');
 const customerStremio=read('src/platform/customer-stremio.js');
@@ -129,8 +130,8 @@ assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&pol
 // every current plan member; stale/new-purchases-only grandfathering is retired.
 assert(!fs.existsSync(path.join(root,'src/platform/admin-stremio-plan-create.js')),'retired standalone Stremio plan creator must stay removed; adaptive plan creation owns this flow');
 assert(!stremioPlanEditor.includes('New purchases only')&&!stremioPlanEditor.includes('Existing customers too'),'Stremio plan edits must not offer stale-policy grandfathering for current members');
-assert(compact(stremioPlanEditor).includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must update all current household snapshots and queue current members for request-policy reconciliation');
-assert(stremioPlanEditor.includes("UPDATE access_network_leases SET expires_at=NOW() WHERE scope='stremio'")&&!stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must expire current Stremio leases without requiring web-role DELETE');
+assert(stremioPlanEditor.includes('planCommands.updateStremioAccess({')&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must delegate household snapshot updates and queue current members for request-policy reconciliation');
+assert(planCommandSource.includes('UPDATE subscriptions')&&planCommandSource.includes('stremio_household_network_limit_snapshot=$2')&&planCommandSource.includes("UPDATE access_network_leases")&&planCommandSource.includes("scope='stremio'")&&!planCommandSource.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'catalog plan commands must update current Stremio household snapshots and expire leases without requiring web-role DELETE');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
 assert(accessJs.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'My Access must own unlimited playback copy while customer Stremio routes retain server-enforced household replacement');

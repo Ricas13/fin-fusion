@@ -2,7 +2,8 @@
 
 const { query, transaction } = require('../db');
 const planServers = require('./plan-servers');
-const provisioning = require('./provisioning');
+const provisioning = require('./provisioning-helpers');
+const reconciliationLock = require('./reconciliation-lock');
 
 const RUNNING_STALE_MINUTES = 45;
 
@@ -295,7 +296,7 @@ async function executeMigrationUnlocked(migrationId) {
 async function executeMigration(migrationId) {
     const migration = await migrationForId(migrationId);
     if (!migration) throw new ServerMigrationError('MIGRATION_NOT_FOUND', 'Server migration not found.');
-    return provisioning.reconciliationLock.withCustomerReconciliationLock(
+    return reconciliationLock.withCustomerReconciliationLock(
         migration.customer_id,
         () => executeMigrationUnlocked(migrationId)
     );
@@ -390,7 +391,7 @@ async function rollbackMigrationUnlocked(migrationId, actorUserId) {
 async function rollbackMigration(migrationId, actorUserId) {
     const migration = await migrationForId(migrationId);
     if (!migration) throw new ServerMigrationError('MIGRATION_NOT_FOUND', 'Server migration not found.');
-    return provisioning.reconciliationLock.withCustomerReconciliationLock(
+    return reconciliationLock.withCustomerReconciliationLock(
         migration.customer_id,
         () => rollbackMigrationUnlocked(migrationId, actorUserId)
     );

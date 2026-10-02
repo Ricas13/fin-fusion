@@ -12,6 +12,10 @@ const PAYPAL_PAYMENT_CODES = new Set([
 ]);
 const PAYPAL_REFUND_CODES = new Set(['T1106','T1107','T1120','T1201']);
 const PAYPAL_SUCCESS_STATUS = 'S';
+const PAYPAL_LIVE_PAYMENT_TYPES = new Set(['paypal_sale','paypal_subscription_payment']);
+const PAYPAL_LIVE_REFUND_TYPES = new Set(['paypal_refund','paypal_reversal']);
+const PLISIO_PAYMENT_TYPES = new Set(['payment']);
+const PLISIO_REFUND_TYPES = new Set(['refund']);
 
 function clean(value) { return String(value == null ? '' : value).trim(); }
 
@@ -28,13 +32,31 @@ function classifyProviderTransaction({ provider, type, status = '', grossMinor =
     }
 
     if (source === 'paypal') {
-        // Transaction Search status S is the only completed/successful ledger
-        // state. Pending, denied, reversed and rows without an authoritative
-        // success status must never be counted as realized revenue/refunds.
-        if (clean(status).toUpperCase() !== PAYPAL_SUCCESS_STATUS) return null;
-        const code = clean(type).toUpperCase();
-        if (amount > 0 && PAYPAL_PAYMENT_CODES.has(code)) return 'payment';
-        if (amount < 0 && PAYPAL_REFUND_CODES.has(code)) return 'refund';
+        const code = clean(type);
+        const upperCode = code.toUpperCase();
+        const upperStatus = clean(status).toUpperCase();
+        // Transaction Search rows retain PayPal's event-code contract and must
+        // be successful (S). Authenticated live webhook rows use explicit
+        // semantic types so customer history can converge before a reporting
+        // import catches up, without pretending they carry exact fee data.
+        if (PAYPAL_PAYMENT_CODES.has(upperCode) || PAYPAL_REFUND_CODES.has(upperCode)) {
+            if (upperStatus !== PAYPAL_SUCCESS_STATUS) return null;
+            if (amount > 0 && PAYPAL_PAYMENT_CODES.has(upperCode)) return 'payment';
+            if (amount < 0 && PAYPAL_REFUND_CODES.has(upperCode)) return 'refund';
+            return null;
+        }
+        const lowerCode=code.toLowerCase();
+        if (!['COMPLETED','SUCCEEDED','SUCCESS'].includes(upperStatus)) return null;
+        if (amount > 0 && PAYPAL_LIVE_PAYMENT_TYPES.has(lowerCode)) return 'payment';
+        if (amount < 0 && PAYPAL_LIVE_REFUND_TYPES.has(lowerCode)) return 'refund';
+        return null;
+    }
+
+    if (source === 'plisio') {
+        const statusValue = clean(status).toLowerCase();
+        if (!['completed','success','succeeded'].includes(statusValue)) return null;
+        if (amount > 0 && PLISIO_PAYMENT_TYPES.has(transactionType)) return 'payment';
+        if (amount < 0 && PLISIO_REFUND_TYPES.has(transactionType)) return 'refund';
     }
     return null;
 }
@@ -54,6 +76,10 @@ module.exports = {
     PAYPAL_PAYMENT_CODES,
     PAYPAL_REFUND_CODES,
     PAYPAL_SUCCESS_STATUS,
+    PAYPAL_LIVE_PAYMENT_TYPES,
+    PAYPAL_LIVE_REFUND_TYPES,
+    PLISIO_PAYMENT_TYPES,
+    PLISIO_REFUND_TYPES,
     classifyProviderTransaction,
     historyKind
 };

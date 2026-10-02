@@ -8,7 +8,6 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const migration = read('db/migrations/106_customer_override_gaps.sql');
 const policy = read('src/jellyfin/policy.js');
-const viewV2 = read('src/platform/customer-360-view-v2.js');
 const lanePolicy = read('src/platform/admin-lane-policy.js');
 const accessCards = read('src/platform/customer-360-access-cards.js');
 const provisioningEngine = read('src/jellyfin/provisioning-engine.js');

@@ -13,6 +13,7 @@ for (const [jobKey, expected] of Object.entries({
   creation_intent_recovery: 60,
   customer_service_recovery: 60,
   revenue_integrity: 60,
+  provider_financial_reconciliation: 300,
   paypal_history_reconciliation: 300,
   provider_checkout_recovery: 300,
   subscription_discovery: 21600,

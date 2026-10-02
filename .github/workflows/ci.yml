@@ -103,7 +103,7 @@ jobs:
           NODE
 
       - name: Fast checks
-        run: npm run check
+        run: npm run check:tag -- fast
 
       - name: Purpose-key encryption smoke test
         run: |

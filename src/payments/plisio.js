@@ -242,6 +242,20 @@ async function activateCompleted(remote, fields, intent) {
         providerStatus: 'completed',
         commercialSnapshot: contract.snapshot
     });
+    await financialState.recordTransaction({
+        provider:'plisio',
+        providerTransactionId:fields.id,
+        transactionType:'payment',
+        transactionStatus:'completed',
+        occurredAt:remote?.updated_at||remote?.created_at||remote?.date||new Date(),
+        currency:fields.sourceCurrency,
+        grossMinor:amountMinor,
+        feeMinor:0,
+        netMinor:amountMinor,
+        providerReferenceId:String(intent.id),
+        customerId:intent.customer_id,
+        metadata:{providerAuthoritative:true,providerVerified:true,feeDataAvailable:false,checkoutIntentId:String(intent.id),planId:String(intent.plan_id),source:'verified_operation'}
+    });
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
     return { status: 'completed', completed: true };
 }
