@@ -267,7 +267,7 @@ Tasks:
 - [x] Introduce shared DB fixture builders with scoped setup/cleanup.
 - [ ] Make tagged suites independently runnable without relying on side effects from prior tests.
 - [ ] Prefer `node:test` suites/modules for related tests rather than one process/file per assertion group where practical.
-- [ ] Consolidate repeated helpers for:
+- [x] Consolidate repeated helpers for:
   - temporary PostgreSQL schema/database setup
   - environment overrides
   - fake provider clients
@@ -406,7 +406,7 @@ These are principles to apply opportunistically while completing the prioritized
 - [x] One automation registry.
 - [x] One runtime Compose service-resolution mechanism.
 - [x] One date/time boundary convention.
-- [ ] One test fixture layer for shared database/provider scenarios.
+- [x] One test fixture layer for shared database/provider scenarios.
 - [x] One explicit UI component/helper for repeated mechanics.
 - [ ] No new direct business SQL in `src/platform` without a documented exception.
 - [x] No new compatibility facade without a retirement condition.
@@ -469,6 +469,8 @@ Before final merge/deployment of the completed roadmap:
 ---
 
 # Progress log
+
+- 2026-10-02 — Established `scripts/test-fixture.js` as the canonical shared test-fixture layer: DB lifecycle/rollback/timezone helpers, scoped environment overrides, unique IDs, concurrency barriers, module/provider mocking and customer/plan/subscription builders now live together. `db-test-fixture.js` is a transitional re-export; payment-event replay and provider-checkout recovery were migrated to the canonical helper, and fixture code is excluded from production images.
 
 - 2026-10-02 — Provider capability/transport ownership is now executable: `provider-boundary-smoke.js` prevents platform/access/entitlement/automation code from importing Stripe SDK or lifecycle/refund HTTP adapters directly, while billing continues through `provider-contract.js`. Added the check to the fast customer-access suite.
 
