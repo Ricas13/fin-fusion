@@ -30,10 +30,10 @@ assert(!reporting.includes('api.frankfurter.app'),'FX refresh must not use Frank
 assert(reporting.includes('Array.isArray(body)')&&reporting.includes('row?.quote')&&reporting.includes('row?.rate'),'FX refresh must parse Frankfurter v2 flat rate rows');
 assert(reporting.includes("'admin.portal_currency.update'"),'Master currency changes must be audited');
 assert(reporting.includes("pricingMode:'same_numeric_amount'"),'Currency switching must explicitly preserve numeric catalogue amounts');
-assert(reporting.includes('active=CASE WHEN p.is_free_tier THEN TRUE ELSE FALSE END'),'Paid legacy currency rows must retire while canonical free-tier rows stay active');
-assert(reporting.includes('pr.currency<>$2'),'Provider mappings for non-master catalogue currencies must retire from new sales');
-assert(reporting.includes('plan.is_free_tier?0:Number(plan.price_minor||0)'),'Currency reconciliation must keep the canonical free tier at zero');
-assert(reporting.includes("verification_status='unverified'"),'Changed target-currency mappings must be invalidated for re-verification');
+assert(planCommands.includes('active=CASE WHEN p.is_free_tier THEN TRUE ELSE FALSE END'),'Canonical catalog owner must retire paid legacy currency rows while keeping free-tier rows active');
+assert(planCommands.includes('pr.currency<>$2'),'Canonical catalog owner must retire provider mappings for non-master catalogue currencies');
+assert(planCommands.includes('plan.is_free_tier?0:Number(plan.price_minor||0)'),'Canonical catalog currency reconciliation must keep the free tier at zero');
+assert(planCommands.includes("verification_status='unverified'"),'Canonical catalog owner must invalidate changed target-currency mappings for re-verification');
 assert(reporting.includes('async function getForUser(_userId)'),'Per-admin reporting currency must no longer override the portal currency');
 assert(storefront.includes('async function selectedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Storefront must ignore query/session currency overrides');
 assert(storefront.includes('function currencySwitcher(_currency,_currencies){return\'\';}'),'Storefront must not expose a customer currency switcher');
