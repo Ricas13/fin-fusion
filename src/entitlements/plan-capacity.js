@@ -78,8 +78,13 @@ function freePendingUnblockedSql(subscriptionAlias,holdAlias='free_pending_hold'
     )
   )`;
 }
+function managedMediaLimit(plan){
+  const policy=plan?.inactivity_policy&&typeof plan.inactivity_policy==='object'?plan.inactivity_policy:{};
+  if(policy.mediaCapacityManaged!==true)return null;
+  return plan.capacity_limit==null?null:Math.max(0,Number(plan.capacity_limit)||0);
+}
 async function loadPlan(planId,db=query){
-  const result=await db(`SELECT id,capacity_limit,media_user_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
+  const result=await db(`SELECT id,capacity_limit,inactivity_policy,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
   return result.rows[0];
 }
@@ -264,7 +269,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
       ]);
   const planUsed=Number(planUsage.rows[0]?.used||0);
   const planReserved=Number(planUsage.rows[0]?.reserved||0);
-  const planLimit=plan.media_user_limit==null?null:Math.max(0,Number(plan.media_user_limit)||0);
+  const planLimit=managedMediaLimit(plan);
   const planRemaining=planLimit==null?null:Math.max(0,planLimit-planUsed-planReserved);
   const userRemaining=planRemaining==null?physicalRemaining:Math.min(physicalRemaining,planRemaining);
   const effectiveLimit=planLimit==null?physicalUserLimit:Math.min(physicalUserLimit,planLimit);
@@ -461,7 +466,7 @@ function fleetAvailableSql(alias='p'){
 }
 function mediaPlanLimitAvailableSql(alias='p'){
   const checkoutHold=checkoutReservationSql('plan_capacity_checkout');
-  return `(${alias}.media_user_limit IS NULL OR ${alias}.media_user_limit > ((
+  return `(${alias}.inactivity_policy->>'mediaCapacityManaged'<>'true' OR ${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT plan_capacity_subscription.customer_id)
     FROM subscriptions plan_capacity_subscription
     WHERE plan_capacity_subscription.plan_id=${alias}.id
@@ -490,4 +495,4 @@ function acquisitionSql(alias='p'){
   const planLimitAvailable=mediaPlanLimitAvailableSql(alias);return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${planLimitAvailable}))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql,managedMediaLimit};
