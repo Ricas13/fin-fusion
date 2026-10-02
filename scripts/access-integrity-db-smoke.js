@@ -117,6 +117,34 @@ function kindsFor(findings, customerId) {
     await makeSubscription(freeReady, freePlanId, { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" });
     await makeAccount(freeReady, freeServerId, 'free', 'free-ready');
 
+    const migratedBlockedFreeMissing = await makeCustomer('free-migrated-blocked-missing');
+    const migratedBlockedSubscription = await makeSubscription(
+      migratedBlockedFreeMissing,
+      freePlanId,
+      { source: 'migration', endSql: "NOW()+INTERVAL '3000 days'" }
+    );
+    await accessHolds.addHold({
+      customerId: migratedBlockedFreeMissing,
+      type: 'inactivity_policy',
+      sourceKey: `plan:${freePlanId}`,
+      reason: 'access integrity migrated Free inactivity smoke',
+      metadata: { subscriptionId: migratedBlockedSubscription }
+    });
+
+    const claimedBlockedFreeMissing = await makeCustomer('free-claimed-blocked-missing');
+    const claimedBlockedSubscription = await makeSubscription(
+      claimedBlockedFreeMissing,
+      freePlanId,
+      { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" }
+    );
+    await accessHolds.addHold({
+      customerId: claimedBlockedFreeMissing,
+      type: 'inactivity_policy',
+      sourceKey: `plan:${freePlanId}`,
+      reason: 'access integrity claimed Free inactivity smoke',
+      metadata: { subscriptionId: claimedBlockedSubscription }
+    });
+
     const protectedFreeMissing = await makeCustomer('free-protected-missing');
     const protectedFreeSubscription = await makeSubscription(
       protectedFreeMissing,
@@ -183,6 +211,10 @@ function kindsFor(findings, customerId) {
       'live Free plan without a ready Free account must be detected');
     assert(!kindsFor(findings, freeReady).has('free_plan_without_ready_server'),
       'ready Free plan+server must not be reported as inconsistent');
+    assert(!kindsFor(findings, migratedBlockedFreeMissing).has('free_plan_without_ready_server'),
+      'migrated Free entitlement under its exact inactivity hold must be treated as intentionally blocked, not stranded');
+    assert(!kindsFor(findings, claimedBlockedFreeMissing).has('free_plan_without_ready_server'),
+      'Free claim under its exact inactivity hold must be treated as intentionally blocked, not stranded');
     assert(kindsFor(findings, protectedFreeMissing).has('free_plan_without_ready_server'),
       'explicit administrator-present access must remain visible to the integrity scanner even when an automatic hold exists');
     assert(kindsFor(findings, permanentFreeMissing).has('free_plan_without_ready_server'),
