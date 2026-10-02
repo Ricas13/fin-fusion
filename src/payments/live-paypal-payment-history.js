@@ -1,7 +1,7 @@
 'use strict';
 
 const { query } = require('../db');
-const { PAYPAL_PAYMENT_CODES } = require('./provider-transaction-classifier');
+const financialTruth = require('./provider-financial-truth');
 
 // PayPal Transaction Search classifies Express Checkout / one-time checkout
 // receipts as customer payments. Live captures use the same canonical type.
@@ -113,57 +113,24 @@ async function upsertValues(values, { eventId = null, reconciliation = false } =
         ...(eventId ? { providerEventId: String(eventId) } : {}),
         ...(reconciliation ? { reconciled: true } : {})
     };
-    const compatiblePaymentTypes = [...PAYPAL_PAYMENT_CODES];
-    const result = await query(`
-        INSERT INTO payment_history_transactions(
-            provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,
-            gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,
-            provider_reference_id,provider_source_id,customer_id,metadata
-        ) VALUES(
-            'paypal',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb
-        )
-        ON CONFLICT(provider,provider_transaction_id) DO UPDATE SET
-            transaction_type=CASE
-                WHEN UPPER(COALESCE(payment_history_transactions.transaction_type,'')) = ANY($14::text[])
-                    THEN payment_history_transactions.transaction_type
-                ELSE EXCLUDED.transaction_type
-            END,
-            transaction_status=EXCLUDED.transaction_status,
-            occurred_at=EXCLUDED.occurred_at,
-            currency=EXCLUDED.currency,
-            gross_amount_minor=EXCLUDED.gross_amount_minor,
-            fee_amount_minor=EXCLUDED.fee_amount_minor,
-            net_amount_minor=EXCLUDED.net_amount_minor,
-            provider_customer_id=COALESCE(EXCLUDED.provider_customer_id,payment_history_transactions.provider_customer_id),
-            provider_reference_id=COALESCE(EXCLUDED.provider_reference_id,payment_history_transactions.provider_reference_id),
-            provider_source_id=COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id),
-            customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-            metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb) || COALESCE(EXCLUDED.metadata,'{}'::jsonb),
-            updated_at=NOW()
-        WHERE payment_history_transactions.customer_id IS NULL
-           OR EXCLUDED.customer_id IS NULL
-           OR payment_history_transactions.customer_id=EXCLUDED.customer_id
-        RETURNING customer_id
-    `, [
-        values.providerTransactionId,
-        LIVE_CAPTURE_PAYMENT_TYPE,
-        values.status,
-        values.occurredAt,
-        values.currency,
-        values.grossMinor,
-        values.feeMinor,
-        values.netMinor,
-        values.providerCustomerId,
-        values.providerReferenceId,
-        values.providerSourceId,
-        values.customerId,
-        JSON.stringify(metadata),
-        compatiblePaymentTypes
-    ]);
-    if (result.rowCount !== 1) {
-        throw new Error(`PayPal capture ${values.providerTransactionId} conflicts with an existing financial-history customer owner.`);
-    }
-    return { recorded: true, id: values.providerTransactionId, customerId: result.rows[0]?.customer_id || values.customerId };
+    const result = await financialTruth.upsertTransaction({
+        provider: 'paypal',
+        providerTransactionId: values.providerTransactionId,
+        transactionType: LIVE_CAPTURE_PAYMENT_TYPE,
+        transactionStatus: values.status,
+        occurredAt: values.occurredAt,
+        currency: values.currency,
+        grossMinor: values.grossMinor,
+        feeMinor: values.feeMinor,
+        netMinor: values.netMinor,
+        providerCustomerId: values.providerCustomerId,
+        providerReferenceId: values.providerReferenceId,
+        providerSourceId: values.providerSourceId,
+        customerId: values.customerId,
+        metadata,
+        identitySource: reconciliation ? 'paypal_reconciliation' : 'paypal_capture'
+    });
+    return { recorded: true, id: values.providerTransactionId, customerId: result.customerId || values.customerId };
 }
 
 async function recordCapture(capture, {
