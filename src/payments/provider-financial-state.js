@@ -397,53 +397,60 @@ async function customerIncidents(customerId) {
 
 async function unlinkedCountForCustomer(customerId) {
     const result=await query(`
-      WITH strong_for_customer AS (
-        SELECT t.id
+      WITH strong_evidence AS (
+        SELECT t.id,c.id AS customer_id
           FROM payment_history_transactions t
-          JOIN customers c ON c.id=$1
+          JOIN customers c ON c.id::text=COALESCE(t.metadata->>'customerId',t.metadata->>'internal_customer_id')
          WHERE t.customer_id IS NULL
-           AND c.id::text=COALESCE(t.metadata->>'customerId',t.metadata->>'internal_customer_id')
-        UNION
-        SELECT t.id
+        UNION ALL
+        SELECT t.id,i.customer_id
           FROM payment_history_transactions t
-          JOIN billing_checkout_intents i ON i.customer_id=$1 AND i.provider=t.provider
+          JOIN billing_checkout_intents i ON i.provider=t.provider
            AND (
              i.provider_checkout_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
              OR i.id::text=COALESCE(t.metadata->>'checkoutIntentId',t.metadata->>'internal_checkout_intent_id')
            )
          WHERE t.customer_id IS NULL
-        UNION
-        SELECT t.id
+        UNION ALL
+        SELECT t.id,s.customer_id
           FROM payment_history_transactions t
-          JOIN subscriptions s ON s.customer_id=$1 AND s.source=t.provider
+          JOIN subscriptions s ON s.source=t.provider
            AND s.provider_subscription_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
          WHERE t.customer_id IS NULL AND s.provider_subscription_id IS NOT NULL
-      ),
-      unique_weak AS (
-        SELECT t.id,MIN(e.customer_id::text)::uuid customer_id
-          FROM payment_history_transactions t
-          JOIN (
-            SELECT provider,provider_customer_id,customer_id FROM payment_customers
-            UNION ALL
-            SELECT source,provider_customer_id,customer_id FROM subscriptions
-             WHERE source IN ('stripe','paypal','plisio') AND provider_customer_id IS NOT NULL
-          ) e ON e.provider=t.provider AND e.provider_customer_id=t.provider_customer_id
-         WHERE t.customer_id IS NULL
-           AND t.provider_customer_id IS NOT NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM payment_history_transactions tx
-             JOIN customers c2 ON c2.id::text=COALESCE(tx.metadata->>'customerId',tx.metadata->>'internal_customer_id')
-             WHERE tx.id=t.id
-           )
-         GROUP BY t.id
-        HAVING COUNT(DISTINCT e.customer_id)=1
-      )
-      SELECT COUNT(DISTINCT id)::int AS count
-      FROM (
-        SELECT id FROM strong_for_customer
         UNION ALL
-        SELECT id FROM unique_weak WHERE customer_id=$1
-      ) matches
+        SELECT t.id,lsi.customer_id
+          FROM payment_history_transactions t
+          JOIN legacy_subscription_imports lsi ON lsi.provider=t.provider
+           AND lsi.provider_transaction_id IN (t.provider_transaction_id,t.provider_reference_id,t.provider_source_id)
+         WHERE t.customer_id IS NULL AND lsi.customer_id IS NOT NULL
+      ),
+      strong_summary AS (
+        SELECT id,MIN(customer_id::text)::uuid customer_id,COUNT(DISTINCT customer_id) candidate_count
+          FROM strong_evidence GROUP BY id
+      ),
+      weak_evidence AS (
+        SELECT t.id,pc.customer_id
+          FROM payment_history_transactions t
+          JOIN payment_customers pc ON pc.provider=t.provider AND pc.provider_customer_id=t.provider_customer_id
+         WHERE t.customer_id IS NULL AND t.provider_customer_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM strong_summary ss WHERE ss.id=t.id)
+        UNION ALL
+        SELECT t.id,s.customer_id
+          FROM payment_history_transactions t
+          JOIN subscriptions s ON s.source=t.provider AND s.provider_customer_id=t.provider_customer_id
+         WHERE t.customer_id IS NULL AND t.provider_customer_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM strong_summary ss WHERE ss.id=t.id)
+      ),
+      weak_summary AS (
+        SELECT id,MIN(customer_id::text)::uuid customer_id,COUNT(DISTINCT customer_id) candidate_count
+          FROM weak_evidence GROUP BY id
+      ),
+      resolved AS (
+        SELECT id,customer_id FROM strong_summary WHERE candidate_count=1
+        UNION ALL
+        SELECT id,customer_id FROM weak_summary WHERE candidate_count=1
+      )
+      SELECT COUNT(*)::int AS count FROM resolved WHERE customer_id=$1
     `,[customerId]);
     return Number(result.rows[0]?.count||0);
 }
