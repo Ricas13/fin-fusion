@@ -121,27 +121,22 @@ async function selectServerForLocation(plan, requested, { db = query, requireSel
 }
 
 async function selectServerForLocationLocked(plan, requested, { db = query, requireSelection = true } = {}) {
-  // Location acquisition can span multiple plans sharing one physical server.
-  // Serialize the final physical choice on the server row, then re-read exact
-  // server occupancy while that row is locked so two different plan locks
-  // cannot reserve the same final place concurrently.
-  const attempted = new Set();
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const selected = await selectServerForLocation(plan, requested, { db, requireSelection });
-    if (!selected?.id || attempted.has(String(selected.id))) {
-      const error = new Error('That server location is no longer available. Choose another location.');
-      error.code = 'MEDIA_LOCATION_UNAVAILABLE';
-      throw error;
-    }
-    attempted.add(String(selected.id));
-    const locked = await db('SELECT id,enabled,allow_new_users,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE', [selected.id]);
-    if (!locked.rowCount || !locked.rows[0].enabled || !locked.rows[0].allow_new_users) continue;
-    const fresh = await userCapacity.serverState(selected.id, db);
-    if (fresh && fresh.full !== true) return { ...selected, ...fresh, selected_location: selected.selected_location };
+  // Plans may share physical servers. Lock every candidate in deterministic ID
+  // order before the final capacity read so acquisitions from different plans
+  // cannot reserve the same final place or deadlock while switching candidates.
+  const location = await resolveAcquisitionLocation(plan, requested, { db, requireSelection });
+  const available = await availableServers(plan, { db });
+  const candidates = location ? available.filter(server => matchesPreference(server, location)) : available;
+  if (!candidates.length) {
+    const error = new Error('That server location is no longer available. Choose another location.');
+    error.code = 'MEDIA_LOCATION_UNAVAILABLE';
+    throw error;
   }
-  const error = new Error('That server location is no longer available. Choose another location.');
-  error.code = 'MEDIA_LOCATION_UNAVAILABLE';
-  throw error;
+  const ids = candidates.map(server => String(server.id)).sort();
+  await db('SELECT id FROM jellyfin_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+  // Re-evaluate after taking the locks because a transaction which held one of
+  // these rows may just have committed a checkout/free reservation.
+  return selectServerForLocation(plan, location, { db, requireSelection: false });
 }
 
 async function resolveAcquisitionLocation(plan, requested, { db = query, requireSelection = true } = {}) {
