@@ -150,7 +150,8 @@ function purchaseSnapshot(snapshot, { provider, planId }) {
     const durationDays = Number(snapshot.durationDays), priceMinor = Number(snapshot.priceMinor);
     if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650) throw new Error('Checkout contract duration is invalid');
     if (!Number.isInteger(priceMinor) || priceMinor < 0) throw new Error('Checkout contract price is invalid');
-    return { ...snapshot, durationDays, priceMinor };
+    const mediaLocation = snapshot.mediaLocation == null ? null : String(snapshot.mediaLocation).trim().slice(0, 100) || null;
+    return { ...snapshot, durationDays, priceMinor, mediaLocation };
 }
 
 async function assertSettlementCheckout(client, checkoutIntentId, { customerId, planId, provider }) {
@@ -349,6 +350,13 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             } else {
                 const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot,billing_mode) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb),COALESCE($18,'payment')) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson, checkoutBillingMode]);
                 row = inserted.rows[0];
+            }
+
+            if (row && contract?.mediaLocation && !row.media_server_id) {
+                const located = await client.query(`UPDATE subscriptions
+                    SET media_location_preference=COALESCE(NULLIF(media_location_preference,''),$2),updated_at=NOW()
+                    WHERE id=$1 RETURNING *`, [row.id, contract.mediaLocation]);
+                row = located.rows[0] || row;
             }
 
             const effectiveStatus = row.status;
