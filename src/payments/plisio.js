@@ -6,6 +6,7 @@ const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
 const incidents = require('./incidents');
 const providerLifecycleState = require('./provider-lifecycle-state');
+const financialState = require('./provider-financial-state');
 
 const API_BASE = 'https://api.plisio.net';
 const WAITING_STATUSES = providerLifecycleState.PLISIO_WAITING;
@@ -109,6 +110,19 @@ async function createCheckout({ intentId, resolvedPlan, finalAmountMinor = null,
     return { id: String(invoice.txn_id), url: String(invoice.invoice_url), mode: 'payment' };
 }
 
+function finiteNonNegative(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function closeEnough(leftValue, rightValue) {
+    const left = finiteNonNegative(leftValue);
+    const right = finiteNonNegative(rightValue);
+    if (left == null || right == null) return false;
+    const tolerance = Math.max(1e-12, Math.max(Math.abs(left), Math.abs(right)) * 1e-6);
+    return Math.abs(left - right) <= tolerance;
+}
+
 function operationFields(remote) {
     const params = remote?.params && typeof remote.params === 'object' ? remote.params : {};
     return {
@@ -116,8 +130,87 @@ function operationFields(remote) {
         orderNumber: String(remote?.order_number || params.order_number || '').trim(),
         status: String(remote?.status || '').toLowerCase(),
         sourceAmount: remote?.source_amount ?? params.source_amount ?? null,
-        sourceCurrency: String(remote?.source_currency || params.source_currency || '').toUpperCase()
+        sourceCurrency: String(remote?.source_currency || params.source_currency || '').toUpperCase(),
+        sourceRate: remote?.source_rate ?? params.source_rate ?? null,
+        invoiceAmount: params.amount ?? remote?.invoice_amount ?? null,
+        commission: remote?.commission ?? null,
+        actualCommission: remote?.actual_commission ?? null,
+        invoiceCommission: remote?.invoice_commission ?? params.invoice_commission ?? null,
+        actualInvoiceSum: remote?.actual_invoice_sum ?? null,
+        invoiceSum: remote?.invoice_sum ?? params.invoice_sum ?? null,
+        invoiceTotalSum: remote?.invoice_total_sum ?? params.invoice_total_sum ?? null,
+        operationSum: remote?.sum ?? null
     };
+}
+
+function cryptoToSourceMinor(cryptoAmount, sourceRate) {
+    const crypto = finiteNonNegative(cryptoAmount);
+    const rate = finiteNonNegative(sourceRate);
+    if (crypto == null || rate == null || rate <= 0) return null;
+    return moneyMinor(crypto / rate);
+}
+
+function feeAccounting(fields, { grossMinor = null } = {}) {
+    const gross = grossMinor == null ? moneyMinor(fields?.sourceAmount) : Number(grossMinor);
+    if (!Number.isInteger(gross) || gross < 0) {
+        return { feeDataAvailable: false, feeMinor: 0, netMinor: 0, source: null };
+    }
+    const rate = finiteNonNegative(fields?.sourceRate);
+    if (rate == null || rate <= 0) {
+        return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
+    }
+
+    // Plisio documents invoice_sum as the amount received by the shop:
+    // invoice amount minus commission when the shop pays it, or the full
+    // invoice amount when the customer pays it. actual_invoice_sum is the
+    // settled equivalent and is preferred when the operation exposes it.
+    const settledPayout = finiteNonNegative(fields?.actualInvoiceSum);
+    const quotedPayout = finiteNonNegative(fields?.invoiceSum);
+    const payout = settledPayout ?? quotedPayout;
+    if (payout != null) {
+        const calculatedNet = cryptoToSourceMinor(payout, rate);
+        if (calculatedNet != null) {
+            // Fiat/crypto conversion can differ by a cent or two through
+            // provider rounding. Anything materially above the verified gross
+            // is not safe fee evidence and remains explicitly incomplete.
+            const toleratedDrift = Math.max(2, Math.round(gross * 0.01));
+            if (calculatedNet <= gross + toleratedDrift) {
+                const netMinor = Math.max(0, Math.min(gross, calculatedNet));
+                return {
+                    feeDataAvailable: true,
+                    feeMinor: gross - netMinor,
+                    netMinor,
+                    source: settledPayout != null ? 'actual_invoice_sum' : 'invoice_sum'
+                };
+            }
+        }
+    }
+
+    // Transaction details can omit invoice_sum but still expose params.amount,
+    // commission and sum. Plisio defines sum as params.amount when the merchant
+    // pays commission, or params.amount + commission when the customer pays it.
+    const commission = finiteNonNegative(fields?.actualCommission)
+        ?? finiteNonNegative(fields?.invoiceCommission)
+        ?? finiteNonNegative(fields?.commission);
+    const invoiceAmount = finiteNonNegative(fields?.invoiceAmount);
+    const operationSum = finiteNonNegative(fields?.operationSum ?? fields?.invoiceTotalSum);
+    if (commission != null && invoiceAmount != null && operationSum != null) {
+        const customerPays = closeEnough(operationSum, invoiceAmount + commission);
+        const merchantPays = closeEnough(operationSum, invoiceAmount);
+        if (customerPays || merchantPays) {
+            const feeMinor = merchantPays ? cryptoToSourceMinor(commission, rate) : 0;
+            if (feeMinor != null && feeMinor <= gross) {
+                return {
+                    feeDataAvailable: true,
+                    feeMinor,
+                    netMinor: gross - feeMinor,
+                    source: customerPays ? 'customer_paid_commission' : 'merchant_paid_commission'
+                };
+            }
+        }
+    }
+
+    return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
 }
 
 async function getOperation(providerTxnId) {
@@ -188,7 +281,16 @@ function verifiedFieldsFromEvidence(remote, payload, intent, providerId) {
         ...fields,
         orderNumber: fields.orderNumber || evidence.orderNumber,
         sourceAmount: fields.sourceAmount ?? evidence.sourceAmount,
-        sourceCurrency: fields.sourceCurrency || evidence.sourceCurrency
+        sourceCurrency: fields.sourceCurrency || evidence.sourceCurrency,
+        sourceRate: fields.sourceRate ?? evidence.sourceRate,
+        invoiceAmount: fields.invoiceAmount ?? evidence.invoiceAmount,
+        commission: fields.commission ?? evidence.commission,
+        actualCommission: fields.actualCommission ?? evidence.actualCommission,
+        invoiceCommission: fields.invoiceCommission ?? evidence.invoiceCommission,
+        actualInvoiceSum: fields.actualInvoiceSum ?? evidence.actualInvoiceSum,
+        invoiceSum: fields.invoiceSum ?? evidence.invoiceSum,
+        invoiceTotalSum: fields.invoiceTotalSum ?? evidence.invoiceTotalSum,
+        operationSum: fields.operationSum ?? evidence.operationSum
     };
 }
 
@@ -242,6 +344,7 @@ async function activateCompleted(remote, fields, intent) {
         providerStatus: 'completed',
         commercialSnapshot: contract.snapshot
     });
+    const accounting = feeAccounting(fields, { grossMinor: amountMinor });
     await financialState.recordTransaction({
         provider:'plisio',
         providerTransactionId:fields.id,
@@ -250,14 +353,130 @@ async function activateCompleted(remote, fields, intent) {
         occurredAt:remote?.updated_at||remote?.created_at||remote?.date||new Date(),
         currency:fields.sourceCurrency,
         grossMinor:amountMinor,
-        feeMinor:0,
-        netMinor:amountMinor,
+        feeMinor:accounting.feeMinor,
+        netMinor:accounting.netMinor,
         providerReferenceId:String(intent.id),
         customerId:intent.customer_id,
-        metadata:{providerAuthoritative:true,providerVerified:true,feeDataAvailable:false,checkoutIntentId:String(intent.id),planId:String(intent.plan_id),source:'verified_operation'}
+        metadata:{
+            providerAuthoritative:true,
+            providerVerified:true,
+            feeDataAvailable:accounting.feeDataAvailable,
+            feeAccountingSource:accounting.source,
+            checkoutIntentId:String(intent.id),
+            planId:String(intent.plan_id),
+            source:'verified_operation'
+        }
     });
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
-    return { status: 'completed', completed: true };
+    return { status: 'completed', completed: true, feeDataAvailable: accounting.feeDataAvailable };
+}
+
+async function syncFeeData({ limit = 100 } = {}) {
+    const cfg = await providerSettings.get('plisio');
+    if (!cfg?.secretKey) {
+        return { provider:'plisio', configured:false, processed:0, updated:0, unresolved:0, failed:0 };
+    }
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+    const result = await financialState.queryTransactions(
+        { provider:'plisio', status:'completed', feeDataAvailable:false },
+        { limit:safeLimit, offset:0, order:'asc' }
+    );
+    let updated = 0, unresolved = 0, failed = 0;
+
+    for (const row of result.rows) {
+        try {
+            const providerTransactionId = String(row.provider_transaction_id || '').trim();
+            if (!providerTransactionId) { unresolved += 1; continue; }
+            const remote = await getOperation(providerTransactionId);
+            let fields = operationFields(remote);
+            if (fields.id !== providerTransactionId || fields.status !== 'completed') {
+                unresolved += 1;
+                continue;
+            }
+
+            const evidence = await financialState.latestPlisioCallbackEvidence(providerTransactionId);
+            if (evidence) {
+                const callbackFields = operationFields(evidence);
+                fields = {
+                    ...fields,
+                    sourceAmount: fields.sourceAmount ?? callbackFields.sourceAmount,
+                    sourceCurrency: fields.sourceCurrency || callbackFields.sourceCurrency,
+                    sourceRate: fields.sourceRate ?? callbackFields.sourceRate,
+                    invoiceAmount: fields.invoiceAmount ?? callbackFields.invoiceAmount,
+                    commission: fields.commission ?? callbackFields.commission,
+                    actualCommission: fields.actualCommission ?? callbackFields.actualCommission,
+                    invoiceCommission: fields.invoiceCommission ?? callbackFields.invoiceCommission,
+                    actualInvoiceSum: fields.actualInvoiceSum ?? callbackFields.actualInvoiceSum,
+                    invoiceSum: fields.invoiceSum ?? callbackFields.invoiceSum,
+                    invoiceTotalSum: fields.invoiceTotalSum ?? callbackFields.invoiceTotalSum,
+                    operationSum: fields.operationSum ?? callbackFields.operationSum
+                };
+            }
+
+            const rowCurrency = String(row.currency || '').toUpperCase();
+            const sourceCurrency = String(fields.sourceCurrency || rowCurrency).toUpperCase();
+            if (!rowCurrency || sourceCurrency !== rowCurrency) {
+                unresolved += 1;
+                continue;
+            }
+
+            const grossMinor = Number(row.gross_amount_minor || 0);
+            if (!Number.isInteger(grossMinor) || grossMinor < 0) {
+                unresolved += 1;
+                continue;
+            }
+            if (fields.sourceAmount != null) {
+                const verifiedGross = moneyMinor(fields.sourceAmount);
+                if (verifiedGross != null && verifiedGross !== grossMinor) {
+                    unresolved += 1;
+                    continue;
+                }
+            } else {
+                fields.sourceAmount = (grossMinor / 100).toFixed(2);
+            }
+            fields.sourceCurrency = sourceCurrency;
+
+            const accounting = feeAccounting(fields, { grossMinor });
+            if (!accounting.feeDataAvailable) {
+                unresolved += 1;
+                continue;
+            }
+
+            await financialState.recordTransaction({
+                provider:'plisio',
+                providerTransactionId,
+                transactionType:row.transaction_type || 'payment',
+                transactionStatus:row.transaction_status || 'completed',
+                occurredAt:row.occurred_at,
+                currency:rowCurrency,
+                grossMinor,
+                feeMinor:accounting.feeMinor,
+                netMinor:accounting.netMinor,
+                providerCustomerId:row.provider_customer_id,
+                providerReferenceId:row.provider_reference_id,
+                providerSourceId:row.provider_source_id,
+                customerId:row.customer_id,
+                metadata:{
+                    ...(row.metadata && typeof row.metadata === 'object' ? row.metadata : {}),
+                    providerAuthoritative:true,
+                    providerVerified:true,
+                    feeDataAvailable:true,
+                    feeAccountingSource:accounting.source,
+                    feeReconciledAt:new Date().toISOString(),
+                    source:'verified_operation_fee_reconciliation'
+                }
+            });
+            updated += 1;
+        } catch (error) {
+            failed += 1;
+            console.warn('Plisio fee reconciliation could not update a transaction.', {
+                providerTransactionId: String(row.provider_transaction_id || '').slice(0, 200),
+                error: String(error?.message || error).slice(0, 600)
+            });
+        }
+    }
+
+    return { provider:'plisio', configured:true, processed:result.rows.length, updated, unresolved, failed };
 }
 
 async function recordActivatedProviderLoss(fields, { eventId = null } = {}) {
@@ -513,6 +732,9 @@ module.exports = {
     callbackDigest,
     moneyMinor,
     operationFields,
+    cryptoToSourceMinor,
+    feeAccounting,
+    syncFeeData,
     processWebhook,
     retryPaymentEvent,
     confirmCheckout,
