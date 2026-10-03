@@ -83,6 +83,35 @@ function managedMediaLimit(plan){
   if(policy.mediaCapacityManaged!==true)return null;
   return plan.capacity_limit==null?null:Math.max(0,Number(plan.capacity_limit)||0);
 }
+function pendingPlanChangeUsersSql(planExpr){
+  return `(
+    SELECT COUNT(*)::int
+    FROM customer_plan_changes capacity_change
+    JOIN subscriptions capacity_current ON capacity_current.id=capacity_change.current_subscription_id
+    WHERE capacity_change.target_plan_id=${planExpr}
+      AND capacity_change.provider='stripe'
+      AND capacity_change.state='pending'
+      AND capacity_current.superseded_by IS NULL
+      AND capacity_current.plan_id<>${planExpr}
+  )`;
+}
+function immediatePlanChangeUsersSql(planExpr){
+  return `(
+    SELECT COUNT(*)::int
+    FROM provider_operations capacity_operation
+    JOIN subscriptions capacity_current
+      ON capacity_current.id::text=capacity_operation.request_snapshot->>'subscriptionId'
+    WHERE capacity_operation.provider='stripe'
+      AND capacity_operation.scope='customer'
+      AND capacity_operation.operation_type='plan_change_immediate'
+      AND capacity_operation.state IN('planned','provider_applied','local_applied')
+      AND COALESCE(capacity_operation.failure_kind,'') NOT IN('terminal','superseded')
+      AND COALESCE(capacity_operation.provider_result->>'capacityReserved','false')='true'
+      AND capacity_operation.request_snapshot->>'targetPlanId'=(${planExpr})::text
+      AND capacity_current.superseded_by IS NULL
+      AND capacity_current.plan_id<>${planExpr}
+  )`;
+}
 async function loadPlan(planId,db=query){
   const result=await db(`SELECT id,capacity_limit,inactivity_policy,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
@@ -93,7 +122,9 @@ async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheck
   const result=await db(`SELECT
       (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
-       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
+       ${pendingPlanChangeUsersSql('$1')} +
+       ${immediatePlanChangeUsersSql('$1')}) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
@@ -310,6 +341,8 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
          FROM billing_checkout_intents i
          WHERE i.plan_id=$1 AND ${checkoutHold}
            AND ($4::uuid IS NULL OR i.id<>$4::uuid))
+        + ${pendingPlanChangeUsersSql('$1')}
+        + ${immediatePlanChangeUsersSql('$1')}
       ) AS reserved`,[
         plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,Boolean(plan.is_free_tier)
       ]);
@@ -441,7 +474,7 @@ function mediaPlanLimitAvailableSql(alias='p'){
   ) + (
     SELECT COUNT(*) FROM billing_checkout_intents media_ci
     WHERE media_ci.plan_id=${alias}.id AND ${checkoutHold}
-  )))`;
+  ) + ${pendingPlanChangeUsersSql(`${alias}.id`)} + ${immediatePlanChangeUsersSql(`${alias}.id`)}))`;
 }
 
 function fleetRestrictionSql(planAlias,serverAlias){
