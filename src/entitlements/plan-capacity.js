@@ -94,6 +94,12 @@ async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheck
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
 }
+async function effectiveMediaPlanLimit(plan,db=query){
+  if(plan.capacity_limit==null)return null;
+  const limit=Number(plan.capacity_limit);
+  if(limit!==0)return limit;
+  return await capacityTransition.isApplied(db)?0:null;
+}
 async function mediaPlanUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
@@ -306,7 +312,7 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
   // tighter of the plan-specific acquisition cap and the currently available
   // places in the eligible server fleet.
   const planUsage=await mediaPlanUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
-  const planLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit);
+  const planLimit=await effectiveMediaPlanLimit(plan,db);
   const planRemaining=planLimit==null?null:Number(planUsage.remaining||0);
   const remaining=planRemaining==null?fleet.userRemaining:Math.max(0,Math.min(fleet.userRemaining,planRemaining));
   const state={
@@ -389,7 +395,12 @@ function planPoolOverlapSql(leftPlanAlias,rightPlanAlias){
 
 function mediaPlanAcquisitionSql(alias='p'){
   const checkoutHold=checkoutReservationSql('media_ci');
-  return `(${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
+  return `(${alias}.capacity_limit IS NULL
+    OR (${alias}.capacity_limit=0 AND NOT EXISTS(
+      SELECT 1 FROM platform_settings media_capacity_transition
+      WHERE media_capacity_transition.setting_key='${capacityTransition.SETTING_KEY}'
+    ))
+    OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT media_s.customer_id)
     FROM subscriptions media_s
     LEFT JOIN customer_entitlement_overrides media_o ON media_o.customer_id=media_s.customer_id AND media_o.subscription_id=media_s.id
@@ -546,4 +557,4 @@ function acquisitionSql(alias='p'){
   return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${mediaAvailable}))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,mediaPlanAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,mediaPlanAcquisitionSql,effectiveMediaPlanLimit,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
