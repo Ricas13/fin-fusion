@@ -23,7 +23,7 @@ const SAFE_ERROR_PREFIXES = [
     'Jellyfin API key format is invalid.', 'Emby API key is required.', 'Emby API key format is invalid.',
     'Media-server API key is required.', 'Media-server API key format is invalid.',
     'Priority must be between ', 'Maximum users must be between ', 'Location is required.', 'Customer/public URL is required.',
-    'Maximum users cannot be lower than ', 'Maximum customers on this plan cannot exceed ', 'Set physical customer capacity on every selected media server ',
+    'Maximum users cannot be lower than ', 'Media server type cannot be changed while ', 'Maximum customers on this plan cannot exceed ', 'Set physical customer capacity on every selected media server ',
     'This plan has no media servers with configured physical capacity.',
     'Initial playback grace days must be between ', 'Playback window days must be between ',
     'Minimum playback minutes must be between ', 'Invalid server class.',
@@ -247,6 +247,9 @@ function createAdminServersRouter() {
         try {
             const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found');
             const form=parseServerForm(req.body,{apiKeyRequired:false}),impact=await serverImpact(req.params.serverId),risk=riskyServerChange(server,form,impact);
+            if (registry.mediaProvider.normalizeType(server.media_server_type) !== form.mediaServerType && Number(impact.assigned_accounts) > 0) {
+                throw invalidField('mediaServerType', `Media server type cannot be changed while ${impact.assigned_accounts} account(s) are assigned. Migrate or remove those accounts before converting this server between Jellyfin and Emby.`);
+            }
             if (risk.risky && String(req.body.confirmation||'').trim() !== 'CHANGE') throw invalidField('confirmation', `This server has ${impact.assigned_accounts} assigned account(s) and ${impact.explicit_plan_rules} explicit plan rule(s). Type CHANGE to confirm: ${risk.reasons.join(', ')}.`);
             await updateServer(req.session.authUserId,req.params.serverId,form);
             return res.redirect('/admin/servers?message='+encodeURIComponent('Server configuration updated.'));
