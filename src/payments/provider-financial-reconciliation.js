@@ -16,7 +16,7 @@ async function syncRecent({ hours = DEFAULT_HOURS, force = true } = {}) {
     const [stripe,paypal,plisio] = await Promise.all([
         capture('stripe',()=>liveStripeHistory.syncRecent({hours,force})),
         capture('paypal',()=>providerPaymentReconciliation.syncRecentPayPalHistory({hours,limit:500})),
-        capture('plisio',()=>require('./plisio').syncFeeData({limit:100}))
+        capture('plisio',()=>require('./plisio').syncFeeData({limit:25}))
     ]);
     const after = await financialState.reconcileLocalEvidence();
     const providers=[stripe,paypal,plisio];
