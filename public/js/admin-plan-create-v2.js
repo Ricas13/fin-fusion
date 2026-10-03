@@ -84,11 +84,11 @@
     setVisible(lifecycle,free);
     setVisible(replacementCooldown,stremio&&replacement?.value==='customer_cooldown');
 
-    // Jellyfin capacity is configured only on servers. Keep the legacy database
-    // field at zero for compatibility but do not ask the operator to manage a
-    // second, conflicting plan-level inventory number.
-    if(availability)availability.hidden=!stremio;
-    if(capacityLimit){capacityLimit.disabled=false;if(jellyfin)capacityLimit.value='0';}
+    // Every plan owns its acquisition cap. Media servers keep a separate hard
+    // physical max_users ceiling, so the effective availability is the tighter
+    // of the plan cap and the eligible server pool.
+    if(availability)availability.hidden=false;
+    if(capacityLimit)capacityLimit.disabled=false;
 
     syncAccessCopy();
     const label=free?'FREE JELLYFIN':paid?'PAID JELLYFIN':'STREMIO';
