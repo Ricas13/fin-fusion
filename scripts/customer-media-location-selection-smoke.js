@@ -78,6 +78,9 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
         rows: fullGermany ? [{ server_id: servers[2].id, users: 5 }] : []
       };
     }
+    if (sql.includes('WHERE id=ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+      return { rowCount: params[0]?.length || 0, rows: (params[0] || []).map(id => ({ id })) };
+    }
     if (sql.includes('FROM jellyfin_servers') && sql.includes('WHERE id=$1')) {
       const server = servers.find(item => item.id === params[0]);
       return { rowCount: server ? 1 : 0, rows: server ? [{ ...server, enabled: disabledAssigned ? false : server.enabled }] : [] };
