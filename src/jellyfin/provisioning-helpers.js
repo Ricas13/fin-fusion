@@ -198,6 +198,14 @@ async function reservePlacement(customerId, server, { allowOverCapacity = false 
         SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND disabled=FALSE AND account_purpose='jellyfin'
         UNION ALL
         SELECT 1 FROM jellyfin_account_creation_intents WHERE customer_id=$1 AND server_id=$2
+        UNION ALL
+        SELECT 1 FROM subscriptions
+        WHERE customer_id=$1
+          AND media_server_id=$2
+          AND superseded_by IS NULL
+          AND status IN('active','trialing','past_due','paused')
+          AND starts_at<=NOW()
+          AND current_period_end>NOW()
       ) yes`, [customerId, server.id]);
       if (ownCapacity.rows[0]?.yes !== true) {
         const counts = await userCapacity.countsForServers([server.id], (sql, params) => db.query(sql, params));
