@@ -105,8 +105,9 @@ async function resumeExistingCheckout(customerId,provider,choice){
  const samePlan=String(existing.plan_id||'')===String(choice.plan.id||'');
  const samePrice=!existing.plan_price_id||!choice.plan.plan_price_id||
    String(existing.plan_price_id)===String(choice.plan.plan_price_id);
+ const sameLocation=String(existing.commercial_snapshot?.mediaLocation||'')===String(choice.mediaLocation||'');
  const sameTarget=existing.provider===provider&&
-   existing.checkout_mode===choice.mode&&samePlan&&samePrice;
+   existing.checkout_mode===choice.mode&&samePlan&&samePrice&&sameLocation;
 
  if(sameTarget&&existing.provider_checkout_id){
   let resumed=null;
@@ -139,7 +140,7 @@ async function begin(req,res,provider){
  try{
   let reservation=null;
   if(req.body.discountCode)reservation=await discounts.reserveForIntent({code:req.body.discountCode,planCode:choice.planCode,customerId:req.session.customerId,checkoutIntentId:intent.id,baseMinor:Number(choice.plan.price_minor||0),currency:choice.currency,ttlMinutes:checkoutTtlMinutes});
-  let snapshot=commercialSnapshot(choice,provider,reservation),grossDue=Number((snapshot.discountedMinor??snapshot.priceMinor)||0),serviceCreditMinor=0;
+  let snapshot={...commercialSnapshot(choice,provider,reservation),mediaServerId:intent.commercial_snapshot?.mediaServerId||null},grossDue=Number((snapshot.discountedMinor??snapshot.priceMinor)||0),serviceCreditMinor=0;
   if(wantsCredit&&grossDue>50){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:grossDue-50,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
   const providerDue=Math.max(0,grossDue-serviceCreditMinor);
   snapshot={...snapshot,grossDiscountedMinor:grossDue,serviceCreditMinor,serviceCreditCurrency:serviceCreditMinor?choice.currency:null,discountedMinor:providerDue};
