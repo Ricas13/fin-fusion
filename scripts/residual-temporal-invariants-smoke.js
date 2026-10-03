@@ -50,7 +50,11 @@ function main() {
     ]) {
         assert(activation.includes(required) || lifecycle.includes(required), `Paid activation is missing ${required}`);
     }
-    assert(lifecycle.includes('SELECT id,customer_id,plan_id,provider,state FROM billing_checkout_intents'), 'Settlement verification must load checkout state so terminal historical replays can be distinguished from open crash recovery.');
+    assert(
+        lifecycle.includes('SELECT id,customer_id,plan_id,provider,state') &&
+        lifecycle.includes('media_server_id FROM billing_checkout_intents'),
+        'Settlement verification must load checkout state and the exact reserved media server so historical replay classification and location-aware settlement remain authoritative.'
+    );
     assert(lifecycle.includes('billingMode.BILLING_MODES.PAYMENT'), 'Existing one-time provider payments must be classified as immutable replays even if checkout settlement is still open.');
     assert(activation.indexOf('const settlementIntent = await assertSettlementCheckout') < activation.indexOf('historicalCheckoutReplay = isHistoricalCheckoutReplay'), 'Existing provider-payment replay must lock and classify its settlement intent before deciding whether commercial state may be rewritten.');
     assert.match(activation, /if \(historicalCheckoutReplay\)\s*\{\s*row = existingSubscription;/, 'A historical checkout replay can still rewrite a later subscription contract.');
