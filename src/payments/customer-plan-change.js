@@ -183,7 +183,9 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
         try{
             if(targetMediaServer&&String(targetMediaServer.id)!==String(current.media_server_id||''))scheduledPlacement=await reserveScheduledMediaPlacement(customerId,targetMediaServer,current.current_period_end);
             local=await createLocalChange(customerId,current,target,'stripe',actorUserId,{targetAccessQuantity:quantity,targetVariantKind:kind,targetMediaLocation,targetMediaServerId:targetMediaServer?.id||null});
-            if(scheduledPlacement?.placement_lease_id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});
+            // Keep the ordinary short placement lease until its normal expiry.
+            // New code deduplicates it with the durable plan-change reservation;
+            // an N-1 web process can still see the lease during rolling cutover.
             const scheduled=await scheduleStripeProvider(current,target,local,{currency:target.currency,mapping,accessQuantity:quantity});
             return{handled:true,mode:'period_end',message:`Plan change to ${target.name} · ${targetAccessLabel(target)} (${target.currency}) is scheduled in Stripe for your next renewal (${new Date(scheduled.effective_at).toLocaleDateString('en-GB')}).`};
         }catch(error){
