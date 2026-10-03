@@ -128,20 +128,22 @@ async function begin({email,username,password,referralCode=null,communicationPre
             // capacity check, so the customer does not count twice.
             await client.query(`DELETE FROM pending_registrations WHERE consumed_at IS NULL AND (expires_at<=NOW() OR lower(email)=lower($1) OR lower(username)=lower($2))`,[email,username]);
 
-            let resolvedFreeMediaLocation=null;
+            let resolvedFreeMediaLocation=null,reservedFreeMediaServer=null;
             if(freePlan){
                 resolvedFreeMediaLocation=await customerServerChoice.resolveAcquisitionLocation(freePlan,freeMediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
                 await planCapacity.lockAndAssert(client,freePlan.id,freePlan.name||'Free Access');
+                reservedFreeMediaServer=await customerServerChoice.selectServerForLocation(freePlan,resolvedFreeMediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+                resolvedFreeMediaLocation=reservedFreeMediaServer?.selected_location||resolvedFreeMediaLocation;
             }
 
             const created=await client.query(`INSERT INTO pending_registrations(email,username,password_hash,referral_code,token_hash,expires_at,communication_preferences,free_access_requested) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) RETURNING id,email,username,expires_at,created_at,free_access_requested`,[email,username,passwordHash,ref,hash,expiresAt,JSON.stringify(prefs),Boolean(freeAccess)]);
             let freeReservation=null;
             if(freePlan&&freeIntent){
                 freeReservation=(await client.query(`
-                    INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at,holder_session_hash,media_location)
-                    VALUES($1,$2,$3,$4,$5,$6)
-                    RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email,media_location,created_at
-                `,[created.rows[0].id,freePlan.id,email,expiresAt,holderSessionHash,resolvedFreeMediaLocation])).rows[0];
+                    INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at,holder_session_hash,media_location,media_server_id)
+                    VALUES($1,$2,$3,$4,$5,$6,$7)
+                    RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email,media_location,media_server_id,created_at
+                `,[created.rows[0].id,freePlan.id,email,expiresAt,holderSessionHash,resolvedFreeMediaLocation,reservedFreeMediaServer?.id||null])).rows[0];
                 await client.query(`DELETE FROM free_access_registration_intents WHERE id=$1`,[freeIntent.id]);
                 await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.free_reserved','free_access_registration_reservation',$1,$2::jsonb)`,[freeReservation.id,JSON.stringify({planId:freePlan.id,pendingRegistrationId:created.rows[0].id,registrationIntentId:freeIntent.id,expiresAt:freeReservation.expires_at})]);
             }
@@ -159,7 +161,7 @@ async function consume(rawToken){
         const found=await client.query(`SELECT * FROM pending_registrations WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>NOW() FOR UPDATE`,[hash]);
         if(!found.rowCount)return null;
         const pending=found.rows[0],prefs=cleanCommunicationPreferences(pending.communication_preferences||{});
-        let reservation=(await client.query(`SELECT id,plan_id,expires_at,consumed_at,released_at,customer_id,subscription_id,media_location FROM free_access_registration_reservations WHERE pending_registration_id=$1 FOR UPDATE`,[pending.id])).rows[0]||null;
+        let reservation=(await client.query(`SELECT id,plan_id,expires_at,consumed_at,released_at,customer_id,subscription_id,media_location,media_server_id FROM free_access_registration_reservations WHERE pending_registration_id=$1 FOR UPDATE`,[pending.id])).rows[0]||null;
         if(pending.free_access_requested&&(!reservation||reservation.consumed_at||reservation.released_at||new Date(reservation.expires_at).getTime()<=Date.now()))return terminalize(client,pending.id,'Your reserved Free Access place is no longer available. Please start Free Access signup again.');
         const banned=await client.query(`SELECT 1 FROM customer_bans WHERE revoked_at IS NULL AND blocks_registration=TRUE AND normalized_email=LOWER(BTRIM($1)) LIMIT 1`,[pending.email]);
         if(banned.rowCount)return terminalize(client,pending.id,'Registration is not available for this email address');
@@ -178,7 +180,7 @@ async function consume(rawToken){
             customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
         }
         if(pending.free_access_requested){
-            reservation=(await client.query(`UPDATE free_access_registration_reservations SET customer_id=$2,expires_at=GREATEST(expires_at,NOW()+($3::int*INTERVAL '1 minute')),updated_at=NOW() WHERE id=$1 AND pending_registration_id=$4 AND consumed_at IS NULL AND released_at IS NULL RETURNING id,plan_id,expires_at,consumed_at,released_at,customer_id,subscription_id,media_location`,[reservation.id,customer.id,FREE_POST_VERIFY_RETRY_MINUTES,pending.id])).rows[0]||null;
+            reservation=(await client.query(`UPDATE free_access_registration_reservations SET customer_id=$2,expires_at=GREATEST(expires_at,NOW()+($3::int*INTERVAL '1 minute')),updated_at=NOW() WHERE id=$1 AND pending_registration_id=$4 AND consumed_at IS NULL AND released_at IS NULL RETURNING id,plan_id,expires_at,consumed_at,released_at,customer_id,subscription_id,media_location,media_server_id`,[reservation.id,customer.id,FREE_POST_VERIFY_RETRY_MINUTES,pending.id])).rows[0]||null;
             if(!reservation)throw new Error('Free Access reservation changed while registration was being verified');
         }
         await client.query(`INSERT INTO customer_communication_preferences(customer_id,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,$4,$5) ON CONFLICT(customer_id) DO UPDATE SET telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
