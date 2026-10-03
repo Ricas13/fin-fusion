@@ -128,16 +128,23 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   const lifecycle = fs.readFileSync('src/payments/lifecycle.js', 'utf8');
   const pending = fs.readFileSync('src/security/pending-registration.js', 'utf8');
   const provisioning = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
+  const checkoutIntents = fs.readFileSync('src/payments/checkout-intents.js', 'utf8');
+  const lifecyclePrimitives = fs.readFileSync('src/payments/lifecycle-primitives.js', 'utf8');
+  const userCapacity = fs.readFileSync('src/jellyfin/user-capacity.js', 'utf8');
   const mediaReconcile = fs.readFileSync('src/jellyfin/media-service-reconciliation.js', 'utf8');
   const migration = fs.readFileSync('db/migrations/20261003113000_customer_media_location_assignment.sql', 'utf8');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
-  assert(pending.includes('freeMediaLocation') && pending.includes('media_location)'), 'pre-login Free registration must persist its selected location');
+  assert(pending.includes('freeMediaLocation') && pending.includes('media_location,media_server_id'), 'pre-login Free registration must persist its selected location and concrete server');
   assert(provisioning.includes('media_server_id') && provisioning.includes('persistAssignment'), 'Jellyfin reconciliation must honor and persist sticky subscription assignment');
   assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
   assert(!/DO \\$\\nBEGIN/.test(migration), 'PostgreSQL migration DO blocks must use a valid dollar-quoted delimiter');
   assert(migration.includes('billing_checkout_intents') && migration.includes('free_access_registration_reservations'), 'paid checkout and Free registration must reserve exact physical server capacity');
+  assert(checkoutIntents.includes('selectServerForLocationLocked') && checkoutIntents.includes('media_server_id'), 'paid checkout must serialize and reserve a concrete physical server');
+  assert(lifecycle.includes('selectServerForLocationLocked'), 'Free and trial activation must serialize concrete server selection');
+  assert(lifecyclePrimitives.includes('selectServerForLocationLocked'), 'paid settlement fallback must serialize server reselection inside the chosen location');
+  assert(userCapacity.includes('checkout.media_server_id IS NULL') && userCapacity.includes('reservation.media_server_id IS NULL'), 'N-1 generic checkout/free holds must conservatively protect physical server capacity during rolling deploys');
 
   console.log('customer media location selection smoke: ok');
 })().catch(error => {
