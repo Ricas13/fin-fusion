@@ -127,6 +127,36 @@ async function updateAvailability({ planId, capacityLimit, actorUserId = null })
   });
 }
 
+async function updateInactivityPolicy({ planId, policy, actorUserId = null }) {
+  if (!policy || typeof policy !== 'object') throw new Error('Inactivity policy is required.');
+  const bounds = [
+    ['firstPlaybackGraceDays', 1, 3650, 'Initial playback grace'],
+    ['playbackWindowDays', 1, 365, 'Playback window'],
+    ['minimumPlaybackMinutes', 1, 1000000, 'Minimum playback minutes']
+  ];
+  const normalized = {};
+  for (const [key, min, max, label] of bounds) {
+    const value = Number(policy[key]);
+    if (!Number.isInteger(value) || value < min || value > max) {
+      throw new Error(`${label} must be between ${min} and ${max}.`);
+    }
+    normalized[key] = value;
+  }
+  return transaction(async client => {
+    const updated = await client.query(
+      'UPDATE plans SET inactivity_policy=$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING *',
+      [planId, JSON.stringify(normalized)]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.inactivity_policy.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ ...normalized, thresholdOwner: 'free_plan' })]
+    );
+    return updated.rows[0];
+  });
+}
+
 async function updateDelivery({
   planId,
   serverClass,
