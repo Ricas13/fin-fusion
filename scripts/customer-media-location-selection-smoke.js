@@ -125,6 +125,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   );
 
   const checkout = fs.readFileSync('src/platform/flexible-checkout.js', 'utf8');
+  const dashboard = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
+  const checkoutClient = fs.readFileSync('public/js/customer-checkout.js', 'utf8');
   const lifecycle = fs.readFileSync('src/payments/lifecycle.js', 'utf8');
   const pending = fs.readFileSync('src/security/pending-registration.js', 'utf8');
   const provisioning = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
@@ -147,6 +149,9 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(lifecycle.includes('selectServerForLocationLocked'), 'Free and trial activation must serialize concrete server selection');
   assert(lifecyclePrimitives.includes('selectServerForLocationLocked'), 'paid settlement fallback must serialize server reselection inside the chosen location');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'recurring checkout must forward the chosen media location into the plan-change workflow');
+  assert(dashboard.includes('selectedLocation') && dashboard.includes('existingAssignment:true'), 'customer location discovery must preserve an existing eligible assignment even when its physical server is full');
+  assert(checkoutClient.includes('payload.selectedLocation') && checkoutClient.includes('setMediaLocation(card,preferred)'), 'checkout UI must preselect a reusable existing location without removing the customer choice');
+  assert(planChange.includes('reservedServerIfEligible(target,current.media_server_id,mediaLocation||null)'), 'plan changes must reuse an eligible current server before applying new-customer availability rules');
   assert(planChange.includes('target_media_location') && planChange.includes('media_location_preference=$13') && planChange.includes('media_server_id=$14'), 'plan changes must persist their target location and concrete sticky assignment');
   assert(planChange.includes('change.target_media_location') && planChange.includes('reservedServerIfEligible') && planChange.includes('selectServerForLocationLocked'), 'scheduled plan changes must revalidate their chosen location under row locks and reuse the old server only when it remains eligible');
   assert(migration.includes('ALTER TABLE customer_plan_changes') && migration.includes('target_media_location'), 'scheduled plan changes must retain their target media location across provider renewal boundaries');
