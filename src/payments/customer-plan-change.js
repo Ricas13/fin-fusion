@@ -167,6 +167,22 @@ async function scheduleStripeProvider(current,target,change,{currency,mapping=nu
     }
 }
 
+async function assertNoAmbiguousLegacyMediaAssignment(customerId,current,target){
+    if(current?.media_server_id||!customerServerChoice.mediaServerType(target))return;
+    const provider=customerServerChoice.mediaServerType(target);
+    const existing=await query(`
+        SELECT COUNT(*)::int AS count
+        FROM jellyfin_accounts ja
+        JOIN jellyfin_servers js ON js.id=ja.server_id
+        WHERE ja.customer_id=$1
+          AND ja.account_purpose='jellyfin'
+          AND COALESCE(js.media_server_type,'jellyfin')=$2
+    `,[customerId,provider]);
+    if(Number(existing.rows[0]?.count||0)>0){
+        throw planChangeRefusal('Your current media server assignment needs administrator repair before this paid plan change can be made safely.');
+    }
+}
+
 async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',targetAccessQuantity=null,targetVariantKind=null,mediaLocation=null,timing='auto',actorUserId=null}){
     const targetResult=await query(`SELECT * FROM plans WHERE code=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN ('direct','both') LIMIT 1`,[String(targetPlanCode||'').trim()]);if(!targetResult.rowCount)throw new Error('Target plan is not available.');
     const baseTarget=targetResult.rows[0],price=await query(`SELECT * FROM plan_prices WHERE plan_id=$1 AND currency=$2 AND active=TRUE LIMIT 1`,[baseTarget.id,String(targetCurrency||'').toUpperCase()]);if(!price.rowCount)throw new Error(`Target plan is not available in ${targetCurrency}.`);
@@ -174,6 +190,7 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
     const provider=current.source;if(!['stripe','paypal'].includes(provider))return{handled:false};
     const mapping=await replacementMapping(current,target,provider,target.currency,targetAccessQuantity);if(!mapping)throw new Error(`The selected access option is not configured for ${provider==='stripe'?'Stripe':'PayPal'} recurring billing in ${target.currency}.`);
     target=selectedTarget(target,mapping,targetVariantKind,targetAccessQuantity);
+    await assertNoAmbiguousLegacyMediaAssignment(customerId,current,target);
     let targetMediaLocation=null,targetMediaServer=null;
     if(customerServerChoice.mediaServerType(target)){
         targetMediaServer=await customerServerChoice.existingAssignedServerForPlan(target,current.media_server_id,mediaLocation||null).catch(()=>null);
@@ -293,4 +310,4 @@ async function expireDuePaypal(){const due=await query(`SELECT pc.*,p.code targe
 async function cancelPendingChange(customerId,actorUserId=null){const pending=await pendingForCustomer(customerId);if(!pending)throw new Error('There is no open plan change to cancel.');let warning='';if(pending.provider==='stripe'&&pending.provider_schedule_id){const client=await stripeClient();try{const schedule=await client.subscriptionSchedules.retrieve(pending.provider_schedule_id);if(['active','not_started'].includes(String(schedule.status)))await client.subscriptionSchedules.release(schedule.id);}catch(error){throw new Error(`Stripe schedule could not be released safely: ${error.message}`);}}if(pending.provider==='paypal'&&pending.provider_action_required)warning=' Your existing PayPal renewal state is unchanged; cancelling this target does not create or restore a PayPal agreement.';await transaction(async client=>{await client.query(`UPDATE customer_plan_changes SET state='cancelled',provider_schedule_state=CASE WHEN provider='stripe' THEN 'released' ELSE provider_schedule_state END,updated_at=NOW() WHERE id=$1`,[pending.id]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.cancel','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({changeId:pending.id,targetPlanId:pending.target_plan_id,targetAccessQuantity:pending.target_access_quantity,targetVariantKind:pending.target_variant_kind,targetMediaServerId:pending.target_media_server_id||null,effectiveAt:pending.effective_at,provider:pending.provider,providerScheduleId:pending.provider_schedule_id,previousState:pending.state})]);});await releaseScheduledMediaPlacement(customerId,pending.target_media_server_id).catch(()=>{});return{...pending,warning};}
 async function pendingForCustomer(customerId){const result=await query(`SELECT pc.*,p.name target_plan_name,p.code target_plan_code FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id WHERE pc.customer_id=$1 AND pc.state IN ('pending','awaiting_checkout') ORDER BY pc.created_at DESC LIMIT 1`,[customerId]);return result.rows[0]||null;}
 
-module.exports={requestChange,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement};
+module.exports={requestChange,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment};
