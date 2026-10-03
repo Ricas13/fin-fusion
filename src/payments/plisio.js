@@ -134,7 +134,9 @@ function operationFields(remote) {
         sourceRate: remote?.source_rate ?? params.source_rate ?? null,
         invoiceAmount: params.amount ?? remote?.invoice_amount ?? null,
         commission: remote?.commission ?? null,
+        actualSum: remote?.actual_sum ?? null,
         actualCommission: remote?.actual_commission ?? null,
+        actualFee: remote?.actual_fee ?? null,
         invoiceCommission: remote?.invoice_commission ?? params.invoice_commission ?? null,
         actualInvoiceSum: remote?.actual_invoice_sum ?? null,
         invoiceSum: remote?.invoice_sum ?? params.invoice_sum ?? null,
@@ -160,19 +162,35 @@ function feeAccounting(fields, { grossMinor = null } = {}) {
         return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
     }
 
-    // Plisio documents invoice_sum as the amount received by the shop:
-    // invoice amount minus commission when the shop pays it, or the full
-    // invoice amount when the customer pays it. actual_invoice_sum is the
-    // settled equivalent and is preferred when the operation exposes it.
-    const settledPayout = finiteNonNegative(fields?.actualInvoiceSum);
-    const quotedPayout = finiteNonNegative(fields?.invoiceSum);
-    const payout = settledPayout ?? quotedPayout;
-    if (payout != null) {
-        const calculatedNet = cryptoToSourceMinor(payout, rate);
+    // Transaction details define actual_invoice_sum as actual_sum minus the
+    // commission and network fee used to move the invoice into the wallet.
+    // That is the exact merchant proceeds we need for financial reporting.
+    let settledPayout = finiteNonNegative(fields?.actualInvoiceSum);
+    let source = settledPayout != null ? 'actual_invoice_sum' : null;
+
+    // Some operation responses expose the actual components but omit the
+    // convenience actual_invoice_sum field. Reconstruct the same value only
+    // when every component is present; never substitute quoted invoice fields
+    // because they do not include the final network fee.
+    if (settledPayout == null) {
+        const actualSum = finiteNonNegative(fields?.actualSum);
+        const actualCommission = finiteNonNegative(fields?.actualCommission);
+        const actualFee = finiteNonNegative(fields?.actualFee);
+        if (actualSum != null && actualCommission != null && actualFee != null) {
+            const calculated = actualSum - actualCommission - actualFee;
+            if (calculated >= 0) {
+                settledPayout = calculated;
+                source = 'actual_components';
+            }
+        }
+    }
+
+    if (settledPayout != null) {
+        const calculatedNet = cryptoToSourceMinor(settledPayout, rate);
         if (calculatedNet != null) {
-            // Fiat/crypto conversion can differ by a cent or two through
-            // provider rounding. Anything materially above the verified gross
-            // is not safe fee evidence and remains explicitly incomplete.
+            // Provider conversion/rounding can differ by a cent or two.
+            // Anything materially above the verified sale gross is not safe
+            // evidence and remains explicitly incomplete.
             const toleratedDrift = Math.max(2, Math.round(gross * 0.01));
             if (calculatedNet <= gross + toleratedDrift) {
                 const netMinor = Math.max(0, Math.min(gross, calculatedNet));
@@ -180,31 +198,7 @@ function feeAccounting(fields, { grossMinor = null } = {}) {
                     feeDataAvailable: true,
                     feeMinor: gross - netMinor,
                     netMinor,
-                    source: settledPayout != null ? 'actual_invoice_sum' : 'invoice_sum'
-                };
-            }
-        }
-    }
-
-    // Transaction details can omit invoice_sum but still expose params.amount,
-    // commission and sum. Plisio defines sum as params.amount when the merchant
-    // pays commission, or params.amount + commission when the customer pays it.
-    const commission = finiteNonNegative(fields?.actualCommission)
-        ?? finiteNonNegative(fields?.invoiceCommission)
-        ?? finiteNonNegative(fields?.commission);
-    const invoiceAmount = finiteNonNegative(fields?.invoiceAmount);
-    const operationSum = finiteNonNegative(fields?.operationSum ?? fields?.invoiceTotalSum);
-    if (commission != null && invoiceAmount != null && operationSum != null) {
-        const customerPays = closeEnough(operationSum, invoiceAmount + commission);
-        const merchantPays = closeEnough(operationSum, invoiceAmount);
-        if (customerPays || merchantPays) {
-            const feeMinor = merchantPays ? cryptoToSourceMinor(commission, rate) : 0;
-            if (feeMinor != null && feeMinor <= gross) {
-                return {
-                    feeDataAvailable: true,
-                    feeMinor,
-                    netMinor: gross - feeMinor,
-                    source: customerPays ? 'customer_paid_commission' : 'merchant_paid_commission'
+                    source
                 };
             }
         }
@@ -285,7 +279,9 @@ function verifiedFieldsFromEvidence(remote, payload, intent, providerId) {
         sourceRate: fields.sourceRate ?? evidence.sourceRate,
         invoiceAmount: fields.invoiceAmount ?? evidence.invoiceAmount,
         commission: fields.commission ?? evidence.commission,
+        actualSum: fields.actualSum ?? evidence.actualSum,
         actualCommission: fields.actualCommission ?? evidence.actualCommission,
+        actualFee: fields.actualFee ?? evidence.actualFee,
         invoiceCommission: fields.invoiceCommission ?? evidence.invoiceCommission,
         actualInvoiceSum: fields.actualInvoiceSum ?? evidence.actualInvoiceSum,
         invoiceSum: fields.invoiceSum ?? evidence.invoiceSum,
@@ -404,7 +400,9 @@ async function syncFeeData({ limit = 100 } = {}) {
                     sourceRate: fields.sourceRate ?? callbackFields.sourceRate,
                     invoiceAmount: fields.invoiceAmount ?? callbackFields.invoiceAmount,
                     commission: fields.commission ?? callbackFields.commission,
+                    actualSum: fields.actualSum ?? callbackFields.actualSum,
                     actualCommission: fields.actualCommission ?? callbackFields.actualCommission,
+                    actualFee: fields.actualFee ?? callbackFields.actualFee,
                     invoiceCommission: fields.invoiceCommission ?? callbackFields.invoiceCommission,
                     actualInvoiceSum: fields.actualInvoiceSum ?? callbackFields.actualInvoiceSum,
                     invoiceSum: fields.invoiceSum ?? callbackFields.invoiceSum,
