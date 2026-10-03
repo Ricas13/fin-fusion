@@ -181,6 +181,29 @@ async function reservedServerIfEligible(plan, serverId, requestedLocation = null
   return { ...server, selected_location: locationLabel(server.location) };
 }
 
+async function committedReservedServer(plan, serverId, requestedLocation = null, { db = query } = {}) {
+  if (!serverId || !mediaServerType(plan)) return null;
+  const provider = mediaServerType(plan);
+  const result = await db(`
+    SELECT *
+    FROM jellyfin_servers
+    WHERE id=$1
+    LIMIT 1
+  `, [serverId]);
+  const server = result.rows[0] || null;
+  if (!server) return null;
+  if (mediaProvider.normalizeType(server.media_server_type || 'jellyfin') !== provider) return null;
+  // This server was reserved under lock before the provider checkout/scheduled
+  // billing commitment. Mutable placement flags, pool membership, health and
+  // location labels must not invalidate that already-promised paid capacity.
+  return {
+    ...server,
+    selected_location: requestedLocation
+      ? locationLabel(requestedLocation)
+      : locationLabel(server.location)
+  };
+}
+
 async function assignedServer(entitlement, expectedProvider = null, { db = query } = {}) {
   const serverId = entitlement?.media_server_id;
   if (!serverId) return null;
@@ -221,7 +244,7 @@ async function persistAssignment(subscriptionId, server, { overwrite = false, db
     UPDATE subscriptions
     SET media_server_id=CASE WHEN $4::boolean OR media_server_id IS NULL THEN $2 ELSE media_server_id END,
         media_location_snapshot=CASE WHEN $4::boolean OR media_server_id IS NULL THEN $3 ELSE media_location_snapshot END,
-        media_location_preference=COALESCE(NULLIF(media_location_preference,''),$3),
+        media_location_preference=CASE WHEN $4::boolean OR media_location_preference IS NULL OR media_location_preference='' THEN $3 ELSE media_location_preference END,
         updated_at=NOW()
     WHERE id=$1
     RETURNING media_server_id,media_location_preference,media_location_snapshot
@@ -243,6 +266,7 @@ module.exports = {
   selectServerForLocationLocked,
   matchesPreference,
   reservedServerIfEligible,
+  committedReservedServer,
   assignedServer,
   persistAssignment
 };
