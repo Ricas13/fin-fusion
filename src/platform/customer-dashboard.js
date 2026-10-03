@@ -121,7 +121,26 @@ function createCustomerDashboardRouter(){
     const plan=found.rows[0],media=Boolean(customerServerChoice.mediaServerType(plan));
     if(!media)return res.json({media:false,requiresSelection:false,locations:[]});
     const locations=await customerServerChoice.choicesForPlan(plan);
-    return res.json({media:true,requiresSelection:locations.length>1,locations});
+    let selectedLocation=null;
+    const current=await planChange.currentRecurring(req.session.customerId,plan).catch(()=>null);
+    if(current?.media_server_id){
+      const assigned=await customerServerChoice.reservedServerIfEligible(plan,current.media_server_id,null).catch(()=>null);
+      if(assigned){
+        selectedLocation=assigned.selected_location||customerServerChoice.locationLabel(assigned.location);
+        if(!locations.some(location=>String(location.value)===String(selectedLocation))){
+          locations.push({
+            value:selectedLocation,
+            label:selectedLocation,
+            remaining:0,
+            serverCount:1,
+            testUrl:customerServerChoice.safeTestUrl(assigned.public_url),
+            existingAssignment:true
+          });
+        }
+      }
+    }
+    locations.sort((a,b)=>String(a.label||a.value).localeCompare(String(b.label||b.value)));
+    return res.json({media:true,requiresSelection:locations.length>1,selectedLocation,locations});
   }catch(error){console.warn('Customer media location state failed:',error.message);return res.status(503).json({media:true,requiresSelection:false,locations:[],error:'Server locations are temporarily unavailable.'});}});
   r.get('/account/free-access',requireCustomer,async(req,res,next)=>{
     try{
