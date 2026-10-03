@@ -1,6 +1,7 @@
 'use strict';
 
 const {query}=require('../db');
+const capacityTransition=require('./plan-capacity-transition');
 
 const LIVE_STATUSES=['active','trialing','past_due','paused'];
 const FLEET_ACCESS_HOLD_TYPES=['inactivity_policy','jellyfin_cleanup'];
@@ -288,6 +289,10 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
   return{pool:cls||'jellyfin',configuredServers,userLimit,userUsed,managedUsers,pendingUsers,reservedUsers,userRemaining,healthMode};
 }
 async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+  // Default pool-backed reads are the safe boundary for the one-time legacy
+  // zero normalization. Transaction-scoped callers have already passed a
+  // normal preflight/write boundary and must not open a second transaction.
+  if(db===query) await capacityTransition.ensure();
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
   if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
   if(model!=='fleet_users')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
