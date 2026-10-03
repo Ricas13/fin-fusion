@@ -27,6 +27,16 @@ async function countsForServers(serverIds, db = query) {
       WHERE lease.server_id=ANY($1::uuid[])
         AND lease.expires_at>NOW()
       UNION
+      -- A scheduled Stripe plan change can commit the next renewal to a
+      -- different media server weeks before it becomes the live subscription.
+      -- Count that exact future server as occupied while the change is pending
+      -- so the commercial promise cannot be oversold before Stripe switches.
+      SELECT change.target_media_server_id,change.customer_id::text
+      FROM customer_plan_changes change
+      WHERE change.target_media_server_id=ANY($1::uuid[])
+        AND change.provider='stripe'
+        AND change.state='pending'
+      UNION
       SELECT subscription.media_server_id,subscription.customer_id::text
       FROM subscriptions subscription
       WHERE subscription.media_server_id=ANY($1::uuid[])
