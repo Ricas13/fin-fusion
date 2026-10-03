@@ -150,7 +150,7 @@ async function begin({email,username,password,referralCode=null,communicationPre
             await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.pending','pending_registration',$1,$2::jsonb)`,[created.rows[0].id,JSON.stringify({email,username,expiresAt,referral:Boolean(ref),freeAccess:Boolean(freeAccess),freeHoldExpiresAt:freeReservation?.expires_at||null,freeReservationId:freeReservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
             return{...created.rows[0],freeReservation};
         });
-    }catch(error){if(capacityError(error))throw noFreePlacesError();throw error;}
+    }catch(error){if(capacityError(error)||(freeAccess&&!freeMediaLocation&&error?.code==='MEDIA_LOCATION_UNAVAILABLE'))throw noFreePlacesError();throw error;}
     if(row.freeReservation)refreshFreePlacesStatus('reservation_created');
     return{...row,token:raw};
 }
