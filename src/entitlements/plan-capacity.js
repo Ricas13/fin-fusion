@@ -173,7 +173,25 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
     LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
     WHERE s.superseded_by IS NULL AND s.starts_at<=NOW()
       AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
-      AND COALESCE(NULLIF(s.commercial_snapshot->>'serverClass',''),p.server_class)=$1
+      AND EXISTS(
+        SELECT 1
+        FROM jellyfin_servers overlap_server
+        WHERE COALESCE(overlap_server.media_server_type,'jellyfin')='jellyfin'
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility current_map WHERE current_map.plan_id=$4 AND current_map.server_id=overlap_server.id)
+            OR (
+              NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any WHERE current_any.plan_id=$4)
+              AND overlap_server.server_class=$1
+            )
+          )
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility pending_map WHERE pending_map.plan_id=p.id AND pending_map.server_id=overlap_server.id)
+            OR (
+              NOT EXISTS(SELECT 1 FROM plan_server_eligibility pending_any WHERE pending_any.plan_id=p.id)
+              AND overlap_server.server_class=p.server_class
+            )
+          )
+      )
       AND (
         (o.permanent_access=TRUE AND o.revoked_at IS NULL)
         OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
@@ -201,20 +219,49 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         WHERE existing.customer_id=s.customer_id
           AND existing.disabled=FALSE
           AND existing.account_purpose='jellyfin'
-          AND existing_server.server_class=$1
           AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
-      )`,[cls,LIVE_STATUSES,FLEET_ACCESS_HOLD_TYPES]);
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_map WHERE current_existing_map.plan_id=$4 AND current_existing_map.server_id=existing_server.id)
+            OR (
+              NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_any WHERE current_existing_any.plan_id=$4)
+              AND existing_server.server_class=$1
+            )
+          )
+      )`,[cls,LIVE_STATUSES,FLEET_ACCESS_HOLD_TYPES,plan.id]);
   const checkoutHold=checkoutReservationSql('i');
   const checkout=await db(`SELECT COUNT(*)::int AS reserved_users
     FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
     WHERE ${checkoutHold}
       AND p.service_type IN('jellyfin','bundle')
-      AND COALESCE(NULLIF(i.commercial_snapshot->>'serverClass',''),p.server_class)=$1
-      AND ($2::uuid IS NULL OR i.id<>$2::uuid)`,[cls,excludeCheckoutIntentId]);
+      AND EXISTS(
+        SELECT 1 FROM jellyfin_servers overlap_server
+        WHERE COALESCE(overlap_server.media_server_type,'jellyfin')='jellyfin'
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility current_map WHERE current_map.plan_id=$3 AND current_map.server_id=overlap_server.id)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any WHERE current_any.plan_id=$3) AND overlap_server.server_class=$1)
+          )
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility other_map WHERE other_map.plan_id=p.id AND other_map.server_id=overlap_server.id)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility other_any WHERE other_any.plan_id=p.id) AND overlap_server.server_class=p.server_class)
+          )
+      )
+      AND ($2::uuid IS NULL OR i.id<>$2::uuid)`,[cls,excludeCheckoutIntentId,plan.id]);
   const freeHolds=await db(`SELECT COUNT(*)::int AS reserved_users
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
-    WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
-      AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
+    WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle')
+      AND EXISTS(
+        SELECT 1 FROM jellyfin_servers overlap_server
+        WHERE COALESCE(overlap_server.media_server_type,'jellyfin')='jellyfin'
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility current_map WHERE current_map.plan_id=$3 AND current_map.server_id=overlap_server.id)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any WHERE current_any.plan_id=$3) AND overlap_server.server_class=$1)
+          )
+          AND (
+            EXISTS(SELECT 1 FROM plan_server_eligibility other_map WHERE other_map.plan_id=p.id AND other_map.server_id=overlap_server.id)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility other_any WHERE other_any.plan_id=p.id) AND overlap_server.server_class=p.server_class)
+          )
+      )
+      AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId,plan.id]);
   const pendingUsers=Number(pending.rows[0]?.pending_users||0),reservedUsers=Number(checkout.rows[0]?.reserved_users||0)+Number(freeHolds.rows[0]?.reserved_users||0),userUsed=managedUsers+pendingUsers,userRemaining=Math.max(0,userLimit-userUsed-reservedUsers);
   return{pool:cls||'jellyfin',configuredServers,userLimit,userUsed,managedUsers,pendingUsers,reservedUsers,userRemaining,healthMode};
 }
@@ -348,10 +395,15 @@ function fleetAvailableSql(alias='p'){
       FROM jellyfin_servers occupancy_server
       LEFT JOIN jellyfin_accounts capacity_account ON capacity_account.server_id=occupancy_server.id
         AND capacity_account.disabled=FALSE AND capacity_account.account_purpose='jellyfin'
-      WHERE occupancy_server.server_class=${alias}.server_class
-        AND COALESCE(occupancy_server.media_server_type,'jellyfin')='jellyfin'
+      WHERE COALESCE(occupancy_server.media_server_type,'jellyfin')='jellyfin'
         AND occupancy_server.max_users IS NOT NULL
-        AND ${occupancyRestriction}
+        AND (
+          EXISTS(SELECT 1 FROM plan_server_eligibility occupancy_map WHERE occupancy_map.plan_id=${alias}.id AND occupancy_map.server_id=occupancy_server.id)
+          OR (
+            NOT EXISTS(SELECT 1 FROM plan_server_eligibility occupancy_any WHERE occupancy_any.plan_id=${alias}.id)
+            AND occupancy_server.server_class=${alias}.server_class
+          )
+        )
         AND occupancy_server.enabled=TRUE
         AND occupancy_server.allow_new_users=TRUE
         AND COALESCE(occupancy_server.placement_mode,'active')='active'
@@ -423,7 +475,7 @@ function fleetAvailableSql(alias='p'){
 }
 function acquisitionSql(alias='p'){
   const fleetPlan=`(${alias}.service_type IN('jellyfin','bundle'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
-  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}))`;
+  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${manualAvailable}))`;
 }
 
 module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
