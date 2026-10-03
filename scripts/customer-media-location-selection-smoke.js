@@ -150,6 +150,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   const planChange = fs.readFileSync('src/payments/customer-plan-change.js', 'utf8');
   const userCapacity = fs.readFileSync('src/jellyfin/user-capacity.js', 'utf8');
   const mediaReconcile = fs.readFileSync('src/jellyfin/media-service-reconciliation.js', 'utf8');
+  const providerRecovery = fs.readFileSync('src/payments/provider-operation-recovery.js', 'utf8');
+  const adminServers = fs.readFileSync('src/platform/admin-servers.js', 'utf8');
   const migration = fs.readFileSync('db/migrations/20261003113000_customer_media_location_assignment.sql', 'utf8');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
@@ -171,6 +173,15 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(planChange.includes('change.target_media_location') && planChange.includes('reservedServerIfEligible') && planChange.includes('selectServerForLocationLocked'), 'scheduled plan changes must revalidate their chosen location under row locks and reuse the old server only when it remains eligible');
   assert(migration.includes('ALTER TABLE customer_plan_changes') && migration.includes('target_media_location'), 'scheduled plan changes must retain their target media location across provider renewal boundaries');
   assert(userCapacity.includes('checkout.media_server_id IS NULL') && userCapacity.includes('reservation.media_server_id IS NULL'), 'N-1 generic checkout/free holds must conservatively protect physical server capacity during rolling deploys');
+  assert(lifecyclePrimitives.includes('committedReservedServer') && lifecyclePrimitives.includes('media_server_unavailable_after_provider_settlement'), 'paid settlement must honor the exact server reserved before payment and surface any remaining media failure as paid-but-unfulfilled');
+  assert(planChange.includes('targetMediaLocation:mediaLocation||null') && planChange.includes('targetMediaServerId:mediaServer?.id||null'), 'immediate Stripe recovery snapshots must retain the paid target media assignment');
+  assert(planChange.includes('!providerMutationAttempted&&placementReservation?.placement_lease_id'), 'an immediate Stripe mutation attempt must retain its placement lease until provider truth is reconciled');
+  assert(planChange.includes('reserveScheduledMediaPlacement') && planChange.includes('target_media_server_id'), 'period-end Stripe changes must reserve and persist their future media server through renewal');
+  assert(providerRecovery.includes('request.targetMediaLocation') && providerRecovery.includes('request.targetMediaServerId'), 'provider-operation recovery must restore location/server assignment after provider-success/local-failure');
+  assert(provisioning.includes('SELECT 1 FROM subscriptions') && provisioning.includes('media_server_id=$2'), 'provisioning capacity checks must recognize the customer\'s own active subscription reservation');
+  assert(migration.includes('target_media_server_id') && migration.includes('customer_plan_changes_target_media_server_id_fkey'), 'scheduled paid media reservations must survive process restarts and block destructive server deletion');
+  assert(adminServers.includes('providerChanged&&occupied>0'), 'server provider conversion must be blocked while paid/free customer capacity is occupied or reserved');
+  assert(fs.readFileSync('src/jellyfin/customer-server-choice.js','utf8').includes('$4::boolean OR media_location_preference'), 'explicit admin migration must overwrite the sticky location preference together with the server assignment');
 
   console.log('customer media location selection smoke: ok');
 })().catch(error => {
