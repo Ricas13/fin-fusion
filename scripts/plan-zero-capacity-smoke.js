@@ -33,32 +33,35 @@ const inactivity=read('src/automation/customer-inactivity.js')+read('src/automat
 const freeCapacityBackfill=read('src/automation/free-capacity-backfill.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
-// Jellyfin plans no longer own an inventory number. Server max_users is the
-// only customer-capacity input, with exactly one managed customer per place.
-assert(create.includes('name="capacityLimit" required'),'legacy plan storage field must remain available for compatible plan creation');
-assert(createBrowser.includes("if(availability)availability.hidden=!stremio")&&createBrowser.includes("if(jellyfin)capacityLimit.value='0'"),'Jellyfin plan creation must hide the duplicate plan inventory field and keep it neutral internally');
-assert(inventory.includes("usage.model==='fleet_users'")&&inventory.includes('One managed Jellyfin customer = one place'),'Jellyfin plan inventory must be derived from server user capacity');
-assert(inventory.includes('managed users:')&&inventory.includes('customers still owed an account:')&&inventory.includes('temporary reservations:'),'Jellyfin availability must explain managed, owed and held customer places');
+// Physical servers own max_users; plans own an independent acquisition cap.
+// Effective availability is the tighter of those two constraints.
+assert(create.includes('name="capacityLimit" required'),'plan creation must expose the plan-owned customer cap');
+assert(createBrowser.includes('availability.hidden=false'),'Jellyfin creation must keep the plan availability card visible');
+assert(!createBrowser.includes("if(jellyfin)capacityLimit.value='0'"),'switching plan type must not silently overwrite the plan cap');
+assert(inventory.includes("usage.model==='fleet_users'")&&inventory.includes('Plan cap + physical server guardrail'),'Jellyfin plan inventory must show both independent capacity constraints');
+assert(inventory.includes('managed users')&&inventory.includes('customers still owed an account')&&inventory.includes('temporarily reserved'),'Jellyfin availability must explain physical occupancy and pending demand');
 assert(!inventory.includes('server stream capacity')&&!inventory.includes('Fleet stream capacity')&&!inventory.includes('Sold / held streams'),'admin plan inventory must not expose retired stream-weighted capacity language');
-assert(serverForm.includes('Customer capacity')&&serverForm.includes('Every Jellyfin customer uses exactly one place'),'server configuration must define max_users as customer-user capacity');
-assert(!serverForm.includes('Sellable stream capacity')&&!serverForm.includes('3-stream plan consumes'),'server configuration must not describe capacity as stream inventory');
-assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'Jellyfin fleet availability must be expressed only in customer places');
-assert(capacitySource.includes("NOT public.subscription_admin_removed(s.customer_id,'jellyfin')")&&capacitySource.includes("NOT public.subscription_admin_removed(pending_subscription.customer_id,'jellyfin')"),'admin-removed Jellyfin customers must not consume storefront fleet capacity in either live usage or acquisition SQL');
-assert(capacitySource.includes('function freePendingUnblockedSql')&&capacitySource.includes("hold_type NOT IN('payment_delinquency','inactivity_policy','jellyfin_cleanup')"),'Free pending capacity must share the canonical Free-lane blocker precedence');
+assert(serverForm.includes('Customer capacity')&&serverForm.includes('Every Jellyfin customer uses exactly one place'),'server configuration must still define physical max_users capacity');
+assert(!serverForm.includes('freeFirstPlaybackGraceDays')&&!serverForm.includes('freePlaybackWindowDays')&&!serverForm.includes('freeMinimumPlaybackMinutes'),'server UI must not expose plan-owned Free inactivity thresholds');
+assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'Jellyfin physical availability must remain one-user-one-place');
+assert(capacitySource.includes('async function mediaPlanUsage')&&capacitySource.includes('function mediaPlanAcquisitionSql'),'Jellyfin plan caps must count canonical current entitlement episodes in runtime and storefront SQL');
+assert(capacitySource.includes('service_extension_days')&&capacitySource.includes("subscription_admin_present"),'extension/permanent/admin-present access must continue consuming a plan place');
+assert(capacitySource.includes("NOT public.subscription_admin_removed(s.customer_id,'jellyfin')")&&capacitySource.includes("NOT public.subscription_admin_removed(pending_subscription.customer_id,'jellyfin')"),'admin-removed Jellyfin customers must not consume physical pending capacity');
+assert(capacitySource.includes('function freePendingUnblockedSql')&&capacitySource.includes("hold_type NOT IN('payment_delinquency','inactivity_policy','jellyfin_cleanup')"),'Free pending physical capacity must share canonical blocker precedence');
 assert(capacitySource.includes("public.subscription_admin_present(${subscriptionAlias}.customer_id,'jellyfin',${subscriptionAlias}.id)"),'Permanent/admin-present authority must override automatic Free holds in pending capacity');
 assert(freeCapacityBackfill.includes("planCapacity.freePendingUnblockedSql('s','free_pending_hold')"),'Free capacity backfill must filter canonical blockers before applying its queue limit');
 assert(freeCapacityBackfill.includes("NOT public.subscription_admin_removed(s.customer_id,'jellyfin')"),'Free capacity backfill must not treat explicit admin removals as customers waiting for a Jellyfin account');
-assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'capacity must not depend on plan streams or raw Jellyfin total-user metrics');
+assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'capacity must not depend on plan stream allowances or raw Jellyfin total-user metrics');
 assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource.includes('COUNT(DISTINCT customer_id)')&&userCapacitySource.includes("ja.account_purpose='jellyfin'")&&userCapacitySource.includes('ja.disabled=FALSE')&&userCapacitySource.includes('jellyfin_account_creation_intents')&&userCapacitySource.includes('jellyfin_server_placement_leases'),'canonical server capacity must count each managed customer exactly once across persisted accounts, creation intents and active placement leases');
-assert(capacitySource.includes("key=model==='fleet_users'?`fleet-users:${serverClass(plan)||'unclassified'}`"),'all Jellyfin plans sharing a server class must serialize acquisition against the same user-capacity lock');
-assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'server user capacity must still honor automatic placement health/state');
-assert(plansList.includes("state.model==='fleet_users'")&&plansList.includes('View server user capacity'),'Plans must display server user capacity rather than stream inventory');
+assert(capacitySource.includes("key=model==='fleet_users'?'fleet-users':"),'all media-fleet acquisitions must serialize against the shared physical-capacity lock');
+assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'physical server capacity must still honor placement health/state');
+assert(plansList.includes('Manage plan & server capacity'),'Plans must expose both plan and physical capacity');
 assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative capacity recheck');
-assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must continue to admit explicit zero capacity for non-Jellyfin/manual inventory');
+assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must continue to admit explicit zero capacity');
 assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'free'}),'fleet_users');
 assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'premium'}),'fleet_users');
-assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'custom'}),'fleet_users','custom Jellyfin plans must also derive capacity from their servers');
-assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'custom'}),'fleet_users','bundle plans containing Jellyfin must derive capacity from servers');
+assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'custom'}),'fleet_users','custom Jellyfin plans must use physical server capacity plus their plan cap');
+assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'custom'}),'fleet_users','bundle plans containing Jellyfin must use physical server capacity plus their plan cap');
 
 // Stremio remains a separate household-unit product and is not part of the
 // Jellyfin user-capacity simplification.
@@ -116,6 +119,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
     if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
     if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,user_limit:0,managed_users:0}]};
     if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:0}]};
+    if(sql.includes('LEFT JOIN customer_entitlement_overrides o')&&sql.includes('AS used'))return{rowCount:1,rows:[{used:0,reserved:0}]};
     if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
     if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
     throw new Error(`Unexpected fleet capacity query: ${sql.slice(0,120)}`);
@@ -131,6 +135,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
     if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
     if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,user_limit:10,managed_users:7}]};
     if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
+    if(sql.includes('LEFT JOIN customer_entitlement_overrides o')&&sql.includes('AS used'))return{rowCount:1,rows:[{used:9,reserved:1}]};
     if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
     if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:1}]};
     throw new Error(`Unexpected occupied fleet capacity query: ${sql.slice(0,120)}`);
@@ -141,6 +146,21 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
   assert.strictEqual(occupied.reservedUsers,1);
   assert.strictEqual(occupied.remaining,0,'7 managed + 2 owed + 1 held must fill a 10-user server pool');
   assert.strictEqual(occupied.soldOut,true);
+
+  const cappedFleetDb=async(sql)=>{
+    if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'capped-plan',capacity_limit:50,service_type:'jellyfin',server_class:'premium',billing_interval:'month',price_minor:600,is_free_tier:false}]};
+    if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
+    if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:2,user_limit:400,managed_users:100}]};
+    if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:0}]};
+    if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
+    if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
+    if(sql.includes('LEFT JOIN customer_entitlement_overrides o')&&sql.includes('AS used'))return{rowCount:1,rows:[{used:40,reserved:5}]};
+    throw new Error(`Unexpected capped fleet capacity query: ${sql.slice(0,120)}`);
+  };
+  const capped=await capacity.usage('capped-plan',cappedFleetDb);
+  assert.strictEqual(capped.userLimit,400,'physical fleet capacity remains independent');
+  assert.strictEqual(capped.limit,50,'plan owns its commercial acquisition cap');
+  assert.strictEqual(capped.remaining,5,'plan cap must stop acquisition before a much larger physical fleet is full');
 
   assert.deepStrictEqual(capacity.scarcity({remaining:2,soldOut:false,pool:'premium',plan:{billing_interval:'month',service_type:'jellyfin'}}),{label:'🔥 Only 2 Premium places left',kind:'urgent'});
   assert.deepStrictEqual(capacity.scarcity({remaining:8,soldOut:false,pool:'free',plan:{billing_interval:'month',service_type:'jellyfin'}}),{label:'Only 8 Free places left',kind:'limited'});
