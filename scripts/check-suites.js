@@ -86,6 +86,7 @@ module.exports = {
       "node scripts/server-form-validation-smoke.js",
       "node scripts/server-status-timestamp-smoke.js",
       "node scripts/server-placement-smoke.js",
+      "node scripts/customer-media-location-selection-smoke.js",
       "node scripts/server-control-consolidation-smoke.js",
       "node scripts/invitations-smoke.js",
       "node scripts/provisioning-control-smoke.js",
