@@ -195,6 +195,7 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
     serviceLabel:mediaLabel(account),
     accessLabel:accessLabel(account),
     serverName:account.server_name||`${mediaLabel(account)} server`,
+    serverLocation:account.server_location||entitlement?.media_location_snapshot||entitlement?.media_location_preference||'',
     publicUrl:account.public_url||'',
     username:account.jellyfin_username||'',
     accessLane:account.access_lane||'primary',
