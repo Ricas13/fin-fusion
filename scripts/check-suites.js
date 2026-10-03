@@ -247,6 +247,7 @@ module.exports = {
       "node scripts/state-machine-invariants-db-smoke.js",
       "node scripts/adversarial-concurrency-smoke.js",
       "node scripts/provisioning-control-db-smoke.js",
+      "node scripts/customer-media-location-selection-db-smoke.js",
       "node scripts/jellyfin-account-creation-recovery-db-smoke.js",
       "npm run check:discount-checkout-db",
       "npm run check:post443-payment-db",
