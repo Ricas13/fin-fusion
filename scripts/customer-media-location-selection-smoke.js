@@ -164,7 +164,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(lifecycle.includes('selectServerForLocationLocked'), 'Free and trial activation must serialize concrete server selection');
   assert(lifecyclePrimitives.includes('selectServerForLocationLocked'), 'paid settlement fallback must serialize server reselection inside the chosen location');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'recurring checkout must forward the chosen media location into the plan-change workflow');
-  assert(dashboard.includes('selectedLocation') && dashboard.includes('existingAssignment:true'), 'customer location discovery must preserve an existing eligible assignment even when its physical server is full');
+  assert(dashboard.includes('selectedLocation') && dashboard.includes('existingAssignment:true') && dashboard.includes('safeTestUrl(assigned)'), 'customer location discovery must preserve an existing eligible assignment, including its safe performance-test URL, even when its physical server is full');
   assert(checkoutClient.includes('payload.selectedLocation') && checkoutClient.includes('setMediaLocation(card,preferred)'), 'checkout UI must preselect a reusable existing location without removing the customer choice');
   assert(planChange.includes('reservedServerIfEligible(target,current.media_server_id,mediaLocation||null)'), 'plan changes must reuse an eligible current server before applying new-customer availability rules');
   assert(planChange.includes('target_media_location') && planChange.includes('media_location_preference=$13') && planChange.includes('media_server_id=$14'), 'plan changes must persist their target location and concrete sticky assignment');
