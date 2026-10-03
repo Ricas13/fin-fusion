@@ -109,7 +109,10 @@ async function freeClaimRace() {
     };
 
     try{
-        const results=await Promise.allSettled([lifecycle.claimFreePlan(c.id,p.code),lifecycle.claimFreePlan(c.id,p.code)]);
+        const results=await Promise.allSettled([
+            lifecycle.claimFreePlan(c.id,p.code,{mediaLocation:'Race Test'}),
+            lifecycle.claimFreePlan(c.id,p.code,{mediaLocation:'Race Test'})
+        ]);
         assert.strictEqual(results.filter(x=>x.status==='fulfilled').length,1,'Concurrent free claim must produce exactly one successful claim');
         assert.strictEqual(results.filter(x=>x.status==='rejected').length,1,'Concurrent free claim must reject the duplicate claim');
         const count=await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND status IN('active','trialing','past_due','paused') AND current_period_end>NOW()`,[c.id,p.id]);
