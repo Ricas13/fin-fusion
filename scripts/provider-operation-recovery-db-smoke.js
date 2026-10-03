@@ -110,7 +110,7 @@ async function testAConcurrentRecurringSerialization() {
 }
 
 async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
-    const tag = suffix(), c = await customer(`bhi-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Plan', 2000);
+    const tag = suffix(), c = await customer(`bhi-${tag}`), competing = await customer(`bhi-competing-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Plan', 2000);
     const oldServer = await mediaServer(`old-${tag}`, 'Old Region', 10), targetServer = await mediaServer(`target-${tag}`, 'London', 1);
     const providerId = `sub_recovery_bhi_${tag}`, targetPrice = `price_recovery_target_${tag}`, sub = await subscription(c.id, oldPlan.id, providerId);
     await query(`UPDATE subscriptions SET media_server_id=$2,media_location_preference='Old Region',media_location_snapshot='Old Region' WHERE id=$1`, [sub.id, oldServer.id]);
@@ -126,6 +126,11 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     assert.strictEqual(unresolved.state, 'provider_applied', 'B/H: provider success plus local failure must remain provider_applied');
     assert.strictEqual(unresolved.failure_kind, 'retryable', 'B/H: local failure after provider success must remain retryable');
     assert.strictEqual((await row('subscriptions', sub.id)).plan_id, oldPlan.id, 'H: failed local write must leave old local plan in place');
+    await assert.rejects(
+        provisioningHelpers.reservePlacement(competing.id,targetServer),
+        error=>error?.code==='JELLYFIN_SERVER_CAPACITY_CHANGED',
+        'H: provider-success/local-failure recovery must keep the paid target server reserved even without a live placement lease'
+    );
     await forceDue(op.id);
     const result = await recovery.run({ limit: 10 });
     assert.strictEqual(result.reconciled, 1, 'B/H: reconciler must complete the missing local side');
