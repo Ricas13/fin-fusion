@@ -330,6 +330,35 @@ function legacyAcquisitionSql(alias='p'){
     WHERE ci.plan_id=${alias}.id AND ${checkoutHold}
   )))`;
 }
+function planPoolServerSql(planAlias,serverAlias){
+  return `(
+    EXISTS(
+      SELECT 1 FROM plan_server_eligibility pool_map
+      JOIN jellyfin_servers pool_mapped_server ON pool_mapped_server.id=pool_map.server_id
+      WHERE pool_map.plan_id=${planAlias}.id
+        AND pool_map.server_id=${serverAlias}.id
+        AND COALESCE(pool_mapped_server.media_server_type,'jellyfin')='jellyfin'
+    )
+    OR (
+      NOT EXISTS(
+        SELECT 1 FROM plan_server_eligibility pool_any
+        JOIN jellyfin_servers pool_any_server ON pool_any_server.id=pool_any.server_id
+        WHERE pool_any.plan_id=${planAlias}.id
+          AND COALESCE(pool_any_server.media_server_type,'jellyfin')='jellyfin'
+      )
+      AND ${serverAlias}.server_class=${planAlias}.server_class
+    )
+  )`;
+}
+function planPoolOverlapSql(leftPlanAlias,rightPlanAlias){
+  return `EXISTS(
+    SELECT 1 FROM jellyfin_servers overlap_server
+    WHERE COALESCE(overlap_server.media_server_type,'jellyfin')='jellyfin'
+      AND ${planPoolServerSql(leftPlanAlias,'overlap_server')}
+      AND ${planPoolServerSql(rightPlanAlias,'overlap_server')}
+  )`;
+}
+
 function fleetRestrictionSql(planAlias,serverAlias){
   return `(NOT EXISTS(
     SELECT 1 FROM plan_server_eligibility capacity_restriction
@@ -348,13 +377,7 @@ function fleetConfiguredSql(alias='p'){
     SELECT 1 FROM jellyfin_servers configured_server
     WHERE COALESCE(configured_server.media_server_type,'jellyfin')='jellyfin'
       AND configured_server.max_users IS NOT NULL
-      AND (
-        EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id AND x.server_id=configured_server.id)
-        OR (
-          NOT EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id)
-          AND configured_server.server_class=${alias}.server_class
-        )
-      )
+      AND ${planPoolServerSql(alias,'configured_server')}
   ))`;
 }
 function fleetAvailableSql(alias='p'){
@@ -375,13 +398,7 @@ function fleetAvailableSql(alias='p'){
     FROM jellyfin_servers capacity_server
     WHERE COALESCE(capacity_server.media_server_type,'jellyfin')='jellyfin'
       AND capacity_server.max_users IS NOT NULL
-      AND (
-        EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id AND x.server_id=capacity_server.id)
-        OR (
-          NOT EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id)
-          AND capacity_server.server_class=${alias}.server_class
-        )
-      )
+      AND ${planPoolServerSql(alias,'capacity_server')}
       AND capacity_server.enabled=TRUE
       AND capacity_server.allow_new_users=TRUE
       AND COALESCE(capacity_server.placement_mode,'active')='active'
@@ -397,13 +414,7 @@ function fleetAvailableSql(alias='p'){
         AND capacity_account.disabled=FALSE AND capacity_account.account_purpose='jellyfin'
       WHERE COALESCE(occupancy_server.media_server_type,'jellyfin')='jellyfin'
         AND occupancy_server.max_users IS NOT NULL
-        AND (
-          EXISTS(SELECT 1 FROM plan_server_eligibility occupancy_map WHERE occupancy_map.plan_id=${alias}.id AND occupancy_map.server_id=occupancy_server.id)
-          OR (
-            NOT EXISTS(SELECT 1 FROM plan_server_eligibility occupancy_any WHERE occupancy_any.plan_id=${alias}.id)
-            AND occupancy_server.server_class=${alias}.server_class
-          )
-        )
+        AND ${planPoolServerSql(alias,'occupancy_server')}
         AND occupancy_server.enabled=TRUE
         AND occupancy_server.allow_new_users=TRUE
         AND COALESCE(occupancy_server.placement_mode,'active')='active'
@@ -420,7 +431,7 @@ function fleetAvailableSql(alias='p'){
     WHERE pending_subscription.superseded_by IS NULL
       AND pending_subscription.starts_at<=NOW()
       AND COALESCE(NULLIF(pending_subscription.service_type_snapshot,''),pending_plan.service_type,'jellyfin') IN('jellyfin','bundle')
-      AND COALESCE(NULLIF(pending_subscription.commercial_snapshot->>'serverClass',''),pending_plan.server_class)=${alias}.server_class
+      AND ${planPoolOverlapSql(alias,'pending_plan')}
       AND (
         (pending_override.permanent_access=TRUE AND pending_override.revoked_at IS NULL)
         OR (pending_subscription.status IN('active','trialing','past_due','paused') AND pending_subscription.current_period_end>NOW())
@@ -448,8 +459,8 @@ function fleetAvailableSql(alias='p'){
         WHERE existing_account.customer_id=pending_subscription.customer_id
           AND existing_account.disabled=FALSE
           AND existing_account.account_purpose='jellyfin'
-          AND existing_server.server_class=${alias}.server_class
           AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
+          AND ${planPoolServerSql(alias,'existing_server')}
       )
   )`;
   const checkoutHold=checkoutReservationSql('capacity_checkout');
@@ -459,7 +470,7 @@ function fleetAvailableSql(alias='p'){
     JOIN plans checkout_plan ON checkout_plan.id=capacity_checkout.plan_id
     WHERE ${checkoutHold}
       AND checkout_plan.service_type IN('jellyfin','bundle')
-      AND COALESCE(NULLIF(capacity_checkout.commercial_snapshot->>'serverClass',''),checkout_plan.server_class)=${alias}.server_class
+      AND ${planPoolOverlapSql(alias,'checkout_plan')}
   )`;
   const freeHolds=`(
     SELECT COUNT(*)
@@ -469,7 +480,7 @@ function fleetAvailableSql(alias='p'){
       AND capacity_free_hold.released_at IS NULL
       AND capacity_free_hold.expires_at>NOW()
       AND free_plan.service_type IN('jellyfin','bundle')
-      AND free_plan.server_class=${alias}.server_class
+      AND ${planPoolOverlapSql(alias,'free_plan')}
   )`;
   return `(${userCapacity} >= (${managedUsers} + ${pendingUsers} + ${checkoutHolds} + ${freeHolds} + 1))`;
 }
