@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { getPool } = require('../src/db');
 const migrationEpochs = require('./migration-epochs');
+const compatibilityMigrations = require('../src/db-compatibility-migrations');
 
 const LEGACY_BRIDGE_COMMIT = migrationEpochs.CURRENT_EPOCH.legacyBridgeCommit;
 const CURRENT_BASELINE_FILE = migrationEpochs.CURRENT_EPOCH.baselineFile;
@@ -160,6 +161,23 @@ async function adoptBaseline(pool, filename, checksum) {
     console.log(`adopt ${filename}`);
 }
 
+async function applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query("SELECT pg_catalog.set_config('search_path','public',false)");
+        await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
+        await client.query(unwrapTransaction(sql));
+        await client.query('COMMIT');
+        console.log(`compatibility applied ${filename}`);
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 async function applyMigration(pool, filename, sql, checksum, freshInstall) {
     const client = await pool.connect();
     try {
@@ -224,6 +242,12 @@ async function runMigrations({ argv = process.argv.slice(2), pool = getPool(), c
         for (const filename of files) {
             const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
             const checksum = migrationChecksum(sql);
+
+            if (compatibilityMigrations.isRepeatableCompatibilityMigration(filename)) {
+                await applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall);
+                continue;
+            }
+
             const verification = await verifyOrBaselineAppliedMigration(pool, filename, checksum, options);
             repairedDrift = repairedDrift || verification.repairedDrift;
             if (verification.applied) {
@@ -271,5 +295,6 @@ module.exports = {
     parseArguments,
     databaseShape,
     verifyOrBaselineAppliedMigration,
+    applyRepeatableCompatibilityMigration,
     runMigrations
 };
