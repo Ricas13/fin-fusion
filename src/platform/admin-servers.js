@@ -211,6 +211,7 @@ async function updateServer(actorUserId, serverId, form) {
         if(!locked)throw new Error('Server not found.');
         const counts=await userCapacity.countsForServers([serverId],(sql,params)=>client.query(sql,params));
         const occupied=Number(counts.get(String(serverId))||0);
+        if(providerChanged&&occupied>0)throw invalidField('mediaServerType',`Media server type cannot be changed while ${occupied} customer place(s) are occupied or reserved. Complete, cancel, migrate or release those commitments before converting this server between Jellyfin and Emby.`);
         if(Number(form.maxUsers)<occupied)throw invalidField('maxUsers',`Maximum users cannot be lower than the ${occupied} customer place(s) already occupied or reserved on this server.`);
         const result = await client.query(`UPDATE jellyfin_servers SET name=$2,slug=$3,server_class=$4,media_server_type=$5,base_url=$6,public_url=$7,location=$8,
             priority=$9,max_users=$10,allow_new_users=$11,trial_enabled=$12,paid_enabled=$13,
