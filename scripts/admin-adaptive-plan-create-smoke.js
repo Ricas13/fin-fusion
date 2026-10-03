@@ -33,7 +33,7 @@ assert.equal(free.priceMinor, 0, 'free Jellyfin must force a zero price');
 assert.equal(free.billing, 'month', 'free Jellyfin keeps a canonical internal billing value');
 assert.equal(free.duration, 30, 'free Jellyfin keeps a canonical internal duration');
 assert.equal(free.serverClass, 'free', 'free Jellyfin must force free placement class');
-assert.deepStrictEqual(free.inactivityPolicy, {}, 'new Free plans must inherit the global activity policy rather than store lifecycle controls');
+assert.deepStrictEqual(free.inactivityPolicy, {}, 'new Free plans must begin with no plan threshold override so legacy server thresholds remain the safe fallback until explicitly configured');
 
 const paid = parse(base({ planKind: 'paid_jellyfin', price: '6.00', billingInterval: 'month', serverClass: 'premium' }), 'GBP');
 assert.equal(paid.planKind, 'paid_jellyfin');
@@ -64,7 +64,9 @@ assert.match(freeHtml, /Free Jellyfin/);
 assert.match(freeHtml, /Paid Jellyfin/);
 assert.match(freeHtml, /Household connections/);
 assert.match(freeHtml, /data-commercial-card hidden/, 'free plan should render commercial card hidden');
-assert.doesNotMatch(freeHtml, /data-free-lifecycle|inactivityEnabled|inactivityDryRun|noPlaybackDays|minimumPlaybackMinutes/, 'plan creation must not expose configurable Jellyfin lifecycle controls');
+assert.doesNotMatch(freeHtml, /inactivityEnabled|inactivityDryRun|noPlaybackDays|minimumPlaybackMinutes/, 'plan creation must not duplicate the Free inactivity editor');
+assert.match(freeHtml, /Maximum customers on this plan/);
+assert.match(freeHtml, /legacy server thresholds remain the compatibility fallback/);
 
 const stremioHtml = form({ session: {}, query: { type: 'stremio' } }, {}, '', 'GBP');
 assert.match(stremioHtml, /name="stremioHouseholdNetworkLimit"/);
@@ -80,6 +82,8 @@ assert.doesNotMatch(source, /child_process|execSync|spawnSync/);
 assert.match(browser, /free_jellyfin/);
 assert.match(browser, /paid_jellyfin/);
 assert.match(browser, /data-plan-kind/);
+assert.match(browser, /availability\.hidden=false/);
+assert.doesNotMatch(browser, /if\(jellyfin\)capacityLimit\.value='0'/, 'switching to Jellyfin must not overwrite the operator\'s plan cap');
 assert.match(css, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(css, /@media\(max-width:820px\)/);
 assert.match(css, /grid-template-columns:1fr/);
