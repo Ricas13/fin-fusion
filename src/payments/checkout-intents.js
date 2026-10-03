@@ -202,6 +202,21 @@ async function createIntent({
                 const selected=await customerServerChoice.selectServerForLocationLocked(plan,snapshot.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
                 mediaServerId=selected?.id||null;
                 snapshot={...snapshot,mediaLocation:selected?.selected_location||snapshot.mediaLocation||null,mediaServerId};
+                if(mediaServerId&&customerId){
+                    // Rolling-deploy compatibility: N-1 web code cannot read the
+                    // new checkout.media_server_id reservation, but it already
+                    // understands placement leases. Keep a short bridge lease so
+                    // the old generation also sees this slot as occupied during
+                    // cutover. The exact checkout row remains the long-lived
+                    // authority in the new generation.
+                    await client.query(`
+                        INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at)
+                        VALUES($1,$2,LEAST($3::timestamptz,NOW()+INTERVAL '15 minutes'))
+                        ON CONFLICT(customer_id,server_id) DO UPDATE SET
+                          expires_at=GREATEST(jellyfin_server_placement_leases.expires_at,EXCLUDED.expires_at),
+                          updated_at=NOW()
+                    `,[customerId,mediaServerId,expires]);
+                }
             }
         }
         const created = await client.query(`
