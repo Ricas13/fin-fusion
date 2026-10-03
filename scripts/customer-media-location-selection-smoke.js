@@ -147,7 +147,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(lifecyclePrimitives.includes('selectServerForLocationLocked'), 'paid settlement fallback must serialize server reselection inside the chosen location');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'recurring checkout must forward the chosen media location into the plan-change workflow');
   assert(planChange.includes('target_media_location') && planChange.includes('media_location_preference=$13') && planChange.includes('media_server_id=$14'), 'plan changes must persist their target location and concrete sticky assignment');
-  assert(planChange.includes('change.target_media_location') && planChange.includes('reservedServerIfEligible') && planChange.includes('selectServerForLocation'), 'scheduled plan changes must revalidate their chosen location and reuse the old server only when it remains eligible');
+  assert(planChange.includes('change.target_media_location') && planChange.includes('reservedServerIfEligible') && planChange.includes('selectServerForLocationLocked'), 'scheduled plan changes must revalidate their chosen location under row locks and reuse the old server only when it remains eligible');
   assert(migration.includes('ALTER TABLE customer_plan_changes') && migration.includes('target_media_location'), 'scheduled plan changes must retain their target media location across provider renewal boundaries');
   assert(userCapacity.includes('checkout.media_server_id IS NULL') && userCapacity.includes('reservation.media_server_id IS NULL'), 'N-1 generic checkout/free holds must conservatively protect physical server capacity during rolling deploys');
 
