@@ -93,6 +93,28 @@ async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheck
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
 }
+async function mediaPlanUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
+  const checkoutHold=checkoutReservationSql('i');
+  const result=await db(`SELECT
+      (SELECT COUNT(DISTINCT s.customer_id)::int
+       FROM subscriptions s
+       LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW()
+         AND (
+           (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+           OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+           OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+           OR (
+             COALESCE(s.service_extension_days,0)>0
+             AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+             AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW()
+           )
+         )) AS used,
+      ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
+       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+  const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
+  return {limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit};
+}
 async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
@@ -278,7 +300,7 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
   // of that fleet it is allowed to sell. The effective availability is the
   // tighter of the plan-specific acquisition cap and the currently available
   // places in the eligible server fleet.
-  const planUsage=await legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
+  const planUsage=await mediaPlanUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   const planLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit);
   const planRemaining=planLimit==null?null:Number(planUsage.remaining||0);
   const remaining=planRemaining==null?fleet.userRemaining:Math.max(0,Math.min(fleet.userRemaining,planRemaining));
@@ -357,6 +379,35 @@ function planPoolOverlapSql(leftPlanAlias,rightPlanAlias){
       AND ${planPoolServerSql(leftPlanAlias,'overlap_server')}
       AND ${planPoolServerSql(rightPlanAlias,'overlap_server')}
   )`;
+}
+
+function mediaPlanAcquisitionSql(alias='p'){
+  const checkoutHold=checkoutReservationSql('media_ci');
+  return `(${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
+    SELECT COUNT(DISTINCT media_s.customer_id)
+    FROM subscriptions media_s
+    LEFT JOIN customer_entitlement_overrides media_o ON media_o.customer_id=media_s.customer_id AND media_o.subscription_id=media_s.id
+    WHERE media_s.plan_id=${alias}.id
+      AND media_s.superseded_by IS NULL
+      AND media_s.starts_at<=NOW()
+      AND (
+        (media_o.permanent_access=TRUE AND media_o.revoked_at IS NULL AND media_o.subscription_id=media_s.id)
+        OR public.subscription_admin_present(media_s.customer_id,'jellyfin',media_s.id)
+        OR (media_s.status IN('active','trialing','past_due','paused') AND media_s.current_period_end>NOW())
+        OR (
+          COALESCE(media_s.service_extension_days,0)>0
+          AND media_s.status IN('active','trialing','past_due','paused','cancelled','expired')
+          AND (media_s.current_period_end+((media_s.service_extension_days||' days')::interval))>NOW()
+        )
+      )
+  ) + (
+    SELECT COUNT(*) FROM free_access_registration_reservations media_fr
+    WHERE media_fr.plan_id=${alias}.id
+      AND media_fr.consumed_at IS NULL AND media_fr.released_at IS NULL AND media_fr.expires_at>NOW()
+  ) + (
+    SELECT COUNT(*) FROM billing_checkout_intents media_ci
+    WHERE media_ci.plan_id=${alias}.id AND ${checkoutHold}
+  )))`;
 }
 
 function fleetRestrictionSql(planAlias,serverAlias){
@@ -485,8 +536,8 @@ function fleetAvailableSql(alias='p'){
   return `(${userCapacity} >= (${managedUsers} + ${pendingUsers} + ${checkoutHolds} + ${freeHolds} + 1))`;
 }
 function acquisitionSql(alias='p'){
-  const fleetPlan=`(${alias}.service_type IN('jellyfin','bundle'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
-  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${manualAvailable}))`;
+  const fleetPlan=`(${alias}.service_type IN('jellyfin','bundle'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias),mediaAvailable=mediaPlanAcquisitionSql(alias);
+  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${mediaAvailable}))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,mediaPlanAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql};
