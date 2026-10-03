@@ -3,9 +3,11 @@
 const { transaction } = require('../db');
 const planPricing = require('../payments/plan-pricing');
 const planContract = require('./plan-contract');
+const capacityTransition = require('../entitlements/plan-capacity-transition');
 
 async function createPlan(plan, actorUserId = null) {
   planContract.validateCreatePlan(plan);
+  await capacityTransition.ensure();
   return transaction(async client => {
     const nextOrder = Number((await client.query(
       'SELECT COALESCE(MAX(sort_order),0)+10 AS n FROM plans'
@@ -112,6 +114,7 @@ async function updateProduct({
 
 async function updateAvailability({ planId, capacityLimit, actorUserId = null }) {
   planContract.validateAvailability({ capacityLimit });
+  await capacityTransition.ensure();
   return transaction(async client => {
     const updated = await client.query(
       'UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
@@ -1023,6 +1026,7 @@ async function updatePlanInventory({
   auditMetadata = {}
 }) {
   planContract.validateAvailability({ capacityLimit });
+  await capacityTransition.ensure();
   return transaction(async client => {
     const updated = await client.query(
       `UPDATE plans
