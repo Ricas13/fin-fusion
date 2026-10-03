@@ -5,6 +5,7 @@ const serviceCatalog = require('../catalog/service-catalog');
 const planServers = require('./plan-servers');
 const userCapacity = require('./user-capacity');
 const mediaProvider = require('../media-servers/provider');
+const placement = require('./placement');
 
 function mediaServerType(plan) {
   const type = serviceCatalog.serviceType(plan);
@@ -52,7 +53,7 @@ function safeTestUrl(server) {
 async function availableServers(plan, { db = query } = {}) {
   const provider = mediaServerType(plan);
   if (!provider) return [];
-  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true }))
+  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true, db }))
     .filter(server => mediaProvider.normalizeType(server.media_server_type || 'jellyfin') === provider)
     .filter(server => serverAllowsPlan(server, plan));
   if (!servers.length) return [];
@@ -88,6 +89,34 @@ async function choicesForPlan(plan, { db = query } = {}) {
       testUrl: group.testUrl
     }))
     .sort((a, b) => a.label.localeCompare(b.label, 'en-GB'));
+}
+
+async function selectServerForLocation(plan, requested, { db = query } = {}) {
+  const provider = mediaServerType(plan);
+  if (!provider) return null;
+  const location = await resolveAcquisitionLocation(plan, requested, { db, requireSelection: true });
+  const candidates = (await availableServers(plan, { db })).filter(server => matchesPreference(server, location));
+  if (!candidates.length) {
+    const error = new Error('That server location is no longer available. Choose another location.');
+    error.code = 'MEDIA_LOCATION_UNAVAILABLE';
+    throw error;
+  }
+  const ids = candidates.map(server => server.id);
+  const playback = ids.length ? await db(`
+    SELECT server_id,COUNT(DISTINCT jellyfin_session_id)::int AS active_streams
+    FROM active_playback_sessions
+    WHERE server_id=ANY($1::uuid[])
+    GROUP BY server_id
+  `, [ids]) : { rows: [] };
+  const streams = new Map(playback.rows.map(row => [String(row.server_id), Number(row.active_streams || 0)]));
+  for (const server of candidates) server.active_streams = streams.get(String(server.id)) || 0;
+  const selected = placement.selectServer(candidates, plan?.placement_strategy);
+  if (!selected) {
+    const error = new Error('That server location is no longer available. Choose another location.');
+    error.code = 'MEDIA_LOCATION_UNAVAILABLE';
+    throw error;
+  }
+  return { ...selected, selected_location: location };
 }
 
 async function resolveAcquisitionLocation(plan, requested, { db = query, requireSelection = true } = {}) {
@@ -170,6 +199,7 @@ module.exports = {
   availableServers,
   choicesForPlan,
   resolveAcquisitionLocation,
+  selectServerForLocation,
   matchesPreference,
   assignedServer,
   persistAssignment
