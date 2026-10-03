@@ -13,6 +13,7 @@ const serviceScope=require('../entitlements/service-scope');
 const providerOps=require('./provider-operations');
 const notificationDispatch=require('../integrations/notification-dispatch');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const provisioningHelpers=require('../jellyfin/provisioning-helpers');
 const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 function planChangeRefusal(message){const error=new Error(message);error.planChangeRefusal=true;return error;}
@@ -70,20 +71,21 @@ async function replacementMapping(current,target,provider,currency,quantity){
     return providerPricing.getProviderPlan(target.code,provider,'subscription',currency,requested);
 }
 
-async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null,mediaLocation=null,mediaServerId=null}={}){
+async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null,mediaLocation=null,mediaServer=null}={}){
     mapping=mapping||await replacementMapping(current,target,'stripe',currency,accessQuantity);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
     const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_immediate',localReference:subscriptionId,idempotencyKey:`customer-plan-immediate:${subscriptionId}:${target.id}:${identity}:${proration?'prorate':'no-prorate'}`,request:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity),targetVariantKind:normalizedKind(target,mapping),targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration)}});
-    let providerMutationAttempted=false;
+    let providerMutationAttempted=false,placementReservation=null;
     try{
+        if(mediaServer)placementReservation=await provisioningHelpers.reservePlacement(current.customer_id,mediaServer);
         const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);if(remote.schedule)throw planChangeRefusal('This Stripe subscription already has a scheduled change. Cancel the pending change first.');const item=remote.items?.data?.[0];if(!item?.id)throw planChangeRefusal('Stripe subscription has no editable item.');
         providerMutationAttempted=true;
         const updated=await client.subscriptions.update(current.provider_subscription_id,{items:[{id:item.id,price:mapping.external_id}],proration_behavior:proration?'create_prorations':'none',metadata:{...(remote.metadata||{}),internal_customer_id:current.customer_id,internal_plan_id:target.id,internal_plan_price_id:mapping.plan_price_id||'',internal_access_quantity:String(mappingQuantity(target,mapping,accessQuantity))}},{idempotencyKey:op.idempotency_key});
         await providerOps.providerApplied(op.id,{providerReference:updated.id,result:{priceId:mapping.external_id,status:updated.status||null}});
-        await transaction(async db=>{await applySnapshot(db,subscriptionId,target,mapping,{mediaLocation,mediaServerId});await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,updated_at=NOW() WHERE id=$1`,[op.id]);});
+        await transaction(async db=>{await applySnapshot(db,subscriptionId,target,mapping,{mediaLocation,mediaServerId:placementReservation?.id?mediaServer?.id||null:mediaServer?.id||null});await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,updated_at=NOW() WHERE id=$1`,[op.id]);});
         const synced=await billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id});if(!synced.ok)throw new Error(`Stripe accepted the plan change, but provider verification failed: ${synced.error}`);
         await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity)}});
         return{provider:'stripe',target,mapping,providerOperationId:op.id};
-    }catch(error){await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>{});throw error;}
+    }catch(error){if(placementReservation?.placement_lease_id&&mediaServer?.id)await provisioningHelpers.releaseDefinitivePlacementFailure(current.customer_id,mediaServer.id,placementReservation.placement_lease_id).catch(()=>{});await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>{});throw error;}
 }
 
 async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null,targetMediaLocation=null}={}){
@@ -135,7 +137,7 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
     if(provider==='stripe'){
         const requested=stripeChangeTiming(current,target,timing);
         if(requested==='immediate'){
-            const changed=await setStripePlan(current,target,{proration:true,currency:target.currency,mapping,accessQuantity:quantity,mediaLocation:targetMediaLocation,mediaServerId:targetMediaServer?.id||null});
+            const changed=await setStripePlan(current,target,{proration:true,currency:target.currency,mapping,accessQuantity:quantity,mediaLocation:targetMediaLocation,mediaServer:targetMediaServer});
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.immediate','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({provider:'stripe',fromPlanId:current.plan_id,toPlanId:target.id,targetPlanPriceId:target.plan_price_id,targetAccessQuantity:quantity,targetVariantKind:kind,currency:target.currency,fromCurrency:billingMode.currencyOf(current),toCurrency:billingMode.currencyOf(target),fromMonthlyValue:monthlyValue(current),toMonthlyValue:monthlyValue(target),providerOperationId:changed.providerOperationId})]);
             return{handled:true,mode:'immediate',message:`Plan changed to ${target.name} · ${targetAccessLabel(target)} (${target.currency}). Stripe will handle any applicable proration.`};
         }
