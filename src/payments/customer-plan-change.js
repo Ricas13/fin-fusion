@@ -129,7 +129,15 @@ async function scheduleStripeProvider(current,target,change,{currency,mapping=nu
         await transaction(async db=>{await db.query(`UPDATE customer_plan_changes SET provider_schedule_id=$2,provider_schedule_state=$3,source_price_id=$4,target_price_id=$5,target_access_quantity=$6,target_variant_kind=$7,error=NULL,updated_at=NOW() WHERE id=$1`,[change.id,updated.id,updated.status||'active',sourcePrice,mapping.external_id,targetQuantity,targetKind]);await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,updated_at=NOW() WHERE id=$1`,[op.id]);});
         await providerOps.reconciled(op.id,{result:{changeId:change.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity}});
         return{...change,provider_schedule_id:updated.id,provider_schedule_state:updated.status,source_price_id:sourcePrice,target_price_id:mapping.external_id,target_access_quantity:targetQuantity,target_variant_kind:targetKind,provider_operation_id:op.id,mapping};
-    }catch(error){if(error&&typeof error==='object')error.planChangeMutationAttempted=providerMutationAttempted;await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>{});throw error;}
+    }catch(error){
+        if(error&&typeof error==='object')error.planChangeMutationAttempted=providerMutationAttempted;
+        const recorded=await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>null);
+        if(error&&typeof error==='object'){
+            error.providerOperationId=op.id;
+            error.providerOperationTerminal=recorded?.state==='failed'&&recorded?.failure_kind==='terminal';
+        }
+        throw error;
+    }
 }
 
 async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',targetAccessQuantity=null,targetVariantKind=null,mediaLocation=null,timing='auto',actorUserId=null}){
@@ -169,8 +177,8 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
             return{handled:true,mode:'period_end',message:`Plan change to ${target.name} · ${targetAccessLabel(target)} (${target.currency}) is scheduled in Stripe for your next renewal (${new Date(scheduled.effective_at).toLocaleDateString('en-GB')}).`};
         }catch(error){
             if(!local){if(scheduledPlacement?.placement_lease_id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});throw error;}
-            const terminal=Boolean(error.planChangeRefusal&&!error.planChangeMutationAttempted);
-            if(terminal&&scheduledPlacement?.placement_lease_id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});
+            const terminal=Boolean((error.planChangeRefusal&&!error.planChangeMutationAttempted)||error.providerOperationTerminal);
+            if(terminal&&targetMediaServer?.id)await releaseScheduledMediaPlacement(customerId,targetMediaServer.id).catch(()=>{});
             await query(`UPDATE customer_plan_changes SET state=CASE WHEN $3::boolean THEN 'failed' ELSE state END,error=$2,updated_at=NOW() WHERE id=$1`,[local.id,String(error.message).slice(0,1000),terminal]);
             throw error;
         }
