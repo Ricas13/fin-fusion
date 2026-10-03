@@ -127,8 +127,8 @@ function accessCard(data, req) {
 
 function availabilityCard(data, req) {
   const p = data.plan;
-  const used = Number(data.usage.used || 0), reserved = Number(data.usage.reserved || 0);
-  const limit = data.usage.limit == null ? null : Number(data.usage.limit);
+  const used = Number(data.usage.manualUsed || 0), reserved = Number(data.usage.manualReserved || 0);
+  const limit = data.usage.manualLimit == null ? null : Number(data.usage.manualLimit);
   const remaining = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const status = remaining == null ? 'No limit' : remaining > 0 ? `${remaining} open` : 'Closed';
   const tone = remaining == null || remaining > 0 ? 'good' : 'warn';
