@@ -73,7 +73,7 @@ assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource
 assert(provisioningSource.includes('async function reservePlacement')&&provisioningSource.includes('FOR UPDATE')&&provisioningSource.includes("error.code = 'JELLYFIN_SERVER_CAPACITY_CHANGED'")&&provisioningSource.includes('placementLeaseId: reservedServer.placement_lease_id'),'remote user creation must be preceded by a serialized server-capacity lease');
 assert(durableSource.includes('access_lane,access_lane_changed_at')&&durableSource.includes('access_lane=EXCLUDED.access_lane')&&durableSource.includes('jellyfin_server_placement_leases'),'account lane and placement-lease consumption must persist in the same local transaction');
 assert(hardeningMigration.includes('CREATE TABLE IF NOT EXISTS jellyfin_server_placement_leases')&&hardeningMigration.includes('UNIQUE(customer_id,server_id)'),'placement leases must be durable and unique per customer/server');
-assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a plan capacity_limit');
+assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${mediaAvailable}'),'fleet Jellyfin acquisition must require both physical server capacity and the plan-owned acquisition cap');
 assert(
     pendingRegistrationSource.includes('free_access_registration_intents')&&
     pendingRegistrationSource.includes('await planCapacity.assertAvailable(plan.id')&&
@@ -90,6 +90,7 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
         if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
         if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,user_limit:10,managed_users:7}]};
         if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
+        if(sql.includes('LEFT JOIN customer_entitlement_overrides o')&&sql.includes('AS used'))return{rowCount:1,rows:[{used:9,reserved:0}]};
         if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
         if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
         throw new Error(`Unexpected user-capacity query: ${sql.slice(0,120)}`);
@@ -102,13 +103,16 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
     assert.strictEqual(state.userUsed,9,'used capacity is managed users plus owed pending users');
     assert.strictEqual(state.remaining,1,'one place remains regardless of any plan stream allowance');
     assert.strictEqual(state.soldOut,false);
-    assert.strictEqual(state.manualLimit,null,'plans.capacity_limit must not cap a Free/Premium Jellyfin fleet');
+    assert.strictEqual(state.limit,999,'the plan cap remains a separate acquisition ceiling');
+    assert.strictEqual(state.userRemaining,1,'the physical pool has one place remaining');
+    assert.strictEqual(state.remaining,1,'the tighter physical constraint must win');
 
     const reservedDb=async sql=>{
         if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-reserved',capacity_limit:null,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true}]};
         if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
         if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,user_limit:10,managed_users:7}]};
         if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
+        if(sql.includes('LEFT JOIN customer_entitlement_overrides o')&&sql.includes('AS used'))return{rowCount:1,rows:[{used:9,reserved:1}]};
         if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
         if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:1}]};
         throw new Error(`Unexpected reservation query: ${sql.slice(0,120)}`);
