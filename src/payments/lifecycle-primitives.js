@@ -230,7 +230,9 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
     `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
         reason: error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
             ? 'service_credit_unavailable_after_provider_settlement'
-            : 'capacity_exhausted_after_provider_settlement',
+            : ['MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
+                ? 'media_server_unavailable_after_provider_settlement'
+                : 'capacity_exhausted_after_provider_settlement',
         planId,
         checkoutIntentId,
         providerSubscriptionId,
@@ -311,7 +313,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 });
                 if(customerServerChoice.mediaServerType(plan)&&contract?.mediaLocation){
                     const reservedId=settlementIntent?.media_server_id||contract.mediaServerId||null;
-                    activationMediaServer=await customerServerChoice.reservedServerIfEligible(plan,reservedId,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
+                    activationMediaServer=await customerServerChoice.committedReservedServer(plan,reservedId,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
                     if(!activationMediaServer)activationMediaServer=await customerServerChoice.selectServerForLocationLocked(plan,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
                     if(settlementIntent?.id&&activationMediaServer?.id&&String(settlementIntent.media_server_id||'')!==String(activationMediaServer.id)){
                         await client.query('UPDATE billing_checkout_intents SET media_server_id=$2,updated_at=NOW() WHERE id=$1',[settlementIntent.id,activationMediaServer.id]);
@@ -396,7 +398,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             return row;
         });
     } catch (error) {
-        if (['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code) && settlementCheckoutIntentId) {
+        if (['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code) && settlementCheckoutIntentId) {
             try {
                 await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error });
                 error.paidButUnfulfilled = true;
