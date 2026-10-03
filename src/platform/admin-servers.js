@@ -10,11 +10,6 @@ const { encryptWithEnv } = require('../security/purpose-crypto');
 
 const SERVER_CLASSES = new Set(['premium', 'free', 'custom']);
 const SERVER_ID_PARAM = ':serverId([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})';
-const FREE_POLICY_DEFAULTS = Object.freeze({
-    firstPlaybackGraceDays: 3,
-    playbackWindowDays: 7,
-    minimumPlaybackMinutes: 30
-});
 const SAFE_ERROR_PREFIXES = [
     'Slug must be ', 'Enter a valid ', 'Only http and https ', 'URLs may not contain ',
     'URL hostname is required.', 'Internal/base URL is required.', 'Jellyfin API key is required.',
@@ -81,7 +76,6 @@ function intField(value, { min = 0, max = 100000, nullable = false, field = null
     if (!Number.isInteger(number) || number < min || number > max) throw invalidField(field, `${label} must be between ${min} and ${max}.`);
     return number;
 }
-function defaulted(value, fallback) { return value === '' || value == null ? fallback : value; }
 function safeAdminErrorInfo(error) {
     if (error instanceof FieldValidationError) return { message: error.message, field: error.field || null };
     if (error?.code === '23505') {
@@ -246,4 +240,4 @@ function createAdminServersRouter() {
     router.use('/admin/servers', async (error,_req,res,_next) => { console.error('Admin servers route error:',error.message); await runtimeSettings.ensureLoaded().catch(()=>{}); return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Servers unavailable',message:'Server administration could not be loaded safely.',link:'/admin',linkText:'Return to Administration'}); });
     return router;
 }
-module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType,FREE_POLICY_DEFAULTS };
+module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType };
