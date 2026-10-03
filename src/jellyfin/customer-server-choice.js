@@ -181,6 +181,21 @@ async function reservedServerIfEligible(plan, serverId, requestedLocation = null
   return { ...server, selected_location: locationLabel(server.location) };
 }
 
+async function existingAssignedServerForPlan(plan, serverId, requestedLocation = null, { db = query } = {}) {
+  if (!serverId || !mediaServerType(plan)) return null;
+  const provider = mediaServerType(plan);
+  // Existing paid customers already consume their physical slot. Reusing that
+  // assignment for an eligible target plan is not a new placement, so fullness,
+  // allow_new_users, placement drain and transient health must not force a move
+  // or block a commercial plan change. The target plan pool/provider still has
+  // to allow this server; a deleted or excluded server is not silently reused.
+  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: false, forPlacement: false, db }))
+    .filter(server => mediaProvider.normalizeType(server.media_server_type || 'jellyfin') === provider);
+  const server = servers.find(candidate => String(candidate.id) === String(serverId));
+  if (!server || (requestedLocation && !matchesPreference(server, requestedLocation))) return null;
+  return { ...server, selected_location: locationLabel(server.location) };
+}
+
 async function committedReservedServer(plan, serverId, requestedLocation = null, { db = query } = {}) {
   if (!serverId || !mediaServerType(plan)) return null;
   const provider = mediaServerType(plan);
@@ -273,6 +288,7 @@ module.exports = {
   selectServerForLocationLocked,
   matchesPreference,
   reservedServerIfEligible,
+  existingAssignedServerForPlan,
   committedReservedServer,
   assignedServer,
   persistAssignment
