@@ -229,7 +229,32 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
     const state={planId:plan.id,plan,model:'fleet_users',pool:serverClass(plan)||'jellyfin',configuredServers:0,userLimit:0,userUsed:0,managedUsers:0,pendingUsers:0,reservedUsers:0,userRemaining:0,healthMode:null,limit:0,used:0,reserved:0,remaining:0,soldOut:true,manualLimit:null,manualUsed:0,manualReserved:0,fallbackReason:'No Jellyfin server user capacity is configured for this plan.'};
     return{...state,...scarcity(state)};
   }
-  const state={planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,configuredServers:fleet.configuredServers,userLimit:fleet.userLimit,userUsed:fleet.userUsed,managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,healthMode:fleet.healthMode,limit:fleet.userLimit,used:fleet.userUsed,reserved:fleet.reservedUsers,remaining:fleet.userRemaining,soldOut:fleet.userRemaining===0,manualLimit:null,manualUsed:0,manualReserved:0};
+  // A media server owns physical capacity; the catalogue plan owns how much
+  // of that fleet it is allowed to sell. The effective availability is the
+  // tighter of the plan-specific acquisition cap and the currently available
+  // places in the eligible server fleet.
+  const planUsage=await legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
+  const planLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit);
+  const planRemaining=planLimit==null?null:Number(planUsage.remaining||0);
+  const remaining=planRemaining==null?fleet.userRemaining:Math.max(0,Math.min(fleet.userRemaining,planRemaining));
+  const state={
+    planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,
+    configuredServers:fleet.configuredServers,
+    userLimit:fleet.userLimit,userUsed:fleet.userUsed,
+    managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,
+    reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,
+    healthMode:fleet.healthMode,
+    // limit/used/reserved are plan-owned numbers. Fleet numbers stay exposed
+    // separately so admin screens can show both constraints.
+    limit:planLimit,
+    used:planUsage.used,
+    reserved:planUsage.reserved,
+    remaining,
+    soldOut:remaining===0,
+    manualLimit:planLimit,
+    manualUsed:planUsage.used,
+    manualReserved:planUsage.reserved
+  };
   return{...state,...scarcity(state)};
 }
 
@@ -240,7 +265,7 @@ async function assertAvailable(planId,{db=query,label='This plan',excludeReserva
 }
 
 async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
-  const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?`fleet-users:${serverClass(plan)||'unclassified'}`:`plan:${planId}`;
+  const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?'fleet-users':`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
   return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,households});
 }
