@@ -73,7 +73,7 @@ function validateProduct({name,description='',features=[],visible,active}){
 }
 
 function validateAvailability({capacityLimit,active=null,visible=null}){
-  integer(capacityLimit,0,1000000,'Capacity');
+  integer(capacityLimit,0,1000000,'Capacity',{nullable:true});
   if(active!==null)boolean(active,'Plan active state');
   if(visible!==null)boolean(visible,'Plan visibility');
 }
