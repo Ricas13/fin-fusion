@@ -129,7 +129,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
       SELECT EXISTS(
         SELECT 1 FROM plan_server_eligibility pse
         JOIN jellyfin_servers restricted_server ON restricted_server.id=pse.server_id
-        WHERE pse.plan_id=$1 AND restricted_server.server_class=$2
+        WHERE pse.plan_id=$1
           AND COALESCE(restricted_server.media_server_type,'jellyfin')='jellyfin'
       ) AS restricted
     ), eligible_servers AS (
@@ -137,10 +137,9 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
       FROM jellyfin_servers js
       CROSS JOIN restriction r
       LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
-      WHERE js.server_class=$2
-        AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+      WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
         AND js.max_users IS NOT NULL
-        AND (NOT r.restricted OR pse.server_id IS NOT NULL)
+        AND ((r.restricted AND pse.server_id IS NOT NULL) OR (NOT r.restricted AND js.server_class=$2))
         AND js.enabled=TRUE AND js.allow_new_users=TRUE
         AND COALESCE(js.placement_mode,'active')='active'
         AND ${health}
@@ -156,10 +155,9 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
        FROM jellyfin_servers js
        CROSS JOIN restriction r
        LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
-       WHERE js.server_class=$2
-         AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+       WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
          AND js.max_users IS NOT NULL
-         AND (NOT r.restricted OR pse.server_id IS NOT NULL)) AS configured_servers,
+         AND ((r.restricted AND pse.server_id IS NOT NULL) OR (NOT r.restricted AND js.server_class=$2))) AS configured_servers,
       COALESCE(SUM(so.max_users),0)::int AS user_limit,
       COALESCE(SUM(so.managed_users),0)::int AS managed_users
     FROM server_occupancy so`,[plan.id,cls]);
@@ -290,7 +288,6 @@ function fleetRestrictionSql(planAlias,serverAlias){
     SELECT 1 FROM plan_server_eligibility capacity_restriction
     JOIN jellyfin_servers restricted_server ON restricted_server.id=capacity_restriction.server_id
     WHERE capacity_restriction.plan_id=${planAlias}.id
-      AND restricted_server.server_class=${planAlias}.server_class
       AND COALESCE(restricted_server.media_server_type,'jellyfin')='jellyfin'
   ) OR EXISTS(
     SELECT 1 FROM plan_server_eligibility capacity_match
@@ -302,10 +299,15 @@ function fleetConfiguredSql(alias='p'){
   const restriction=fleetRestrictionSql(alias,'configured_server');
   return `(${alias}.service_type IN('jellyfin','bundle') AND EXISTS(
     SELECT 1 FROM jellyfin_servers configured_server
-    WHERE configured_server.server_class=${alias}.server_class
-      AND COALESCE(configured_server.media_server_type,'jellyfin')='jellyfin'
+    WHERE COALESCE(configured_server.media_server_type,'jellyfin')='jellyfin'
       AND configured_server.max_users IS NOT NULL
-      AND ${restriction}
+      AND (
+        EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id AND x.server_id=configured_server.id)
+        OR (
+          NOT EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id)
+          AND configured_server.server_class=${alias}.server_class
+        )
+      )
   ))`;
 }
 function fleetAvailableSql(alias='p'){
@@ -324,10 +326,15 @@ function fleetAvailableSql(alias='p'){
   const userCapacity=`(
     SELECT COALESCE(SUM(capacity_server.max_users),0)
     FROM jellyfin_servers capacity_server
-    WHERE capacity_server.server_class=${alias}.server_class
-      AND COALESCE(capacity_server.media_server_type,'jellyfin')='jellyfin'
+    WHERE COALESCE(capacity_server.media_server_type,'jellyfin')='jellyfin'
       AND capacity_server.max_users IS NOT NULL
-      AND ${restriction}
+      AND (
+        EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id AND x.server_id=capacity_server.id)
+        OR (
+          NOT EXISTS(SELECT 1 FROM plan_server_eligibility x WHERE x.plan_id=${alias}.id)
+          AND capacity_server.server_class=${alias}.server_class
+        )
+      )
       AND capacity_server.enabled=TRUE
       AND capacity_server.allow_new_users=TRUE
       AND COALESCE(capacity_server.placement_mode,'active')='active'
