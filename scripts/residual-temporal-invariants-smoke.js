@@ -127,7 +127,7 @@ function main() {
     assert(immediate.includes('let providerMutationAttempted=false'), 'Immediate Stripe plan changes must track whether a remote mutation may have happened.');
     assert(/providerMutationAttempted=true;\s*const updated=await client\.subscriptions\.update/.test(immediate), 'Immediate Stripe mutation ambiguity is not marked before the provider call.');
     assert(immediate.includes('billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id})'), 'Immediate Stripe plan change can still reconcile after merely proving the subscription is readable rather than proving the target Price.');
-    assert(immediate.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Ambiguous post-provider Stripe plan-change failures are still forced terminal instead of entering recovery.');
+    assert(immediate.includes('!providerMutationAttempted ? {terminal:true,ambiguous:false} : {}'), 'Immediate Stripe failures must be terminal only when no provider mutation was attempted; post-provider ambiguity must remain recoverable.');
     const scheduled = section(planChange, 'async function scheduleStripeProvider', 'async function requestChange');
     assert(scheduled.includes('let providerMutationAttempted=false'), 'Scheduled Stripe plan changes must track possible provider mutation.');
     assert(scheduled.includes('providerMutationAttempted=true;schedule=await client.subscriptionSchedules.create'), 'Stripe schedule creation ambiguity is not routed into provider-operation recovery.');
