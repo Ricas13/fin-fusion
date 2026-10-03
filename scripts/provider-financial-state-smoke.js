@@ -55,6 +55,8 @@ assert(state.includes("filters.feeDataAvailable===false")&&state.includes("metad
   'canonical financial queries must be able to select transactions whose provider fee is still unresolved');
 assert(state.includes('latestPlisioCallbackEvidence')&&state.includes("provider='plisio'")&&state.includes("payload->>'txn_id'"),
   'historical Plisio fee repair must read only successfully processed callback evidence from canonical financial state');
+assert(state.includes('missingPlisioFeeTransactions')&&state.includes('feeReconcileAttemptedAt')&&state.includes('markPlisioFeeReconcileAttempt'),
+  'historical Plisio fee repair must rotate deferred rows instead of retrying the same unresolved transactions forever');
 
 assert(state.includes("s.source<>'stripe'"),
   'provider-customer backfill must preserve PayPal payer fan-in and restrict collision protection to Stripe');
@@ -69,7 +71,7 @@ assert(stripeHistory.includes('financialState.resolveCustomerId'),
 assert(paypal.includes('financialState.recordTransaction')&&paypal.includes('recordPaypalLivePayment')&&paypal.includes('recordPaypalLiveRefund'),
   'PayPal webhook payments and refunds must enter the canonical customer financial ledger');
 
-assert(reconciliation.includes("liveStripeHistory.syncRecent")&&reconciliation.includes("syncRecentPayPalHistory")&&reconciliation.includes("syncFeeData({limit:100})")&&reconciliation.includes('reconcileLocalEvidence'),
+assert(reconciliation.includes("liveStripeHistory.syncRecent")&&reconciliation.includes("syncRecentPayPalHistory")&&reconciliation.includes("syncFeeData({limit:25})")&&reconciliation.includes('reconcileLocalEvidence'),
   'unified reconciliation must converge Stripe, PayPal and Plisio fee evidence');
 assert(jobs.includes('provider_financial_reconciliation:{defaultIntervalSeconds:300'),
   'unified provider financial reconciliation must remain scheduled every five minutes');
