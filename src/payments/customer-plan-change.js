@@ -166,14 +166,17 @@ async function applyDueStripe(){
             const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id,{expand:['items.data.price','schedule']}),remotePrice=typeof remote.items?.data?.[0]?.price==='string'?remote.items.data[0].price:remote.items?.data?.[0]?.price?.id;
             if(remotePrice===targetPrice){
                 const synced=await billingControl.syncSubscription(current.subscription_id,{expectedProviderPriceId:targetPrice});if(!synced.ok)throw new Error(`Target price observed, but canonical provider verification failed: ${synced.error}`);
-                let dueMediaLocation=null,dueMediaServer=null;
-                if(customerServerChoice.mediaServerType(target)){
-                    dueMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,change.target_media_location||current.media_location_preference||null,{requireSelection:true});
-                    dueMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,dueMediaLocation).catch(()=>null);
-                    if(!dueMediaServer)dueMediaServer=await customerServerChoice.selectServerForLocation(target,dueMediaLocation,{requireSelection:true});
-                    dueMediaLocation=dueMediaServer?.selected_location||dueMediaLocation;
-                }
-                await transaction(async db=>{await applySnapshot(db,current.subscription_id,target,mapping,{mediaLocation:dueMediaLocation,mediaServerId:dueMediaServer?.id||null});});
+                await transaction(async db=>{
+                    let dueMediaLocation=null,dueMediaServer=null;
+                    const dbQuery=(sql,params)=>db.query(sql,params);
+                    if(customerServerChoice.mediaServerType(target)){
+                        dueMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,change.target_media_location||current.media_location_preference||null,{db:dbQuery,requireSelection:true});
+                        dueMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,dueMediaLocation,{db:dbQuery});
+                        if(!dueMediaServer)dueMediaServer=await customerServerChoice.selectServerForLocationLocked(target,dueMediaLocation,{db:dbQuery,requireSelection:true});
+                        dueMediaLocation=dueMediaServer?.selected_location||dueMediaLocation;
+                    }
+                    await applySnapshot(db,current.subscription_id,target,mapping,{mediaLocation:dueMediaLocation,mediaServerId:dueMediaServer?.id||null});
+                });
                 await provisioning.reconcileCustomer(change.customer_id);
                 await query(`UPDATE customer_plan_changes SET state='applied',provider_schedule_state='applied',error=NULL,updated_at=NOW() WHERE id=$1 AND state='pending'`,[change.id]);
                 summary.succeeded++;continue;
