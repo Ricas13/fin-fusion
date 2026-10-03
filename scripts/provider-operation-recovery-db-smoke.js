@@ -7,6 +7,9 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const providerOps = require('../src/payments/provider-operations');
+const provisioningHelpers = require('../src/jellyfin/provisioning-helpers');
+const resilientProvisioning = require('../src/jellyfin/resilient-provisioning');
+resilientProvisioning.reconcileCustomer = async customerId => ({ customerId, active: true, testStub: true });
 const incidents = require('../src/payments/incidents');
 const incidentReconciliation = require('../src/payments/incident-reconciliation');
 
@@ -65,11 +68,21 @@ async function customer(tag) {
 async function subscription(customerId, planId, providerSubscriptionId) {
     return (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING *`, [customerId, planId, providerSubscriptionId])).rows[0];
 }
+async function mediaServer(tag, location, maxUsers = 1) {
+    return (await query(`
+        INSERT INTO jellyfin_servers(
+            name,slug,server_class,media_server_type,base_url,public_url,location,
+            api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,
+            priority,max_users,health_status,placement_mode
+        ) VALUES($1,$2,'premium','jellyfin',$3,$3,$4,'test-key',TRUE,TRUE,TRUE,TRUE,100,$5,'healthy','active')
+        RETURNING *
+    `, [`Recovery server ${tag}`, `recovery-server-${tag}`, `https://recovery-${tag}.example.invalid`, location, maxUsers])).rows[0];
+}
 function remote(id, priceId) {
     remoteSubscriptions.set(id, { id, status: 'active', cancel_at_period_end: false, metadata: {}, items: { data: [{ id: `si_${id}`, price: { id: priceId }, current_period_start: Math.floor(Date.now()/1000)-100, current_period_end: Math.floor(Date.now()/1000)+2592000 }] } });
 }
-async function immediateOp({ customerId, subscriptionId, targetPlanId, targetPriceId, key }) {
-    return providerOps.begin({ provider: 'stripe', scope: 'customer', ownerId: customerId, operationType: 'plan_change_immediate', localReference: subscriptionId, idempotencyKey: key, request: { subscriptionId, targetPlanId, targetPlanPriceId: null, targetPriceId, currency: 'GBP', proration: true } });
+async function immediateOp({ customerId, subscriptionId, targetPlanId, targetPriceId, key, targetMediaLocation = null, targetMediaServerId = null }) {
+    return providerOps.begin({ provider: 'stripe', scope: 'customer', ownerId: customerId, operationType: 'plan_change_immediate', localReference: subscriptionId, idempotencyKey: key, request: { subscriptionId, targetPlanId, targetPlanPriceId: null, targetPriceId, currency: 'GBP', proration: true, targetMediaLocation, targetMediaServerId } });
 }
 async function row(table, id) { return (await query(`SELECT * FROM ${table} WHERE id=$1`, [id])).rows[0]; }
 
@@ -98,10 +111,12 @@ async function testAConcurrentRecurringSerialization() {
 
 async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     const tag = suffix(), c = await customer(`bhi-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Plan', 2000);
+    const oldServer = await mediaServer(`old-${tag}`, 'Old Region', 10), targetServer = await mediaServer(`target-${tag}`, 'London', 1);
     const providerId = `sub_recovery_bhi_${tag}`, targetPrice = `price_recovery_target_${tag}`, sub = await subscription(c.id, oldPlan.id, providerId);
+    await query(`UPDATE subscriptions SET media_server_id=$2,media_location_preference='Old Region',media_location_snapshot='Old Region' WHERE id=$1`, [sub.id, oldServer.id]);
     targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
     remote(providerId, `price_old_${tag}`);
-    const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}` });
+    const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}`, targetMediaLocation: 'London', targetMediaServerId: targetServer.id });
     const fake = new FakeStripe();
     await fake.subscriptions.update(providerId, { items: [{ id: `si_${providerId}`, price: targetPrice }] });
     const mutationsAfterSuccess = providerMutationCount;
@@ -114,7 +129,13 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     await forceDue(op.id);
     const result = await recovery.run({ limit: 10 });
     assert.strictEqual(result.reconciled, 1, 'B/H: reconciler must complete the missing local side');
-    assert.strictEqual((await row('subscriptions', sub.id)).plan_id, target.id, 'H: recovered plan change must apply target local plan');
+    const recoveredSubscription = await row('subscriptions', sub.id);
+    assert.strictEqual(recoveredSubscription.plan_id, target.id, 'H: recovered plan change must apply target local plan');
+    assert.strictEqual(String(recoveredSubscription.media_server_id), String(targetServer.id), 'H: recovery must preserve the exact paid target server assignment');
+    assert.strictEqual(recoveredSubscription.media_location_preference, 'London', 'H: recovery must preserve the chosen paid target location');
+    assert.strictEqual(recoveredSubscription.media_location_snapshot, 'London', 'H: recovery must snapshot the chosen paid target location');
+    const ownFinalSlot = await provisioningHelpers.reservePlacement(c.id, targetServer);
+    assert(ownFinalSlot.placement_lease_id, 'H: provisioning must be allowed to materialize a customer whose own subscription already occupies the final physical slot');
     assert.strictEqual((await providerOps.get(op.id)).state, 'reconciled', 'B: operation must converge to reconciled');
     assert.strictEqual(providerMutationCount, mutationsAfterSuccess, 'I: retry must not duplicate a provider mutation when remote already reflects target');
 }
