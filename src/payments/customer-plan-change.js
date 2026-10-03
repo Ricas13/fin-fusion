@@ -9,6 +9,7 @@ const providerSettings=require('./provider-settings');
 const providerHttp=require('./provider-http');
 const billingMode=require('./subscription-billing-mode');
 const entitlement=require('../entitlements/subscription-state');
+const planCapacity=require('../entitlements/plan-capacity');
 const serviceScope=require('../entitlements/service-scope');
 const providerOps=require('./provider-operations');
 const notificationDispatch=require('../integrations/notification-dispatch');
@@ -91,6 +92,14 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
     const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_immediate',localReference:subscriptionId,idempotencyKey:`customer-plan-immediate:${subscriptionId}:${target.id}:${identity}:${proration?'prorate':'no-prorate'}`,request:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity),targetVariantKind:normalizedKind(target,mapping),targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration),targetMediaLocation:mediaLocation||null,targetMediaServerId:mediaServer?.id||null}});
     let providerMutationAttempted=false,placementReservation=null;
     try{
+        if(String(current.plan_id)!==String(target.id)){
+            await transaction(async db=>{
+                await planCapacity.lockAndAssert(db,target.id,target.name||'This plan');
+                await db.query(`UPDATE provider_operations
+                    SET provider_result=provider_result||'{"capacityReserved":true}'::jsonb,updated_at=NOW()
+                    WHERE id=$1`,[op.id]);
+            });
+        }
         if(mediaServer)placementReservation=await provisioningHelpers.reservePlacement(current.customer_id,mediaServer);
         const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);if(remote.schedule)throw planChangeRefusal('This Stripe subscription already has a scheduled change. Cancel the pending change first.');const item=remote.items?.data?.[0];if(!item?.id)throw planChangeRefusal('Stripe subscription has no editable item.');
         providerMutationAttempted=true;
@@ -101,7 +110,11 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
         await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity)}});
         return{provider:'stripe',target,mapping,providerOperationId:op.id};
     }catch(error){
-        const recorded=await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>null);
+        const recorded=await providerOps.recordError(
+            op.id,
+            error,
+            !providerMutationAttempted ? {terminal:true,ambiguous:false} : {}
+        ).catch(()=>null);
         const terminal=recorded?.state==='failed'&&recorded?.failure_kind==='terminal';
         if((!providerMutationAttempted||terminal)&&placementReservation?.placement_lease_id&&mediaServer?.id){
             await provisioningHelpers.releaseDefinitivePlacementFailure(current.customer_id,mediaServer.id,placementReservation.placement_lease_id).catch(()=>{});
@@ -116,6 +129,9 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
 
 async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null,targetMediaLocation=null,targetMediaServerId=null}={}){
     return transaction(async client=>{
+        if(provider==='stripe'&&String(current.plan_id)!==String(target.id)){
+            await planCapacity.lockAndAssert(client,target.id,target.name||'This plan');
+        }
         const prior=await client.query(`SELECT id FROM customer_plan_changes WHERE customer_id=$1 AND state IN ('pending','awaiting_checkout') LIMIT 1 FOR UPDATE`,[customerId]);if(prior.rowCount)throw new Error('A plan change is already open. Cancel or complete it before requesting another one.');
         const effective=new Date(current.current_period_end),created=await client.query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,requested_by,provider_action_required,target_access_quantity,target_variant_kind,target_media_location,target_media_server_id) VALUES($1,$2,$3,$4,'period_end','pending',$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[customerId,current.subscription_id||current.id,target.id,provider,effective,actorUserId,Boolean(providerActionRequired),targetAccessQuantity,targetVariantKind,targetMediaLocation,targetMediaServerId]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.schedule','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({changeId:created.rows[0].id,fromPlanId:current.plan_id,toPlanId:target.id,targetAccessQuantity,targetVariantKind,targetMediaLocation,targetMediaServerId,provider,effectiveAt:effective.toISOString(),providerActionRequired:Boolean(providerActionRequired)})]);
