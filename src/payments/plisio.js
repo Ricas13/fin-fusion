@@ -367,26 +367,36 @@ async function activateCompleted(remote, fields, intent) {
     return { status: 'completed', completed: true, feeDataAvailable: accounting.feeDataAvailable };
 }
 
-async function syncFeeData({ limit = 100 } = {}) {
+async function syncFeeData({ limit = 25 } = {}) {
     const cfg = await providerSettings.get('plisio');
     if (!cfg?.secretKey) {
         return { provider:'plisio', configured:false, processed:0, updated:0, unresolved:0, failed:0 };
     }
-    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
-    const result = await financialState.queryTransactions(
-        { provider:'plisio', status:'completed', feeDataAvailable:false },
-        { limit:safeLimit, offset:0, order:'asc' }
-    );
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 25));
+    const result = await financialState.missingPlisioFeeTransactions(safeLimit);
     let updated = 0, unresolved = 0, failed = 0;
 
-    for (const row of result.rows) {
+    async function defer(providerTransactionId, reason) {
+        unresolved += 1;
+        if (!providerTransactionId) return;
         try {
-            const providerTransactionId = String(row.provider_transaction_id || '').trim();
-            if (!providerTransactionId) { unresolved += 1; continue; }
+            await financialState.markPlisioFeeReconcileAttempt(providerTransactionId, reason);
+        } catch (error) {
+            console.warn('Unable to record deferred Plisio fee reconciliation attempt.', {
+                providerTransactionId: String(providerTransactionId).slice(0, 200),
+                error: String(error?.message || error).slice(0, 600)
+            });
+        }
+    }
+
+    for (const row of result.rows) {
+        const providerTransactionId = String(row.provider_transaction_id || '').trim();
+        try {
+            if (!providerTransactionId) { await defer(null, 'missing provider transaction id'); continue; }
             const remote = await getOperation(providerTransactionId);
             let fields = operationFields(remote);
             if (fields.id !== providerTransactionId || fields.status !== 'completed') {
-                unresolved += 1;
+                await defer(providerTransactionId, 'provider operation is not an exact completed match');
                 continue;
             }
 
@@ -414,19 +424,19 @@ async function syncFeeData({ limit = 100 } = {}) {
             const rowCurrency = String(row.currency || '').toUpperCase();
             const sourceCurrency = String(fields.sourceCurrency || rowCurrency).toUpperCase();
             if (!rowCurrency || sourceCurrency !== rowCurrency) {
-                unresolved += 1;
+                await defer(providerTransactionId, 'provider source currency does not match stored settlement currency');
                 continue;
             }
 
             const grossMinor = Number(row.gross_amount_minor || 0);
             if (!Number.isInteger(grossMinor) || grossMinor < 0) {
-                unresolved += 1;
+                await defer(providerTransactionId, 'stored gross amount is invalid');
                 continue;
             }
             if (fields.sourceAmount != null) {
                 const verifiedGross = moneyMinor(fields.sourceAmount);
                 if (verifiedGross != null && verifiedGross !== grossMinor) {
-                    unresolved += 1;
+                    await defer(providerTransactionId, 'provider source amount does not match stored settlement gross');
                     continue;
                 }
             } else {
@@ -436,7 +446,7 @@ async function syncFeeData({ limit = 100 } = {}) {
 
             const accounting = feeAccounting(fields, { grossMinor });
             if (!accounting.feeDataAvailable) {
-                unresolved += 1;
+                await defer(providerTransactionId, 'exact actual settlement fee components are unavailable');
                 continue;
             }
 
@@ -461,14 +471,21 @@ async function syncFeeData({ limit = 100 } = {}) {
                     feeDataAvailable:true,
                     feeAccountingSource:accounting.source,
                     feeReconciledAt:new Date().toISOString(),
+                    feeReconcileLastError:null,
                     source:'verified_operation_fee_reconciliation'
                 }
             });
             updated += 1;
         } catch (error) {
             failed += 1;
+            if (providerTransactionId) {
+                await financialState.markPlisioFeeReconcileAttempt(
+                    providerTransactionId,
+                    String(error?.message || error)
+                ).catch(()=>{});
+            }
             console.warn('Plisio fee reconciliation could not update a transaction.', {
-                providerTransactionId: String(row.provider_transaction_id || '').slice(0, 200),
+                providerTransactionId: providerTransactionId.slice(0, 200),
                 error: String(error?.message || error).slice(0, 600)
             });
         }
