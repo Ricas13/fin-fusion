@@ -14,6 +14,14 @@ const LOCK_KEY = 780031003;
  * runtime compatibility transition rather than a schema migration: the
  * previous web generation stays healthy throughout a zero-downtime deploy.
  */
+async function isApplied(db) {
+  const result = await db(
+    'SELECT 1 FROM platform_settings WHERE setting_key=$1 LIMIT 1',
+    [SETTING_KEY]
+  );
+  return result.rowCount > 0;
+}
+
 async function ensure() {
   return transaction(async client => {
     await client.query('SELECT pg_advisory_xact_lock($1)', [LOCK_KEY]);
@@ -48,4 +56,4 @@ async function ensure() {
   });
 }
 
-module.exports = { ensure, SETTING_KEY, LOCK_KEY };
+module.exports = { ensure, isApplied, SETTING_KEY, LOCK_KEY };
