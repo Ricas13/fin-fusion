@@ -79,11 +79,15 @@ CREATE INDEX IF NOT EXISTS billing_checkout_intents_media_server_id_idx
   ON billing_checkout_intents(media_server_id)
   WHERE media_server_id IS NOT NULL;
 
-WITH current_assignments AS (
-  SELECT DISTINCT ON (s.id)
-         s.id AS subscription_id,
+WITH matching_assignments AS (
+  SELECT s.id AS subscription_id,
          ja.server_id,
-         NULLIF(BTRIM(js.location),'') AS location
+         NULLIF(BTRIM(js.location),'') AS location,
+         COUNT(*) OVER (PARTITION BY s.id) AS matching_account_count,
+         ROW_NUMBER() OVER (
+           PARTITION BY s.id
+           ORDER BY ja.disabled ASC,ja.is_primary DESC,ja.created_at ASC,ja.id ASC
+         ) AS matching_account_rank
   FROM subscriptions s
   JOIN plans p ON p.id=s.plan_id
   JOIN jellyfin_accounts ja
@@ -107,7 +111,12 @@ WITH current_assignments AS (
         )
       )
     )
-  ORDER BY s.id,ja.disabled ASC,ja.is_primary DESC,ja.created_at ASC
+),
+current_assignments AS (
+  SELECT subscription_id,server_id,location
+  FROM matching_assignments
+  WHERE matching_account_count=1
+    AND matching_account_rank=1
 )
 UPDATE subscriptions s
 SET media_server_id=a.server_id,
