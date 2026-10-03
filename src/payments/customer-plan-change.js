@@ -126,10 +126,14 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
     target=selectedTarget(target,mapping,targetVariantKind,targetAccessQuantity);
     let targetMediaLocation=null,targetMediaServer=null;
     if(customerServerChoice.mediaServerType(target)){
-        targetMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,mediaLocation,{requireSelection:true});
-        targetMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,targetMediaLocation).catch(()=>null);
-        if(!targetMediaServer)targetMediaServer=await customerServerChoice.selectServerForLocation(target,targetMediaLocation,{requireSelection:true});
-        targetMediaLocation=targetMediaServer?.selected_location||targetMediaLocation;
+        targetMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,mediaLocation||null).catch(()=>null);
+        if(targetMediaServer){
+            targetMediaLocation=targetMediaServer.selected_location||customerServerChoice.locationLabel(targetMediaServer.location);
+        }else{
+            targetMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,mediaLocation,{requireSelection:true});
+            targetMediaServer=await customerServerChoice.selectServerForLocation(target,targetMediaLocation,{requireSelection:true});
+            targetMediaLocation=targetMediaServer?.selected_location||targetMediaLocation;
+        }
     }
     const kind=normalizedKind(target,mapping,targetVariantKind),quantity=mappingQuantity(target,mapping,targetAccessQuantity,targetVariantKind),currentQuantity=subscriptionAccessQuantity(current,kind),samePlanCurrency=String(current.plan_id)===String(target.id)&&String(current.currency_snapshot||current.currency||'').toUpperCase()===String(target.currency).toUpperCase(),sameProviderPrice=!current.provider_price_id_snapshot||String(current.provider_price_id_snapshot)===String(mapping.external_id);
     if(samePlanCurrency&&currentQuantity===quantity&&sameProviderPrice)throw new Error('That is already your current plan, currency and access allowance.');
@@ -170,10 +174,15 @@ async function applyDueStripe(){
                     let dueMediaLocation=null,dueMediaServer=null;
                     const dbQuery=(sql,params)=>db.query(sql,params);
                     if(customerServerChoice.mediaServerType(target)){
-                        dueMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,change.target_media_location||current.media_location_preference||null,{db:dbQuery,requireSelection:true});
-                        dueMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,dueMediaLocation,{db:dbQuery});
-                        if(!dueMediaServer)dueMediaServer=await customerServerChoice.selectServerForLocationLocked(target,dueMediaLocation,{db:dbQuery,requireSelection:true});
-                        dueMediaLocation=dueMediaServer?.selected_location||dueMediaLocation;
+                        const requestedLocation=change.target_media_location||current.media_location_preference||null;
+                        dueMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,requestedLocation,{db:dbQuery});
+                        if(dueMediaServer){
+                            dueMediaLocation=dueMediaServer.selected_location||customerServerChoice.locationLabel(dueMediaServer.location);
+                        }else{
+                            dueMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,requestedLocation,{db:dbQuery,requireSelection:true});
+                            dueMediaServer=await customerServerChoice.selectServerForLocationLocked(target,dueMediaLocation,{db:dbQuery,requireSelection:true});
+                            dueMediaLocation=dueMediaServer?.selected_location||dueMediaLocation;
+                        }
                     }
                     await applySnapshot(db,current.subscription_id,target,mapping,{mediaLocation:dueMediaLocation,mediaServerId:dueMediaServer?.id||null});
                 });
