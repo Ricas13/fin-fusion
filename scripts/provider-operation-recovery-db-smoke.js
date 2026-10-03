@@ -81,8 +81,8 @@ async function mediaServer(tag, location, maxUsers = 1) {
 function remote(id, priceId) {
     remoteSubscriptions.set(id, { id, status: 'active', cancel_at_period_end: false, metadata: {}, items: { data: [{ id: `si_${id}`, price: { id: priceId }, current_period_start: Math.floor(Date.now()/1000)-100, current_period_end: Math.floor(Date.now()/1000)+2592000 }] } });
 }
-async function immediateOp({ customerId, subscriptionId, targetPlanId, targetPriceId, key, targetMediaLocation = null, targetMediaServerId = null }) {
-    return providerOps.begin({ provider: 'stripe', scope: 'customer', ownerId: customerId, operationType: 'plan_change_immediate', localReference: subscriptionId, idempotencyKey: key, request: { subscriptionId, targetPlanId, targetPlanPriceId: null, targetPriceId, currency: 'GBP', proration: true, targetMediaLocation, targetMediaServerId } });
+async function immediateOp({ customerId, subscriptionId, targetPlanId, targetPriceId, key, targetMediaLocation = null, targetMediaServerId = null, targetAccessQuantity = null, targetVariantKind = null }) {
+    return providerOps.begin({ provider: 'stripe', scope: 'customer', ownerId: customerId, operationType: 'plan_change_immediate', localReference: subscriptionId, idempotencyKey: key, request: { subscriptionId, targetPlanId, targetPlanPriceId: null, targetPriceId, currency: 'GBP', proration: true, targetMediaLocation, targetMediaServerId, targetAccessQuantity, targetVariantKind } });
 }
 async function row(table, id) { return (await query(`SELECT * FROM ${table} WHERE id=$1`, [id])).rows[0]; }
 
@@ -114,9 +114,10 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     const oldServer = await mediaServer(`old-${tag}`, 'Old Region', 10), targetServer = await mediaServer(`target-${tag}`, 'London', 1);
     const providerId = `sub_recovery_bhi_${tag}`, targetPrice = `price_recovery_target_${tag}`, sub = await subscription(c.id, oldPlan.id, providerId);
     await query(`UPDATE subscriptions SET media_server_id=$2,media_location_preference='Old Region',media_location_snapshot='Old Region' WHERE id=$1`, [sub.id, oldServer.id]);
-    targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
+    const variantId=crypto.randomUUID();
+    targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, access_variant_id: variantId, variant_kind: 'streams', access_quantity: 3, quantity: 3, streams: 3, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
     remote(providerId, `price_old_${tag}`);
-    const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}`, targetMediaLocation: 'London', targetMediaServerId: targetServer.id });
+    const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}`, targetMediaLocation: 'London', targetMediaServerId: targetServer.id, targetAccessQuantity: 3, targetVariantKind: 'streams' });
     const fake = new FakeStripe();
     await fake.subscriptions.update(providerId, { items: [{ id: `si_${providerId}`, price: targetPrice }] });
     const mutationsAfterSuccess = providerMutationCount;
@@ -139,6 +140,11 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     assert.strictEqual(String(recoveredSubscription.media_server_id), String(targetServer.id), 'H: recovery must preserve the exact paid target server assignment');
     assert.strictEqual(recoveredSubscription.media_location_preference, 'London', 'H: recovery must preserve the chosen paid target location');
     assert.strictEqual(recoveredSubscription.media_location_snapshot, 'London', 'H: recovery must snapshot the chosen paid target location');
+    const recoveredContract=typeof recoveredSubscription.commercial_snapshot==='string'?JSON.parse(recoveredSubscription.commercial_snapshot):recoveredSubscription.commercial_snapshot;
+    assert.strictEqual(recoveredContract.accessVariantId,variantId,'H: recovery must preserve the exact paid access variant identity');
+    assert.strictEqual(recoveredContract.accessVariantKind,'streams','H: recovery must preserve the paid access variant kind');
+    assert.strictEqual(Number(recoveredContract.accessQuantity),3,'H: recovery must preserve the paid access quantity instead of falling back to the base plan');
+    assert.strictEqual(Number(recoveredContract.streams),3,'H: recovered Jellyfin entitlement must expose the stream allowance Stripe actually billed');
     const ownFinalSlot = await provisioningHelpers.reservePlacement(c.id, targetServer);
     assert(ownFinalSlot.placement_lease_id, 'H: provisioning must be allowed to materialize a customer whose own subscription already occupies the final physical slot');
     assert.strictEqual((await providerOps.get(op.id)).state, 'reconciled', 'B: operation must converge to reconciled');
