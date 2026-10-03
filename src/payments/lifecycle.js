@@ -373,7 +373,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
             selectedServer=reservation?.media_server_id
                 ? await customerServerChoice.reservedServerIfEligible(plan,reservation.media_server_id,preferredLocation,{db:(sql,params)=>client.query(sql,params)})
                 : null;
-            if(!selectedServer)selectedServer=await customerServerChoice.selectServerForLocation(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:!automatic&&!reservationId});
+            if(!selectedServer)selectedServer=await customerServerChoice.selectServerForLocationLocked(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:!automatic&&!reservationId});
         }
         const selectedLocation=selectedServer?.selected_location||preferredLocation||null;
         const startsAt=new Date(),endsAt=permanentEnd();
