@@ -157,11 +157,12 @@ async function serverList() {
                js.allow_new_users,js.trial_enabled,js.paid_enabled,js.priority,js.max_users,
                js.free_first_playback_grace_days,js.free_playback_window_days,js.free_minimum_playback_minutes,
                js.health_status,js.last_health_check,js.created_at,js.updated_at,
-               COUNT(DISTINCT ja.id)::int assigned_users,COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams
+               COUNT(DISTINCT ja.customer_id) FILTER(WHERE ja.disabled=FALSE AND ja.account_purpose='jellyfin')::int active_users,COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams
         FROM jellyfin_servers js LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id
         LEFT JOIN active_playback_sessions aps ON aps.server_id=js.id
         GROUP BY js.id ORDER BY js.priority,js.name`);
-    return result.rows;
+    const decorated=await userCapacity.decorateServers(result.rows);
+    return decorated.map(server=>({...server,pending_reserved_users:Math.max(0,Number(server.assigned_users||0)-Number(server.active_users||0))}));
 }
 async function serverDetail(serverId) {
     const result = await query(`SELECT id,name,slug,server_class,media_server_type,base_url,public_url,location,enabled,allow_new_users,
