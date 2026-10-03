@@ -1,0 +1,139 @@
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const choice = require('../src/jellyfin/customer-server-choice');
+
+const plan = {
+  id: '11111111-1111-1111-1111-111111111111',
+  server_class: 'premium',
+  service_type: 'jellyfin',
+  billing_interval: 'month',
+  price_minor: 1000,
+  placement_strategy: 'balanced'
+};
+
+const servers = [
+  {
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    name: 'London A',
+    location: 'London',
+    server_class: 'premium',
+    media_server_type: 'jellyfin',
+    enabled: true,
+    allow_new_users: true,
+    paid_enabled: true,
+    trial_enabled: true,
+    placement_mode: 'active',
+    health_status: 'healthy',
+    max_users: 10,
+    priority: 10,
+    public_url: 'https://london-a.example.invalid'
+  },
+  {
+    id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    name: 'London B',
+    location: ' london ',
+    server_class: 'premium',
+    media_server_type: 'jellyfin',
+    enabled: true,
+    allow_new_users: true,
+    paid_enabled: true,
+    trial_enabled: true,
+    placement_mode: 'active',
+    health_status: 'healthy',
+    max_users: 10,
+    priority: 20,
+    public_url: 'https://london-b.example.invalid'
+  },
+  {
+    id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+    name: 'Germany',
+    location: 'Germany',
+    server_class: 'premium',
+    media_server_type: 'jellyfin',
+    enabled: true,
+    allow_new_users: true,
+    paid_enabled: true,
+    trial_enabled: true,
+    placement_mode: 'active',
+    health_status: 'healthy',
+    max_users: 5,
+    priority: 30,
+    public_url: 'https://germany.example.invalid'
+  }
+];
+
+function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
+  return async (sql, params = []) => {
+    if (sql.includes("setting_key='operations_v1'")) {
+      return { rowCount: 1, rows: [{ setting_value: { placementHealthMode: 'healthy_or_degraded' } }] };
+    }
+    if (sql.includes('WITH restriction AS')) {
+      return { rowCount: servers.length, rows: servers.map(server => ({ ...server, placement_weight: 100 })) };
+    }
+    if (sql.includes('WITH capacity_users AS')) {
+      return {
+        rowCount: fullGermany ? 1 : 0,
+        rows: fullGermany ? [{ server_id: servers[2].id, users: 5 }] : []
+      };
+    }
+    if (sql.includes('FROM jellyfin_servers') && sql.includes('WHERE id=$1')) {
+      const server = servers.find(item => item.id === params[0]);
+      return { rowCount: server ? 1 : 0, rows: server ? [{ ...server, enabled: disabledAssigned ? false : server.enabled }] : [] };
+    }
+    if (sql.includes('FROM active_playback_sessions')) return { rowCount: 0, rows: [] };
+    throw new Error('Unexpected customer-location smoke SQL: ' + sql.slice(0, 140));
+  };
+}
+
+(async () => {
+  assert.strictEqual(choice.locationLabel('  London   '), 'London');
+  assert.strictEqual(choice.locationLabel(''), 'Default');
+  assert.strictEqual(choice.matchesPreference({ location: ' london ' }, 'London'), true);
+  assert.strictEqual(choice.matchesPreference({ location: 'Germany' }, 'London'), false);
+  assert.strictEqual(choice.mediaServerType({ service_type: 'bundle' }), 'jellyfin');
+  assert.strictEqual(choice.mediaServerType({ service_type: 'emby' }), 'emby');
+  assert.strictEqual(choice.mediaServerType({ service_type: 'stremio' }), null);
+
+  const grouped = await choice.choicesForPlan(plan, { db: fakeDb() });
+  assert.strictEqual(grouped.length, 2, 'two distinct locations must produce two customer choices');
+  assert.strictEqual(grouped.find(item => item.value === 'London').serverCount, 2, 'same-location servers must be grouped behind one customer choice');
+  assert.strictEqual(grouped.find(item => item.value === 'London').remaining, 20);
+  assert.strictEqual(grouped.find(item => item.value === 'Germany').remaining, 5);
+  await assert.rejects(() => choice.resolveAcquisitionLocation(plan, null, { db: fakeDb(), requireSelection: true }), /Choose a server location/);
+  assert.strictEqual(await choice.resolveAcquisitionLocation(plan, 'gErMaNy', { db: fakeDb(), requireSelection: true }), 'Germany');
+
+  const withFullGermany = await choice.choicesForPlan(plan, { db: fakeDb({ fullGermany: true }) });
+  assert.deepStrictEqual(withFullGermany.map(item => item.value), ['London'], 'full locations must not be offered');
+  assert.strictEqual(await choice.resolveAcquisitionLocation(plan, null, { db: fakeDb({ fullGermany: true }), requireSelection: true }), 'London', 'single remaining location must auto-select without a dropdown');
+
+  const selected = await choice.selectServerForLocation(plan, 'London', { db: fakeDb() });
+  assert(['London A', 'London B'].includes(selected.name), 'location selection must never escape the chosen location');
+
+  const sticky = await choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb() });
+  assert.strictEqual(sticky.id, servers[0].id, 'persisted assignment must win over later pool ordering');
+  await assert.rejects(
+    () => choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb({ disabledAssigned: true }) }),
+    error => error && error.code === 'ASSIGNED_MEDIA_SERVER_UNAVAILABLE',
+    'disabled sticky servers must fail closed instead of silently moving customers'
+  );
+
+  const checkout = fs.readFileSync('src/platform/flexible-checkout.js', 'utf8');
+  const lifecycle = fs.readFileSync('src/payments/lifecycle.js', 'utf8');
+  const pending = fs.readFileSync('src/security/pending-registration.js', 'utf8');
+  const provisioning = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
+  const mediaReconcile = fs.readFileSync('src/jellyfin/media-service-reconciliation.js', 'utf8');
+  const migration = fs.readFileSync('db/migrations/20261003113000_customer_media_location_assignment.sql', 'utf8');
+  assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
+  assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
+  assert(pending.includes('freeMediaLocation') && pending.includes('media_location)'), 'pre-login Free registration must persist its selected location');
+  assert(provisioning.includes('media_server_id') && provisioning.includes('persistAssignment'), 'Jellyfin reconciliation must honor and persist sticky subscription assignment');
+  assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
+  assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
+
+  console.log('customer media location selection smoke: ok');
+})().catch(error => {
+  console.error(error.stack || error);
+  process.exit(1);
+});
