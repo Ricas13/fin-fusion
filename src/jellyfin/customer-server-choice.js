@@ -207,11 +207,6 @@ async function assignedServer(entitlement, expectedProvider = null, { db = query
     error.code = 'ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH';
     throw error;
   }
-  if (!server.enabled) {
-    const error = new Error('The media server assigned to this subscription is currently unavailable.');
-    error.code = 'ASSIGNED_MEDIA_SERVER_UNAVAILABLE';
-    throw error;
-  }
   return server;
 }
 
