@@ -33,7 +33,7 @@ BEGIN
 END
 $$;
 
-DO $
+DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -60,7 +60,7 @@ BEGIN
       NOT VALID;
   END IF;
 END
-$;
+$$;
 
 ALTER TABLE subscriptions
   VALIDATE CONSTRAINT subscriptions_media_server_id_fkey;
