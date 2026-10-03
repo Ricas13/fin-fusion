@@ -154,6 +154,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   const checkoutIntents = fs.readFileSync('src/payments/checkout-intents.js', 'utf8');
   const lifecyclePrimitives = fs.readFileSync('src/payments/lifecycle-primitives.js', 'utf8');
   const planChange = fs.readFileSync('src/payments/customer-plan-change.js', 'utf8');
+  const subscriptionActions = fs.readFileSync('src/platform/customer-subscription-actions.js', 'utf8');
+  const subscriptionTermination = fs.readFileSync('src/payments/subscription-termination.js', 'utf8');
   const userCapacity = fs.readFileSync('src/jellyfin/user-capacity.js', 'utf8');
   const mediaReconcile = fs.readFileSync('src/jellyfin/media-service-reconciliation.js', 'utf8');
   const providerRecovery = fs.readFileSync('src/payments/provider-operation-recovery.js', 'utf8');
@@ -178,6 +180,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(checkoutClient.includes('payload.selectedLocation') && checkoutClient.includes('setMediaLocation(card,preferred)'), 'checkout UI must preselect a reusable existing location without removing the customer choice');
   assert(planChange.includes('existingAssignedServerForPlan(target,current.media_server_id,mediaLocation||null)'), 'plan changes must reuse an eligible existing server before applying new-customer availability rules, even when that server is full or closed to new placements');
   assert(planChange.includes('assertNoAmbiguousLegacyMediaAssignment') && planChange.includes('needs administrator repair before this paid plan change can be made safely'), 'paid plan changes must fail closed when a legacy customer has media accounts but no unambiguous persisted server assignment');
+  assert(subscriptionActions.includes("if(!enable&&await planChange.pendingForCustomer") && subscriptionActions.includes('Cancel your scheduled plan change before stopping automatic renewal.'), 'renewal stop must not race an open scheduled plan change or leave its future commercial reservation ambiguous');
+  assert(subscriptionTermination.includes("UPDATE customer_plan_changes") && subscriptionTermination.includes("state='cancelled'") && subscriptionTermination.includes("current_subscription_id=$1"), 'hard subscription termination/refund must retire pending plan changes so future plan/server capacity is released');
   assert(planChange.includes('target_media_location') && planChange.includes('media_location_preference=$13') && planChange.includes('media_server_id=$14'), 'plan changes must persist their target location and concrete sticky assignment');
   assert(planChange.includes('change.target_media_location') && planChange.includes('reservedServerIfEligible') && planChange.includes('selectServerForLocationLocked'), 'scheduled plan changes must revalidate their chosen location under row locks and reuse the old server only when it remains eligible');
   assert(migration.includes('ALTER TABLE customer_plan_changes') && migration.includes('target_media_location'), 'scheduled plan changes must retain their target media location across provider renewal boundaries');
