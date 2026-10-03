@@ -156,7 +156,7 @@ async function resolveAcquisitionLocation(plan, requested, { db = query, require
     error.code = 'MEDIA_LOCATION_REQUIRED';
     throw error;
   }
-  const found = choices.find(choice => choice.key === locationKey(wanted));
+  const found = choices.find(choice => locationKey(choice.value) === locationKey(wanted));
   if (!found) {
     const error = new Error('That server location is no longer available. Choose another location.');
     error.code = 'MEDIA_LOCATION_UNAVAILABLE';
