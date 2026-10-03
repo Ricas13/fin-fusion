@@ -167,6 +167,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(migration.includes('billing_checkout_intents') && migration.includes('free_access_registration_reservations'), 'paid checkout and Free registration must reserve exact physical server capacity');
   assert(migration.includes('matching_account_count=1'), 'legacy subscription assignment backfill must leave ambiguous multi-account customers untouched');
   assert(checkoutIntents.includes('selectServerForLocationLocked') && checkoutIntents.includes('media_server_id'), 'paid checkout must serialize and reserve a concrete physical server');
+  assert(checkoutIntents.includes('jellyfin_server_placement_leases') && checkoutIntents.includes("INTERVAL '15 minutes'"), 'paid checkout must expose a short compatibility reservation to N-1 web capacity accounting during rolling deployment');
   assert(lifecycle.includes('selectServerForLocationLocked'), 'Free and trial activation must serialize concrete server selection');
   assert(lifecyclePrimitives.includes('selectServerForLocationLocked'), 'paid settlement fallback must serialize server reselection inside the chosen location');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'recurring checkout must forward the chosen media location into the plan-change workflow');
