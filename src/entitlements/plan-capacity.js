@@ -120,7 +120,7 @@ async function loadPlan(planId,db=query){
 async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
-      (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS used,
+      (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=clock_timestamp() AND s.current_period_end>NOW()) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
        (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
        ${pendingPlanChangeUsersSql('$1')} +
@@ -136,7 +136,7 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
         s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit,1))),0)::int
        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS household_used,
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=clock_timestamp() AND s.current_period_end>NOW()) AS household_used,
       ((SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.stremio_household_network_limit,1))),0)::int
         FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
         WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
@@ -207,7 +207,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
     FROM subscriptions s
     JOIN plans p ON p.id=s.plan_id
     LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
-    WHERE s.superseded_by IS NULL AND s.starts_at<=NOW()
+    WHERE s.superseded_by IS NULL AND s.starts_at<=clock_timestamp()
       AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
       AND EXISTS(
         SELECT 1
@@ -314,7 +314,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
           ON o.customer_id=s.customer_id AND o.subscription_id=s.id
         WHERE s.plan_id=$1
           AND s.superseded_by IS NULL
-          AND s.starts_at<=NOW()
+          AND s.starts_at<=clock_timestamp()
           AND (
             (o.permanent_access=TRUE AND o.revoked_at IS NULL)
             OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
@@ -408,7 +408,7 @@ function legacyAcquisitionSql(alias='p'){
     SELECT COUNT(DISTINCT cs.customer_id) FROM subscriptions cs
     WHERE cs.plan_id=${alias}.id AND cs.superseded_by IS NULL
       AND cs.status IN ('active','trialing','past_due','paused')
-      AND cs.starts_at<=NOW() AND cs.current_period_end>NOW()
+      AND cs.starts_at<=clock_timestamp() AND cs.current_period_end>NOW()
   ) + (
     SELECT COUNT(*) FROM free_access_registration_reservations cr
     WHERE cr.plan_id=${alias}.id AND cr.consumed_at IS NULL AND cr.released_at IS NULL AND cr.expires_at>NOW()
@@ -454,7 +454,7 @@ function mediaPlanLimitAvailableSql(alias='p'){
     LEFT JOIN customer_entitlement_overrides media_o ON media_o.customer_id=media_s.customer_id AND media_o.subscription_id=media_s.id
     WHERE media_s.plan_id=${alias}.id
       AND media_s.superseded_by IS NULL
-      AND media_s.starts_at<=NOW()
+      AND media_s.starts_at<=clock_timestamp()
       AND NOT public.subscription_admin_removed(media_s.customer_id,'jellyfin')
       AND (COALESCE(${alias}.is_free_tier,FALSE)=FALSE OR ${freePendingUnblockedSql('media_s','media_plan_hold')})
       AND (
@@ -547,7 +547,7 @@ function fleetAvailableSql(alias='p'){
     JOIN plans pending_plan ON pending_plan.id=pending_subscription.plan_id
     LEFT JOIN customer_entitlement_overrides pending_override ON pending_override.customer_id=pending_subscription.customer_id AND pending_override.subscription_id=pending_subscription.id
     WHERE pending_subscription.superseded_by IS NULL
-      AND pending_subscription.starts_at<=NOW()
+      AND pending_subscription.starts_at<=clock_timestamp()
       AND COALESCE(NULLIF(pending_subscription.service_type_snapshot,''),pending_plan.service_type,'jellyfin') IN('jellyfin','bundle')
       AND ${planPoolOverlapSql(alias,'pending_plan')}
       AND (
