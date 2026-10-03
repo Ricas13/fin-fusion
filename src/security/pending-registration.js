@@ -132,7 +132,7 @@ async function begin({email,username,password,referralCode=null,communicationPre
             if(freePlan){
                 resolvedFreeMediaLocation=await customerServerChoice.resolveAcquisitionLocation(freePlan,freeMediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
                 await planCapacity.lockAndAssert(client,freePlan.id,freePlan.name||'Free Access');
-                reservedFreeMediaServer=await customerServerChoice.selectServerForLocation(freePlan,resolvedFreeMediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+                reservedFreeMediaServer=await customerServerChoice.selectServerForLocationLocked(freePlan,resolvedFreeMediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
                 resolvedFreeMediaLocation=reservedFreeMediaServer?.selected_location||resolvedFreeMediaLocation;
             }
 
