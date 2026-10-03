@@ -151,6 +151,17 @@ function matchesPreference(server, preference) {
   return locationKey(server?.location) === locationKey(preference);
 }
 
+async function reservedServerIfEligible(plan, serverId, requestedLocation = null, { db = query } = {}) {
+  if (!serverId || !mediaServerType(plan)) return null;
+  const provider = mediaServerType(plan);
+  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true, db }))
+    .filter(server => mediaProvider.normalizeType(server.media_server_type || 'jellyfin') === provider)
+    .filter(server => serverAllowsPlan(server, plan));
+  const server = servers.find(candidate => String(candidate.id) === String(serverId));
+  if (!server || (requestedLocation && !matchesPreference(server, requestedLocation))) return null;
+  return { ...server, selected_location: locationLabel(server.location) };
+}
+
 async function assignedServer(entitlement, expectedProvider = null, { db = query } = {}) {
   const serverId = entitlement?.media_server_id;
   if (!serverId) return null;
@@ -207,6 +218,7 @@ module.exports = {
   resolveAcquisitionLocation,
   selectServerForLocation,
   matchesPreference,
+  reservedServerIfEligible,
   assignedServer,
   persistAssignment
 };
