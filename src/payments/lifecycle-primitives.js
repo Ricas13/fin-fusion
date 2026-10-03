@@ -312,7 +312,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 if(customerServerChoice.mediaServerType(plan)&&contract?.mediaLocation){
                     const reservedId=settlementIntent?.media_server_id||contract.mediaServerId||null;
                     activationMediaServer=await customerServerChoice.reservedServerIfEligible(plan,reservedId,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
-                    if(!activationMediaServer)activationMediaServer=await customerServerChoice.selectServerForLocation(plan,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+                    if(!activationMediaServer)activationMediaServer=await customerServerChoice.selectServerForLocationLocked(plan,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
                     if(settlementIntent?.id&&activationMediaServer?.id&&String(settlementIntent.media_server_id||'')!==String(activationMediaServer.id)){
                         await client.query('UPDATE billing_checkout_intents SET media_server_id=$2,updated_at=NOW() WHERE id=$1',[settlementIntent.id,activationMediaServer.id]);
                     }
