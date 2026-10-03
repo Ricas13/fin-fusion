@@ -166,9 +166,9 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
             const scheduled=await scheduleStripeProvider(current,target,local,{currency:target.currency,mapping,accessQuantity:quantity});
             return{handled:true,mode:'period_end',message:`Plan change to ${target.name} · ${targetAccessLabel(target)} (${target.currency}) is scheduled in Stripe for your next renewal (${new Date(scheduled.effective_at).toLocaleDateString('en-GB')}).`};
         }catch(error){
-            if(!local){if(scheduledPlacement?.id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});throw error;}
+            if(!local){if(scheduledPlacement?.placement_lease_id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});throw error;}
             const terminal=Boolean(error.planChangeRefusal&&!error.planChangeMutationAttempted);
-            if(terminal&&scheduledPlacement?.id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});
+            if(terminal&&scheduledPlacement?.placement_lease_id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});
             await query(`UPDATE customer_plan_changes SET state=CASE WHEN $3::boolean THEN 'failed' ELSE state END,error=$2,updated_at=NOW() WHERE id=$1`,[local.id,String(error.message).slice(0,1000),terminal]);
             throw error;
         }
