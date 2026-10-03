@@ -6,6 +6,7 @@ const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
 const incidents = require('./incidents');
 const providerLifecycleState = require('./provider-lifecycle-state');
+const financialState = require('./provider-financial-state');
 
 const API_BASE = 'https://api.plisio.net';
 const WAITING_STATUSES = providerLifecycleState.PLISIO_WAITING;
@@ -109,6 +110,11 @@ async function createCheckout({ intentId, resolvedPlan, finalAmountMinor = null,
     return { id: String(invoice.txn_id), url: String(invoice.invoice_url), mode: 'payment' };
 }
 
+function finiteNonNegative(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
 function operationFields(remote) {
     const params = remote?.params && typeof remote.params === 'object' ? remote.params : {};
     return {
@@ -116,8 +122,75 @@ function operationFields(remote) {
         orderNumber: String(remote?.order_number || params.order_number || '').trim(),
         status: String(remote?.status || '').toLowerCase(),
         sourceAmount: remote?.source_amount ?? params.source_amount ?? null,
-        sourceCurrency: String(remote?.source_currency || params.source_currency || '').toUpperCase()
+        sourceCurrency: String(remote?.source_currency || params.source_currency || '').toUpperCase(),
+        sourceRate: remote?.source_rate ?? params.source_rate ?? null,
+        actualSum: remote?.actual_sum ?? null,
+        actualCommission: remote?.actual_commission ?? null,
+        actualFee: remote?.actual_fee ?? null,
+        actualInvoiceSum: remote?.actual_invoice_sum ?? null
     };
+}
+
+function cryptoToSourceMinor(cryptoAmount, sourceRate) {
+    const crypto = finiteNonNegative(cryptoAmount);
+    const rate = finiteNonNegative(sourceRate);
+    if (crypto == null || rate == null || rate <= 0) return null;
+    return moneyMinor(crypto / rate);
+}
+
+function feeAccounting(fields, { grossMinor = null } = {}) {
+    const gross = grossMinor == null ? moneyMinor(fields?.sourceAmount) : Number(grossMinor);
+    if (!Number.isInteger(gross) || gross < 0) {
+        return { feeDataAvailable: false, feeMinor: 0, netMinor: 0, source: null };
+    }
+    const rate = finiteNonNegative(fields?.sourceRate);
+    if (rate == null || rate <= 0) {
+        return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
+    }
+
+    // Transaction details define actual_invoice_sum as actual_sum minus the
+    // commission and network fee used to move the invoice into the wallet.
+    // That is the exact merchant proceeds we need for financial reporting.
+    let settledPayout = finiteNonNegative(fields?.actualInvoiceSum);
+    let source = settledPayout != null ? 'actual_invoice_sum' : null;
+
+    // Some operation responses expose the actual components but omit the
+    // convenience actual_invoice_sum field. Reconstruct the same value only
+    // when every component is present; never substitute quoted invoice fields
+    // because they do not include the final network fee.
+    if (settledPayout == null) {
+        const actualSum = finiteNonNegative(fields?.actualSum);
+        const actualCommission = finiteNonNegative(fields?.actualCommission);
+        const actualFee = finiteNonNegative(fields?.actualFee);
+        if (actualSum != null && actualCommission != null && actualFee != null) {
+            const calculated = actualSum - actualCommission - actualFee;
+            if (calculated >= 0) {
+                settledPayout = calculated;
+                source = 'actual_components';
+            }
+        }
+    }
+
+    if (settledPayout != null) {
+        const calculatedNet = cryptoToSourceMinor(settledPayout, rate);
+        if (calculatedNet != null) {
+            // Provider conversion/rounding can differ by a cent or two.
+            // Anything materially above the verified sale gross is not safe
+            // evidence and remains explicitly incomplete.
+            const toleratedDrift = 2;
+            if (calculatedNet <= gross + toleratedDrift) {
+                const netMinor = Math.max(0, Math.min(gross, calculatedNet));
+                return {
+                    feeDataAvailable: true,
+                    feeMinor: gross - netMinor,
+                    netMinor,
+                    source
+                };
+            }
+        }
+    }
+
+    return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
 }
 
 async function getOperation(providerTxnId) {
@@ -188,7 +261,12 @@ function verifiedFieldsFromEvidence(remote, payload, intent, providerId) {
         ...fields,
         orderNumber: fields.orderNumber || evidence.orderNumber,
         sourceAmount: fields.sourceAmount ?? evidence.sourceAmount,
-        sourceCurrency: fields.sourceCurrency || evidence.sourceCurrency
+        sourceCurrency: fields.sourceCurrency || evidence.sourceCurrency,
+        sourceRate: fields.sourceRate ?? evidence.sourceRate,
+        actualSum: fields.actualSum ?? evidence.actualSum,
+        actualCommission: fields.actualCommission ?? evidence.actualCommission,
+        actualFee: fields.actualFee ?? evidence.actualFee,
+        actualInvoiceSum: fields.actualInvoiceSum ?? evidence.actualInvoiceSum
     };
 }
 
@@ -242,6 +320,7 @@ async function activateCompleted(remote, fields, intent) {
         providerStatus: 'completed',
         commercialSnapshot: contract.snapshot
     });
+    const accounting = feeAccounting(fields, { grossMinor: amountMinor });
     await financialState.recordTransaction({
         provider:'plisio',
         providerTransactionId:fields.id,
@@ -250,14 +329,151 @@ async function activateCompleted(remote, fields, intent) {
         occurredAt:remote?.updated_at||remote?.created_at||remote?.date||new Date(),
         currency:fields.sourceCurrency,
         grossMinor:amountMinor,
-        feeMinor:0,
-        netMinor:amountMinor,
+        feeMinor:accounting.feeMinor,
+        netMinor:accounting.netMinor,
         providerReferenceId:String(intent.id),
         customerId:intent.customer_id,
-        metadata:{providerAuthoritative:true,providerVerified:true,feeDataAvailable:false,checkoutIntentId:String(intent.id),planId:String(intent.plan_id),source:'verified_operation'}
+        metadata:{
+            providerAuthoritative:true,
+            providerVerified:true,
+            feeDataAvailable:accounting.feeDataAvailable,
+            feeAccountingSource:accounting.source,
+            checkoutIntentId:String(intent.id),
+            planId:String(intent.plan_id),
+            source:'verified_operation'
+        }
     });
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
-    return { status: 'completed', completed: true };
+    return { status: 'completed', completed: true, feeDataAvailable: accounting.feeDataAvailable };
+}
+
+async function syncFeeData({ limit = 25 } = {}) {
+    const cfg = await providerSettings.get('plisio');
+    if (!cfg?.secretKey) {
+        return { provider:'plisio', configured:false, processed:0, updated:0, unresolved:0, failed:0 };
+    }
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 25));
+    const result = await financialState.missingPlisioFeeTransactions(safeLimit);
+    let updated = 0, unresolved = 0, failed = 0;
+
+    async function defer(providerTransactionId, reason) {
+        unresolved += 1;
+        if (!providerTransactionId) return;
+        try {
+            await financialState.markPlisioFeeReconcileAttempt(providerTransactionId, reason);
+        } catch (error) {
+            console.warn('Unable to record deferred Plisio fee reconciliation attempt.', {
+                providerTransactionId: String(providerTransactionId).slice(0, 200),
+                error: String(error?.message || error).slice(0, 600)
+            });
+        }
+    }
+
+    for (const row of result.rows) {
+        const providerTransactionId = String(row.provider_transaction_id || '').trim();
+        try {
+            if (!providerTransactionId) { await defer(null, 'missing provider transaction id'); continue; }
+            const remote = await getOperation(providerTransactionId);
+            let fields = operationFields(remote);
+            if (fields.id !== providerTransactionId || fields.status !== 'completed') {
+                await defer(providerTransactionId, 'provider operation is not an exact completed match');
+                continue;
+            }
+
+            const evidence = await financialState.latestPlisioCallbackEvidence(providerTransactionId);
+            if (evidence) {
+                const callbackFields = operationFields(evidence);
+                fields = {
+                    ...fields,
+                    sourceAmount: fields.sourceAmount ?? callbackFields.sourceAmount,
+                    sourceCurrency: fields.sourceCurrency || callbackFields.sourceCurrency,
+                    sourceRate: fields.sourceRate ?? callbackFields.sourceRate,
+                    actualSum: fields.actualSum ?? callbackFields.actualSum,
+                    actualCommission: fields.actualCommission ?? callbackFields.actualCommission,
+                    actualFee: fields.actualFee ?? callbackFields.actualFee,
+                    actualInvoiceSum: fields.actualInvoiceSum ?? callbackFields.actualInvoiceSum
+                };
+            }
+
+            const rowCurrency = String(row.currency || '').toUpperCase();
+            const sourceCurrency = String(fields.sourceCurrency || rowCurrency).toUpperCase();
+            if (!rowCurrency || sourceCurrency !== rowCurrency) {
+                await defer(providerTransactionId, 'provider source currency does not match stored settlement currency');
+                continue;
+            }
+
+            const grossMinor = Number(row.gross_amount_minor || 0);
+            if (!Number.isInteger(grossMinor) || grossMinor < 0) {
+                await defer(providerTransactionId, 'stored gross amount is invalid');
+                continue;
+            }
+            if (fields.sourceAmount != null) {
+                const verifiedGross = moneyMinor(fields.sourceAmount);
+                if (verifiedGross != null && verifiedGross !== grossMinor) {
+                    await defer(providerTransactionId, 'provider source amount does not match stored settlement gross');
+                    continue;
+                }
+            } else {
+                fields.sourceAmount = (grossMinor / 100).toFixed(2);
+            }
+            fields.sourceCurrency = sourceCurrency;
+
+            const accounting = feeAccounting(fields, { grossMinor });
+            if (!accounting.feeDataAvailable) {
+                await defer(providerTransactionId, 'exact actual settlement fee components are unavailable');
+                continue;
+            }
+
+            await financialState.recordTransaction({
+                provider:'plisio',
+                providerTransactionId,
+                transactionType:row.transaction_type || 'payment',
+                transactionStatus:row.transaction_status || 'completed',
+                occurredAt:row.occurred_at,
+                currency:rowCurrency,
+                grossMinor,
+                feeMinor:accounting.feeMinor,
+                netMinor:accounting.netMinor,
+                providerCustomerId:row.provider_customer_id,
+                providerReferenceId:row.provider_reference_id,
+                providerSourceId:row.provider_source_id,
+                customerId:row.customer_id,
+                metadata:{
+                    ...(row.metadata && typeof row.metadata === 'object' ? row.metadata : {}),
+                    providerAuthoritative:true,
+                    providerVerified:true,
+                    feeDataAvailable:true,
+                    feeAccountingSource:accounting.source,
+                    feeReconciledAt:new Date().toISOString(),
+                    feeReconcileLastError:null,
+                    source:'verified_operation_fee_reconciliation'
+                }
+            });
+            updated += 1;
+        } catch (error) {
+            failed += 1;
+            if (providerTransactionId) {
+                await financialState.markPlisioFeeReconcileAttempt(
+                    providerTransactionId,
+                    String(error?.message || error)
+                ).catch(()=>{});
+            }
+            console.warn('Plisio fee reconciliation could not update a transaction.', {
+                providerTransactionId: providerTransactionId.slice(0, 200),
+                error: String(error?.message || error).slice(0, 600)
+            });
+        }
+    }
+
+    return {
+        provider:'plisio',
+        configured:true,
+        processed:result.rows.length,
+        updated,
+        unresolved,
+        failed,
+        warning:failed ? `${failed} Plisio fee reconciliation row${failed===1?'':'s'} failed; exact fee accounting will retry automatically.` : null
+    };
 }
 
 async function recordActivatedProviderLoss(fields, { eventId = null } = {}) {
@@ -513,6 +729,9 @@ module.exports = {
     callbackDigest,
     moneyMinor,
     operationFields,
+    cryptoToSourceMinor,
+    feeAccounting,
+    syncFeeData,
     processWebhook,
     retryPaymentEvent,
     confirmCheckout,

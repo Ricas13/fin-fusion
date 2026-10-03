@@ -10,6 +10,39 @@ expect(plisio.API_BASE==='https://api.plisio.net','Plisio must use the documente
 expect(plisio.moneyMinor('12.34')===1234,'Plisio source amount conversion must preserve minor units.');
 expect(plisio.moneyMinor('bad')===null,'Invalid Plisio amount must fail verification.');
 
+const merchantPays=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.001',actualCommission:'0.00001',actualFee:'0',actualInvoiceSum:'0.00099'
+});
+expect(merchantPays.feeDataAvailable&&merchantPays.feeMinor===10&&merchantPays.netMinor===990,'Merchant-paid Plisio commission must reduce net proceeds by the exact settled fee.');
+
+const customerPays=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.00101',actualCommission:'0.00001',actualFee:'0',actualInvoiceSum:'0.001'
+});
+expect(customerPays.feeDataAvailable&&customerPays.feeMinor===0&&customerPays.netMinor===1000,'Customer-paid Plisio commission must be known exact fee data without reducing merchant sale proceeds.');
+
+const settledFee=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.00101',actualCommission:'0.00001',actualFee:'0.00002',actualInvoiceSum:'0.00098'
+});
+expect(settledFee.feeDataAvailable&&settledFee.feeMinor===20&&settledFee.source==='actual_invoice_sum','Exact settled Plisio proceeds must include final network fee impact.');
+
+const reconstructed=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.00101',actualCommission:'0.00001',actualFee:'0.00002'
+});
+expect(reconstructed.feeDataAvailable&&reconstructed.feeMinor===20&&reconstructed.source==='actual_components','Exact actual Plisio components must reconstruct merchant proceeds when actual_invoice_sum is omitted.');
+
+const quotedOnly=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',invoiceAmount:'0.001',
+    invoiceCommission:'0.00001',invoiceSum:'0.00099',invoiceTotalSum:'0.001'
+});
+expect(!quotedOnly.feeDataAvailable&&quotedOnly.feeMinor===0,'Quoted Plisio invoice commission must not be treated as exact final fee because network settlement fees can still differ.');
+
+const unknownFee=plisio.feeAccounting({sourceAmount:'10.00'});
+expect(!unknownFee.feeDataAvailable&&unknownFee.feeMinor===0&&unknownFee.netMinor===1000,'Missing Plisio fee evidence must stay explicitly incomplete instead of guessing a fee.');
+
 // Plisio's callback protocol signs JSON.stringify(parsedJsonWithoutVerifyHash)
 // with HMAC-SHA1. Pin a literal vector so this test proves serialization and
 // key-order behavior instead of calculating its own expected value at runtime.
@@ -42,6 +75,9 @@ expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'other-
 expect(!plisio.storedEventIntentMatches({id:'txn-historical',orderNumber:'',status:'cancelled'},authenticatedHistoricalPayload,{...historicalIntent,provider_checkout_id:'another-txn'},'txn-historical'),'Terminal fallback must reject a checkout no longer bound to the provider transaction.');
 
 const moduleSource=source('src/payments/plisio.js');
+expect(moduleSource.includes("require('./provider-financial-state')"),'Plisio completion must write through canonical provider financial state.');
+expect(moduleSource.includes('feeAccounting(fields')&&moduleSource.includes('feeDataAvailable:accounting.feeDataAvailable'),'Completed Plisio payments must persist verified fee completeness instead of hardcoding zero-fee accounting.');
+expect(moduleSource.includes('syncFeeData')&&moduleSource.includes('latestPlisioCallbackEvidence'),'Historical Plisio fee reconciliation must combine authenticated operation truth with previously processed callback evidence.');
 expect(moduleSource.includes("'/api/v1/invoices/new'"),'Plisio checkout must use invoices/new.');
 expect(moduleSource.includes('source_currency')&&moduleSource.includes('source_amount'),'Plisio checkout must anchor invoices to the local fiat contract.');
 expect(moduleSource.includes("callback.searchParams.set('json', 'true')"),'Plisio callback must request JSON mode.');

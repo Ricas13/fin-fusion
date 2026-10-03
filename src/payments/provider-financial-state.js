@@ -48,6 +48,7 @@ function transactionWhere(filters={},params=[]) {
     }
     if(filters.providerAuthoritative===true)clauses.push("COALESCE(t.metadata->>'providerAuthoritative','false')='true'");
     if(filters.feeDataAvailable===true)clauses.push("COALESCE(t.metadata->>'feeDataAvailable','false')='true'");
+    if(filters.feeDataAvailable===false)clauses.push("COALESCE(t.metadata->>'feeDataAvailable','false')<>'true'");
     if(filters.unowned===true)clauses.push('t.customer_id IS NULL');
     const q=String(filters.q||'').trim();
     if(q){
@@ -79,6 +80,56 @@ async function countTransactions(filters={},options={}) {
     const where=transactionWhere(filters,params);
     const result=await queryFn(`SELECT COUNT(*)::bigint AS total FROM payment_history_transactions t LEFT JOIN customers c ON c.id=t.customer_id LEFT JOIN app_users u ON u.id=c.user_id WHERE ${where}`,params);
     return Number(result.rows[0]?.total||0);
+}
+
+async function missingPlisioFeeTransactions(limit=25,options={}) {
+    const queryFn=options.queryFn||query;
+    const safe=boundedInt(limit,{min:1,max:500,fallback:25});
+    return queryFn(`${transactionSelect()}
+      WHERE t.provider='plisio'
+        AND LOWER(COALESCE(t.transaction_status,'')) IN ('completed','success','succeeded')
+        AND COALESCE(t.metadata->>'feeDataAvailable','false')<>'true'
+      ORDER BY
+        CASE WHEN t.metadata ? 'feeReconcileAttemptedAt' THEN 1 ELSE 0 END ASC,
+        COALESCE(t.metadata->>'feeReconcileAttemptedAt','') ASC,
+        t.occurred_at DESC,t.id DESC
+      LIMIT $1
+    `,[safe]);
+}
+
+async function markPlisioFeeReconcileAttempt(providerTransactionId,error=null,options={}) {
+    const queryFn=options.queryFn||query;
+    const id=text(providerTransactionId);
+    if(!id)return 0;
+    const result=await queryFn(`
+      UPDATE payment_history_transactions
+      SET metadata=COALESCE(metadata,'{}'::jsonb)
+          ||jsonb_build_object(
+              'feeReconcileAttemptedAt',NOW(),
+              'feeReconcileLastError',CASE WHEN $2::text IS NULL THEN NULL ELSE LEFT($2::text,500) END
+            ),
+          updated_at=NOW()
+      WHERE provider='plisio' AND provider_transaction_id=$1
+    `,[id,text(error)]);
+    return result.rowCount;
+}
+
+async function latestPlisioCallbackEvidence(providerTransactionId,options={}) {
+    const queryFn=options.queryFn||query;
+    const id=text(providerTransactionId);
+    if(!id)return null;
+    const result=await queryFn(`
+      SELECT payload
+      FROM payment_events
+      WHERE provider='plisio'
+        AND payload->>'txn_id'=$1
+        AND processed_at IS NOT NULL
+        AND processing_error IS NULL
+      ORDER BY created_at DESC,id DESC
+      LIMIT 1
+    `,[id]);
+    const payload=result.rows[0]?.payload;
+    return payload&&typeof payload==='object'&&!Array.isArray(payload)?payload:null;
 }
 
 async function transactionCoverage(options={}) {
@@ -654,7 +705,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
+    missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
