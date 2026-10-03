@@ -199,7 +199,7 @@ async function createIntent({
             });
             const plan=(await client.query('SELECT * FROM plans WHERE id=$1',[planId])).rows[0];
             if(plan&&customerServerChoice.mediaServerType(plan)){
-                const selected=await customerServerChoice.selectServerForLocation(plan,snapshot.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
+                const selected=await customerServerChoice.selectServerForLocationLocked(plan,snapshot.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
                 mediaServerId=selected?.id||null;
                 snapshot={...snapshot,mediaLocation:selected?.selected_location||snapshot.mediaLocation||null,mediaServerId};
             }
