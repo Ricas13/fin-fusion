@@ -159,7 +159,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
   };
   const capped=await capacity.usage('capped-plan',cappedFleetDb);
   assert.strictEqual(capped.userLimit,400,'physical fleet capacity remains independent');
-  assert.strictEqual(capped.limit,50,'plan owns its commercial acquisition cap');
+  assert.strictEqual(capped.manualLimit,50,'plan owns its commercial acquisition cap');
   assert.strictEqual(capped.remaining,5,'plan cap must stop acquisition before a much larger physical fleet is full');
 
   assert.deepStrictEqual(capacity.scarcity({remaining:2,soldOut:false,pool:'premium',plan:{billing_interval:'month',service_type:'jellyfin'}}),{label:'🔥 Only 2 Premium places left',kind:'urgent'});
