@@ -211,8 +211,12 @@ async function assignedServer(entitlement, expectedProvider = null, { db = query
 }
 
 async function persistAssignment(subscriptionId, server, { overwrite = false, db = query } = {}) {
-  if (!subscriptionId || !server?.id) return null;
-  const location = locationLabel(server.location);
+  // Callers may already have a decorated media-server row or a persisted
+  // Jellyfin/Emby account row. Account rows use `server_id` while their own
+  // `id` is the account id; never mistake that account id for a server FK.
+  const serverId = server?.server_id || server?.id || null;
+  if (!subscriptionId || !serverId) return null;
+  const location = locationLabel(server?.server_location ?? server?.location);
   const result = await db(`
     UPDATE subscriptions
     SET media_server_id=CASE WHEN $4::boolean OR media_server_id IS NULL THEN $2 ELSE media_server_id END,
@@ -221,7 +225,7 @@ async function persistAssignment(subscriptionId, server, { overwrite = false, db
         updated_at=NOW()
     WHERE id=$1
     RETURNING media_server_id,media_location_preference,media_location_snapshot
-  `, [subscriptionId, server.id, location, Boolean(overwrite)]);
+  `, [subscriptionId, serverId, location, Boolean(overwrite)]);
   return result.rows[0] || null;
 }
 
