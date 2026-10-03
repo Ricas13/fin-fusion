@@ -202,6 +202,11 @@ async function assignedServer(entitlement, expectedProvider = null, { db = query
     error.code = 'ASSIGNED_MEDIA_SERVER_MISSING';
     throw error;
   }
+  if (server.enabled !== true) {
+    const error = new Error('The media server assigned to this subscription is currently unavailable.');
+    error.code = 'ASSIGNED_MEDIA_SERVER_UNAVAILABLE';
+    throw error;
+  }
   if (provider && mediaProvider.normalizeType(server.media_server_type || 'jellyfin') !== provider) {
     const error = new Error('The media server assigned to this subscription has the wrong provider type.');
     error.code = 'ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH';
