@@ -142,6 +142,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
   assert(!/DO \\$\\nBEGIN/.test(migration), 'PostgreSQL migration DO blocks must use a valid dollar-quoted delimiter');
   assert(migration.includes('billing_checkout_intents') && migration.includes('free_access_registration_reservations'), 'paid checkout and Free registration must reserve exact physical server capacity');
+  assert(migration.includes('matching_account_count=1'), 'legacy subscription assignment backfill must leave ambiguous multi-account customers untouched');
   assert(checkoutIntents.includes('selectServerForLocationLocked') && checkoutIntents.includes('media_server_id'), 'paid checkout must serialize and reserve a concrete physical server');
   assert(lifecycle.includes('selectServerForLocationLocked'), 'Free and trial activation must serialize concrete server selection');
   assert(lifecyclePrimitives.includes('selectServerForLocationLocked'), 'paid settlement fallback must serialize server reselection inside the chosen location');
