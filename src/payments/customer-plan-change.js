@@ -36,12 +36,13 @@ function selectedTarget(target,mapping,requestedKind=null,requestedQuantity=null
 function targetAccessLabel(target){const kind=normalizedKind(target,target,target.variant_kind),quantity=mappingQuantity(target,target,target.access_quantity,target.variant_kind);return kind==='households'?`${quantity} household${quantity===1?'':'s'}`:`${quantity} stream${quantity===1?'':'s'}`;}
 async function reserveScheduledMediaPlacement(customerId,server,effectiveAt){
     if(!customerId||!server?.id||!effectiveAt)return null;
-    const reserved=await provisioningHelpers.reservePlacement(customerId,server),when=new Date(effectiveAt);
+    const when=new Date(effectiveAt);
     if(!Number.isFinite(when.getTime()))throw new Error('Scheduled plan change has an invalid effective date.');
-    const keepUntil=new Date(when.getTime()+24*60*60*1000);
-    const extended=await query(`UPDATE jellyfin_server_placement_leases SET expires_at=GREATEST(expires_at,$2),updated_at=NOW() WHERE id=$1 AND customer_id=$3 AND server_id=$4 RETURNING expires_at`,[reserved.placement_lease_id,keepUntil,customerId,server.id]);
-    if(!extended.rowCount)throw new Error('Scheduled media capacity reservation disappeared before the Stripe plan change was created.');
-    return{...reserved,scheduled_lease_expires_at:extended.rows[0].expires_at};
+    // The short placement lease serializes the final-slot decision while the
+    // durable customer_plan_changes row is created. Once that row exists it is
+    // itself counted by user-capacity until applied/cancelled, so no long-lived
+    // generic lease (and no orphaned ghost capacity) is required.
+    return provisioningHelpers.reservePlacement(customerId,server);
 }
 async function releaseScheduledMediaPlacement(customerId,serverId){
     if(!customerId||!serverId)return;
@@ -163,6 +164,7 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
         try{
             if(targetMediaServer&&String(targetMediaServer.id)!==String(current.media_server_id||''))scheduledPlacement=await reserveScheduledMediaPlacement(customerId,targetMediaServer,current.current_period_end);
             local=await createLocalChange(customerId,current,target,'stripe',actorUserId,{targetAccessQuantity:quantity,targetVariantKind:kind,targetMediaLocation,targetMediaServerId:targetMediaServer?.id||null});
+            if(scheduledPlacement?.placement_lease_id)await releaseScheduledMediaPlacement(customerId,targetMediaServer?.id).catch(()=>{});
             const scheduled=await scheduleStripeProvider(current,target,local,{currency:target.currency,mapping,accessQuantity:quantity});
             return{handled:true,mode:'period_end',message:`Plan change to ${target.name} · ${targetAccessLabel(target)} (${target.currency}) is scheduled in Stripe for your next renewal (${new Date(scheduled.effective_at).toLocaleDateString('en-GB')}).`};
         }catch(error){
