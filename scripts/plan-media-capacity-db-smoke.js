@@ -9,6 +9,7 @@ const capacity = require('../src/entitlements/plan-capacity');
   const suffix = crypto.randomBytes(5).toString('hex');
   let serverId = null;
   let previousFreePlan = null;
+  let freeTestMappingAdded = false;
   const planIds = [];
   const customerIds = [];
   try {
@@ -193,6 +194,11 @@ const capacity = require('../src/entitlements/plan-capacity');
     const policy={firstPlaybackGraceDays:3,playbackWindowDays:14,minimumPlaybackMinutes:30};
     previousFreePlan=(await query('SELECT id,capacity_limit,inactivity_policy FROM plans WHERE is_free_tier=TRUE')).rows[0];
     const freePlanId=previousFreePlan.id;
+    const existingFreeTestMapping=await query('SELECT 1 FROM plan_server_eligibility WHERE plan_id=$1 AND server_id=$2',[freePlanId,serverId]);
+    if(!existingFreeTestMapping.rowCount){
+      await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)',[freePlanId,serverId]);
+      freeTestMappingAdded=true;
+    }
     await commands.updateMediaUserLimit({planId:freePlanId,mediaUserLimit:10,freeInactivityPolicy:policy});
     await query("UPDATE subscriptions SET plan_id=$2,status='active',starts_at=NOW()-INTERVAL '20 days',current_period_end=NOW()+INTERVAL '30 days' WHERE customer_id=$1",[planCustomer.id,freePlanId]);
     const account=(await query("UPDATE jellyfin_accounts SET access_lane='free',created_at=NOW()-INTERVAL '20 days',access_lane_changed_at=NOW()-INTERVAL '20 days' WHERE customer_id=$1 RETURNING id",[planCustomer.id])).rows[0];
@@ -220,6 +226,7 @@ const capacity = require('../src/entitlements/plan-capacity');
     if (customerIds.length) await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [customerIds]).catch(() => {});
     if (planIds.length) await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [planIds]).catch(() => {});
     if(previousFreePlan)await query("UPDATE plans SET capacity_limit=$2,inactivity_policy=$3::jsonb WHERE id=$1",[previousFreePlan.id,previousFreePlan.capacity_limit,JSON.stringify(previousFreePlan.inactivity_policy)]);
+    if(freeTestMappingAdded&&previousFreePlan&&serverId)await query('DELETE FROM plan_server_eligibility WHERE plan_id=$1 AND server_id=$2',[previousFreePlan.id,serverId]).catch(()=>{});
     if (serverId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
     await getPool().end();
   }
