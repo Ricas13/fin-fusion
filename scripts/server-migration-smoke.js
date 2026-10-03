@@ -58,14 +58,14 @@ registry.request = async (serverId, endpoint, options = {}) => {
 const migration = require('../src/jellyfin/server-migration');
 const resilient = require('../src/jellyfin/resilient-provisioning');
 
-async function makeServer(name, slug) {
+async function makeServer(name, slug, serverClass = 'premium') {
     const result = await query(`
         INSERT INTO jellyfin_servers(
             name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,
             health_status,allow_new_users,trial_enabled,paid_enabled
-        ) VALUES($1,$2,'premium',$3,$3,'not-used-by-stub',TRUE,100,100,'healthy',TRUE,TRUE,TRUE)
+        ) VALUES($1,$2,$3,$4,$4,'not-used-by-stub',TRUE,100,100,'healthy',TRUE,TRUE,TRUE)
         RETURNING *
-    `, [name, slug, `https://${slug}.example.test`]);
+    `, [name, slug, serverClass, `https://${slug}.example.test`]);
     state(result.rows[0].id);
     return result.rows[0];
 }
@@ -97,7 +97,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
 (async () => {
     const source = await makeServer('Source', 'source');
-    const target = await makeServer('Target', 'target');
+    const target = await makeServer('Target', 'target', 'custom');
     const outside = await makeServer('Outside Pool', 'outside');
     const plan = await makePlan('migration-plan', [source.id, target.id]);
     const first = await makeCustomer('move-user', plan.id, source, 'source-user-1');
@@ -107,6 +107,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
     const check = await migration.preflight(first.customerId, target.id);
     assert.strictEqual(check.source.jellyfin_username, 'move-user');
+    assert.strictEqual(check.target.server_class, 'custom', 'explicit plan server eligibility must override the legacy plan/server class label during migration');
     assert.strictEqual(check.target.id, target.id);
     assert.strictEqual(check.libraryAccess.missing.length, 0);
     await assert.rejects(() => migration.preflight(first.customerId, outside.id), error => error.code === 'TARGET_NOT_ELIGIBLE');
