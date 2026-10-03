@@ -115,14 +115,6 @@ function finiteNonNegative(value) {
     return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-function closeEnough(leftValue, rightValue) {
-    const left = finiteNonNegative(leftValue);
-    const right = finiteNonNegative(rightValue);
-    if (left == null || right == null) return false;
-    const tolerance = Math.max(1e-12, Math.max(Math.abs(left), Math.abs(right)) * 1e-6);
-    return Math.abs(left - right) <= tolerance;
-}
-
 function operationFields(remote) {
     const params = remote?.params && typeof remote.params === 'object' ? remote.params : {};
     return {
@@ -132,16 +124,10 @@ function operationFields(remote) {
         sourceAmount: remote?.source_amount ?? params.source_amount ?? null,
         sourceCurrency: String(remote?.source_currency || params.source_currency || '').toUpperCase(),
         sourceRate: remote?.source_rate ?? params.source_rate ?? null,
-        invoiceAmount: params.amount ?? remote?.invoice_amount ?? null,
-        commission: remote?.commission ?? null,
         actualSum: remote?.actual_sum ?? null,
         actualCommission: remote?.actual_commission ?? null,
         actualFee: remote?.actual_fee ?? null,
-        invoiceCommission: remote?.invoice_commission ?? params.invoice_commission ?? null,
-        actualInvoiceSum: remote?.actual_invoice_sum ?? null,
-        invoiceSum: remote?.invoice_sum ?? params.invoice_sum ?? null,
-        invoiceTotalSum: remote?.invoice_total_sum ?? params.invoice_total_sum ?? null,
-        operationSum: remote?.sum ?? null
+        actualInvoiceSum: remote?.actual_invoice_sum ?? null
     };
 }
 
@@ -277,16 +263,10 @@ function verifiedFieldsFromEvidence(remote, payload, intent, providerId) {
         sourceAmount: fields.sourceAmount ?? evidence.sourceAmount,
         sourceCurrency: fields.sourceCurrency || evidence.sourceCurrency,
         sourceRate: fields.sourceRate ?? evidence.sourceRate,
-        invoiceAmount: fields.invoiceAmount ?? evidence.invoiceAmount,
-        commission: fields.commission ?? evidence.commission,
         actualSum: fields.actualSum ?? evidence.actualSum,
         actualCommission: fields.actualCommission ?? evidence.actualCommission,
         actualFee: fields.actualFee ?? evidence.actualFee,
-        invoiceCommission: fields.invoiceCommission ?? evidence.invoiceCommission,
-        actualInvoiceSum: fields.actualInvoiceSum ?? evidence.actualInvoiceSum,
-        invoiceSum: fields.invoiceSum ?? evidence.invoiceSum,
-        invoiceTotalSum: fields.invoiceTotalSum ?? evidence.invoiceTotalSum,
-        operationSum: fields.operationSum ?? evidence.operationSum
+        actualInvoiceSum: fields.actualInvoiceSum ?? evidence.actualInvoiceSum
     };
 }
 
@@ -408,16 +388,10 @@ async function syncFeeData({ limit = 25 } = {}) {
                     sourceAmount: fields.sourceAmount ?? callbackFields.sourceAmount,
                     sourceCurrency: fields.sourceCurrency || callbackFields.sourceCurrency,
                     sourceRate: fields.sourceRate ?? callbackFields.sourceRate,
-                    invoiceAmount: fields.invoiceAmount ?? callbackFields.invoiceAmount,
-                    commission: fields.commission ?? callbackFields.commission,
                     actualSum: fields.actualSum ?? callbackFields.actualSum,
                     actualCommission: fields.actualCommission ?? callbackFields.actualCommission,
                     actualFee: fields.actualFee ?? callbackFields.actualFee,
-                    invoiceCommission: fields.invoiceCommission ?? callbackFields.invoiceCommission,
-                    actualInvoiceSum: fields.actualInvoiceSum ?? callbackFields.actualInvoiceSum,
-                    invoiceSum: fields.invoiceSum ?? callbackFields.invoiceSum,
-                    invoiceTotalSum: fields.invoiceTotalSum ?? callbackFields.invoiceTotalSum,
-                    operationSum: fields.operationSum ?? callbackFields.operationSum
+                    actualInvoiceSum: fields.actualInvoiceSum ?? callbackFields.actualInvoiceSum
                 };
             }
 
