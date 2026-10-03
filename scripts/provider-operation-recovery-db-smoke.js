@@ -406,6 +406,36 @@ async function testNOrphanedIncidentMetadataCustomer() {
     assert.strictEqual(malformed.customerId,null,'N: malformed historical metadata customer IDs must never become direct identity');
 }
 
+async function testOScheduledStripeMediaCapacityReservation() {
+    const tag=suffix(), first=await customer(`o-first-${tag}`), second=await customer(`o-second-${tag}`);
+    const currentPlan=await plan(`recovery-o-current-${tag}`,'Scheduled current',1000);
+    const targetPlan=await plan(`recovery-o-target-${tag}`,'Scheduled target',2000);
+    const targetServer=await mediaServer(`scheduled-${tag}`,'London',1);
+    const current=await subscription(first.id,currentPlan.id,`sub_scheduled_o_${tag}`);
+    const change=(await query(`
+        INSERT INTO customer_plan_changes(
+            customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,
+            target_media_location,target_media_server_id
+        ) VALUES($1,$2,$3,'stripe','period_end','pending',NOW()+INTERVAL '30 days','London',$4)
+        RETURNING *
+    `,[first.id,current.id,targetPlan.id,targetServer.id])).rows[0];
+
+    const capacity=require('../src/jellyfin/user-capacity');
+    const occupied=await capacity.serverState(targetServer.id);
+    assert.strictEqual(occupied.capacity_users,1,'O: pending scheduled Stripe change must reserve the exact future server slot');
+    assert.strictEqual(occupied.full,true,'O: max-users=1 target server must be full while the Stripe change is pending');
+
+    await assert.rejects(
+        provisioningHelpers.reservePlacement(second.id,targetServer),
+        error=>error?.code==='JELLYFIN_SERVER_CAPACITY_CHANGED',
+        'O: a competing customer must not consume capacity already promised to a scheduled paid renewal'
+    );
+
+    await query(`UPDATE customer_plan_changes SET state='cancelled',updated_at=NOW() WHERE id=$1`,[change.id]);
+    const afterCancel=await provisioningHelpers.reservePlacement(second.id,targetServer);
+    assert(afterCancel.placement_lease_id,'O: cancelling the scheduled change must release its durable physical-capacity reservation');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -420,7 +450,8 @@ async function main() {
     await testLRecurringIdentityStatusBoundary();
     await testMHistoricalDuplicateIdentityRemainsReconcileable();
     await testNOrphanedIncidentMetadataCustomer();
-    console.log('provider operation recovery DB smoke: A-N ok');
+    await testOScheduledStripeMediaCapacityReservation();
+    console.log('provider operation recovery DB smoke: A-O ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });
