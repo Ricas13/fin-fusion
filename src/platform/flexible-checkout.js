@@ -72,7 +72,15 @@ async function existingRecurringReplacementOption(req,provider,planCode,currency
   return requestedQuantity<=currentQuantity?mapping:null;
 }
 async function withMediaLocation(req,choice){
- const mediaLocation=await customerServerChoice.resolveAcquisitionLocation(choice.plan,req.body.mediaLocation||null,{requireSelection:true});
+ const requested=String(req.body.mediaLocation||'').trim()||null;
+ if(customerServerChoice.mediaServerType(choice.plan)&&req.session?.customerId){
+  const current=await planChange.currentRecurring(req.session.customerId,choice.plan);
+  if(current?.media_server_id){
+   const existing=await customerServerChoice.existingAssignedServerForPlan(choice.plan,current.media_server_id,requested);
+   if(existing)return{...choice,mediaLocation:existing.selected_location||customerServerChoice.locationLabel(existing.location)};
+  }
+ }
+ const mediaLocation=await customerServerChoice.resolveAcquisitionLocation(choice.plan,requested,{requireSelection:true});
  return{...choice,mediaLocation};
 }
 async function chooseOrResolve(req,res,provider){
