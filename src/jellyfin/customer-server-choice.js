@@ -193,9 +193,16 @@ async function committedReservedServer(plan, serverId, requestedLocation = null,
   const server = result.rows[0] || null;
   if (!server) return null;
   if (mediaProvider.normalizeType(server.media_server_type || 'jellyfin') !== provider) return null;
-  // This server was reserved under lock before the provider checkout/scheduled
-  // billing commitment. Mutable placement flags, pool membership, health and
-  // location labels must not invalidate that already-promised paid capacity.
+  // Pool membership, class labels, allow_new_users and location display text
+  // may change after checkout starts and must not erase already-promised paid
+  // capacity. Actual operational availability is different: if the server was
+  // disabled/drained or is no longer healthy enough for the configured
+  // placement policy, let the caller select another server in the same chosen
+  // location (or surface a paid-but-unfulfilled incident).
+  const healthMode = await planServers.placementHealthMode(db);
+  if (server.enabled !== true
+      || String(server.placement_mode || 'active') !== 'active'
+      || !planServers.healthEligible(server, healthMode)) return null;
   return {
     ...server,
     selected_location: requestedLocation
