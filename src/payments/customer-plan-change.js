@@ -176,7 +176,7 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
     target=selectedTarget(target,mapping,targetVariantKind,targetAccessQuantity);
     let targetMediaLocation=null,targetMediaServer=null;
     if(customerServerChoice.mediaServerType(target)){
-        targetMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,mediaLocation||null).catch(()=>null);
+        targetMediaServer=await customerServerChoice.existingAssignedServerForPlan(target,current.media_server_id,mediaLocation||null).catch(()=>null);
         if(targetMediaServer){
             targetMediaLocation=targetMediaServer.selected_location||customerServerChoice.locationLabel(targetMediaServer.location);
         }else{
