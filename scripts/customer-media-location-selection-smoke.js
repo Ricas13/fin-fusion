@@ -118,6 +118,10 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
 
   const sticky = await choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb() });
   assert.strictEqual(sticky.id, servers[0].id, 'persisted assignment must win over later pool ordering');
+  const committed = await choice.committedReservedServer(plan, servers[0].id, 'London', { db: fakeDb() });
+  assert.strictEqual(committed.id, servers[0].id, 'an operational server reserved before payment must remain the authoritative settlement target');
+  const unusableCommitted = await choice.committedReservedServer(plan, servers[0].id, 'London', { db: fakeDb({ disabledAssigned: true }) });
+  assert.strictEqual(unusableCommitted, null, 'a committed server disabled before settlement must fail over instead of producing paid access on an unusable target');
 
   let persistedParams = null;
   const assignmentDb = async (sql, params) => {
