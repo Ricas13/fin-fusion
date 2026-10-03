@@ -91,9 +91,17 @@ tbody:has(.planHiddenToggle:checked) .planHiddenDisclosure{background:linear-gra
 function capacityCell(plan) {
   const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{},customers=Math.max(0,Number(plan.live_subscriber_count||0));
   if(state.model==='fleet_users'){
-    const remaining=Math.max(0,Number(state.remaining||0)),limit=state.userLimit==null?null:Math.max(0,Number(state.userLimit)),used=limit==null?0:Math.max(0,limit-remaining),pct=limit?Math.min(100,Math.max(0,Math.round((used/limit)*100))):100,near=pct>=85?' nearFull':'';
-    const managed=Math.max(0,Number(state.managedUsers||0)),pending=Math.max(0,Number(state.pendingUsers||0)),held=Math.max(0,Number(state.reservedUsers||0));
-    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${managed}/${limit??'—'} managed users${pending?` · ${pending} awaiting access`:''}${held?` · ${held} held`:''}</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View server user capacity →</a></div>`;
+    const remaining=Math.max(0,Number(state.remaining||0));
+    const planLimit=state.limit==null?null:Math.max(0,Number(state.limit));
+    const planUsed=Math.max(0,Number(state.used||0)+Number(state.reserved||0));
+    const physicalLimit=state.userLimit==null?null:Math.max(0,Number(state.userLimit));
+    const physicalRemaining=state.userRemaining==null?null:Math.max(0,Number(state.userRemaining));
+    const meterLimit=planLimit??physicalLimit;
+    const meterUsed=planLimit==null?(physicalLimit==null?0:Math.max(0,physicalLimit-(physicalRemaining??0))):planUsed;
+    const pct=meterLimit?Math.min(100,Math.max(0,Math.round((meterUsed/meterLimit)*100))):(state.soldOut?100:0),near=pct>=85?' nearFull':'';
+    const planText=planLimit==null?'no plan cap':`${planUsed}/${planLimit} plan places used/held`;
+    const physicalText=physicalLimit==null?'physical capacity not configured':`${physicalRemaining??0}/${physicalLimit} physical places open`;
+    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${esc(planText)} · ${esc(physicalText)}</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage plan & server capacity →</a></div>`;
   }
   const limit=state.limit==null?null:Number(state.limit),used=Number(state.used||0)+Number(state.reserved||0);
   if(limit==null)return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${customers} ${plural(customers,'customer')} currently active · no customer limit configured</div><a class="subText" href="${esc(link)}">Set customer availability →</a>`;
