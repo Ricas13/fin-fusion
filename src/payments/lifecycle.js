@@ -212,7 +212,7 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         await capacity.lockAndAssert(client,plan.id,plan.name||'This trial');
-        const selectedServer=await customerServerChoice.selectServerForLocation(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+        const selectedServer=await customerServerChoice.selectServerForLocationLocked(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
         const selectedLocation=selectedServer?.selected_location||preferredLocation||null;
         const live = await client.query(`
             SELECT s.id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier
