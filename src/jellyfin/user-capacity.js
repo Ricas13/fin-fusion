@@ -58,6 +58,80 @@ async function countsForServers(serverIds, db = query) {
         AND reservation.consumed_at IS NULL
         AND reservation.released_at IS NULL
         AND reservation.expires_at>NOW()
+      UNION
+      -- Rolling-deployment compatibility: the previous application generation
+      -- can still create generic checkout holds without media_server_id. Count
+      -- each such hold conservatively against every candidate server in its
+      -- eligible pool so an N-1 instance cannot consume the final physical
+      -- place behind the new location-aware allocator.
+      SELECT candidate.id,
+             COALESCE(checkout.customer_id::text,'legacy-checkout:'||checkout.id::text)
+      FROM billing_checkout_intents checkout
+      JOIN plans checkout_plan ON checkout_plan.id=checkout.plan_id
+      JOIN jellyfin_servers candidate ON candidate.id=ANY($1::uuid[])
+      WHERE checkout.media_server_id IS NULL
+        AND checkout_plan.service_type IN('jellyfin','bundle','emby')
+        AND checkout.state='open'
+        AND (
+          (checkout.provider_checkout_id IS NULL AND checkout.expires_at>NOW())
+          OR (
+            checkout.provider_checkout_id IS NOT NULL
+            AND checkout.provider_terminal_at IS NULL
+            AND COALESCE(checkout.capacity_hold_until,checkout.expires_at)>NOW()
+          )
+        )
+        AND COALESCE(candidate.media_server_type,'jellyfin')=
+            CASE WHEN checkout_plan.service_type='emby' THEN 'emby' ELSE 'jellyfin' END
+        AND (
+          EXISTS(
+            SELECT 1
+            FROM plan_server_eligibility mapped
+            WHERE mapped.plan_id=checkout_plan.id AND mapped.server_id=candidate.id
+          )
+          OR (
+            NOT EXISTS(
+              SELECT 1
+              FROM plan_server_eligibility any_map
+              JOIN jellyfin_servers mapped_server ON mapped_server.id=any_map.server_id
+              WHERE any_map.plan_id=checkout_plan.id
+                AND COALESCE(mapped_server.media_server_type,'jellyfin')=
+                    CASE WHEN checkout_plan.service_type='emby' THEN 'emby' ELSE 'jellyfin' END
+            )
+            AND candidate.server_class=checkout_plan.server_class
+          )
+        )
+      UNION
+      -- Same N-1 protection for pre-verification Free registration holds.
+      SELECT candidate.id,
+             COALESCE(reservation.customer_id::text,'legacy-free-reservation:'||reservation.id::text)
+      FROM free_access_registration_reservations reservation
+      JOIN plans free_plan ON free_plan.id=reservation.plan_id
+      JOIN jellyfin_servers candidate ON candidate.id=ANY($1::uuid[])
+      WHERE reservation.media_server_id IS NULL
+        AND free_plan.service_type IN('jellyfin','bundle','emby')
+        AND reservation.consumed_at IS NULL
+        AND reservation.released_at IS NULL
+        AND reservation.expires_at>NOW()
+        AND COALESCE(candidate.media_server_type,'jellyfin')=
+            CASE WHEN free_plan.service_type='emby' THEN 'emby' ELSE 'jellyfin' END
+        AND (
+          EXISTS(
+            SELECT 1
+            FROM plan_server_eligibility mapped
+            WHERE mapped.plan_id=free_plan.id AND mapped.server_id=candidate.id
+          )
+          OR (
+            NOT EXISTS(
+              SELECT 1
+              FROM plan_server_eligibility any_map
+              JOIN jellyfin_servers mapped_server ON mapped_server.id=any_map.server_id
+              WHERE any_map.plan_id=free_plan.id
+                AND COALESCE(mapped_server.media_server_type,'jellyfin')=
+                    CASE WHEN free_plan.service_type='emby' THEN 'emby' ELSE 'jellyfin' END
+            )
+            AND candidate.server_class=free_plan.server_class
+          )
+        )
     )
     SELECT server_id,COUNT(DISTINCT capacity_owner)::int AS users
     FROM capacity_users
