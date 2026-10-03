@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const policy = require('../integrations/request-plan-policy');
@@ -100,7 +101,7 @@ function createAdminRequestPlanPolicyRouter() {
     if(!csrf.verify(req))return res.status(403).send('Invalid security token');
     try{
       const planId=req.params.planId;
-      const found=await require('../db').query('SELECT id,is_free_tier,service_type,price_minor,billing_interval,server_class FROM plans WHERE id=$1',[planId]);
+      const found=await query('SELECT id,is_free_tier,service_type,price_minor,billing_interval,server_class FROM plans WHERE id=$1',[planId]);
       const plan=found.rows[0]||null;
       if(!plan||!freeJellyfinPlan(plan))throw new Error('Free inactivity rules apply only to the Free Jellyfin plan.');
       const whole=(value,min,max,label)=>{const n=Number(value);if(!Number.isInteger(n)||n<min||n>max)throw new Error(`${label} must be a whole number from ${min} to ${max}.`);return n;};
