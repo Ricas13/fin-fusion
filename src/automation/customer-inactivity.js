@@ -21,29 +21,43 @@ function boundedInt(value, min, max, fallback) {
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
+function completePlanPolicy(value) {
+    const policy = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const firstPlaybackGraceDays = boundedInt(policy.firstPlaybackGraceDays, 1, 3650, null);
+    const playbackWindowDays = boundedInt(policy.playbackWindowDays, 1, 365, null);
+    const minimumPlaybackMinutes = boundedInt(policy.minimumPlaybackMinutes, 1, 1000000, null);
+    if (firstPlaybackGraceDays == null || playbackWindowDays == null || minimumPlaybackMinutes == null) return null;
+    return { firstPlaybackGraceDays, playbackWindowDays, minimumPlaybackMinutes };
+}
+
 function serverPolicy(row = {}, globalCfg = {}) {
+    // Plan policy is the new authority. Existing installations remain byte-for-
+    // byte compatible until an administrator saves the Free plan policy: an
+    // empty/partial/invalid plan policy falls back to the assigned server's
+    // existing values instead of silently changing live automation.
+    const planPolicy = completePlanPolicy(row.inactivity_policy);
     return {
         enabled: Boolean(globalCfg.enabled),
         dryRun: Boolean(globalCfg.dryRun),
-        firstPlaybackGraceDays: boundedInt(
+        firstPlaybackGraceDays: planPolicy?.firstPlaybackGraceDays ?? boundedInt(
             row.free_first_playback_grace_days,
             1,
             3650,
             FREE_POLICY_DEFAULTS.firstPlaybackGraceDays
         ),
-        playbackWindowDays: boundedInt(
+        playbackWindowDays: planPolicy?.playbackWindowDays ?? boundedInt(
             row.free_playback_window_days,
             1,
             365,
             FREE_POLICY_DEFAULTS.playbackWindowDays
         ),
-        minimumPlaybackMinutes: boundedInt(
+        minimumPlaybackMinutes: planPolicy?.minimumPlaybackMinutes ?? boundedInt(
             row.free_minimum_playback_minutes,
             1,
             1000000,
             FREE_POLICY_DEFAULTS.minimumPlaybackMinutes
         ),
-        thresholdOwner: 'free_server'
+        thresholdOwner: planPolicy ? 'free_plan' : 'free_server_compat'
     };
 }
 
@@ -123,7 +137,8 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.current_period_end,
             s.created_at subscription_created_at,
             p.code plan_code,
-            p.name plan_name
+            p.name plan_name,
+            p.inactivity_policy
           FROM subscriptions s
           JOIN plans p ON p.id=s.plan_id
           WHERE s.superseded_by IS NULL
@@ -241,13 +256,27 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
                   LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
                   - GREATEST(
                       ph.started_at,
-                      NOW()-(js.free_playback_window_days||' days')::interval
+                      NOW()-(
+                        CASE
+                          WHEN (fa.inactivity_policy->>'playbackWindowDays') ~ '^[0-9]+$'
+                           AND (fa.inactivity_policy->>'playbackWindowDays')::int BETWEEN 1 AND 365
+                          THEN (fa.inactivity_policy->>'playbackWindowDays')::int
+                          ELSE js.free_playback_window_days
+                        END || ' days'
+                      )::interval
                     )
                 ))
               )
             ) FILTER (
               WHERE ph.started_at>=allocation.allocation_start_at
-                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(js.free_playback_window_days||' days')::interval
+                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(
+                        CASE
+                          WHEN (fa.inactivity_policy->>'playbackWindowDays') ~ '^[0-9]+$'
+                           AND (fa.inactivity_policy->>'playbackWindowDays')::int BETWEEN 1 AND 365
+                          THEN (fa.inactivity_policy->>'playbackWindowDays')::int
+                          ELSE js.free_playback_window_days
+                        END || ' days'
+                      )::interval
                 AND ph.started_at<NOW()
             ),0)::bigint playback_seconds
           FROM playback_history ph
@@ -336,6 +365,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
 module.exports = {
     HOLD_TYPE,
     FREE_POLICY_DEFAULTS,
+    completePlanPolicy,
     serverPolicy,
     assessUsage,
     candidates
