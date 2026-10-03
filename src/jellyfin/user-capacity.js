@@ -12,22 +12,54 @@ async function countsForServers(serverIds, db = query) {
   if (!ids.length) return new Map();
   const result = await db(`
     WITH capacity_users AS (
-      SELECT ja.server_id,ja.customer_id
+      SELECT ja.server_id,ja.customer_id::text AS capacity_owner
       FROM jellyfin_accounts ja
       WHERE ja.server_id=ANY($1::uuid[])
         AND ja.disabled=FALSE
         AND ja.account_purpose='jellyfin'
       UNION
-      SELECT intent.server_id,intent.customer_id
+      SELECT intent.server_id,intent.customer_id::text
       FROM jellyfin_account_creation_intents intent
       WHERE intent.server_id=ANY($1::uuid[])
       UNION
-      SELECT lease.server_id,lease.customer_id
+      SELECT lease.server_id,lease.customer_id::text
       FROM jellyfin_server_placement_leases lease
       WHERE lease.server_id=ANY($1::uuid[])
         AND lease.expires_at>NOW()
+      UNION
+      SELECT subscription.media_server_id,subscription.customer_id::text
+      FROM subscriptions subscription
+      WHERE subscription.media_server_id=ANY($1::uuid[])
+        AND subscription.superseded_by IS NULL
+        AND subscription.status IN('active','trialing','past_due','paused')
+        AND subscription.starts_at<=NOW()
+        AND subscription.current_period_end>NOW()
+      UNION
+      SELECT checkout.media_server_id,checkout.customer_id::text
+      FROM billing_checkout_intents checkout
+      WHERE checkout.media_server_id=ANY($1::uuid[])
+        AND checkout.state='open'
+        AND (
+          (
+            checkout.provider_checkout_id IS NULL
+            AND checkout.expires_at>NOW()
+          )
+          OR (
+            checkout.provider_checkout_id IS NOT NULL
+            AND checkout.provider_terminal_at IS NULL
+            AND COALESCE(checkout.capacity_hold_until,checkout.expires_at)>NOW()
+          )
+        )
+      UNION
+      SELECT reservation.media_server_id,
+             COALESCE(reservation.customer_id::text,'free-reservation:'||reservation.id::text)
+      FROM free_access_registration_reservations reservation
+      WHERE reservation.media_server_id=ANY($1::uuid[])
+        AND reservation.consumed_at IS NULL
+        AND reservation.released_at IS NULL
+        AND reservation.expires_at>NOW()
     )
-    SELECT server_id,COUNT(DISTINCT customer_id)::int AS users
+    SELECT server_id,COUNT(DISTINCT capacity_owner)::int AS users
     FROM capacity_users
     GROUP BY server_id
   `, [ids]);
