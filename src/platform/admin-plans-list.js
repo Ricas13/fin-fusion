@@ -92,8 +92,8 @@ function capacityCell(plan) {
   const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{},customers=Math.max(0,Number(plan.live_subscriber_count||0));
   if(state.model==='fleet_users'){
     const remaining=Math.max(0,Number(state.remaining||0));
-    const planLimit=state.limit==null?null:Math.max(0,Number(state.limit));
-    const planUsed=Math.max(0,Number(state.used||0)+Number(state.reserved||0));
+    const planLimit=state.manualLimit==null?null:Math.max(0,Number(state.manualLimit));
+    const planUsed=Math.max(0,Number(state.manualUsed||0)+Number(state.manualReserved||0));
     const physicalLimit=state.userLimit==null?null:Math.max(0,Number(state.userLimit));
     const physicalRemaining=state.userRemaining==null?null:Math.max(0,Number(state.userRemaining));
     const meterLimit=planLimit??physicalLimit;
