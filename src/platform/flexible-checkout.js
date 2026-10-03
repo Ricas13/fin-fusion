@@ -22,6 +22,7 @@ const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const routeRateLimit=require('../security/route-rate-limit');
 const publicError=require('./public-error');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 const checkoutStartLimit=routeRateLimit.middleware({scope:'customer-checkout-start',max:20,windowSeconds:3600});
 const checkoutReadLimit=routeRateLimit.middleware({scope:'customer-checkout-read',max:240,windowSeconds:3600});
 const checkoutActionLimit=routeRateLimit.middleware({scope:'customer-checkout-action',max:60,windowSeconds:3600});
@@ -47,7 +48,9 @@ const CHECKOUT_SAFE=[
  'Checkout intent belongs to a different provider.','Checkout intent belongs to a different account.','Invalid checkout completion state.',
  /^A checkout is already in progress\./,
  /^An existing (Stripe|PayPal|Plisio) checkout is still awaiting completion\./,
- /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./
+ /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
+ 'Choose a server location before continuing.',
+ 'That server location is no longer available. Choose another location.'
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
@@ -68,6 +71,10 @@ async function existingRecurringReplacementOption(req,provider,planCode,currency
   const kind=planChange.normalizedKind(target,mapping),requestedQuantity=planChange.mappingQuantity(target,mapping,quantity),currentQuantity=planChange.subscriptionAccessQuantity(current,kind);
   return requestedQuantity<=currentQuantity?mapping:null;
 }
+async function withMediaLocation(req,choice){
+ const mediaLocation=await customerServerChoice.resolveAcquisitionLocation(choice.plan,req.body.mediaLocation||null,{requireSelection:true});
+ return{...choice,mediaLocation};
+}
 async function chooseOrResolve(req,res,provider){
  if(!csrf.verify(req))throw new Error('Invalid or expired security token');
  await commerce.assertOpen();
@@ -79,15 +86,16 @@ async function chooseOrResolve(req,res,provider){
  if(requested){
   const match=options.find(option=>option.checkout_mode===requested);if(!match)throw new Error(`That payment type is not available for this plan in ${currency}`);
   if(provider==='paypal'&&requested==='subscription'&&req.body.discountCode)throw new Error('PayPal discount codes currently apply only to one-time payments');
-  return{mode:requested,planCode,currency,options,plan:match,accessQuantity:choiceQuantity(match),accessVariantKind:match.variant_kind||null};
+  return withMediaLocation(req,{mode:requested,planCode,currency,options,plan:match,accessQuantity:choiceQuantity(match),accessVariantKind:match.variant_kind||null});
  }
- if(options.length===1)return{mode:options[0].checkout_mode,planCode,currency,options,plan:options[0],accessQuantity:choiceQuantity(options[0]),accessVariantKind:options[0].variant_kind||null};
+ if(options.length===1)return withMediaLocation(req,{mode:options[0].checkout_mode,planCode,currency,options,plan:options[0],accessQuantity:choiceQuantity(options[0]),accessVariantKind:options[0].variant_kind||null});
  await runtimeSettings.ensureLoaded();const first=options[0];
- res.render('customer/payment-choice',{siteName:runtimeSettings.siteName(),provider,planCode,planName:first.name,priceLabel:priceLabel(first),options,currency,accessQuantity:choiceQuantity(first),accessVariantKind:first.variant_kind||null,discountCode:String(req.body.discountCode||'').trim().slice(0,40),csrfToken:csrf.token(req)});return null;
+ const mediaLocation=await customerServerChoice.resolveAcquisitionLocation(first,req.body.mediaLocation||null,{requireSelection:true});
+ res.render('customer/payment-choice',{siteName:runtimeSettings.siteName(),provider,planCode,planName:first.name,priceLabel:priceLabel(first),options,currency,accessQuantity:choiceQuantity(first),accessVariantKind:first.variant_kind||null,discountCode:String(req.body.discountCode||'').trim().slice(0,40),mediaLocation,csrfToken:csrf.token(req)});return null;
 }
 async function stateUrl(req,path,intent){const url=new URL(await operations.absoluteUrl(req,path));url.searchParams.set('checkout_intent',intent.id);url.searchParams.set('checkout_state',intent.nonce);return url.toString();}
 async function stripeSuccessUrl(req,intent){return `${await stateUrl(req,'/account/stripe/return',intent)}&session_id={CHECKOUT_SESSION_ID}`;}
-function commercialSnapshot(choice,provider,discount=null){const p=choice.plan,variantKind=choice.accessVariantKind||p.variant_kind||null,quantity=choice.accessQuantity||choiceQuantity(p);return{kind:'direct_plan',planId:p.id,planPriceId:p.plan_price_id||null,planCode:p.code,planName:p.name,accessVariantId:p.access_variant_id||null,accessVariantKind:variantKind,accessQuantity:quantity,priceMinor:Number(p.price_minor||0),currency:String(p.currency||'').toUpperCase(),billingInterval:p.billing_interval,durationDays:Number(p.duration_days||30),streams:variantKind==='streams'?quantity:Number(p.streams||1),stremioHouseholdNetworkLimit:variantKind==='households'?quantity:Number(p.stremio_household_network_limit||1),allowDownloads:Boolean(p.allow_downloads),allowVideoTranscoding:Boolean(p.allow_video_transcoding),allowAudioTranscoding:Boolean(p.allow_audio_transcoding),allowLiveTv:Boolean(p.allow_live_tv),allowLiveTvManagement:Boolean(p.allow_live_tv_management),serverClass:p.server_class,requestMovieQuotaLimit:p.request_movie_quota_limit==null?null:Number(p.request_movie_quota_limit),requestMovieQuotaDays:p.request_movie_quota_days==null?null:Number(p.request_movie_quota_days),requestTvQuotaLimit:p.request_tv_quota_limit==null?null:Number(p.request_tv_quota_limit),requestTvQuotaDays:p.request_tv_quota_days==null?null:Number(p.request_tv_quota_days),provider,checkoutMode:choice.mode,providerMappingId:p.external_id||null,providerMappingRecordId:p.provider_mapping_id||null,discountCodeId:discount?.discount?.id||null,discountCode:discount?.discount?.code||null,discountedMinor:discount?.discountedMinor??Number(p.price_minor||0),discountReservationId:discount?.reservation?.id||null};}
+function commercialSnapshot(choice,provider,discount=null){const p=choice.plan,variantKind=choice.accessVariantKind||p.variant_kind||null,quantity=choice.accessQuantity||choiceQuantity(p);return{kind:'direct_plan',planId:p.id,planPriceId:p.plan_price_id||null,planCode:p.code,planName:p.name,accessVariantId:p.access_variant_id||null,accessVariantKind:variantKind,accessQuantity:quantity,priceMinor:Number(p.price_minor||0),currency:String(p.currency||'').toUpperCase(),billingInterval:p.billing_interval,durationDays:Number(p.duration_days||30),streams:variantKind==='streams'?quantity:Number(p.streams||1),stremioHouseholdNetworkLimit:variantKind==='households'?quantity:Number(p.stremio_household_network_limit||1),allowDownloads:Boolean(p.allow_downloads),allowVideoTranscoding:Boolean(p.allow_video_transcoding),allowAudioTranscoding:Boolean(p.allow_audio_transcoding),allowLiveTv:Boolean(p.allow_live_tv),allowLiveTvManagement:Boolean(p.allow_live_tv_management),serverClass:p.server_class,requestMovieQuotaLimit:p.request_movie_quota_limit==null?null:Number(p.request_movie_quota_limit),requestMovieQuotaDays:p.request_movie_quota_days==null?null:Number(p.request_movie_quota_days),requestTvQuotaLimit:p.request_tv_quota_limit==null?null:Number(p.request_tv_quota_limit),requestTvQuotaDays:p.request_tv_quota_days==null?null:Number(p.request_tv_quota_days),mediaLocation:choice.mediaLocation||null,provider,checkoutMode:choice.mode,providerMappingId:p.external_id||null,providerMappingRecordId:p.provider_mapping_id||null,discountCodeId:discount?.discount?.id||null,discountCode:discount?.discount?.code||null,discountedMinor:discount?.discountedMinor??Number(p.price_minor||0),discountReservationId:discount?.reservation?.id||null};}
 async function livePrimaryRows(customerId){return(await query(`SELECT s.id,s.source,s.provider_subscription_id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND s.superseded_by IS NULL AND s.starts_at<=NOW() AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW()`,[customerId])).rows;}
 async function overlappingRecurring(customerId,target){const rows=await livePrimaryRows(customerId);return rows.filter(row=>serviceScope.overlaps(row,target)&&((row.source==='stripe'&&/^sub_/i.test(String(row.provider_subscription_id||'')))||(row.source==='paypal'&&/^I-/i.test(String(row.provider_subscription_id||'')))));}
 async function resumeExistingCheckout(customerId,provider,choice){
