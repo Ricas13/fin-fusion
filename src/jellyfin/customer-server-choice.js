@@ -120,6 +120,30 @@ async function selectServerForLocation(plan, requested, { db = query, requireSel
   return { ...selected, selected_location: location || locationLabel(selected.location) };
 }
 
+async function selectServerForLocationLocked(plan, requested, { db = query, requireSelection = true } = {}) {
+  // Location acquisition can span multiple plans sharing one physical server.
+  // Serialize the final physical choice on the server row, then re-read exact
+  // server occupancy while that row is locked so two different plan locks
+  // cannot reserve the same final place concurrently.
+  const attempted = new Set();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const selected = await selectServerForLocation(plan, requested, { db, requireSelection });
+    if (!selected?.id || attempted.has(String(selected.id))) {
+      const error = new Error('That server location is no longer available. Choose another location.');
+      error.code = 'MEDIA_LOCATION_UNAVAILABLE';
+      throw error;
+    }
+    attempted.add(String(selected.id));
+    const locked = await db('SELECT id,enabled,allow_new_users,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE', [selected.id]);
+    if (!locked.rowCount || !locked.rows[0].enabled || !locked.rows[0].allow_new_users) continue;
+    const fresh = await userCapacity.serverState(selected.id, db);
+    if (fresh && fresh.full !== true) return { ...selected, ...fresh, selected_location: selected.selected_location };
+  }
+  const error = new Error('That server location is no longer available. Choose another location.');
+  error.code = 'MEDIA_LOCATION_UNAVAILABLE';
+  throw error;
+}
+
 async function resolveAcquisitionLocation(plan, requested, { db = query, requireSelection = true } = {}) {
   if (!mediaServerType(plan)) return null;
   const choices = await choicesForPlan(plan, { db });
@@ -217,6 +241,7 @@ module.exports = {
   choicesForPlan,
   resolveAcquisitionLocation,
   selectServerForLocation,
+  selectServerForLocationLocked,
   matchesPreference,
   reservedServerIfEligible,
   assignedServer,
