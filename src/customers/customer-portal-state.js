@@ -57,7 +57,7 @@ async function current(customerId, {
              FROM customers c
              LEFT JOIN app_users u ON u.id=c.user_id
              WHERE c.id=$1`, [customerId]),
-    query(`SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,
+    query(`SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,js.location AS server_location,
                   COALESCE(js.media_server_type,'jellyfin') AS media_server_type,
                   ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username
              FROM jellyfin_accounts ja
