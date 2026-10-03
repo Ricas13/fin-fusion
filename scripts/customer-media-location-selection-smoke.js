@@ -118,6 +118,21 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
 
   const sticky = await choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb() });
   assert.strictEqual(sticky.id, servers[0].id, 'persisted assignment must win over later pool ordering');
+
+  let persistedParams = null;
+  const assignmentDb = async (sql, params) => {
+    if (!sql.includes('UPDATE subscriptions')) throw new Error('Unexpected assignment SQL');
+    persistedParams = params;
+    return { rowCount: 1, rows: [{ media_server_id: params[1], media_location_preference: params[2], media_location_snapshot: params[2] }] };
+  };
+  const accountShapedAssignment = {
+    id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    server_id: servers[0].id,
+    server_location: 'London'
+  };
+  await choice.persistAssignment(plan.id, accountShapedAssignment, { db: assignmentDb });
+  assert.strictEqual(persistedParams[1], servers[0].id, 'persistAssignment must use account.server_id rather than mistaking the account id for a server foreign key');
+  assert.strictEqual(persistedParams[2], 'London', 'persistAssignment must preserve the account server location snapshot');
   await assert.rejects(
     () => choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb({ disabledAssigned: true }) }),
     error => error && error.code === 'ASSIGNED_MEDIA_SERVER_UNAVAILABLE',
