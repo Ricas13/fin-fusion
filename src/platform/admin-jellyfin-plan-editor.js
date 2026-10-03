@@ -68,6 +68,7 @@ async function serverChoices(plan) {
            pse.weight AS placement_weight,(pse.server_id IS NOT NULL) AS selected
     FROM jellyfin_servers js
     LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
+    WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
     ORDER BY js.server_class,js.priority,js.name`, [plan.id]);
   return result.rows;
 }
@@ -158,13 +159,13 @@ function deliveryCard(data, req) {
   const restricted = data.servers.some(row => row.selected);
   const nextClass = data.free ? 'free' : p.server_class;
   const classControl = data.free
-    ? `<div class="planFreeStatement"><strong>Free fleet.</strong><span>Free plans are pinned to the Free Jellyfin server class and do not inherit paid-plan placement.</span></div><input type="hidden" name="serverClass" value="free">`
+    ? `<div class="planFreeStatement"><strong>Free fleet.</strong><span>Without an explicit selection, Free plans use the Free Jellyfin server class. Selected Jellyfin servers override that fallback.</span></div><input type="hidden" name="serverClass" value="free">`
     : `<div class="formGroup"><label>Server class</label><select class="input" name="serverClass"><option value="premium" ${selected(p.server_class, 'premium')}>Premium</option><option value="free" ${selected(p.server_class, 'free')}>Free</option><option value="custom" ${selected(p.server_class, 'custom')}>Custom</option></select></div>`;
   const serverRows = data.servers.map(row => {
     const unavailable = !row.enabled || !row.allow_new_users;
     const location = row.location ? ` · ${esc(row.location)}` : ''; const capacityLabel = row.max_users ? ` · capacity ${esc(row.max_users)}` : ' · capacity not set'; return `<label class="planServerChoice"><input type="checkbox" name="serverIds" value="${esc(row.id)}" ${row.selected ? 'checked' : ''} ${unavailable ? 'disabled' : ''}><span><strong>${esc(row.name)}</strong><small>${esc(row.server_class)}${location} · ${esc(row.health_status || 'checking')}${capacityLabel}${unavailable ? ' · unavailable for new users' : ''}</small></span><input class="input" type="number" min="1" max="10000" name="weight_${esc(row.id)}" value="${esc(row.placement_weight || 100)}" aria-label="${esc(row.name)} weight" ${unavailable ? 'disabled' : ''}></label>`;
   }).join('');
-  return `<section class="planConfigCard span2" id="delivery"><div class="planConfigHead"><div><h2>Delivery & server placement</h2><p>Free and paid plans keep independent fleet targeting.</p></div><span class="pill accent">${esc(nextClass)} fleet</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-delivery">${token(req)}${classControl}<div class="formGrid"><div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy"><option value="balanced" ${selected(strategy, 'balanced')}>Balanced (recommended)</option><option value="lowest_customers" ${selected(strategy, 'lowest_customers')}>Lowest user count</option><option value="lowest_streams" ${selected(strategy, 'lowest_streams')}>Lowest live streams</option><option value="weighted" ${selected(strategy, 'weighted')}>Weighted distribution</option><option value="manual" ${selected(strategy, 'manual')}>Pinned server</option></select></div><div class="formGroup"><label>Eligible server pool</label><select class="input" name="poolMode"><option value="all" ${restricted ? '' : 'selected'}>All matching servers</option><option value="selected" ${restricted ? 'selected' : ''}>Only selected servers below</option></select></div></div><details class="planCardDetails"><summary>Select individual servers / weights</summary><div class="planDetailsBody"><div class="planServerChoices">${serverRows || '<div class="empty">No Jellyfin servers are configured.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save delivery</button></div></form></section>`;
+  return `<section class="planConfigCard span2" id="delivery"><div class="planConfigHead"><div><h2>Delivery & server placement</h2><p>Free and paid plans keep independent fleet targeting.</p></div><span class="pill accent">${esc(nextClass)} fleet</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-delivery">${token(req)}${classControl}<div class="formGrid"><div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy"><option value="balanced" ${selected(strategy, 'balanced')}>Balanced (recommended)</option><option value="lowest_customers" ${selected(strategy, 'lowest_customers')}>Lowest user count</option><option value="lowest_streams" ${selected(strategy, 'lowest_streams')}>Lowest live streams</option><option value="weighted" ${selected(strategy, 'weighted')}>Weighted distribution</option><option value="manual" ${selected(strategy, 'manual')}>Pinned server</option></select></div><div class="formGroup"><label>Eligible server pool</label><select class="input" name="poolMode"><option value="all" ${restricted ? '' : 'selected'}>All servers in the fallback class</option><option value="selected" ${restricted ? 'selected' : ''}>Only selected servers below</option></select></div></div><details class="planCardDetails"><summary>Select individual servers / weights</summary><div class="planDetailsBody"><div class="planServerChoices">${serverRows || '<div class="empty">No Jellyfin servers are configured.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save delivery</button></div></form></section>`;
 }
 
 function librariesCard(data, req) {
@@ -244,11 +245,7 @@ async function saveAvailability(req, plan) {
   if (capacity.capacityModel(plan) === 'fleet_users') {
     const raw = String(req.body.mediaUserLimit ?? '').trim();
     const mediaUserLimit = raw === '' ? null : int(raw, 0, 1000000, 'Maximum customers on this plan');
-    await planCommands.updateMediaUserLimit({
-      planId: plan.id,
-      mediaUserLimit,
-      actorUserId: req.session.authUserId
-    });
+    let freeInactivityPolicy = null;
     if (freePlan(plan)) {
       const policyRaw = [
         String(req.body.freeFirstPlaybackGraceDays ?? '').trim(),
@@ -258,15 +255,19 @@ async function saveAvailability(req, plan) {
       const supplied = policyRaw.filter(Boolean).length;
       if (supplied > 0 && supplied < 3) throw new Error('Enter all three Free inactivity thresholds, or leave all three blank to preserve the legacy assigned-server policy.');
       if (supplied === 3) {
-        await planCommands.updateFreeInactivityPolicy({
-          planId: plan.id,
+        freeInactivityPolicy = {
           firstPlaybackGraceDays: int(policyRaw[0], 1, 3650, 'Initial playback grace'),
           playbackWindowDays: int(policyRaw[1], 1, 365, 'Playback window'),
-          minimumPlaybackMinutes: int(policyRaw[2], 1, 1000000, 'Minimum playback'),
-          actorUserId: req.session.authUserId
-        });
+          minimumPlaybackMinutes: int(policyRaw[2], 1, 1000000, 'Minimum playback')
+        };
       }
     }
+    await planCommands.updateMediaUserLimit({
+      planId: plan.id,
+      mediaUserLimit,
+      freeInactivityPolicy,
+      actorUserId: req.session.authUserId
+    });
     return;
   }
   const limit = int(req.body.capacityLimit, 0, 1000000, 'Availability limit');
@@ -284,7 +285,7 @@ async function saveDelivery(req, plan, data) {
   const strategy = placement.normalizeStrategy(req.body.placementStrategy);
   const poolMode = req.body.poolMode === 'selected' ? 'selected' : 'all';
   const ids = values(req.body.serverIds);
-  const available = await query(`SELECT id,name,enabled,allow_new_users FROM jellyfin_servers WHERE server_class=$1 ORDER BY priority,name`, [serverClass]);
+  const available = await query(`SELECT id,name,enabled,allow_new_users FROM jellyfin_servers WHERE COALESCE(media_server_type,'jellyfin')='jellyfin' ORDER BY priority,name`, []);
   const byId = new Map(available.rows.map(row => [String(row.id), row]));
   const chosen = ids.map(id => byId.get(id)).filter(Boolean);
   if (poolMode === 'selected' && !chosen.length) throw new Error('Choose at least one eligible server or use all matching servers.');

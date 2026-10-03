@@ -70,7 +70,7 @@ async function save(input, actorUserId = null) {
                 ...value,
                 settingKey: KEY,
                 portalAccountPreserved: true,
-                thresholdOwner: 'free_server'
+                thresholdOwner: 'free_plan'
             })
         ]);
     });

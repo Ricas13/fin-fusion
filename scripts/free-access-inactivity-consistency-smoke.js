@@ -227,8 +227,8 @@ assert.match(cleanupReturn, /Free Server inactivity is terminal/,'the lifecycle 
 // Status and admin UI must describe the same two rules.
 assert.doesNotMatch(status, /refreshCandidateUserActivity/);
 assert.match(lifecycleAdmin, /Free Server inactivity has two rules/);
-assert.match(lifecycleAdmin, /Thresholds belong to each Free-class media server/);
+assert.match(lifecycleAdmin, /Thresholds belong to the Free Plan/);
 assert.doesNotMatch(lifecycleAdmin, /Free Jellyfin plan and are edited from Plans/);
-assert.match(planAdmin, /Inactivity thresholds are owned by the Free media server/);
+assert.match(planAdmin, /Inactivity thresholds are owned by the Free plan/);
 
 console.log('Free Access inactivity consistency smoke: ok');

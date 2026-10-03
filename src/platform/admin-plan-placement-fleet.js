@@ -51,16 +51,16 @@ async function placementData(plan) {
                m.observed_at AS fleet_observed_at,m.last_error AS fleet_error
         FROM jellyfin_servers js
         LEFT JOIN plan_server_eligibility pse
-               ON pse.plan_id=$2 AND pse.server_id=js.id
+               ON pse.plan_id=$1 AND pse.server_id=js.id
         LEFT JOIN jellyfin_accounts ja
                ON ja.server_id=js.id AND ja.disabled=FALSE AND ja.account_purpose='jellyfin'
         LEFT JOIN active_playback_sessions aps
                ON aps.server_id=js.id
         LEFT JOIN jellyfin_server_metrics m ON m.server_id=js.id
-        WHERE js.server_class=$1
+        WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
         GROUP BY js.id,pse.weight,pse.server_id,m.server_id,m.active_streams,m.managed_streams,m.observed_at,m.last_error
         ORDER BY js.priority,js.name
-    `, [plan.server_class, plan.id]);
+    `, [plan.id]);
     const restricted = result.rows.some(server => server.selected);
     return { servers: result.rows, restricted };
 }
@@ -110,10 +110,10 @@ function page(req, plan, data) {
                 <div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy">${strategyOptions(strategy)}</select></div>
                 <div class="formGroup">
                     <label>Eligible server pool</label>
-                    <label class="toggleRow"><input type="radio" name="poolMode" value="all" ${poolMode === 'all' ? 'checked' : ''}><span>All available <strong>${esc(plan.server_class)}</strong> servers</span></label>
+                    <label class="toggleRow"><input type="radio" name="poolMode" value="all" ${poolMode === 'all' ? 'checked' : ''}><span>Fallback to all available <strong>${esc(plan.server_class)}</strong> Jellyfin servers</span></label>
                     <label class="toggleRow"><input type="radio" name="poolMode" value="selected" ${poolMode === 'selected' ? 'checked' : ''} ${empty ? 'disabled' : ''}><span>Only selected servers below</span></label>
                 </div>
-                ${empty ? `<div class="empty">No ${esc(plan.server_class)} Jellyfin servers are configured yet. <a href="/admin/servers/new">Add a server</a>.</div>` : `
+                ${empty ? `<div class="empty">No Jellyfin servers are configured yet. <a href="/admin/servers/new">Add a server</a>.</div>` : `
                 <div class="tableWrap"><table class="dataTable fleetPlacementTable">
                     <thead><tr><th>Use</th><th>Server</th><th>Health</th><th>Customers / capacity</th><th>Live streams</th><th>Capacity source</th><th>Weight</th></tr></thead>
                     <tbody>${serverRows(data)}</tbody>
@@ -122,7 +122,7 @@ function page(req, plan, data) {
                 <div class="buttonRow"><button class="button">Save placement</button></div>
             </form>
         </section><style>.fleetPlacementTable{min-width:1120px}</style>`;
-    return layout({ siteName: site(), active: 'plans', title: `${plan.name} · Servers`, subtitle: `${plan.server_class} server pool`, body });
+    return layout({ siteName: site(), active: 'plans', title: `${plan.name} · Servers`, subtitle: 'Explicit Jellyfin server pool with class fallback', body });
 }
 
 function createAdminPlanPlacementFleetRouter() {

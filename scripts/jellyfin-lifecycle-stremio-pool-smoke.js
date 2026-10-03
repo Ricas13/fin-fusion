@@ -35,7 +35,7 @@ assert(!planEditor.includes('editor-lifecycle'),'plan editor must not expose a p
 assert(!planEditor.includes('function lifecycleCard'),'plan editor must not render a configurable Jellyfin lifecycle card');
 assert(!planCreate.includes('data-free-lifecycle'),'plan creation must not expose per-plan lifecycle configuration');
 assert(!planCreate.includes('inactivityEnabled'),'plan creation must not collect per-plan inactivity toggles');
-assert(planCreate.includes('inactivityPolicy: {}'),'legacy plan inactivity JSON may remain empty for schema compatibility but must not own enforcement thresholds');
+assert(planCreate.includes('mediaCapacityManaged: true') && planCreate.includes('freeInactivity'),'new media plans must explicitly own capacity and Free playback thresholds');
 assert(lifecycleAdmin.includes('Free Server inactivity has two rules.'),'global lifecycle UI must describe the two-rule Free Server contract');
 assert(!lifecycleAdmin.includes('Delete disabled users'),'global lifecycle UI must not expose post-disable deletion');
 assert(retiredLifecycleMigration.includes("- 'deleteAfterDisableDays'"),'migration must purge retired plan delete-after-disable configuration');

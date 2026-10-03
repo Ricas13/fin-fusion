@@ -82,7 +82,7 @@ if (legacyFallbackPolicy.thresholdOwner !== 'free_server_legacy_fallback' || !le
 const root = path.join(__dirname, '..');
 const inactivitySource = fs.readFileSync(path.join(root, 'src/automation/customer-inactivity.js'), 'utf8');
 for (const column of ["p.inactivity_policy #>> '{freeInactivity,firstPlaybackGraceDays}'", "p.inactivity_policy #>> '{freeInactivity,playbackWindowDays}'", "p.inactivity_policy #>> '{freeInactivity,minimumPlaybackMinutes}'"]) {
-    if (!inactivitySource.includes(column)) throw new Error(`Inactivity candidate discovery must read plan-owned policy column: ${column}`);
+    if (!inactivity.planPolicySql().includes(column)) throw new Error(`Inactivity candidate discovery must read plan-owned policy column: ${column}`);
 }
 if (!inactivitySource.includes("COALESCE(fa.plan_free_playback_window_days,js.free_playback_window_days,7)")) {
     throw new Error('Rolling playback SQL must prefer the Free Plan window with a safe assigned-server fallback.');

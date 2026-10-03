@@ -128,23 +128,28 @@ async function updateAvailability({ planId, capacityLimit, actorUserId = null })
 }
 
 
-async function updateMediaUserLimit({ planId, mediaUserLimit, actorUserId = null }) {
+async function updateMediaUserLimit({ planId, mediaUserLimit, freeInactivityPolicy = null, actorUserId = null }) {
   const value = mediaUserLimit == null ? null : Number(mediaUserLimit);
   if (value != null && (!Number.isInteger(value) || value < 0 || value > 1000000)) {
     throw new Error('Media user limit must be between 0 and 1000000.');
   }
+  if (freeInactivityPolicy != null) {
+    for (const [key,max] of [['firstPlaybackGraceDays',3650],['playbackWindowDays',365],['minimumPlaybackMinutes',1000000]]) {
+      if (!Number.isInteger(freeInactivityPolicy[key]) || freeInactivityPolicy[key] < 1 || freeInactivityPolicy[key] > max) throw new Error('Invalid Free inactivity policy.');
+    }
+  }
   return transaction(async client => {
     const updated = await client.query(
       `UPDATE plans SET capacity_limit=$2,
-         inactivity_policy=jsonb_set(COALESCE(inactivity_policy,'{}'::jsonb),'{mediaCapacityManaged}','true'::jsonb,TRUE),
+         inactivity_policy=jsonb_set(COALESCE(inactivity_policy,'{}'::jsonb),'{mediaCapacityManaged}','true'::jsonb,TRUE) || $3::jsonb,
          updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [planId, value]
+      [planId, value, JSON.stringify(freeInactivityPolicy ? {freeInactivity:freeInactivityPolicy} : {})]
     );
     if (!updated.rowCount) throw new Error('Plan not found.');
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
        VALUES($1,'admin.plan.media_capacity.update','plan',$2,$3::jsonb)`,
-      [actorUserId, planId, JSON.stringify({ mediaUserLimit: value })]
+      [actorUserId, planId, JSON.stringify({ mediaUserLimit: value, ...(freeInactivityPolicy ? {freeInactivity:freeInactivityPolicy} : {}) })]
     );
     return updated.rows[0];
   });

@@ -79,3 +79,7 @@ assert.strictEqual(removed.desired.stremio, true, 'Jellyfin removal must not sup
 assert.deepStrictEqual(removed.activePlanIds, ['stremio'], 'Discord desired roles must not keep paid/free Jellyfin plan roles after explicit Jellyfin removal');
 
 console.log('reconciliation desired-state ownership smoke: ok');
+const matchesPlacement=require('../src/jellyfin/resilient-provisioning').accountMatchesEntitlementPlacement;
+assert(matchesPlacement({server_id:'selected',server_class:'custom'},{server_class:'premium',eligible_server_ids:['selected']}),'selected cross-class server must remain valid');
+assert(!matchesPlacement({server_id:'other',server_class:'premium'},{server_class:'premium',eligible_server_ids:['selected']}),'matching class must not bypass an explicit pool');
+assert(matchesPlacement({server_id:'pinned',server_class:'custom'},{server_class:'premium',eligible_server_ids:['selected'],admin_forced_server_id:'pinned'}),'administrator pin must retain precedence');

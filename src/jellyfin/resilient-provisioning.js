@@ -14,6 +14,7 @@ const libraryPolicy = require('./account-library-policy');
 const jellyfinPolicy = require('./policy');
 const discordRoles = require('../integrations/discord-roles');
 const mediaReconciliation = require('./media-service-reconciliation');
+const planServers = require('./plan-servers');
 
 function serviceType(entitlement) {
     return String(entitlement?.service_type_snapshot || entitlement?.service_type || 'jellyfin');
@@ -26,7 +27,14 @@ function sameId(a, b) {
 function accountMatchesEntitlementPlacement(account, entitlement) {
     const forcedServerId = entitlement?.admin_forced_server_id || null;
     if (forcedServerId) return sameId(account?.server_id, forcedServerId);
+    if (Array.isArray(entitlement?.eligible_server_ids)) return entitlement.eligible_server_ids.some(id => sameId(account?.server_id, id));
     return account?.server_class === entitlement?.server_class;
+}
+
+async function withPlanPlacement(entitlement) {
+    if (!entitlement || entitlement.admin_forced_server_id) return entitlement;
+    const servers = await planServers.eligibleServersForPlan(entitlement, {enabledOnly:false, forPlacement:false});
+    return {...entitlement, eligible_server_ids:servers.map(server => server.id)};
 }
 
 function laneState(result) {
@@ -261,17 +269,19 @@ async function setLibrarySelectionForAccount(customerId, accountId, names) {
 
 async function adoptExistingFreeAccount(customerId, accounts, freeEntitlement, primaryEntitlement) {
     if (!freeEntitlement?.is_free_tier || freeEntitlement.blocked || accounts.some(account => account.access_lane === 'free')) return accounts;
+    freeEntitlement = await withPlanPlacement(freeEntitlement);
+    primaryEntitlement = await withPlanPlacement(primaryEntitlement);
     const primaryStart = primaryEntitlement?.starts_at ? new Date(primaryEntitlement.starts_at).getTime() : null;
     const candidates = accounts.filter(account =>
         account.server_enabled
         && account.access_lane === 'primary'
-        && account.server_class === freeEntitlement.server_class
+        && accountMatchesEntitlementPlacement(account, freeEntitlement)
     );
-    let candidate = candidates.find(account => !primaryEntitlement || account.server_class !== primaryEntitlement.server_class);
+    let candidate = candidates.find(account => !primaryEntitlement || !accountMatchesEntitlementPlacement(account, primaryEntitlement));
     if (!candidate && primaryStart) {
         candidate = candidates.find(account => new Date(account.created_at || 0).getTime() < primaryStart);
     }
-    if (!candidate && !primaryEntitlement) candidate = candidates[0] || accounts.find(account => account.server_enabled);
+    if (!candidate && !primaryEntitlement) candidate = candidates[0];
     if (!candidate) return accounts;
 
     await query(`
@@ -350,6 +360,7 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
 
+    entitlement = await withPlanPlacement(entitlement);
     const eligibleAccounts = laneAccounts.filter(account =>
         account.server_enabled && accountMatchesEntitlementPlacement(account, entitlement)
     );

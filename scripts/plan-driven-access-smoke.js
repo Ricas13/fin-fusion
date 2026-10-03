@@ -50,7 +50,7 @@ assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate 
 for(const token of ['capacityLimit','streams','allowDownloads','allowVideoTranscoding','allowAudioTranscoding','allowRemuxing','allowLiveTv','allowLiveTvManagement','allowRemoteAccess','libraryAccessMode','libraryNames'])assert(createPlan.includes(token),`New plan is missing ${token}`);
 assert(createPlan.includes('allow4k')&&createPlan.includes('planCommands.createPlan')&&planCommands.includes('allow_4k'),'New Jellyfin plans must carry the 4K catalogue flag through the canonical plan command owner');
 assert(createPlan.includes('allowSubtitleEditing')&&createPlan.includes("'Edit subtitles'"),'New Jellyfin plans must expose the real Jellyfin subtitle-management permission');
-for(const retired of ['inactivityEnabled','minimumPlaybackMinutes','noPlaybackDays'])assert(!createPlan.includes(retired),`Plan creation must not expose retired lifecycle field ${retired}`);
+for(const retired of ['inactivityEnabled','noPlaybackDays'])assert(!createPlan.includes(retired),`Plan creation must not expose retired lifecycle field ${retired}`);
 assert(!planLifecycleSource.includes('name="_lifecycleCheckboxes"'),'Unified plan editor must not render per-plan lifecycle controls');
 assert(!planLifecycleSource.includes("editor-lifecycle"),'Unified plan editor must not own a per-plan lifecycle save action');
 assert(!fs.existsSync(path.join(root,'src/entitlements/plan-lifecycle-policy.js')),'Retired plan-level inactivity policy module must stay removed');
@@ -68,7 +68,7 @@ assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptio
 
 // The global lifecycle page is execution-only and points threshold editing to Free Servers.
 assert(globalLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&globalLifecycleSource.includes('lifecycleFormInput(req.body)'),'Global lifecycle form must explicitly mark browser checkbox submissions');
-assert(globalLifecycleSource.includes('Thresholds belong to each Free-class media server')&&globalLifecycleSource.includes('Free Server settings'),'Global lifecycle UI must direct threshold ownership to Free Servers');
+assert(globalLifecycleSource.includes('Thresholds belong to the Free Plan')&&globalLifecycleSource.includes('Free Plan settings'),'Global lifecycle UI must direct threshold ownership to Free Servers');
 assert(!globalLifecycleSource.includes('freeNoPlaybackDays')&&!globalLifecycleSource.includes('minimumPlaybackMinutes'),'Global lifecycle UI must not expose retired global thresholds');
 const globalUnchecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1'});
 assert.strictEqual(globalUnchecked.enabled,false,'Unticking global lifecycle automation must persist explicit false');
