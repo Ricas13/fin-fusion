@@ -9,6 +9,7 @@ const planServers = require('./plan-servers');
 const placement = require('./placement');
 const adminControl = require('./admin-control');
 const userCapacity = require('./user-capacity');
+const customerServerChoice = require('./customer-server-choice');
 
 const PLACEMENT_LEASE_MINUTES = 10;
 
@@ -135,12 +136,16 @@ async function selectServerForPlan(plan) {
   const forced = await adminControl.forcedServerForPlan(plan);
   if (forced) return { ...forced, placement_forced: true, requested_access_lane: lane };
 
+  const assigned = await customerServerChoice.assignedServer(plan, 'jellyfin');
+  if (assigned) return { ...assigned, placement_assigned: true, requested_access_lane: lane };
+
   const accessKind = String(plan?.billing_interval || plan?.contract_billing_interval || '') === 'trial'
     ? 'trial'
     : Number(plan?.price_minor ?? plan?.contract_price_minor ?? 0) === 0
       ? 'free'
       : 'paid';
   const available = (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true }))
+    .filter(server => customerServerChoice.matchesPreference(server, plan?.media_location_preference || null))
     .filter(server => Boolean(server.allow_new_users))
     .filter(server => accessKind === 'trial'
       ? Boolean(server.trial_enabled)
