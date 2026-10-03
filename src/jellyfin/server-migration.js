@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const planServers = require('./plan-servers');
 const provisioning = require('./provisioning-helpers');
 const reconciliationLock = require('./reconciliation-lock');
+const customerServerChoice = require('./customer-server-choice');
 
 const RUNNING_STALE_MINUTES = 45;
 
@@ -243,6 +244,15 @@ async function executeMigrationUnlocked(migrationId) {
 
         stage = 'switch_primary';
         await provisioning.markPrimaryAccount(migration.customer_id, targetAccount.id);
+        // An administrator-requested migration is one of the few flows allowed
+        // to change a customer's sticky media assignment. Persist it explicitly
+        // so later reconciliation follows the migrated account instead of an
+        // older backfilled/source-server assignment.
+        await customerServerChoice.persistAssignment(
+            check.entitlement.subscription_id,
+            { id: targetAccount.server_id, location: check.target.location },
+            { overwrite: true }
+        );
 
         await query(`
             UPDATE customer_server_migrations
@@ -343,6 +353,13 @@ async function rollbackMigrationUnlocked(migrationId, actorUserId) {
 
         await provisioning.deleteJellyfinAccount(current, { reason: 'Server migration rollback', actorUserId: actorUserId || null });
         await provisioning.markPrimaryAccount(migration.customer_id, restoredSource.id);
+        // Rollback is also an explicit reassignment. Restore the subscription's
+        // sticky server/location together with the recreated source identity.
+        await customerServerChoice.persistAssignment(
+            entitlement.subscription_id,
+            { id: restoredSource.server_id, location: sourceServer.location },
+            { overwrite: true }
+        );
 
         await query(`
             UPDATE customer_server_migrations
