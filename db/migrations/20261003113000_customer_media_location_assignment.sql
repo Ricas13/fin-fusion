@@ -16,6 +16,9 @@ ALTER TABLE free_access_registration_reservations
 ALTER TABLE billing_checkout_intents
   ADD COLUMN IF NOT EXISTS media_server_id uuid;
 
+ALTER TABLE customer_plan_changes
+  ADD COLUMN IF NOT EXISTS target_media_location varchar(100);
+
 DO $$
 BEGIN
   IF NOT EXISTS (
