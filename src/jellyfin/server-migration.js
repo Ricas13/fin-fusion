@@ -113,7 +113,10 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     if (!target) throw new ServerMigrationError('TARGET_NOT_ELIGIBLE', 'Target server is not in this plan\'s eligible server pool.', 'preflight');
     if (!target.allow_new_users) throw new ServerMigrationError('TARGET_CLOSED', 'Target server is closed to new users.', 'preflight');
     if (target.health_status === 'offline') throw new ServerMigrationError('TARGET_OFFLINE', 'Target Jellyfin server is offline.', 'preflight');
-    if (target.server_class !== entitlement.server_class) throw new ServerMigrationError('TARGET_CLASS_MISMATCH', 'Target server class does not match the active plan.', 'preflight');
+    // targetServerForPlan() is authoritative. An explicit plan-server pool
+    // intentionally overrides legacy server_class grouping (PR #877), so do
+    // not reject an explicitly eligible target just because its old class
+    // label differs from the plan.
     const kind = accessKind(entitlement);
     if (kind === 'trial' && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
     if (kind === 'paid' && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
