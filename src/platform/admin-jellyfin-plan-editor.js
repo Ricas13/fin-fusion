@@ -64,11 +64,12 @@ async function loadPlan(id) {
 }
 async function serverChoices(plan) {
   const result = await query(`
-    SELECT js.id,js.name,js.server_class,js.enabled,js.allow_new_users,js.health_status,
+    SELECT js.id,js.name,js.server_class,js.location,js.max_users,js.enabled,js.allow_new_users,js.health_status,
            pse.weight AS placement_weight,(pse.server_id IS NOT NULL) AS selected
     FROM jellyfin_servers js
     LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
-    ORDER BY js.server_class,js.priority,js.name`, [plan.id]);
+    WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+    ORDER BY js.priority,js.name`, [plan.id]);
   return result.rows;
 }
 async function loadData(plan) {
@@ -131,34 +132,25 @@ function availabilityCard(data, req) {
   const remaining = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const status = remaining == null ? 'No limit' : remaining > 0 ? `${remaining} open` : 'Closed';
   const tone = remaining == null || remaining > 0 ? 'good' : 'warn';
-  const facts = `<div class="planConfigFacts"><div class="planConfigFact"><span>Used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Limit</span><strong>${limit == null ? '—' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div>`;
-  // Every Jellyfin/bundle plan (fleet_users capacity model) draws its real,
-  // enforced availability from the eligible servers' user capacity (Server
-  // config -> Customer capacity / max_users), never from plans.capacity_limit
-  // -- that column is a no-op for this plan type. An editable "slots" field
-  // here would silently do nothing while looking authoritative, which is
-  // exactly what let a Free plan oversell: an admin set this to 1 expecting
-  // it to cap acquisition, while the real limit (server max_users) stayed at
-  // whatever it already was.
-  if (capacity.capacityModel(p) === 'fleet_users') {
-    return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><div class="planConfigBody">${facts}<div class="planFreeStatement"><strong>Server-controlled capacity.</strong><span>Jellyfin plan availability is the eligible server's customer capacity, not a plan-level slot count. Change it under <a href="/admin/servers">Servers</a> -> the server's Customer capacity (max_users).</span></div></div></section>`;
-  }
-  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}<div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit ?? 0)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved. In-progress Free registrations reserve a slot until completed or released.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
+  const fleetLimit = data.usage.userLimit == null ? null : Number(data.usage.userLimit);
+  const fleetRemaining = data.usage.userRemaining == null ? null : Number(data.usage.userRemaining);
+  const facts = `<div class="planConfigFacts"><div class="planConfigFact"><span>Plan users</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Plan cap</span><strong>${limit == null ? 'No cap' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open now</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div>`;
+  const fleet = capacity.capacityModel(p) === 'fleet_users'
+    ? `<div class="planFreeStatement"><strong>Physical server guardrail.</strong><span>The selected server fleet has ${fleetLimit == null ? 'no configured' : esc(fleetLimit)} physical customer places and ${fleetRemaining == null ? 'unknown' : esc(fleetRemaining)} currently available. New acquisition stops when either this plan cap or the eligible server fleet is full.</span></div>`
+    : '';
+  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>The plan owns how many customers it may sell; servers own physical capacity.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}${fleet}<div class="formGroup"><label>Maximum customers on this plan</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit == null ? '' : p.capacity_limit)}" placeholder="No plan-specific cap"><div class="inlineHelp">Leave blank to use only physical server capacity. Set 0 to close new acquisition without removing existing users.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
 }
-
 function deliveryCard(data, req) {
   const p = data.plan;
   const strategy = placement.normalizeStrategy(p.placement_strategy);
   const restricted = data.servers.some(row => row.selected);
   const nextClass = data.free ? 'free' : p.server_class;
-  const classControl = data.free
-    ? `<div class="planFreeStatement"><strong>Free fleet.</strong><span>Free plans are pinned to the Free Jellyfin server class and do not inherit paid-plan placement.</span></div><input type="hidden" name="serverClass" value="free">`
-    : `<div class="formGroup"><label>Server class</label><select class="input" name="serverClass"><option value="premium" ${selected(p.server_class, 'premium')}>Premium</option><option value="free" ${selected(p.server_class, 'free')}>Free</option><option value="custom" ${selected(p.server_class, 'custom')}>Custom</option></select></div>`;
+  const classControl = `<div class="formGroup"><label>Fallback server class</label><select class="input" name="serverClass"><option value="premium" ${selected(p.server_class, 'premium')}>Premium</option><option value="free" ${selected(p.server_class, 'free')}>Free</option><option value="custom" ${selected(p.server_class, 'custom')}>Custom</option></select><div class="inlineHelp">Used only when no individual servers are selected. An explicit server selection below can mix server classes.</div></div>`;
   const serverRows = data.servers.map(row => {
     const unavailable = !row.enabled || !row.allow_new_users;
-    return `<label class="planServerChoice"><input type="checkbox" name="serverIds" value="${esc(row.id)}" ${row.selected ? 'checked' : ''} ${unavailable ? 'disabled' : ''}><span><strong>${esc(row.name)}</strong><small>${esc(row.server_class)} · ${esc(row.health_status || 'checking')}${unavailable ? ' · unavailable for new users' : ''}</small></span><input class="input" type="number" min="1" max="10000" name="weight_${esc(row.id)}" value="${esc(row.placement_weight || 100)}" aria-label="${esc(row.name)} weight" ${unavailable ? 'disabled' : ''}></label>`;
+    return `<label class="planServerChoice"><input type="checkbox" name="serverIds" value="${esc(row.id)}" ${row.selected ? 'checked' : ''} ${unavailable ? 'disabled' : ''}><span><strong>${esc(row.name)}</strong><small>${row.location ? esc(row.location)+' · ' : ''}${esc(row.server_class)} · ${esc(row.health_status || 'checking')} · ${row.max_users == null ? 'no physical cap' : esc(row.max_users)+' max users'}${unavailable ? ' · unavailable for new users' : ''}</small></span><input class="input" type="number" min="1" max="10000" name="weight_${esc(row.id)}" value="${esc(row.placement_weight || 100)}" aria-label="${esc(row.name)} weight" ${unavailable ? 'disabled' : ''}></label>`;
   }).join('');
-  return `<section class="planConfigCard span2" id="delivery"><div class="planConfigHead"><div><h2>Delivery & server placement</h2><p>Free and paid plans keep independent fleet targeting.</p></div><span class="pill accent">${esc(nextClass)} fleet</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-delivery">${token(req)}${classControl}<div class="formGrid"><div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy"><option value="balanced" ${selected(strategy, 'balanced')}>Balanced (recommended)</option><option value="lowest_customers" ${selected(strategy, 'lowest_customers')}>Lowest user count</option><option value="lowest_streams" ${selected(strategy, 'lowest_streams')}>Lowest live streams</option><option value="weighted" ${selected(strategy, 'weighted')}>Weighted distribution</option><option value="manual" ${selected(strategy, 'manual')}>Pinned server</option></select></div><div class="formGroup"><label>Eligible server pool</label><select class="input" name="poolMode"><option value="all" ${restricted ? '' : 'selected'}>All matching servers</option><option value="selected" ${restricted ? 'selected' : ''}>Only selected servers below</option></select></div></div><details class="planCardDetails"><summary>Select individual servers / weights</summary><div class="planDetailsBody"><div class="planServerChoices">${serverRows || '<div class="empty">No Jellyfin servers are configured.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save delivery</button></div></form></section>`;
+  return `<section class="planConfigCard span2" id="delivery"><div class="planConfigHead"><div><h2>Delivery & server placement</h2><p>Select exactly which Jellyfin servers may host this plan. Server capacity remains a hard physical ceiling.</p></div><span class="pill accent">${esc(nextClass)} fleet</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-delivery">${token(req)}${classControl}<div class="formGrid"><div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy"><option value="balanced" ${selected(strategy, 'balanced')}>Balanced (recommended)</option><option value="lowest_customers" ${selected(strategy, 'lowest_customers')}>Lowest user count</option><option value="lowest_streams" ${selected(strategy, 'lowest_streams')}>Lowest live streams</option><option value="weighted" ${selected(strategy, 'weighted')}>Weighted distribution</option><option value="manual" ${selected(strategy, 'manual')}>Pinned server</option></select></div><div class="formGroup"><label>Eligible server pool</label><select class="input" name="poolMode"><option value="all" ${restricted ? '' : 'selected'}>All matching servers</option><option value="selected" ${restricted ? 'selected' : ''}>Only selected servers below</option></select></div></div><details class="planCardDetails"><summary>Select individual servers / weights</summary><div class="planDetailsBody"><div class="planServerChoices">${serverRows || '<div class="empty">No Jellyfin servers are configured.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save delivery</button></div></form></section>`;
 }
 
 function librariesCard(data, req) {
@@ -235,8 +227,8 @@ async function saveAccess(req, plan, data) {
   if (data.affected) await queuePlanReconciliation(plan.id, req.session.authUserId);
 }
 async function saveAvailability(req, plan) {
-  if (capacity.capacityModel(plan) === 'fleet_users') throw new Error('Jellyfin plan availability is controlled by the eligible server\'s customer capacity, not a plan-level slot count. Change it under Servers -> Customer capacity.');
-  const limit = int(req.body.capacityLimit, 0, 1000000, 'Availability limit');
+  const raw = String(req.body.capacityLimit ?? '').trim();
+  const limit = raw === '' ? null : int(raw, 0, 1000000, 'Availability limit');
   await planCommands.updateAvailability({
     planId: plan.id,
     capacityLimit: limit,
@@ -245,12 +237,12 @@ async function saveAvailability(req, plan) {
 }
 async function saveDelivery(req, plan, data) {
   requireImpact(plan, data.affected, req.body.impactConfirmation);
-  const serverClass = data.free ? 'free' : (SERVER_CLASSES.has(String(req.body.serverClass)) ? String(req.body.serverClass) : null);
+  const serverClass = SERVER_CLASSES.has(String(req.body.serverClass)) ? String(req.body.serverClass) : null;
   if (!serverClass) throw new Error('Choose Premium, Free or Custom as the server class.');
   const strategy = placement.normalizeStrategy(req.body.placementStrategy);
   const poolMode = req.body.poolMode === 'selected' ? 'selected' : 'all';
   const ids = values(req.body.serverIds);
-  const available = await query(`SELECT id,name,enabled,allow_new_users FROM jellyfin_servers WHERE server_class=$1 ORDER BY priority,name`, [serverClass]);
+  const available = await query(`SELECT id,name,enabled,allow_new_users FROM jellyfin_servers WHERE COALESCE(media_server_type,'jellyfin')='jellyfin' ORDER BY priority,name`);
   const byId = new Map(available.rows.map(row => [String(row.id), row]));
   const chosen = ids.map(id => byId.get(id)).filter(Boolean);
   if (poolMode === 'selected' && !chosen.length) throw new Error('Choose at least one eligible server or use all matching servers.');
