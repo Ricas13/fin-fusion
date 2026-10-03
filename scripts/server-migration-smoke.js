@@ -120,6 +120,8 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
     const accountsAfterMove = await query(`SELECT id,server_id,disabled,is_primary,password_setup_required,jellyfin_user_id FROM jellyfin_accounts WHERE customer_id=$1`, [first.customerId]);
     assert.strictEqual(accountsAfterMove.rowCount, 1, 'successful move must retain only the enabled target account');
+    const assignmentAfterMove = await query(`SELECT media_server_id,media_location_snapshot FROM subscriptions WHERE customer_id=$1 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`, [first.customerId]);
+    assert.strictEqual(String(assignmentAfterMove.rows[0]?.media_server_id), String(target.id), 'successful admin migration must move the sticky subscription assignment to the target server');
     const primary = accountsAfterMove.rows[0];
     assert.strictEqual(String(primary.server_id), String(target.id));
     assert.strictEqual(primary.disabled, false);
@@ -142,6 +144,8 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     assert.strictEqual(rolledBack.status, 'rolled_back');
     const afterRollback = await query(`SELECT server_id,disabled,is_primary,password_setup_required FROM jellyfin_accounts WHERE customer_id=$1`, [first.customerId]);
     assert.strictEqual(afterRollback.rowCount, 1, 'rollback must retain only the recreated enabled source account');
+    const assignmentAfterRollback = await query(`SELECT media_server_id,media_location_snapshot FROM subscriptions WHERE customer_id=$1 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`, [first.customerId]);
+    assert.strictEqual(String(assignmentAfterRollback.rows[0]?.media_server_id), String(source.id), 'migration rollback must restore the sticky subscription assignment to the source server');
     assert.strictEqual(String(afterRollback.rows[0].server_id), String(source.id));
     assert.strictEqual(afterRollback.rows[0].disabled, false);
     assert.strictEqual(afterRollback.rows[0].is_primary, true);
