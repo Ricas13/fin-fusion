@@ -187,9 +187,10 @@ async function existingAssignedServerForPlan(plan, serverId, requestedLocation =
   // Existing paid customers already consume their physical slot. Reusing that
   // assignment for an eligible target plan is not a new placement, so fullness,
   // allow_new_users, placement drain and transient health must not force a move
-  // or block a commercial plan change. The target plan pool/provider still has
-  // to allow this server; a deleted or excluded server is not silently reused.
-  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: false, forPlacement: false, db }))
+  // or block a commercial plan change. A server explicitly disabled by an
+  // administrator is different: do not start a new paid change against it.
+  // The target plan pool/provider must still allow the server.
+  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: false, db }))
     .filter(server => mediaProvider.normalizeType(server.media_server_type || 'jellyfin') === provider);
   const server = servers.find(candidate => String(candidate.id) === String(serverId));
   if (!server || (requestedLocation && !matchesPreference(server, requestedLocation))) return null;
