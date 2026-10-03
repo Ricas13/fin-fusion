@@ -222,14 +222,36 @@ async function applyDueStripe(){
                     const dbQuery=(sql,params)=>db.query(sql,params);
                     if(customerServerChoice.mediaServerType(target)){
                         const requestedLocation=change.target_media_location||current.media_location_preference||null;
-                        dueMediaServer=await customerServerChoice.committedReservedServer(target,change.target_media_server_id,requestedLocation,{db:dbQuery});
-                        if(!dueMediaServer)dueMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,requestedLocation,{db:dbQuery});
-                        if(dueMediaServer){
-                            dueMediaLocation=dueMediaServer.selected_location||customerServerChoice.locationLabel(dueMediaServer.location);
+                        if(change.target_media_server_id){
+                            // Stripe has already switched to the scheduled price.
+                            // The commercial state must now converge locally even
+                            // if the committed server is temporarily offline or
+                            // drained; provisioning is retried separately. Keeping
+                            // the old plan here could let a cheaper downgrade retain
+                            // richer access or leave an upgrade billed but absent.
+                            dueMediaServer=(await db.query(`
+                                SELECT id,location,media_server_type
+                                FROM jellyfin_servers
+                                WHERE id=$1
+                                LIMIT 1
+                            `,[change.target_media_server_id])).rows[0]||null;
+                            if(!dueMediaServer)throw planChangeRefusal('The media server committed to this scheduled Stripe change no longer exists. Manual review is required.');
+                            if(customerServerChoice.mediaServerType(target)!==String(dueMediaServer.media_server_type||'jellyfin')){
+                                throw planChangeRefusal('The media server committed to this scheduled Stripe change no longer matches the target service provider. Manual review is required.');
+                            }
+                            dueMediaLocation=requestedLocation||customerServerChoice.locationLabel(dueMediaServer.location);
                         }else{
-                            dueMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,requestedLocation,{db:dbQuery,requireSelection:true});
-                            dueMediaServer=await customerServerChoice.selectServerForLocationLocked(target,dueMediaLocation,{db:dbQuery,requireSelection:true});
-                            dueMediaLocation=dueMediaServer?.selected_location||dueMediaLocation;
+                            // Legacy/N-1 scheduled changes did not persist a
+                            // concrete media server. Preserve their old behavior
+                            // and resolve the best currently valid placement.
+                            dueMediaServer=await customerServerChoice.reservedServerIfEligible(target,current.media_server_id,requestedLocation,{db:dbQuery});
+                            if(dueMediaServer){
+                                dueMediaLocation=dueMediaServer.selected_location||customerServerChoice.locationLabel(dueMediaServer.location);
+                            }else{
+                                dueMediaLocation=await customerServerChoice.resolveAcquisitionLocation(target,requestedLocation,{db:dbQuery,requireSelection:true});
+                                dueMediaServer=await customerServerChoice.selectServerForLocationLocked(target,dueMediaLocation,{db:dbQuery,requireSelection:true});
+                                dueMediaLocation=dueMediaServer?.selected_location||dueMediaLocation;
+                            }
                         }
                     }
                     await applySnapshot(db,current.subscription_id,target,mapping,{mediaLocation:dueMediaLocation,mediaServerId:dueMediaServer?.id||null});
