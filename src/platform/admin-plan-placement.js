@@ -37,9 +37,9 @@ async function savePlacement(req, plan) {
     const mediaType=serviceCatalog.mediaServerType(plan);
 
     const available = await query(`
-        SELECT id,name,enabled,allow_new_users,media_server_type FROM jellyfin_servers
-        WHERE server_class=$1 AND COALESCE(media_server_type,'jellyfin')=$2 ORDER BY priority,name
-    `, [plan.server_class,mediaType]);
+        SELECT id,name,server_class,location,max_users,enabled,allow_new_users,media_server_type FROM jellyfin_servers
+        WHERE COALESCE(media_server_type,'jellyfin')=$1 ORDER BY priority,name
+    `, [mediaType]);
     const byId = new Map(available.rows.map(server => [String(server.id), server]));
     const selected = requestedIds.map(id => byId.get(id)).filter(Boolean);
 

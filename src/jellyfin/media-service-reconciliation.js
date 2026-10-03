@@ -140,11 +140,15 @@ async function reconcileCustomer(customerId,serviceType){
     }
 
     const effective=await core.effectivePolicyForCustomer(customerId,entitlement);
+    const entitledServers=(await planServers.eligibleServersForPlan(entitlement,{enabledOnly:false,forPlacement:false}))
+      .filter(server=>normalizeService(server.media_server_type||type)===type);
+    const entitledServerIds=new Set(entitledServers.map(server=>String(server.id)));
+    const matchesPlacement=account=>account.server_enabled&&entitledServerIds.has(String(account.server_id));
     let account=type==='jellyfin'
-      ? accounts.find(a=>a.is_primary&&a.server_class===entitlement.server_class&&a.server_enabled)
+      ? accounts.find(a=>a.is_primary&&matchesPlacement(a))
       : null;
-    if(!account)account=accounts.find(a=>!a.disabled&&a.server_class===entitlement.server_class&&a.server_enabled);
-    if(!account)account=accounts.find(a=>a.server_class===entitlement.server_class&&a.server_enabled);
+    if(!account)account=accounts.find(a=>!a.disabled&&matchesPlacement(a));
+    if(!account)account=accounts.find(a=>matchesPlacement(a));
     let created=false;
 
     if(!account){

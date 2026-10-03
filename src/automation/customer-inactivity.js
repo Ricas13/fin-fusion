@@ -21,29 +21,45 @@ function boundedInt(value, min, max, fallback) {
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
-function serverPolicy(row = {}, globalCfg = {}) {
+// A partial or malformed plan policy must never alter existing removal deadlines.
+function completePlanPolicy(row) {
+    return Number.isInteger(Number(row.plan_free_first_playback_grace_days)) && Number(row.plan_free_first_playback_grace_days) >= 1 && Number(row.plan_free_first_playback_grace_days) <= 3650 &&
+        Number.isInteger(Number(row.plan_free_playback_window_days)) && Number(row.plan_free_playback_window_days) >= 1 && Number(row.plan_free_playback_window_days) <= 365 &&
+        Number.isInteger(Number(row.plan_free_minimum_playback_minutes)) && Number(row.plan_free_minimum_playback_minutes) >= 1 && Number(row.plan_free_minimum_playback_minutes) <= 1000000;
+}
+function planPolicySql(alias='p') {
+    const values = [["firstPlaybackGraceDays","first_playback_grace_days",3650],["playbackWindowDays","playback_window_days",365],["minimumPlaybackMinutes","minimum_playback_minutes",1000000]];
+    const valid = values.map(([key,,max]) => {
+        const raw = `${alias}.inactivity_policy #>> '{freeInactivity,${key}}'`;
+        return `CASE WHEN ${raw} ~ '^[0-9]{1,7}$' THEN (${raw})::int BETWEEN 1 AND ${max} ELSE FALSE END`;
+    }).join(' AND ');
+    return values.map(([key,name]) => `CASE WHEN ${valid} THEN (${alias}.inactivity_policy #>> '{freeInactivity,${key}}')::int END AS plan_free_${name}`).join(',\n            ');
+}
+
+function planPolicy(row = {}, globalCfg = {}) {
+    const complete = completePlanPolicy(row);
     return {
         enabled: Boolean(globalCfg.enabled),
         dryRun: Boolean(globalCfg.dryRun),
         firstPlaybackGraceDays: boundedInt(
-            row.free_first_playback_grace_days,
+            complete ? row.plan_free_first_playback_grace_days : row.free_first_playback_grace_days,
             1,
             3650,
             FREE_POLICY_DEFAULTS.firstPlaybackGraceDays
         ),
         playbackWindowDays: boundedInt(
-            row.free_playback_window_days,
+            complete ? row.plan_free_playback_window_days : row.free_playback_window_days,
             1,
             365,
             FREE_POLICY_DEFAULTS.playbackWindowDays
         ),
         minimumPlaybackMinutes: boundedInt(
-            row.free_minimum_playback_minutes,
+            complete ? row.plan_free_minimum_playback_minutes : row.free_minimum_playback_minutes,
             1,
             1000000,
             FREE_POLICY_DEFAULTS.minimumPlaybackMinutes
         ),
-        thresholdOwner: 'free_server'
+        thresholdOwner: complete ? 'free_plan' : 'free_server_legacy_fallback'
     };
 }
 
@@ -123,7 +139,8 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.current_period_end,
             s.created_at subscription_created_at,
             p.code plan_code,
-            p.name plan_name
+            p.name plan_name,
+            ${planPolicySql()}
           FROM subscriptions s
           JOIN plans p ON p.id=s.plan_id
           WHERE s.superseded_by IS NULL
@@ -241,13 +258,13 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
                   LEAST(COALESCE(ph.ended_at,ph.last_seen_at),NOW())
                   - GREATEST(
                       ph.started_at,
-                      NOW()-(js.free_playback_window_days||' days')::interval
+                      NOW()-(COALESCE(fa.plan_free_playback_window_days,js.free_playback_window_days,7)||' days')::interval
                     )
                 ))
               )
             ) FILTER (
               WHERE ph.started_at>=allocation.allocation_start_at
-                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(js.free_playback_window_days||' days')::interval
+                AND COALESCE(ph.ended_at,ph.last_seen_at)>NOW()-(COALESCE(fa.plan_free_playback_window_days,js.free_playback_window_days,7)||' days')::interval
                 AND ph.started_at<NOW()
             ),0)::bigint playback_seconds
           FROM playback_history ph
@@ -274,7 +291,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
     `, [HOLD_TYPE, customerId || null]);
 
     return result.rows.map(row => {
-        const policy = serverPolicy(row, globalCfg);
+        const policy = planPolicy(row, globalCfg);
         const assessment = assessUsage(row, policy);
         const usageTriggered = assessment.firstPlaybackEligible || assessment.usageEligible;
         const adminProtected = Boolean(
@@ -336,7 +353,9 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
 module.exports = {
     HOLD_TYPE,
     FREE_POLICY_DEFAULTS,
-    serverPolicy,
+    planPolicySql,
+    planPolicy,
+    serverPolicy: planPolicy,
     assessUsage,
     candidates
 };

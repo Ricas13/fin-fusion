@@ -53,7 +53,7 @@ function freeJellyfinPlan(plan){
 }
 function freeInactivityCard(_req,plan){
   if(!freeJellyfinPlan(plan))return'';
-  return `<section class="planConfigCard freeInactivityPlanCard" id="free-activity"><div class="planConfigHead"><div><h2>Free Server activity rules</h2><p>Inactivity thresholds are owned by the Free media server that hosts the customer, not by this plan.</p></div><span class="pill">Server-owned</span></div><div class="planConfigBody"><div class="securityNote standalone"><strong>Where to change them:</strong> open Servers, edit each Free-class media server, then use Advanced settings → Free server inactivity policy. Each server can have its own first-playback grace, rolling playback window and minimum playback requirement. Existing safety checks and the global automation enabled/dry-run switch still apply.</div><div class="buttonRow"><a class="button secondary" href="/admin/servers">Manage Free servers</a></div><div class="planSaveHint">Legacy per-plan inactivity values are retained only for compatibility and are no longer used by inactivity enforcement.</div></div></section>`;
+  return `<section class="planConfigCard freeInactivityPlanCard" id="free-activity"><div class="planConfigHead"><div><h2>Free plan activity rules</h2><p>Inactivity thresholds are owned by the Free plan.</p></div><span class="pill">Plan-owned</span></div><div class="planConfigBody"><p>Edit the first-playback grace, rolling playback window and minimum playback minutes in this plan’s Availability settings. Existing server thresholds remain in use until a complete plan policy is saved. The global automation enabled/dry-run switch and playback safety checks still apply.</p><a class="button secondary" href="/admin/plans/${esc(plan.id)}/edit#availability">Edit Free plan rules</a></div></section>`;
 }
 function planCard(req, plan, { variant = 'jellyfin' } = {}) {
   const managed = plan.request_permissions !== null && plan.request_permissions !== undefined;
@@ -92,10 +92,10 @@ function createAdminRequestPlanPolicyRouter() {
   router.get('/admin/request-plan-policy', (_req, res) => res.redirect(302, '/admin/plans'));
   // Compatibility endpoint for stale browser tabs/bookmarks from releases where
   // inactivity thresholds were edited on the plan. It deliberately performs no
-  // mutation: server-owned settings are now the only enforcement authority.
+  // mutation: the plan editor owns threshold changes.
   router.post('/admin/request-plan-policy/:planId/free-inactivity',writeLimit,(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid security token');
-    return res.redirect(legacyInactivityRedirect(req.params.planId,'Free Server inactivity rules are now configured on each Free server under Servers. No plan-level threshold was changed.'));
+    return res.redirect(legacyInactivityRedirect(req.params.planId,'Free Server inactivity rules are now configured on the Free plan under Plans. No plan-level threshold was changed.'));
   });
   router.post('/admin/request-plan-policy/:planId', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');

@@ -127,6 +127,79 @@ async function updateAvailability({ planId, capacityLimit, actorUserId = null })
   });
 }
 
+
+async function updateMediaUserLimit({ planId, mediaUserLimit, freeInactivityPolicy = null, actorUserId = null }) {
+  const value = mediaUserLimit == null ? null : Number(mediaUserLimit);
+  if (value != null && (!Number.isInteger(value) || value < 0 || value > 1000000)) {
+    throw new Error('Media user limit must be between 0 and 1000000.');
+  }
+  if (freeInactivityPolicy != null) {
+    for (const [key,max] of [['firstPlaybackGraceDays',3650],['playbackWindowDays',365],['minimumPlaybackMinutes',1000000]]) {
+      if (!Number.isInteger(freeInactivityPolicy[key]) || freeInactivityPolicy[key] < 1 || freeInactivityPolicy[key] > max) throw new Error('Invalid Free inactivity policy.');
+    }
+  }
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans SET capacity_limit=$2,
+         inactivity_policy=jsonb_set(COALESCE(inactivity_policy,'{}'::jsonb),'{mediaCapacityManaged}','true'::jsonb,TRUE) || $3::jsonb,
+         updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [planId, value, JSON.stringify(freeInactivityPolicy ? {freeInactivity:freeInactivityPolicy} : {})]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.media_capacity.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify({ mediaUserLimit: value, ...(freeInactivityPolicy ? {freeInactivity:freeInactivityPolicy} : {}) })]
+    );
+    return updated.rows[0];
+  });
+}
+
+async function updateFreeInactivityPolicy({
+  planId,
+  firstPlaybackGraceDays,
+  playbackWindowDays,
+  minimumPlaybackMinutes,
+  actorUserId = null
+}) {
+  const values = {
+    firstPlaybackGraceDays: Number(firstPlaybackGraceDays),
+    playbackWindowDays: Number(playbackWindowDays),
+    minimumPlaybackMinutes: Number(minimumPlaybackMinutes)
+  };
+  if (!Number.isInteger(values.firstPlaybackGraceDays) || values.firstPlaybackGraceDays < 1 || values.firstPlaybackGraceDays > 3650) {
+    throw new Error('Initial playback grace must be between 1 and 3650 days.');
+  }
+  if (!Number.isInteger(values.playbackWindowDays) || values.playbackWindowDays < 1 || values.playbackWindowDays > 365) {
+    throw new Error('Playback window must be between 1 and 365 days.');
+  }
+  if (!Number.isInteger(values.minimumPlaybackMinutes) || values.minimumPlaybackMinutes < 1 || values.minimumPlaybackMinutes > 1000000) {
+    throw new Error('Minimum playback must be between 1 and 1000000 minutes.');
+  }
+  return transaction(async client => {
+    const updated = await client.query(
+      `UPDATE plans
+       SET inactivity_policy=COALESCE(inactivity_policy,'{}'::jsonb) ||
+             jsonb_build_object('freeInactivity',jsonb_build_object(
+               'firstPlaybackGraceDays',$2::int,
+               'playbackWindowDays',$3::int,
+               'minimumPlaybackMinutes',$4::int
+             )),
+           updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [planId, values.firstPlaybackGraceDays, values.playbackWindowDays, values.minimumPlaybackMinutes]
+    );
+    if (!updated.rowCount) throw new Error('Plan not found.');
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.plan.free_inactivity.update','plan',$2,$3::jsonb)`,
+      [actorUserId, planId, JSON.stringify(values)]
+    );
+    return updated.rows[0];
+  });
+}
+
 async function updateDelivery({
   planId,
   serverClass,
@@ -1454,6 +1527,8 @@ module.exports = {
   createPlan,
   updateProduct,
   updateAvailability,
+  updateMediaUserLimit,
+  updateFreeInactivityPolicy,
   updateDelivery,
   updateLibraries,
   updateCommerce,

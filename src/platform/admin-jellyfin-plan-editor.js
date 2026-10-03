@@ -64,10 +64,11 @@ async function loadPlan(id) {
 }
 async function serverChoices(plan) {
   const result = await query(`
-    SELECT js.id,js.name,js.server_class,js.enabled,js.allow_new_users,js.health_status,
+    SELECT js.id,js.name,js.server_class,js.location,js.max_users,js.enabled,js.allow_new_users,js.health_status,
            pse.weight AS placement_weight,(pse.server_id IS NOT NULL) AS selected
     FROM jellyfin_servers js
     LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
+    WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
     ORDER BY js.server_class,js.priority,js.name`, [plan.id]);
   return result.rows;
 }
@@ -131,19 +132,25 @@ function availabilityCard(data, req) {
   const remaining = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const status = remaining == null ? 'No limit' : remaining > 0 ? `${remaining} open` : 'Closed';
   const tone = remaining == null || remaining > 0 ? 'good' : 'warn';
-  const facts = `<div class="planConfigFacts"><div class="planConfigFact"><span>Used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Limit</span><strong>${limit == null ? '—' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div>`;
-  // Every Jellyfin/bundle plan (fleet_users capacity model) draws its real,
-  // enforced availability from the eligible servers' user capacity (Server
-  // config -> Customer capacity / max_users), never from plans.capacity_limit
-  // -- that column is a no-op for this plan type. An editable "slots" field
-  // here would silently do nothing while looking authoritative, which is
-  // exactly what let a Free plan oversell: an admin set this to 1 expecting
-  // it to cap acquisition, while the real limit (server max_users) stayed at
-  // whatever it already was.
+  const physicalLimit = data.usage.physicalUserLimit == null ? null : Number(data.usage.physicalUserLimit);
+  const physicalRemaining = data.usage.physicalRemaining == null ? null : Number(data.usage.physicalRemaining);
+  const facts = `<div class="planConfigFacts"><div class="planConfigFact"><span>Plan used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Effective limit</span><strong>${limit == null ? '—' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div>`;
+
   if (capacity.capacityModel(p) === 'fleet_users') {
-    return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><div class="planConfigBody">${facts}<div class="planFreeStatement"><strong>Server-controlled capacity.</strong><span>Jellyfin plan availability is the eligible server's customer capacity, not a plan-level slot count. Change it under <a href="/admin/servers">Servers</a> -> the server's Customer capacity (max_users).</span></div></div></section>`;
+    const policy = p.inactivity_policy && typeof p.inactivity_policy === 'object' ? p.inactivity_policy : {};
+    const mediaLimit = policy.mediaCapacityManaged === true && p.capacity_limit != null ? Number(p.capacity_limit) : '';
+    const infrastructure = physicalLimit == null
+      ? ''
+      : `<div class="inlineHelp">Eligible servers currently provide <strong>${esc(physicalLimit)}</strong> physical customer places, with <strong>${esc(physicalRemaining ?? 0)}</strong> physically open. The plan limit below can be lower, but can never create capacity beyond the selected servers.</div>`;
+    const freeInactivity = policy.freeInactivity && typeof policy.freeInactivity === 'object' ? policy.freeInactivity : {};
+    const inactivityConfigured = freeInactivity.firstPlaybackGraceDays != null && freeInactivity.playbackWindowDays != null && freeInactivity.minimumPlaybackMinutes != null;
+    const inactivity = data.free
+      ? `<div class="planCardDetails"><div class="planDetailsBody"><div class="formGroup"><label>Free inactivity policy</label><div class="inlineHelp">This policy belongs to the Free Plan, not to an individual server. ${inactivityConfigured ? 'These plan thresholds are authoritative.' : 'This plan is still using the legacy assigned-server thresholds. Leave all three fields blank to preserve that exact behaviour, or enter all three values to move the policy explicitly onto this plan.'}</div></div><div class="formGrid"><div class="formGroup"><label>Initial playback grace</label><div class="inputUnit"><input class="input" type="number" min="1" max="3650" name="freeFirstPlaybackGraceDays" value="${esc(freeInactivity.firstPlaybackGraceDays ?? '')}" placeholder="3"><span>days</span></div></div><div class="formGroup"><label>Playback window</label><div class="inputUnit"><input class="input" type="number" min="1" max="365" name="freePlaybackWindowDays" value="${esc(freeInactivity.playbackWindowDays ?? '')}" placeholder="7"><span>days</span></div></div><div class="formGroup"><label>Minimum playback</label><div class="inputUnit"><input class="input" type="number" min="1" max="1000000" name="freeMinimumPlaybackMinutes" value="${esc(freeInactivity.minimumPlaybackMinutes ?? '')}" placeholder="30"><span>minutes</span></div></div></div></div></div>`
+      : '';
+    return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>Plan places are capped independently from server capacity.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}<div class="formGroup"><label>Maximum customers on this plan</label><input class="input" type="number" min="0" max="1000000" name="mediaUserLimit" value="${esc(mediaLimit)}" placeholder="Use all eligible server capacity"><div class="inlineHelp">Leave blank to let this plan use all capacity offered by its selected servers. Set 0 to close new acquisition without removing existing access.</div></div>${infrastructure}${inactivity}<button class="button" type="submit">Save availability</button></form></section>`;
   }
-  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}<div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit ?? 0)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved. In-progress Free registrations reserve a slot until completed or released.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
+
+  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}${facts}<div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit ?? 0)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved. In-progress registrations reserve a slot until completed or released.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
 }
 
 function deliveryCard(data, req) {
@@ -152,13 +159,13 @@ function deliveryCard(data, req) {
   const restricted = data.servers.some(row => row.selected);
   const nextClass = data.free ? 'free' : p.server_class;
   const classControl = data.free
-    ? `<div class="planFreeStatement"><strong>Free fleet.</strong><span>Free plans are pinned to the Free Jellyfin server class and do not inherit paid-plan placement.</span></div><input type="hidden" name="serverClass" value="free">`
+    ? `<div class="planFreeStatement"><strong>Free fleet.</strong><span>Without an explicit selection, Free plans use the Free Jellyfin server class. Selected Jellyfin servers override that fallback.</span></div><input type="hidden" name="serverClass" value="free">`
     : `<div class="formGroup"><label>Server class</label><select class="input" name="serverClass"><option value="premium" ${selected(p.server_class, 'premium')}>Premium</option><option value="free" ${selected(p.server_class, 'free')}>Free</option><option value="custom" ${selected(p.server_class, 'custom')}>Custom</option></select></div>`;
   const serverRows = data.servers.map(row => {
     const unavailable = !row.enabled || !row.allow_new_users;
-    return `<label class="planServerChoice"><input type="checkbox" name="serverIds" value="${esc(row.id)}" ${row.selected ? 'checked' : ''} ${unavailable ? 'disabled' : ''}><span><strong>${esc(row.name)}</strong><small>${esc(row.server_class)} · ${esc(row.health_status || 'checking')}${unavailable ? ' · unavailable for new users' : ''}</small></span><input class="input" type="number" min="1" max="10000" name="weight_${esc(row.id)}" value="${esc(row.placement_weight || 100)}" aria-label="${esc(row.name)} weight" ${unavailable ? 'disabled' : ''}></label>`;
+    const location = row.location ? ` · ${esc(row.location)}` : ''; const capacityLabel = row.max_users ? ` · capacity ${esc(row.max_users)}` : ' · capacity not set'; return `<label class="planServerChoice"><input type="checkbox" name="serverIds" value="${esc(row.id)}" ${row.selected ? 'checked' : ''} ${unavailable ? 'disabled' : ''}><span><strong>${esc(row.name)}</strong><small>${esc(row.server_class)}${location} · ${esc(row.health_status || 'checking')}${capacityLabel}${unavailable ? ' · unavailable for new users' : ''}</small></span><input class="input" type="number" min="1" max="10000" name="weight_${esc(row.id)}" value="${esc(row.placement_weight || 100)}" aria-label="${esc(row.name)} weight" ${unavailable ? 'disabled' : ''}></label>`;
   }).join('');
-  return `<section class="planConfigCard span2" id="delivery"><div class="planConfigHead"><div><h2>Delivery & server placement</h2><p>Free and paid plans keep independent fleet targeting.</p></div><span class="pill accent">${esc(nextClass)} fleet</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-delivery">${token(req)}${classControl}<div class="formGrid"><div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy"><option value="balanced" ${selected(strategy, 'balanced')}>Balanced (recommended)</option><option value="lowest_customers" ${selected(strategy, 'lowest_customers')}>Lowest user count</option><option value="lowest_streams" ${selected(strategy, 'lowest_streams')}>Lowest live streams</option><option value="weighted" ${selected(strategy, 'weighted')}>Weighted distribution</option><option value="manual" ${selected(strategy, 'manual')}>Pinned server</option></select></div><div class="formGroup"><label>Eligible server pool</label><select class="input" name="poolMode"><option value="all" ${restricted ? '' : 'selected'}>All matching servers</option><option value="selected" ${restricted ? 'selected' : ''}>Only selected servers below</option></select></div></div><details class="planCardDetails"><summary>Select individual servers / weights</summary><div class="planDetailsBody"><div class="planServerChoices">${serverRows || '<div class="empty">No Jellyfin servers are configured.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save delivery</button></div></form></section>`;
+  return `<section class="planConfigCard span2" id="delivery"><div class="planConfigHead"><div><h2>Delivery & server placement</h2><p>Free and paid plans keep independent fleet targeting.</p></div><span class="pill accent">${esc(nextClass)} fleet</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-delivery">${token(req)}${classControl}<div class="formGrid"><div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy"><option value="balanced" ${selected(strategy, 'balanced')}>Balanced (recommended)</option><option value="lowest_customers" ${selected(strategy, 'lowest_customers')}>Lowest user count</option><option value="lowest_streams" ${selected(strategy, 'lowest_streams')}>Lowest live streams</option><option value="weighted" ${selected(strategy, 'weighted')}>Weighted distribution</option><option value="manual" ${selected(strategy, 'manual')}>Pinned server</option></select></div><div class="formGroup"><label>Eligible server pool</label><select class="input" name="poolMode"><option value="all" ${restricted ? '' : 'selected'}>All servers in the fallback class</option><option value="selected" ${restricted ? 'selected' : ''}>Only selected servers below</option></select></div></div><details class="planCardDetails"><summary>Select individual servers / weights</summary><div class="planDetailsBody"><div class="planServerChoices">${serverRows || '<div class="empty">No Jellyfin servers are configured.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save delivery</button></div></form></section>`;
 }
 
 function librariesCard(data, req) {
@@ -195,7 +202,7 @@ function page(data, req) {
   const open = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const availabilityBadge = open == null ? 'No slot limit' : `${open} slots open`;
   const header = `<div class="planControlHeader"><div class="planControlIdentity"><strong>${esc(p.name)}</strong><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free Jellyfin' : 'Paid Jellyfin'}</span><span class="muted">${esc(data.affected)} live entitlement${data.affected === 1 ? '' : 's'}</span></div><div class="planControlIdentity"><span class="pill ${open == null || open > 0 ? 'good' : 'warn'}">${esc(availabilityBadge)}</span>${p.archived_at ? '<span class="pill warn">Archived</span>' : ''}</div></div>`;
-  const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${requestPlanPolicy.planCard(req, p)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition is controlled only by its own availability, access and delivery policy. Inactivity removal follows the global Free Server policy.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
+  const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${requestPlanPolicy.planCard(req, p)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition, server targeting and inactivity thresholds are owned by this plan; server capacity remains an infrastructure safety ceiling.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
   return layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: p.name, subtitle: data.free ? 'Free Access · independent product configuration' : 'Paid Jellyfin · unified product configuration', body, action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>', pageClass: 'planReferencePage' });
 }
 
@@ -235,7 +242,34 @@ async function saveAccess(req, plan, data) {
   if (data.affected) await queuePlanReconciliation(plan.id, req.session.authUserId);
 }
 async function saveAvailability(req, plan) {
-  if (capacity.capacityModel(plan) === 'fleet_users') throw new Error('Jellyfin plan availability is controlled by the eligible server\'s customer capacity, not a plan-level slot count. Change it under Servers -> Customer capacity.');
+  if (capacity.capacityModel(plan) === 'fleet_users') {
+    const raw = String(req.body.mediaUserLimit ?? '').trim();
+    const mediaUserLimit = raw === '' ? null : int(raw, 0, 1000000, 'Maximum customers on this plan');
+    let freeInactivityPolicy = null;
+    if (freePlan(plan)) {
+      const policyRaw = [
+        String(req.body.freeFirstPlaybackGraceDays ?? '').trim(),
+        String(req.body.freePlaybackWindowDays ?? '').trim(),
+        String(req.body.freeMinimumPlaybackMinutes ?? '').trim()
+      ];
+      const supplied = policyRaw.filter(Boolean).length;
+      if (supplied > 0 && supplied < 3) throw new Error('Enter all three Free inactivity thresholds, or leave all three blank to preserve the legacy assigned-server policy.');
+      if (supplied === 3) {
+        freeInactivityPolicy = {
+          firstPlaybackGraceDays: int(policyRaw[0], 1, 3650, 'Initial playback grace'),
+          playbackWindowDays: int(policyRaw[1], 1, 365, 'Playback window'),
+          minimumPlaybackMinutes: int(policyRaw[2], 1, 1000000, 'Minimum playback')
+        };
+      }
+    }
+    await planCommands.updateMediaUserLimit({
+      planId: plan.id,
+      mediaUserLimit,
+      freeInactivityPolicy,
+      actorUserId: req.session.authUserId
+    });
+    return;
+  }
   const limit = int(req.body.capacityLimit, 0, 1000000, 'Availability limit');
   await planCommands.updateAvailability({
     planId: plan.id,
@@ -243,6 +277,7 @@ async function saveAvailability(req, plan) {
     actorUserId: req.session.authUserId
   });
 }
+
 async function saveDelivery(req, plan, data) {
   requireImpact(plan, data.affected, req.body.impactConfirmation);
   const serverClass = data.free ? 'free' : (SERVER_CLASSES.has(String(req.body.serverClass)) ? String(req.body.serverClass) : null);
@@ -250,7 +285,7 @@ async function saveDelivery(req, plan, data) {
   const strategy = placement.normalizeStrategy(req.body.placementStrategy);
   const poolMode = req.body.poolMode === 'selected' ? 'selected' : 'all';
   const ids = values(req.body.serverIds);
-  const available = await query(`SELECT id,name,enabled,allow_new_users FROM jellyfin_servers WHERE server_class=$1 ORDER BY priority,name`, [serverClass]);
+  const available = await query(`SELECT id,name,enabled,allow_new_users FROM jellyfin_servers WHERE COALESCE(media_server_type,'jellyfin')='jellyfin' ORDER BY priority,name`, []);
   const byId = new Map(available.rows.map(row => [String(row.id), row]));
   const chosen = ids.map(id => byId.get(id)).filter(Boolean);
   if (poolMode === 'selected' && !chosen.length) throw new Error('Choose at least one eligible server or use all matching servers.');

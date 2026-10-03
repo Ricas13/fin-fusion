@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const expiry = require('../src/entitlements/subscription-expiry');
 const expiryPolicy = require('../src/integrations/notification-expiry-policy');
 const notificationTemplates = require('../src/integrations/notification-templates');

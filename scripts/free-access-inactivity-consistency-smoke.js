@@ -86,11 +86,15 @@ const minimumMet = inactivity.assessUsage({
 }, policy, Date.parse('2026-09-10T12:00:01.000Z'));
 assert.equal(minimumMet.usageEligible, false, '30 minutes must satisfy the rolling requirement');
 
-// Server settings are the only threshold source.
-const effective = inactivity.serverPolicy({
-    free_first_playback_grace_days: 4,
-    free_playback_window_days: 9,
-    free_minimum_playback_minutes: 45
+// Free Plan settings are authoritative once configured, with a safe legacy
+// server fallback so an upgrade cannot silently change existing deadlines.
+const effective = inactivity.planPolicy({
+    plan_free_first_playback_grace_days: 4,
+    plan_free_playback_window_days: 9,
+    plan_free_minimum_playback_minutes: 45,
+    free_first_playback_grace_days: 3,
+    free_playback_window_days: 7,
+    free_minimum_playback_minutes: 30
 }, { enabled: true, dryRun: false });
 assert.deepStrictEqual(
     {
@@ -107,9 +111,18 @@ assert.deepStrictEqual(
         firstPlaybackGraceDays: 4,
         playbackWindowDays: 9,
         minimumPlaybackMinutes: 45,
-        thresholdOwner: 'free_server'
+        thresholdOwner: 'free_plan'
     }
 );
+const legacyFallback = inactivity.planPolicy({
+    free_first_playback_grace_days: 5,
+    free_playback_window_days: 12,
+    free_minimum_playback_minutes: 50
+}, { enabled: true, dryRun: false });
+assert.equal(legacyFallback.thresholdOwner, 'free_server_legacy_fallback');
+assert.equal(legacyFallback.firstPlaybackGraceDays, 5);
+assert.equal(legacyFallback.playbackWindowDays, 12);
+assert.equal(legacyFallback.minimumPlaybackMinutes, 50);
 assert.equal(Object.prototype.hasOwnProperty.call(effective, 'noPlaybackDays'), false, 'there must be no hidden login/activity retention rule');
 assert.equal(Object.prototype.hasOwnProperty.call(effective, 'minimumObservationHours'), false, 'there must be no second hidden observation timer');
 
@@ -160,7 +173,7 @@ assert.match(base, /ORDER BY s\.customer_id,s\.created_at DESC/, 'Free inactivit
 assert.match(base, /MIN\(ph\.started_at\) FILTER \(\s*WHERE ph\.started_at>=allocation\.allocation_start_at/,'only playback that starts inside the current Free allocation may activate it');
 assert.match(base, /WHERE ph\.started_at>=allocation\.allocation_start_at/,'pre-allocation playback must stay excluded even when it overlaps the allocation boundary');
 assert.match(base, /LEAST\(COALESCE\(ph\.ended_at,ph\.last_seen_at\),NOW\(\)\)/);
-assert.match(base, /GREATEST\([\s\S]*?ph\.started_at[\s\S]*?NOW\(\)-\(js\.free_playback_window_days/,'sessions may still contribute only their overlap with the rolling window once they belong to the current allocation');
+assert.match(base, /GREATEST\([\s\S]*?ph\.started_at[\s\S]*?COALESCE\(fa\.plan_free_playback_window_days,js\.free_playback_window_days,7\)/,'sessions must use the plan-owned rolling window with a safe legacy server fallback');
 assert.match(base, /EXISTS\([\s\S]*?active_playback_sessions[\s\S]*?aps\.jellyfin_account_id=ja\.id/, 'currently-playing protection must target the exact account');
 assert.match(base, /ph\.jellyfin_account_id=ja\.id[\s\S]*?ph\.jellyfin_account_id IS NULL[\s\S]*?ph\.access_lane_snapshot='free'[\s\S]*?ph\.access_lane_snapshot IS NULL/, 'Free playback must keep exact-account activity, retain unknown legacy orphan history conservatively, and exclude orphan rows known to belong to the paid lane');
 assert.doesNotMatch(base, /noPlaybackEligible|noPlaybackDays/, 'Free inactivity must have no login/activity timer');
@@ -214,8 +227,8 @@ assert.match(cleanupReturn, /Free Server inactivity is terminal/,'the lifecycle 
 // Status and admin UI must describe the same two rules.
 assert.doesNotMatch(status, /refreshCandidateUserActivity/);
 assert.match(lifecycleAdmin, /Free Server inactivity has two rules/);
-assert.match(lifecycleAdmin, /Thresholds belong to each Free-class media server/);
+assert.match(lifecycleAdmin, /Thresholds belong to the Free Plan/);
 assert.doesNotMatch(lifecycleAdmin, /Free Jellyfin plan and are edited from Plans/);
-assert.match(planAdmin, /Inactivity thresholds are owned by the Free media server/);
+assert.match(planAdmin, /Inactivity thresholds are owned by the Free plan/);
 
 console.log('Free Access inactivity consistency smoke: ok');

@@ -15,17 +15,17 @@ async function eligibleServersForPlan(plan,{enabledOnly=true,forPlacement=true}=
    SELECT EXISTS(
      SELECT 1 FROM plan_server_eligibility pse
      JOIN jellyfin_servers restricted_server ON restricted_server.id=pse.server_id
-     WHERE pse.plan_id=$2 AND restricted_server.server_class=$1 AND COALESCE(restricted_server.media_server_type,'jellyfin')=$3
+     WHERE pse.plan_id=$2 AND COALESCE(restricted_server.media_server_type,'jellyfin')=$3
    ) AS restricted
  )
  SELECT js.*,pse.weight AS placement_weight
  FROM jellyfin_servers js
  CROSS JOIN restriction r
  LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$2 AND pse.server_id=js.id
- WHERE js.server_class=$1 AND COALESCE(js.media_server_type,'jellyfin')=$3
+ WHERE COALESCE(js.media_server_type,'jellyfin')=$3
  ${enabledOnly?'AND js.enabled=TRUE':''}
  ${forPlacement?"AND COALESCE(js.placement_mode,'active')='active'":''}
- AND (NOT r.restricted OR pse.server_id IS NOT NULL)
+ AND ((r.restricted AND pse.server_id IS NOT NULL) OR (NOT r.restricted AND js.server_class=$1))
  ORDER BY js.priority,js.name`,[plan.server_class,id,mediaType]);
  return forPlacement?result.rows.filter(server=>healthEligible(server,mode)):result.rows
 }

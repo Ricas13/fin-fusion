@@ -92,6 +92,7 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
         if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
         if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
         if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
+        if(sql.includes('AS used'))return{rowCount:1,rows:[{used:0,reserved:0}]};
         throw new Error(`Unexpected user-capacity query: ${sql.slice(0,120)}`);
     };
     const state=await capacity.usage('free-users',fakeDb);
@@ -99,7 +100,7 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
     assert.strictEqual(state.userLimit,10,'server max_users is the pool user capacity');
     assert.strictEqual(state.managedUsers,7,'seven enabled managed customer users consume seven places');
     assert.strictEqual(state.pendingUsers,2,'two active customers still owed accounts reserve two places');
-    assert.strictEqual(state.userUsed,9,'used capacity is managed users plus owed pending users');
+    assert.strictEqual(state.physicalUsed,9,'used capacity is managed users plus owed pending users');
     assert.strictEqual(state.remaining,1,'one place remains regardless of any plan stream allowance');
     assert.strictEqual(state.soldOut,false);
     assert.strictEqual(state.manualLimit,null,'plans.capacity_limit must not cap a Free/Premium Jellyfin fleet');
@@ -111,6 +112,7 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
         if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
         if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
         if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:1}]};
+        if(sql.includes('AS used'))return{rowCount:1,rows:[{used:0,reserved:0}]};
         throw new Error(`Unexpected reservation query: ${sql.slice(0,120)}`);
     };
     const reserved=await capacity.usage('free-reserved',reservedDb);
@@ -121,6 +123,7 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
         if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-no-server',capacity_limit:3,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true}]};
         if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
         if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:0,user_limit:0,managed_users:0}]};
+        if(sql.includes('AS used'))return{rowCount:1,rows:[{used:0,reserved:0}]};
         throw new Error(`Unexpected no-server query: ${sql.slice(0,120)}`);
     };
     const noServer=await capacity.usage('free-no-server',noServerDb);
