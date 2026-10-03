@@ -27,3 +27,16 @@ Corrected the inconsistent SQL playback filter in 877, partial-policy/unsafe-cas
 - No migration added. GitHub release/deployment workflows must pass on the final head before merge. No production deployment was performed.
 
 Late PR 878 commits were reviewed before closure. Their uncapped fleet usage compatibility fix is retained; the automatic global transition is replaced by per-plan explicit opt-in.
+
+## Second regression review
+
+All seven GitHub workflows passed on de0b21c9. A deeper deployment review then found two additional issues, now fixed:
+
+- During old/new application overlap, the shared-pool capacity lock must also acquire the previous release's class lock. A PostgreSQL lock-timeout regression verifies that a new acquisition waits for the old-generation lock, while the existing last-place race still admits only one winner.
+- An Emby-only eligibility mapping must not disable Jellyfin class fallback in pending/reservation accounting. The reproduced failure counted zero pending customers instead of one. Provider-scoped fallback now agrees with storefront SQL; the regression verifies that a full pool stays full.
+
+Compared the old inactivity module from main at bafc7994 with the new module on identical rows in one PostgreSQL transaction. All 45 comparisons matched after removing ownership metadata: three legacy server policies, five absent/retired/partial/malformed/equivalent plan policies, and enabled/dry-run/paused modes. Eligibility, watched seconds, deadlines, reasons and retry flags matched.
+
+Rechecked Free lifecycle deletion safeguards, lane-adoption history, automatic Free downgrade retries, clean-database registration concurrency (ten winners out of eleven submissions), fleet placement, scheduler definitions, zero-downtime portal deployment, drain/rollback and deployment tooling. The scheduler, scoped deletion worker and deployment scripts have no changes from main.
+
+Customer server selection remains absent: the customer access routes expose credentials and account history, not a server/region selector; registration and checkout do not carry a customer location preference into provisioning. Administrator pool selection is not a customer choice or performance test. Implementing that requires a separate end-to-end choice/reservation/provisioning workflow, including full/unhealthy-server behavior and safe handling of existing accounts.

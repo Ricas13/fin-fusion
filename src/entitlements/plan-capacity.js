@@ -185,14 +185,14 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility current_map WHERE current_map.plan_id=$4 AND current_map.server_id=overlap_server.id)
             OR (
-              NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any WHERE current_any.plan_id=$4)
+              NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=current_any.server_id WHERE current_any.plan_id=$4 AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin')
               AND overlap_server.server_class=$1
             )
           )
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility pending_map WHERE pending_map.plan_id=p.id AND pending_map.server_id=overlap_server.id)
             OR (
-              NOT EXISTS(SELECT 1 FROM plan_server_eligibility pending_any WHERE pending_any.plan_id=p.id)
+              NOT EXISTS(SELECT 1 FROM plan_server_eligibility pending_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=pending_any.server_id WHERE pending_any.plan_id=p.id AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin')
               AND overlap_server.server_class=p.server_class
             )
           )
@@ -228,7 +228,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_map WHERE current_existing_map.plan_id=$4 AND current_existing_map.server_id=existing_server.id)
             OR (
-              NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_any WHERE current_existing_any.plan_id=$4)
+              NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=current_existing_any.server_id WHERE current_existing_any.plan_id=$4 AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin')
               AND existing_server.server_class=$1
             )
           )
@@ -243,11 +243,11 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         WHERE COALESCE(overlap_server.media_server_type,'jellyfin')='jellyfin'
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility current_map WHERE current_map.plan_id=$3 AND current_map.server_id=overlap_server.id)
-            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any WHERE current_any.plan_id=$3) AND overlap_server.server_class=$1)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=current_any.server_id WHERE current_any.plan_id=$3 AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin') AND overlap_server.server_class=$1)
           )
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility other_map WHERE other_map.plan_id=p.id AND other_map.server_id=overlap_server.id)
-            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility other_any WHERE other_any.plan_id=p.id) AND overlap_server.server_class=p.server_class)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility other_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=other_any.server_id WHERE other_any.plan_id=p.id AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin') AND overlap_server.server_class=p.server_class)
           )
       )
       AND ($2::uuid IS NULL OR i.id<>$2::uuid)`,[cls,excludeCheckoutIntentId,plan.id]);
@@ -259,11 +259,11 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         WHERE COALESCE(overlap_server.media_server_type,'jellyfin')='jellyfin'
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility current_map WHERE current_map.plan_id=$3 AND current_map.server_id=overlap_server.id)
-            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any WHERE current_any.plan_id=$3) AND overlap_server.server_class=$1)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility current_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=current_any.server_id WHERE current_any.plan_id=$3 AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin') AND overlap_server.server_class=$1)
           )
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility other_map WHERE other_map.plan_id=p.id AND other_map.server_id=overlap_server.id)
-            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility other_any WHERE other_any.plan_id=p.id) AND overlap_server.server_class=p.server_class)
+            OR (NOT EXISTS(SELECT 1 FROM plan_server_eligibility other_any JOIN jellyfin_servers mapped_provider ON mapped_provider.id=other_any.server_id WHERE other_any.plan_id=p.id AND COALESCE(mapped_provider.media_server_type,'jellyfin')='jellyfin') AND overlap_server.server_class=p.server_class)
           )
       )
       AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId,plan.id]);
@@ -363,6 +363,9 @@ async function assertAvailable(planId,{db=query,label='This plan',excludeReserva
 async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
   const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?'fleet-users':`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
+  // During a rolling deployment the previous release still takes the class
+  // lock. Retain it after the global pool lock so both generations serialize.
+  if(model==='fleet_users')await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[`fleet-users:${serverClass(plan)||'unclassified'}`]);
   return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,households});
 }
 

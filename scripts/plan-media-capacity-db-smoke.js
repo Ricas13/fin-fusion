@@ -135,8 +135,36 @@ const capacity = require('../src/entitlements/plan-capacity');
     await query('UPDATE jellyfin_servers SET max_users=2 WHERE id=$1',[serverId]);
     assert.equal((await capacity.usage(limitedPlan)).remaining,0);
     assert.equal(await available(),false,'storefront and live usage must agree on shared physical occupancy');
+    // A mapping for the other provider must not suppress Jellyfin class fallback.
+    const embyServer=(await query("INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,api_key_encrypted) VALUES($1,$2,'custom','emby','https://capacity.invalid','key') RETURNING id",['Other provider '+suffix,'other-provider-'+suffix])).rows[0];
+    try {
+      await query("UPDATE plans SET server_class='custom' WHERE id=$1",[limitedPlan]);
+      await query('UPDATE plan_server_eligibility SET server_id=$2 WHERE plan_id=$1',[limitedPlan,embyServer.id]);
+      const fallback=await capacity.usage(limitedPlan);
+      assert.equal(fallback.pendingUsers,1,'other-provider mappings must not hide pending Jellyfin customers');
+      assert.equal(fallback.remaining,0,'other-provider mappings must not reopen a full Jellyfin pool');
+      assert.equal(await available(),false,'storefront and live fallback must agree');
+    } finally {
+      await query('UPDATE plan_server_eligibility SET server_id=$2 WHERE plan_id=$1',[limitedPlan,serverId]);
+      await query("UPDATE plans SET server_class='premium' WHERE id=$1",[limitedPlan]);
+      await query('DELETE FROM jellyfin_servers WHERE id=$1',[embyServer.id]);
+    }
     await query('UPDATE jellyfin_servers SET max_users=200 WHERE id=$1',[serverId]);
 
+
+    // The previous release holds only the class lock during rolling deploys.
+    const oldGeneration=await getPool().connect(),newGeneration=await getPool().connect();
+    try {
+      await oldGeneration.query('BEGIN');
+      await oldGeneration.query("SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:fleet-users:premium',77133))");
+      await newGeneration.query('BEGIN');
+      await newGeneration.query("SET LOCAL lock_timeout='150ms'");
+      await assert.rejects(()=>capacity.lockAndAssert(newGeneration,limitedPlan),error=>error.code==='55P03','new generation must wait for the old generation capacity lock');
+    } finally {
+      await newGeneration.query('ROLLBACK');
+      await oldGeneration.query('ROLLBACK');
+      oldGeneration.release();newGeneration.release();
+    }
 
     // Competing acquisitions in different classes share the same physical pool.
     await query('UPDATE jellyfin_servers SET max_users=3 WHERE id=$1',[serverId]);
