@@ -13,12 +13,13 @@ async function capture(label, fn) {
 
 async function syncRecent({ hours = DEFAULT_HOURS, force = true } = {}) {
     const before = await financialState.reconcileLocalEvidence();
-    const [stripe,paypal] = await Promise.all([
+    const [stripe,paypal,plisio] = await Promise.all([
         capture('stripe',()=>liveStripeHistory.syncRecent({hours,force})),
-        capture('paypal',()=>providerPaymentReconciliation.syncRecentPayPalHistory({hours,limit:500}))
+        capture('paypal',()=>providerPaymentReconciliation.syncRecentPayPalHistory({hours,limit:500})),
+        capture('plisio',()=>require('./plisio').syncFeeData({limit:100}))
     ]);
     const after = await financialState.reconcileLocalEvidence();
-    const providers=[stripe,paypal];
+    const providers=[stripe,paypal,plisio];
     const failed=providers.filter(item=>!item.ok).length;
     const warnings=providers.filter(item=>!item.ok).map(item=>`${item.provider}: ${item.error}`);
     for(const item of providers){
