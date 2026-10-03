@@ -15,6 +15,7 @@ const jellyfinPolicy = require('./policy');
 const discordRoles = require('../integrations/discord-roles');
 const mediaReconciliation = require('./media-service-reconciliation');
 const planServers = require('./plan-servers');
+const customerServerChoice = require('./customer-server-choice');
 
 function serviceType(entitlement) {
     return String(entitlement?.service_type_snapshot || entitlement?.service_type || 'jellyfin');
@@ -27,12 +28,13 @@ function sameId(a, b) {
 function accountMatchesEntitlementPlacement(account, entitlement) {
     const forcedServerId = entitlement?.admin_forced_server_id || null;
     if (forcedServerId) return sameId(account?.server_id, forcedServerId);
+    if (entitlement?.media_server_id) return sameId(account?.server_id, entitlement.media_server_id);
     if (Array.isArray(entitlement?.eligible_server_ids)) return entitlement.eligible_server_ids.some(id => sameId(account?.server_id, id));
     return account?.server_class === entitlement?.server_class;
 }
 
 async function withPlanPlacement(entitlement) {
-    if (!entitlement || entitlement.admin_forced_server_id) return entitlement;
+    if (!entitlement || entitlement.admin_forced_server_id || entitlement.media_server_id) return entitlement;
     const servers = await planServers.eligibleServersForPlan(entitlement, {enabledOnly:false, forPlacement:false});
     return {...entitlement, eligible_server_ids:servers.map(server => server.id)};
 }
@@ -130,7 +132,7 @@ async function currentEntitlementTruth(customerId) {
 
 async function normalAccounts(customerId) {
     const rows = await query(`
-        SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url
+        SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,js.location AS server_location
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
         WHERE ja.customer_id=$1
@@ -305,6 +307,9 @@ async function createLaneAccount(customerId, entitlement, lane, makePrimary) {
     }
     const effective = await libraryPolicy.effectiveForAccount(customerId, entitlement, { id: null, server_id: server.id });
     const account = await base.createJellyfinAccount(customerId, server, effective, { makePrimary });
+    await customerServerChoice.persistAssignment(entitlement.subscription_id, server, { overwrite: Boolean(entitlement.admin_forced_server_id) });
+    entitlement.media_server_id = server.id;
+    entitlement.media_location_snapshot = customerServerChoice.locationLabel(server.location);
     await query(`UPDATE jellyfin_accounts SET access_lane=$2,updated_at=NOW() WHERE id=$1`, [account.id, lane]);
     account.access_lane = lane;
     account.server_name = server.name;
@@ -360,6 +365,15 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
 
+    if (!entitlement.media_server_id && !entitlement.admin_forced_server_id) {
+        const existing = laneAccounts.find(account => !account.disabled && account.server_enabled)
+            || laneAccounts.find(account => account.server_enabled)
+            || laneAccounts[0];
+        if (existing) {
+            await customerServerChoice.persistAssignment(entitlement.subscription_id, existing);
+            entitlement = { ...entitlement, media_server_id: existing.server_id, media_location_snapshot: customerServerChoice.locationLabel(existing.server_location) };
+        }
+    }
     entitlement = await withPlanPlacement(entitlement);
     const eligibleAccounts = laneAccounts.filter(account =>
         account.server_enabled && accountMatchesEntitlementPlacement(account, entitlement)
