@@ -82,6 +82,38 @@ async function countTransactions(filters={},options={}) {
     return Number(result.rows[0]?.total||0);
 }
 
+async function missingPlisioFeeTransactions(limit=25,options={}) {
+    const queryFn=options.queryFn||query;
+    const safe=boundedInt(limit,{min:1,max:500,fallback:25});
+    return queryFn(`${transactionSelect()}
+      WHERE t.provider='plisio'
+        AND LOWER(COALESCE(t.transaction_status,'')) IN ('completed','success','succeeded')
+        AND COALESCE(t.metadata->>'feeDataAvailable','false')<>'true'
+      ORDER BY
+        CASE WHEN t.metadata ? 'feeReconcileAttemptedAt' THEN 1 ELSE 0 END ASC,
+        COALESCE(t.metadata->>'feeReconcileAttemptedAt','') ASC,
+        t.occurred_at DESC,t.id DESC
+      LIMIT $1
+    `,[safe]);
+}
+
+async function markPlisioFeeReconcileAttempt(providerTransactionId,error=null,options={}) {
+    const queryFn=options.queryFn||query;
+    const id=text(providerTransactionId);
+    if(!id)return 0;
+    const result=await queryFn(`
+      UPDATE payment_history_transactions
+      SET metadata=COALESCE(metadata,'{}'::jsonb)
+          ||jsonb_build_object(
+              'feeReconcileAttemptedAt',NOW(),
+              'feeReconcileLastError',CASE WHEN $2::text IS NULL THEN NULL ELSE LEFT($2::text,500) END
+            ),
+          updated_at=NOW()
+      WHERE provider='plisio' AND provider_transaction_id=$1
+    `,[id,text(error)]);
+    return result.rowCount;
+}
+
 async function latestPlisioCallbackEvidence(providerTransactionId,options={}) {
     const queryFn=options.queryFn||query;
     const id=text(providerTransactionId);
@@ -673,7 +705,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
+    missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
