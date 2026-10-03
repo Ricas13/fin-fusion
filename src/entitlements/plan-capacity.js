@@ -316,11 +316,12 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
     managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,
     reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,
     healthMode:fleet.healthMode,
-    // limit/used/reserved are plan-owned numbers. Fleet numbers stay exposed
-    // separately so admin screens can show both constraints.
-    limit:planLimit,
-    used:planUsage.used,
-    reserved:planUsage.reserved,
+    // Preserve the historical fleet-facing state contract when there is no
+    // explicit plan cap. New UI reads manualLimit/manualUsed/manualReserved to
+    // distinguish the commercial ceiling from physical server capacity.
+    limit:planLimit==null?fleet.userLimit:planLimit,
+    used:planLimit==null?fleet.userUsed:planUsage.used,
+    reserved:planLimit==null?fleet.reservedUsers:planUsage.reserved,
     remaining,
     soldOut:remaining===0,
     manualLimit:planLimit,
