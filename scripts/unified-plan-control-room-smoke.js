@@ -56,7 +56,7 @@ assert(editor.includes('Free plan independence:'), 'free plan editor must explic
 assert(editor.includes('editor-product') && editor.includes('editor-access') && editor.includes('editor-availability') && editor.includes('editor-delivery') && editor.includes('editor-libraries'), 'single-page plan cards must have independent save handlers');
 assert(editor.includes('editor-commerce') && editor.includes('editor-payments'), 'paid Jellyfin plans must configure schedule and payment options from the unified page');
 assert(editor.includes('data-jellyfin-access-model'), 'Jellyfin access card must preserve the optional legacy household policy switch');
-assert(editor.includes('Maximum plan slots'), 'availability must be configurable directly in the unified editor');
+assert(editor.includes('Maximum customers on this plan'), 'availability must be configurable directly in the unified editor');
 assert(editor.includes('Delivery & server placement'), 'server class and placement must be configured in the unified editor');
 assert(editor.includes('Library access'), 'library access must be configured directly in the unified editor');
 assert(baseline.includes("marketing_features text[] DEFAULT '{}'::text[] NOT NULL"), 'baseline must keep marketing features as a PostgreSQL text array');
