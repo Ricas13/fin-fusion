@@ -91,11 +91,12 @@ async function choicesForPlan(plan, { db = query } = {}) {
     .sort((a, b) => a.label.localeCompare(b.label, 'en-GB'));
 }
 
-async function selectServerForLocation(plan, requested, { db = query } = {}) {
+async function selectServerForLocation(plan, requested, { db = query, requireSelection = true } = {}) {
   const provider = mediaServerType(plan);
   if (!provider) return null;
-  const location = await resolveAcquisitionLocation(plan, requested, { db, requireSelection: true });
-  const candidates = (await availableServers(plan, { db })).filter(server => matchesPreference(server, location));
+  const location = await resolveAcquisitionLocation(plan, requested, { db, requireSelection });
+  const available = await availableServers(plan, { db });
+  const candidates = location ? available.filter(server => matchesPreference(server, location)) : available;
   if (!candidates.length) {
     const error = new Error('That server location is no longer available. Choose another location.');
     error.code = 'MEDIA_LOCATION_UNAVAILABLE';
@@ -116,7 +117,7 @@ async function selectServerForLocation(plan, requested, { db = query } = {}) {
     error.code = 'MEDIA_LOCATION_UNAVAILABLE';
     throw error;
   }
-  return { ...selected, selected_location: location };
+  return { ...selected, selected_location: location || locationLabel(selected.location) };
 }
 
 async function resolveAcquisitionLocation(plan, requested, { db = query, requireSelection = true } = {}) {
