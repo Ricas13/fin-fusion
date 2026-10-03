@@ -41,12 +41,33 @@ async function assertNewest(op, types) {
   const newer = await providerOps.newerOperation(op, { operationTypes:types });
   if (newer) throw superseded(`Superseded by newer ${newer.operation_type} operation ${newer.id}.`);
 }
-function contractSnapshot(target, mapping, { mediaLocation = null, mediaServerId = null } = {}) {
+function contractSnapshot(target, mapping, {
+  mediaLocation = null,
+  mediaServerId = null,
+  targetAccessQuantity = null,
+  targetVariantKind = null
+} = {}) {
+  const variantKind = String(mapping?.variant_kind || mapping?.access_variant_kind || targetVariantKind || '').trim() || null;
+  const requestedQuantity = Number(mapping?.access_quantity ?? mapping?.quantity ?? targetAccessQuantity);
+  const accessQuantity = Number.isInteger(requestedQuantity) && requestedQuantity > 0
+    ? requestedQuantity
+    : variantKind === 'households'
+      ? Math.max(1, Number(target?.stremio_household_network_limit || 1))
+      : Math.max(1, Number(target?.streams || 1));
+  const streams = variantKind === 'streams'
+    ? accessQuantity
+    : Math.max(1, Number(target?.streams || 1));
+  const households = variantKind === 'households'
+    ? accessQuantity
+    : Math.max(1, Number(target?.stremio_household_network_limit || 1));
   return {
     kind:'direct_plan',provider:'stripe',planId:target.id,planPriceId:mapping.plan_price_id||null,
-    planCode:target.code,planName:target.name,priceMinor:Number(mapping.price_minor),discountedMinor:Number(mapping.price_minor),
+    planCode:target.code,planName:target.name,accessVariantId:mapping.access_variant_id||null,
+    accessVariantKind:variantKind,accessQuantity,
+    priceMinor:Number(mapping.price_minor),discountedMinor:Number(mapping.price_minor),
     currency:String(mapping.currency).toUpperCase(),billingInterval:target.billing_interval,durationDays:Number(target.duration_days||30),
-    streams:Number(target.streams||1),allowDownloads:Boolean(target.allow_downloads),allowVideoTranscoding:Boolean(target.allow_video_transcoding),
+    streams,stremioHouseholdNetworkLimit:households,
+    allowDownloads:Boolean(target.allow_downloads),allowVideoTranscoding:Boolean(target.allow_video_transcoding),
     allowAudioTranscoding:Boolean(target.allow_audio_transcoding),allowLiveTv:Boolean(target.allow_live_tv),allowLiveTvManagement:Boolean(target.allow_live_tv_management),
     serverClass:target.server_class,requestMovieQuotaLimit:target.request_movie_quota_limit==null?null:Number(target.request_movie_quota_limit),
     requestMovieQuotaDays:target.request_movie_quota_days==null?null:Number(target.request_movie_quota_days),requestTvQuotaLimit:target.request_tv_quota_limit==null?null:Number(target.request_tv_quota_limit),
@@ -62,8 +83,13 @@ async function loadTarget(request) {
   if (!mapping || String(mapping.id) !== String(target.id) || mapping.checkout_mode !== 'subscription') throw manual('Target Stripe price no longer maps to the intended plan.');
   return { target, mapping };
 }
-async function applyPlanSnapshot(db, subscriptionId, target, mapping, { mediaLocation = null, mediaServerId = null } = {}) {
-  const snapshot = contractSnapshot(target, mapping, { mediaLocation, mediaServerId });
+async function applyPlanSnapshot(db, subscriptionId, target, mapping, {
+  mediaLocation = null,
+  mediaServerId = null,
+  targetAccessQuantity = null,
+  targetVariantKind = null
+} = {}) {
+  const snapshot = contractSnapshot(target, mapping, { mediaLocation, mediaServerId, targetAccessQuantity, targetVariantKind });
   await db.query(`UPDATE subscriptions SET plan_id=$2,provider_price_id_snapshot=$3,plan_name_snapshot=$4,plan_code_snapshot=$5,price_minor_snapshot=$6,currency_snapshot=$7,billing_interval_snapshot=$8,duration_days_snapshot=$9,commercial_snapshot=$10::jsonb,plan_price_id_snapshot=$11,provider_mapping_id_snapshot=$12,provider_mapping_external_id_snapshot=$3,media_location_preference=CASE WHEN $13::text IS NULL THEN media_location_preference ELSE $13 END,media_server_id=CASE WHEN $14::uuid IS NULL THEN media_server_id ELSE $14 END,media_location_snapshot=CASE WHEN $13::text IS NULL THEN media_location_snapshot ELSE $13 END,updated_at=NOW() WHERE id=$1`, [subscriptionId,target.id,mapping.external_id,target.name,target.code,Number(mapping.price_minor),String(mapping.currency).toUpperCase(),target.billing_interval,Number(target.duration_days||30),JSON.stringify(snapshot),mapping.plan_price_id||null,mapping.provider_mapping_id||null,mediaLocation,mediaServerId]);
 }
 async function finishImmediateLocal(op, subscription, target, mapping) {
@@ -74,7 +100,9 @@ async function finishImmediateLocal(op, subscription, target, mapping) {
     const request = op.request_snapshot || {};
     await applyPlanSnapshot(db, locked.id, target, mapping, {
       mediaLocation: request.targetMediaLocation || null,
-      mediaServerId: request.targetMediaServerId || null
+      mediaServerId: request.targetMediaServerId || null,
+      targetAccessQuantity: request.targetAccessQuantity || null,
+      targetVariantKind: request.targetVariantKind || null
     });
     const updated = await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1 AND attempt_count=$3 RETURNING id`, [op.id,providerOps.ACTIVE_LEASE_SECONDS,op.attempt_count]);
     if (!updated.rowCount) throw providerOps.leaseLost(op.id);
