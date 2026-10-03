@@ -37,6 +37,21 @@ async function countsForServers(serverIds, db = query) {
         AND change.provider='stripe'
         AND change.state='pending'
       UNION
+      -- Immediate Stripe changes are externally mutable before their local
+      -- transaction completes. The provider-operation snapshot is the durable
+      -- crash-recovery authority, so keep its promised target server occupied
+      -- even after the short placement lease expires.
+      SELECT candidate.id,operation.owner_id::text
+      FROM provider_operations operation
+      JOIN jellyfin_servers candidate
+        ON candidate.id::text=operation.request_snapshot->>'targetMediaServerId'
+      WHERE candidate.id=ANY($1::uuid[])
+        AND operation.provider='stripe'
+        AND operation.scope='customer'
+        AND operation.operation_type='plan_change_immediate'
+        AND operation.state IN('planned','provider_applied','local_applied')
+        AND COALESCE(operation.failure_kind,'') NOT IN('terminal','superseded')
+      UNION
       SELECT subscription.media_server_id,subscription.customer_id::text
       FROM subscriptions subscription
       WHERE subscription.media_server_id=ANY($1::uuid[])
