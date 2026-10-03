@@ -20,9 +20,6 @@ const valid = {
     location: 'UK',
     priority: '100',
     maxUsers: '',
-    freeFirstPlaybackGraceDays: '3',
-    freePlaybackWindowDays: '7',
-    freeMinimumPlaybackMinutes: '30',
     allowNewUsers: 'on',
     trialEnabled: 'on',
     paidEnabled: 'on',
@@ -48,9 +45,6 @@ expectField('baseUrl', { baseUrl: 'file:///etc/passwd' }, 'http and https');
 expectField('publicUrl', { publicUrl: 'not-a-url' }, 'valid');
 expectField('priority', { priority: '-1' }, 'between');
 expectField('maxUsers', { maxUsers: '0' }, 'between');
-expectField('freeFirstPlaybackGraceDays', { freeFirstPlaybackGraceDays: '0' }, 'between');
-expectField('freePlaybackWindowDays', { freePlaybackWindowDays: '366' }, 'between');
-expectField('freeMinimumPlaybackMinutes', { freeMinimumPlaybackMinutes: '0' }, 'between');
 expectField('apiKey', { apiKey: 'short' }, 'format');
 
 const duplicate = safeAdminErrorInfo({ code: '23505', constraint: 'jellyfin_servers_slug_key' });
@@ -60,65 +54,44 @@ const parsed = parseServerForm(valid, { apiKeyRequired: true });
 if (parsed.slug !== 'primary-server' || parsed.baseUrl !== 'https://allowed.example' || parsed.mediaServerType !== 'jellyfin') {
     throw new Error('Valid Jellyfin server form did not normalize as expected');
 }
-if (parsed.freeFirstPlaybackGraceDays !== 3 || parsed.freePlaybackWindowDays !== 7 || parsed.freeMinimumPlaybackMinutes !== 30) {
-    throw new Error('Free Server inactivity fields did not parse as expected');
-}
-
-const defaultedPolicy = parseServerForm({
-    ...valid,
-    freeFirstPlaybackGraceDays: undefined,
-    freePlaybackWindowDays: undefined,
-    freeMinimumPlaybackMinutes: undefined
-}, { apiKeyRequired: true });
-if (defaultedPolicy.freeFirstPlaybackGraceDays !== 3 || defaultedPolicy.freePlaybackWindowDays !== 7 || defaultedPolicy.freeMinimumPlaybackMinutes !== 30) {
-    throw new Error('Legacy server form submissions must inherit the 3 / 7 / 30 Free Server defaults');
-}
-
-const customPolicy = parseServerForm({
-    ...valid,
-    serverClass: 'free',
-    freeFirstPlaybackGraceDays: '5',
-    freePlaybackWindowDays: '14',
-    freeMinimumPlaybackMinutes: '60'
-}, { apiKeyRequired: true });
-if (customPolicy.freeFirstPlaybackGraceDays !== 5 || customPolicy.freePlaybackWindowDays !== 14 || customPolicy.freeMinimumPlaybackMinutes !== 60) {
-    throw new Error('Free Server inactivity overrides must survive form parsing');
-}
-
-const effectiveCustomPolicy = inactivity.serverPolicy({
-    free_first_playback_grace_days: customPolicy.freeFirstPlaybackGraceDays,
-    free_playback_window_days: customPolicy.freePlaybackWindowDays,
-    free_minimum_playback_minutes: customPolicy.freeMinimumPlaybackMinutes,
-    inactivity_policy: { firstPlaybackGraceDays: 99, noPlaybackDays: 99, minimumPlaybackMinutes: 999, playbackWindowDays: 99 }
+const effectiveFallback = inactivity.serverPolicy({
+    inactivity_policy: {},
+    free_first_playback_grace_days: 5,
+    free_playback_window_days: 14,
+    free_minimum_playback_minutes: 60
 }, { enabled: true, dryRun: false });
-if (effectiveCustomPolicy.firstPlaybackGraceDays !== 5 || effectiveCustomPolicy.playbackWindowDays !== 14 || effectiveCustomPolicy.minimumPlaybackMinutes !== 60) {
-    throw new Error('Inactivity enforcement must read the server-owned 5 / 14 / 60 playback policy');
+if (effectiveFallback.firstPlaybackGraceDays !== 5 || effectiveFallback.playbackWindowDays !== 14 || effectiveFallback.minimumPlaybackMinutes !== 60) {
+    throw new Error('Legacy server thresholds must remain the compatibility fallback until the Free plan owns a complete policy');
 }
-if (Object.prototype.hasOwnProperty.call(effectiveCustomPolicy, 'noPlaybackDays')) {
-    throw new Error('Free inactivity policy must not expose a separate login/activity retention rule');
+if (effectiveFallback.thresholdOwner !== 'free_server_compat') throw new Error('Fallback ownership must be explicit');
+
+const effectivePlanPolicy = inactivity.serverPolicy({
+    inactivity_policy: { firstPlaybackGraceDays: 6, playbackWindowDays: 10, minimumPlaybackMinutes: 50 },
+    free_first_playback_grace_days: 5,
+    free_playback_window_days: 14,
+    free_minimum_playback_minutes: 60
+}, { enabled: true, dryRun: false });
+if (effectivePlanPolicy.firstPlaybackGraceDays !== 6 || effectivePlanPolicy.playbackWindowDays !== 10 || effectivePlanPolicy.minimumPlaybackMinutes !== 50) {
+    throw new Error('A complete Free plan policy must override legacy server thresholds');
 }
-if (effectiveCustomPolicy.thresholdOwner !== 'free_server') throw new Error('Free inactivity threshold ownership must be the assigned server');
-const effectiveDefaults = inactivity.serverPolicy({}, { enabled: true, dryRun: true });
-if (effectiveDefaults.firstPlaybackGraceDays !== 3 || effectiveDefaults.playbackWindowDays !== 7 || effectiveDefaults.minimumPlaybackMinutes !== 30 || !effectiveDefaults.dryRun) {
-    throw new Error('Inactivity enforcement must retain 3 / 7 / 30 defaults while preserving the global dry-run switch');
-}
+if (effectivePlanPolicy.thresholdOwner !== 'free_plan') throw new Error('Configured thresholds must be plan-owned');
+if (Object.prototype.hasOwnProperty.call(effectivePlanPolicy, 'noPlaybackDays')) throw new Error('Free inactivity policy must not expose a separate login/activity retention rule');
 
 const root = path.join(__dirname, '..');
 const inactivitySource = fs.readFileSync(path.join(root, 'src/automation/customer-inactivity.js'), 'utf8');
 for (const column of ['js.free_first_playback_grace_days', 'js.free_playback_window_days', 'js.free_minimum_playback_minutes']) {
     if (!inactivitySource.includes(column)) throw new Error(`Inactivity candidate discovery must read ${column} from the assigned server`);
 }
-if (!inactivitySource.includes("NOW()-(js.free_playback_window_days||' days')::interval")) throw new Error('Rolling playback SQL must use the assigned server activity window');
-if (inactivitySource.includes("fa.inactivity_policy->>'playbackWindowDays'")) throw new Error('Rolling playback must not use the legacy per-plan threshold');
+if (!inactivitySource.includes("fa.inactivity_policy->>'playbackWindowDays'") || !inactivitySource.includes('ELSE js.free_playback_window_days')) throw new Error('Rolling playback SQL must prefer the Free plan window while retaining the assigned-server fallback');
 const migrationSource = fs.readFileSync(path.join(root, 'db/migrations/20260917220000_free_server_inactivity_policy.sql'), 'utf8');
 for (const expected of ['DEFAULT 3', 'DEFAULT 7', 'DEFAULT 30']) {
     if (!migrationSource.includes(expected)) throw new Error(`Per-server inactivity migration is missing ${expected}`);
 }
 const formView = fs.readFileSync(path.join(root, 'views/admin/server-form.ejs'), 'utf8');
 for (const field of ['freeFirstPlaybackGraceDays', 'freePlaybackWindowDays', 'freeMinimumPlaybackMinutes']) {
-    if (!formView.includes(`name="${field}"`)) throw new Error(`Server form must expose ${field}`);
+    if (formView.includes(`name="${field}"`)) throw new Error(`Server form must no longer expose plan-owned ${field}`);
 }
-if (!formView.includes('>Playback window</label>')) throw new Error('Server form must describe the seven-day setting as the rolling playback window');
+if (!formView.includes('Customer capacity') || !formView.includes('Fallback placement category')) throw new Error('Server form must remain focused on physical capacity and fallback placement metadata');
 
 const legacyDefault = parseServerForm({ ...valid, mediaServerType: undefined }, { apiKeyRequired: true });
 if (legacyDefault.mediaServerType !== 'jellyfin') throw new Error('Missing media server type must remain backward-compatible with Jellyfin');
@@ -149,4 +122,4 @@ if (!webhookRoute.includes('verifyServerSecret') || !webhookRoute.includes('JELL
 if (webhookRoute.includes("sameSecret(req.get('x-fin-fusion-webhook-secret'),secret)")) throw new Error('Jellyfin webhook route must not authenticate every server with the raw shared secret');
 if (!webhookRoute.includes("require('express-rate-limit')") || !webhookRoute.includes('jellyfinWebhookRateLimit,requestMaintenanceGuard')) throw new Error('Authenticated Jellyfin playback webhooks must be rate-limited before the handler runs');
 
-console.log('Jellyfin/Emby server form validation, Free Server inactivity policy and playback webhook isolation smoke: ok');
+console.log('Jellyfin/Emby server form validation, plan-owned Free inactivity fallback and playback webhook isolation smoke: ok');
