@@ -212,6 +212,8 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         await capacity.lockAndAssert(client,plan.id,plan.name||'This trial');
+        const selectedServer=await customerServerChoice.selectServerForLocation(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+        const selectedLocation=selectedServer?.selected_location||preferredLocation||null;
         const live = await client.query(`
             SELECT s.id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
@@ -229,8 +231,8 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
         const conflict=live.rows.find(row=>serviceScope.overlaps(row,plan)&&!serviceScope.isFreeTier(row));
         if (conflict) throw new Error(`You already have active ${serviceScope.label(conflict)} access. Change or cancel that service before starting another overlapping trial.`);
         const startsAt = new Date(), endsAt = addPlanDuration(plan, startsAt);
-        const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,media_location_preference)
-            VALUES($1,$2,'trialing','manual',$3,$4,$5) RETURNING *`, [customerId, plan.id, startsAt, endsAt, preferredLocation]);
+        const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,media_location_preference,media_server_id,media_location_snapshot)
+            VALUES($1,$2,'trialing','manual',$3,$4,$5,$6,$7) RETURNING *`, [customerId, plan.id, startsAt, endsAt, selectedLocation, selectedServer?.id||null, selectedLocation]);
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code, serviceType: serviceScope.serviceType(plan) })]);
         return row.rows[0];
@@ -366,11 +368,19 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         const liveFree = await state.lockLiveFreeClaimSubscriptions(client,customerId);
         if(liveFree.some(row=>String(row.plan_id)===String(plan.id)))throw new Error('You already have free access on this plan.');
         if(policy.freeMode!=='renewable'&&historical.rowCount)throw new Error('Free access on this plan has already been claimed.');
+        let selectedServer=null;
+        if(customerServerChoice.mediaServerType(plan)){
+            selectedServer=reservation?.media_server_id
+                ? await customerServerChoice.reservedServerIfEligible(plan,reservation.media_server_id,preferredLocation,{db:(sql,params)=>client.query(sql,params)})
+                : null;
+            if(!selectedServer)selectedServer=await customerServerChoice.selectServerForLocation(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:!automatic&&!reservationId});
+        }
+        const selectedLocation=selectedServer?.selected_location||preferredLocation||null;
         const startsAt=new Date(),endsAt=permanentEnd();
-        const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,media_location_preference) VALUES($1,$2,'active','free_claim',$3,$4,$5) RETURNING *`,[customerId,plan.id,startsAt,endsAt,preferredLocation]);
+        const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,media_location_preference,media_server_id,media_location_snapshot) VALUES($1,$2,'active','free_claim',$3,$4,$5,$6,$7) RETURNING *`,[customerId,plan.id,startsAt,endsAt,selectedLocation,selectedServer?.id||null,selectedLocation]);
         for(const old of liveFree)await state.markSuperseded(client,{subscriptionId:old.id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
-        if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id]);
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,parallelWithPaid:true,reservationId:reservation?.id||null,mediaLocation:preferredLocation||null})]);
+        if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,media_location=COALESCE($4,media_location),media_server_id=COALESCE($5,media_server_id),updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id,selectedLocation,selectedServer?.id||null]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,parallelWithPaid:true,reservationId:reservation?.id||null,mediaLocation:selectedLocation||null,mediaServerId:selectedServer?.id||null})]);
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
