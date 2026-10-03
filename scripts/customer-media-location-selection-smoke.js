@@ -139,7 +139,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
   assert(pending.includes('freeMediaLocation') && pending.includes('media_location,media_server_id'), 'pre-login Free registration must persist its selected location and concrete server');
-  assert(provisioning.includes('media_server_id') && provisioning.includes('persistAssignment'), 'Jellyfin reconciliation must honor and persist sticky subscription assignment');
+  assert(provisioning.includes('assignedServer'), 'Jellyfin provisioning must honor sticky subscription assignment before considering fresh placement');
   assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
   assert(!/DO \\$\\nBEGIN/.test(migration), 'PostgreSQL migration DO blocks must use a valid dollar-quoted delimiter');
