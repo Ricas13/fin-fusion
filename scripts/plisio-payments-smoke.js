@@ -11,34 +11,34 @@ expect(plisio.moneyMinor('12.34')===1234,'Plisio source amount conversion must p
 expect(plisio.moneyMinor('bad')===null,'Invalid Plisio amount must fail verification.');
 
 const merchantPays=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.001',actualCommission:'0.00001',actualFee:'0',actualInvoiceSum:'0.00099'
+});
+expect(merchantPays.feeDataAvailable&&merchantPays.feeMinor===10&&merchantPays.netMinor===990,'Merchant-paid Plisio commission must reduce net proceeds by the exact settled fee.');
+
+const customerPays=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.00101',actualCommission:'0.00001',actualFee:'0',actualInvoiceSum:'0.001'
+});
+expect(customerPays.feeDataAvailable&&customerPays.feeMinor===0&&customerPays.netMinor===1000,'Customer-paid Plisio commission must be known exact fee data without reducing merchant sale proceeds.');
+
+const settledFee=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.00101',actualCommission:'0.00001',actualFee:'0.00002',actualInvoiceSum:'0.00098'
+});
+expect(settledFee.feeDataAvailable&&settledFee.feeMinor===20&&settledFee.source==='actual_invoice_sum','Exact settled Plisio proceeds must include final network fee impact.');
+
+const reconstructed=plisio.feeAccounting({
+    sourceAmount:'10.00',sourceRate:'0.0001',
+    actualSum:'0.00101',actualCommission:'0.00001',actualFee:'0.00002'
+});
+expect(reconstructed.feeDataAvailable&&reconstructed.feeMinor===20&&reconstructed.source==='actual_components','Exact actual Plisio components must reconstruct merchant proceeds when actual_invoice_sum is omitted.');
+
+const quotedOnly=plisio.feeAccounting({
     sourceAmount:'10.00',sourceRate:'0.0001',invoiceAmount:'0.001',
     invoiceCommission:'0.00001',invoiceSum:'0.00099',invoiceTotalSum:'0.001'
 });
-expect(merchantPays.feeDataAvailable&&merchantPays.feeMinor===10&&merchantPays.netMinor===990,'Merchant-paid Plisio commission must reduce net proceeds by the verified fee.');
-
-const customerPays=plisio.feeAccounting({
-    sourceAmount:'10.00',sourceRate:'0.0001',invoiceAmount:'0.001',
-    invoiceCommission:'0.00001',invoiceSum:'0.001',invoiceTotalSum:'0.00101'
-});
-expect(customerPays.feeDataAvailable&&customerPays.feeMinor===0&&customerPays.netMinor===1000,'Customer-paid Plisio commission must be known fee data without reducing merchant proceeds.');
-
-const settledFee=plisio.feeAccounting({
-    sourceAmount:'10.00',sourceRate:'0.0001',invoiceAmount:'0.001',
-    invoiceSum:'0.00099',actualInvoiceSum:'0.00098'
-});
-expect(settledFee.feeDataAvailable&&settledFee.feeMinor===20&&settledFee.source==='actual_invoice_sum','Settled Plisio proceeds must override quoted invoice proceeds.');
-
-const inferredMerchantFee=plisio.feeAccounting({
-    sourceAmount:'10.00',sourceRate:'0.0001',invoiceAmount:'0.001',
-    commission:'0.00001',operationSum:'0.001'
-});
-expect(inferredMerchantFee.feeDataAvailable&&inferredMerchantFee.feeMinor===10,'Transaction details must infer merchant-paid commission when sum equals invoice amount.');
-
-const inferredCustomerFee=plisio.feeAccounting({
-    sourceAmount:'10.00',sourceRate:'0.0001',invoiceAmount:'0.001',
-    commission:'0.00001',operationSum:'0.00101'
-});
-expect(inferredCustomerFee.feeDataAvailable&&inferredCustomerFee.feeMinor===0,'Transaction details must infer customer-paid commission when sum includes commission.');
+expect(!quotedOnly.feeDataAvailable&&quotedOnly.feeMinor===0,'Quoted Plisio invoice commission must not be treated as exact final fee because network settlement fees can still differ.');
 
 const unknownFee=plisio.feeAccounting({sourceAmount:'10.00'});
 expect(!unknownFee.feeDataAvailable&&unknownFee.feeMinor===0&&unknownFee.netMinor===1000,'Missing Plisio fee evidence must stay explicitly incomplete instead of guessing a fee.');
