@@ -191,7 +191,7 @@ function feeAccounting(fields, { grossMinor = null } = {}) {
             // Provider conversion/rounding can differ by a cent or two.
             // Anything materially above the verified sale gross is not safe
             // evidence and remains explicitly incomplete.
-            const toleratedDrift = Math.max(2, Math.round(gross * 0.01));
+            const toleratedDrift = 2;
             if (calculatedNet <= gross + toleratedDrift) {
                 const netMinor = Math.max(0, Math.min(gross, calculatedNet));
                 return {
@@ -474,7 +474,15 @@ async function syncFeeData({ limit = 100 } = {}) {
         }
     }
 
-    return { provider:'plisio', configured:true, processed:result.rows.length, updated, unresolved, failed };
+    return {
+        provider:'plisio',
+        configured:true,
+        processed:result.rows.length,
+        updated,
+        unresolved,
+        failed,
+        warning:failed ? `${failed} Plisio fee reconciliation row${failed===1?'':'s'} failed; exact fee accounting will retry automatically.` : null
+    };
 }
 
 async function recordActivatedProviderLoss(fields, { eventId = null } = {}) {
