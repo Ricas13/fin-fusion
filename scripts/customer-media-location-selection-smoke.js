@@ -110,6 +110,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
 
   const selected = await choice.selectServerForLocation(plan, 'London', { db: fakeDb() });
   assert(['London A', 'London B'].includes(selected.name), 'location selection must never escape the chosen location');
+  const lockedSelected = await choice.selectServerForLocationLocked(plan, 'London', { db: fakeDb() });
+  assert(['London A', 'London B'].includes(lockedSelected.name), 'serialized reservation must stay inside the chosen location');
 
   const sticky = await choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb() });
   assert.strictEqual(sticky.id, servers[0].id, 'persisted assignment must win over later pool ordering');
@@ -131,6 +133,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(provisioning.includes('media_server_id') && provisioning.includes('persistAssignment'), 'Jellyfin reconciliation must honor and persist sticky subscription assignment');
   assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
+  assert(!/DO \\$\\nBEGIN/.test(migration), 'PostgreSQL migration DO blocks must use a valid dollar-quoted delimiter');
+  assert(migration.includes('billing_checkout_intents') && migration.includes('free_access_registration_reservations'), 'paid checkout and Free registration must reserve exact physical server capacity');
 
   console.log('customer media location selection smoke: ok');
 })().catch(error => {
