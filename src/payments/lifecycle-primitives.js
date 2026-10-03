@@ -10,6 +10,7 @@ const referrals = require('../referrals');
 const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
 const serviceCreditReservations = require('./service-credit-reservations');
+const customerServerChoice = require('../jellyfin/customer-server-choice');
 const financialState = require('./provider-financial-state');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
@@ -150,12 +151,15 @@ function purchaseSnapshot(snapshot, { provider, planId }) {
     const durationDays = Number(snapshot.durationDays), priceMinor = Number(snapshot.priceMinor);
     if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650) throw new Error('Checkout contract duration is invalid');
     if (!Number.isInteger(priceMinor) || priceMinor < 0) throw new Error('Checkout contract price is invalid');
-    return { ...snapshot, durationDays, priceMinor };
+    const mediaLocation = snapshot.mediaLocation == null ? null : String(snapshot.mediaLocation).trim().slice(0, 100) || null;
+    const mediaServerId = snapshot.mediaServerId == null ? null : String(snapshot.mediaServerId).trim() || null;
+    if (mediaServerId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mediaServerId)) throw new Error('Checkout contract media server is invalid');
+    return { ...snapshot, durationDays, priceMinor, mediaLocation, mediaServerId };
 }
 
 async function assertSettlementCheckout(client, checkoutIntentId, { customerId, planId, provider }) {
     if (!checkoutIntentId) return null;
-    const result = await client.query(`SELECT id,customer_id,plan_id,provider,state FROM billing_checkout_intents WHERE id=$1 FOR UPDATE`, [checkoutIntentId]);
+    const result = await client.query(`SELECT id,customer_id,plan_id,provider,state,media_server_id FROM billing_checkout_intents WHERE id=$1 FOR UPDATE`, [checkoutIntentId]);
     if (!result.rowCount) throw new Error('Settlement checkout intent disappeared before activation.');
     const row = result.rows[0];
     if (String(row.customer_id) !== String(customerId) || String(row.plan_id || '') !== String(planId) || row.provider !== provider) {
@@ -226,7 +230,9 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
     `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
         reason: error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
             ? 'service_credit_unavailable_after_provider_settlement'
-            : 'capacity_exhausted_after_provider_settlement',
+            : ['MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
+                ? 'media_server_unavailable_after_provider_settlement'
+                : 'capacity_exhausted_after_provider_settlement',
         planId,
         checkoutIntentId,
         providerSubscriptionId,
@@ -295,6 +301,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
 
+            let activationMediaServer=null;
             if (!existing.rowCount && !activationSuppressedByMoneyLoss) {
                 if (billingMode.isRecurring({ source: provider, billing_mode: checkoutBillingMode })) {
                     await subscriptionState.assertNoOtherLiveRecurring(client, customerId, null, planId);
@@ -304,6 +311,14 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     streams: contract?.streams,
                     households: contract?.stremioHouseholdNetworkLimit
                 });
+                if(customerServerChoice.mediaServerType(plan)&&contract?.mediaLocation){
+                    const reservedId=settlementIntent?.media_server_id||contract.mediaServerId||null;
+                    activationMediaServer=await customerServerChoice.committedReservedServer(plan,reservedId,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
+                    if(!activationMediaServer)activationMediaServer=await customerServerChoice.selectServerForLocationLocked(plan,contract.mediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+                    if(settlementIntent?.id&&activationMediaServer?.id&&String(settlementIntent.media_server_id||'')!==String(activationMediaServer.id)){
+                        await client.query('UPDATE billing_checkout_intents SET media_server_id=$2,updated_at=NOW() WHERE id=$1',[settlementIntent.id,activationMediaServer.id]);
+                    }
+                }
             }
 
             let row;
@@ -351,6 +366,18 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 row = inserted.rows[0];
             }
 
+            if (row && contract?.mediaLocation && !row.media_server_id) {
+                const selectedServerId=activationMediaServer?.id||settlementIntent?.media_server_id||contract.mediaServerId||null;
+                const selectedLocation=activationMediaServer?.selected_location||contract.mediaLocation;
+                const located = await client.query(`UPDATE subscriptions
+                    SET media_location_preference=COALESCE(NULLIF(media_location_preference,''),$2),
+                        media_server_id=COALESCE(media_server_id,$3),
+                        media_location_snapshot=COALESCE(NULLIF(media_location_snapshot,''),$2),
+                        updated_at=NOW()
+                    WHERE id=$1 RETURNING *`, [row.id, selectedLocation, selectedServerId]);
+                row = located.rows[0] || row;
+            }
+
             const effectiveStatus = row.status;
             await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
@@ -371,7 +398,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             return row;
         });
     } catch (error) {
-        if (['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code) && settlementCheckoutIntentId) {
+        if (['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code) && settlementCheckoutIntentId) {
             try {
                 await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error });
                 error.paidButUnfulfilled = true;

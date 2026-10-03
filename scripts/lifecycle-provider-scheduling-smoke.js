@@ -11,6 +11,9 @@ assert(/subscriptionSchedules\.update/.test(customer)&&/phases:\[/.test(customer
 assert(/idempotencyKey/.test(customer),'customer Stripe schedule mutations must carry provider idempotency keys');
 assert(/subscriptionSchedules\.release\(schedule\.id\)/.test(customer),'cancelling a customer Stripe change must release the provider schedule');
 assert(/providerOps\.providerApplied/.test(customer)&&/providerOps\.reconciled/.test(customer),'customer provider scheduling must record provider and local reconciliation states');
+const targetPriceApplied=customer.match(/if\(remotePrice===targetPrice\)[\s\S]*?summary\.succeeded\+\+;continue;/)?.[0]||'';
+assert(/if\(change\.target_media_server_id\)/.test(targetPriceApplied)&&/await applySnapshot/.test(targetPriceApplied),'once Stripe applies a scheduled target price, the persisted target media assignment must converge locally without being blocked by transient placement availability');
+assert(targetPriceApplied.indexOf('await applySnapshot')<targetPriceApplied.indexOf('await provisioning.reconcileCustomer'),'scheduled Stripe commercial state must commit before media provisioning is retried, preventing cheaper-price/richer-old-entitlement divergence');
 assert(/PayPal cannot replace an active billing agreement in place/.test(customer),'PayPal plan selection must not silently cancel an active agreement');
 const jobs=read('src/automation/jobs.js'),notificationDispatch=read('src/integrations/notification-dispatch.js'),migrationExpiry=read('db/migrations/102_paypal_plan_change_checkout_expiry.sql'),migrationOpen=read('db/migrations/103_plan_change_open_state.sql'),resolution=read('src/payments/plan-change-resolution.js');
 assert(/async function expireDuePaypal\(\)/.test(customer)&&/state='awaiting_checkout'/.test(customer),'PayPal plan changes past their effective date must transition out of pending instead of sitting inert forever');

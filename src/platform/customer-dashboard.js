@@ -27,6 +27,7 @@ const productReadiness=require('./product-readiness');
 const checkoutIntents=require('../payments/checkout-intents');
 const planChange=require('../payments/customer-plan-change');
 const csrf=require('../auth/csrf');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
 async function hideInternalAccounts(_customerId,portal){if(!portal||!Array.isArray(portal.accounts))return portal;portal.accounts=portal.accounts.filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');return portal;}
@@ -111,6 +112,36 @@ function createCustomerDashboardRouter(){
   const r=express.Router();
   r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){const{message,status}=publicError.present(error,{context:'Discount preview failed',fallback:'Promo code could not be checked.'});return res.status(status).json({valid:false,plans:{},message});}});
   r.get('/account/plan-variants',requireCustomer,async(req,res)=>{try{res.setHeader('Cache-Control','no-store, private, max-age=0');return res.json({plans:await customerVariantState(req.session.customerId)});}catch(error){console.warn('Customer plan variant state failed:',error.message);return res.status(503).json({plans:[],error:'Plan options are temporarily unavailable.'});}});
+  r.get('/account/media-locations',requireCustomer,async(req,res)=>{try{
+    res.setHeader('Cache-Control','no-store, private, max-age=0');
+    const planCode=String(req.query.planCode||'').trim();
+    if(!planCode)return res.status(400).json({media:false,requiresSelection:false,locations:[],error:'Plan is required.'});
+    const found=await query(`SELECT * FROM plans WHERE code=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND audience IN('direct','both') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planCode]);
+    if(!found.rowCount)return res.status(404).json({media:false,requiresSelection:false,locations:[],error:'Plan is not available.'});
+    const plan=found.rows[0],media=Boolean(customerServerChoice.mediaServerType(plan));
+    if(!media)return res.json({media:false,requiresSelection:false,locations:[]});
+    const locations=await customerServerChoice.choicesForPlan(plan);
+    let selectedLocation=null;
+    const current=await planChange.currentRecurring(req.session.customerId,plan).catch(()=>null);
+    if(current?.media_server_id){
+      const assigned=await customerServerChoice.existingAssignedServerForPlan(plan,current.media_server_id,null).catch(()=>null);
+      if(assigned){
+        selectedLocation=assigned.selected_location||customerServerChoice.locationLabel(assigned.location);
+        if(!locations.some(location=>String(location.value)===String(selectedLocation))){
+          locations.push({
+            value:selectedLocation,
+            label:selectedLocation,
+            remaining:0,
+            serverCount:1,
+            testUrl:customerServerChoice.safeTestUrl(assigned),
+            existingAssignment:true
+          });
+        }
+      }
+    }
+    locations.sort((a,b)=>String(a.label||a.value).localeCompare(String(b.label||b.value)));
+    return res.json({media:true,requiresSelection:locations.length>1,selectedLocation,locations});
+  }catch(error){console.warn('Customer media location state failed:',error.message);return res.status(503).json({media:true,requiresSelection:false,locations:[],error:'Server locations are temporarily unavailable.'});}});
   r.get('/account/free-access',requireCustomer,async(req,res,next)=>{
     try{
       const customerId=req.session.customerId;

@@ -9,6 +9,7 @@ const capacity = require('../src/entitlements/plan-capacity');
   const suffix = crypto.randomBytes(5).toString('hex');
   let serverId = null;
   let previousFreePlan = null;
+  let freeTestMappingAdded = false;
   const planIds = [];
   const customerIds = [];
   try {
@@ -188,11 +189,59 @@ const capacity = require('../src/entitlements/plan-capacity');
     assert.match(rejected.reason.message,/sold out/i);
     await query('UPDATE jellyfin_servers SET max_users=200 WHERE id=$1',[serverId]);
 
+    // Cross-plan Stripe changes must reserve the target product's final place,
+    // not only the physical server slot. Otherwise two customers could both be
+    // billed for the final configured plan place.
+    const changeTarget=await makePlan(`capacity-change-target-${suffix}`,1);
+    const changeSource=await makePlan(`capacity-change-source-${suffix}`,null);
+    const changeCustomers=[];
+    for(let i=0;i<2;i++){
+      const customer=(await query('INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id',[`Change race ${i} ${suffix}`,`change-race-${i}-${suffix}@example.invalid`])).rows[0];
+      customerIds.push(customer.id);changeCustomers.push(customer.id);
+      await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id)
+                   VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,changeSource,`sub_change_${i}_${suffix}`]);
+    }
+    const changeResults=await Promise.allSettled(changeCustomers.map(async customerId=>{
+      const client=await getPool().connect();
+      try{
+        await client.query('BEGIN');
+        await capacity.lockAndAssert(client,changeTarget,'Target plan');
+        const current=(await client.query('SELECT id FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 FOR UPDATE',[customerId,changeSource])).rows[0];
+        await client.query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at)
+                            VALUES($1,$2,$3,'stripe','period_end','pending',NOW()+INTERVAL '30 days')`,[customerId,current.id,changeTarget]);
+        await client.query('COMMIT');
+      }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    }));
+    assert.strictEqual(changeResults.filter(result=>result.status==='fulfilled').length,1,'only one scheduled Stripe change may reserve the final target-plan place');
+    assert.match(changeResults.find(result=>result.status==='rejected').reason.message,/sold out/i);
+    let changeCapacity=await capacity.usage(changeTarget);
+    assert.strictEqual(changeCapacity.planReserved,1,'pending Stripe plan change must count as one durable target-plan reservation');
+    assert.strictEqual(changeCapacity.remaining,0,'pending Stripe plan change must close the final target-plan place');
+    await query(`UPDATE customer_plan_changes SET state='cancelled' WHERE target_plan_id=$1 AND state='pending'`,[changeTarget]);
+    changeCapacity=await capacity.usage(changeTarget);
+    assert.strictEqual(changeCapacity.planReserved,0,'cancelling a scheduled Stripe change must release target-plan capacity');
+
+    const opCustomer=changeCustomers[0];
+    const opSubscription=(await query('SELECT id FROM subscriptions WHERE customer_id=$1 AND plan_id=$2',[opCustomer,changeSource])).rows[0];
+    const providerOps=require('../src/payments/provider-operations');
+    const op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:opCustomer,operationType:'plan_change_immediate',localReference:opSubscription.id,idempotencyKey:`capacity-immediate-${suffix}`,request:{subscriptionId:opSubscription.id,targetPlanId:changeTarget,targetPriceId:`price_capacity_${suffix}`}});
+    await query(`UPDATE provider_operations SET provider_result=provider_result||'{"capacityReserved":true}'::jsonb WHERE id=$1`,[op.id]);
+    changeCapacity=await capacity.usage(changeTarget);
+    assert.strictEqual(changeCapacity.planReserved,1,'recoverable immediate Stripe operation must retain the target-plan place after a crash');
+    await query(`UPDATE provider_operations SET state='failed',failure_kind='terminal',manual_review_required=TRUE,next_attempt_at=NULL WHERE id=$1`,[op.id]);
+    changeCapacity=await capacity.usage(changeTarget);
+    assert.strictEqual(changeCapacity.planReserved,0,'definitive pre-provider failure must release immediate target-plan capacity');
+
     // A plan window longer than the server window must retain older valid playback.
     const commands=require('../src/catalog/plan-command-service');
     const policy={firstPlaybackGraceDays:3,playbackWindowDays:14,minimumPlaybackMinutes:30};
     previousFreePlan=(await query('SELECT id,capacity_limit,inactivity_policy FROM plans WHERE is_free_tier=TRUE')).rows[0];
     const freePlanId=previousFreePlan.id;
+    const existingFreeTestMapping=await query('SELECT 1 FROM plan_server_eligibility WHERE plan_id=$1 AND server_id=$2',[freePlanId,serverId]);
+    if(!existingFreeTestMapping.rowCount){
+      await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)',[freePlanId,serverId]);
+      freeTestMappingAdded=true;
+    }
     await commands.updateMediaUserLimit({planId:freePlanId,mediaUserLimit:10,freeInactivityPolicy:policy});
     await query("UPDATE subscriptions SET plan_id=$2,status='active',starts_at=NOW()-INTERVAL '20 days',current_period_end=NOW()+INTERVAL '30 days' WHERE customer_id=$1",[planCustomer.id,freePlanId]);
     const account=(await query("UPDATE jellyfin_accounts SET access_lane='free',created_at=NOW()-INTERVAL '20 days',access_lane_changed_at=NOW()-INTERVAL '20 days' WHERE customer_id=$1 RETURNING id",[planCustomer.id])).rows[0];
@@ -217,9 +266,16 @@ const capacity = require('../src/entitlements/plan-capacity');
 
     console.log('plan-owned media capacity DB smoke: ok');
   } finally {
-    if (customerIds.length) await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [customerIds]).catch(() => {});
+    if (customerIds.length) {
+      await query('DELETE FROM customer_plan_changes WHERE customer_id=ANY($1::uuid[])', [customerIds]).catch(() => {});
+      await query('DELETE FROM provider_operations WHERE owner_id=ANY($1::uuid[])', [customerIds]).catch(() => {});
+      await query('DELETE FROM subscriptions WHERE customer_id=ANY($1::uuid[])', [customerIds]).catch(() => {});
+      await query('DELETE FROM jellyfin_accounts WHERE customer_id=ANY($1::uuid[])', [customerIds]).catch(() => {});
+      await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [customerIds]).catch(() => {});
+    }
     if (planIds.length) await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [planIds]).catch(() => {});
     if(previousFreePlan)await query("UPDATE plans SET capacity_limit=$2,inactivity_policy=$3::jsonb WHERE id=$1",[previousFreePlan.id,previousFreePlan.capacity_limit,JSON.stringify(previousFreePlan.inactivity_policy)]);
+    if(freeTestMappingAdded&&previousFreePlan&&serverId)await query('DELETE FROM plan_server_eligibility WHERE plan_id=$1 AND server_id=$2',[previousFreePlan.id,serverId]).catch(()=>{});
     if (serverId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
     await getPool().end();
   }

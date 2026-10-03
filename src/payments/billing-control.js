@@ -146,6 +146,16 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
     if (!isRecurring(row)) throw new Error('This is not a recurring subscription.');
     if (!['active','trialing','past_due','paused'].includes(row.status)) throw new Error('This subscription is no longer renewable.');
     if (row.source === 'paypal' && enabled) throw new Error('A cancelled PayPal subscription cannot be resumed. The customer must subscribe again.');
+    if (!enabled) {
+        const pendingChange = await query(`
+            SELECT id
+            FROM customer_plan_changes
+            WHERE current_subscription_id=$1
+              AND state IN('pending','awaiting_checkout')
+            LIMIT 1
+        `, [row.id]);
+        if (pendingChange.rowCount) throw new Error('Cancel the scheduled plan change before stopping automatic renewal.');
+    }
     const op = await providerOps.begin({ provider:row.source,scope:'customer',ownerId:row.customer_id,operationType:enabled?'renewal_resume':'renewal_stop',localReference:row.id,request:{subscriptionId:row.id,providerSubscriptionId:row.provider_subscription_id,desiredCancelAtPeriodEnd:!enabled,priorCancelAtPeriodEnd:Boolean(row.cancel_at_period_end)} });
     try {
         const remoteAdapter = adapter || await defaultAdapter(row.source);

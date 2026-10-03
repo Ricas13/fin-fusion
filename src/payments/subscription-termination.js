@@ -76,6 +76,11 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         if(!ended.rowCount)throw new Error('Subscription changed before it could be ended.');
+        await client.query(`
+            UPDATE customer_plan_changes
+            SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated.'),updated_at=NOW()
+            WHERE current_subscription_id=$1 AND state IN('pending','awaiting_checkout')
+        `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_local','subscription',$2,$3::jsonb)`,[actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription),provider:subscription.source||null,providerBillingChanged:Boolean(providerBillingChanged),permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary})]);
         return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference};
     });
@@ -189,6 +194,11 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             WHERE id=$1 AND customer_id=$2
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
+        await client.query(`
+            UPDATE customer_plan_changes
+            SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated by refund/reversal.'),updated_at=NOW()
+            WHERE current_subscription_id=$1 AND state IN('pending','awaiting_checkout')
+        `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_for_refund','subscription',$2,$3::jsonb)`,
             [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
         return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked};

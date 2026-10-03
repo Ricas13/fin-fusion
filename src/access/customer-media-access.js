@@ -11,7 +11,7 @@ function mediaType(account) {
 
 async function mediaRows(customerId) {
   const result = await query(`
-    SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,
+    SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,js.location AS server_location,
            COALESCE(js.media_server_type,'jellyfin') AS media_server_type
     FROM jellyfin_accounts ja
     JOIN jellyfin_servers js ON js.id=ja.server_id

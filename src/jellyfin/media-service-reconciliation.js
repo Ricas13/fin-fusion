@@ -6,6 +6,8 @@ const subscriptionState=require('../entitlements/subscription-state');
 const serviceCatalog=require('../catalog/service-catalog');
 const planServers=require('./plan-servers');
 const placement=require('./placement');
+const userCapacity=require('./user-capacity');
+const customerServerChoice=require('./customer-server-choice');
 
 function normalizeService(value){
   const type=serviceCatalog.serviceType(value);
@@ -26,7 +28,7 @@ async function accountsFor(customerId,serviceType){
   const result=await query(`
     SELECT ja.*,js.enabled AS server_enabled,js.server_class,
            COALESCE(js.media_server_type,'jellyfin') AS media_server_type,
-           js.public_url,js.name AS server_name
+           js.public_url,js.name AS server_name,js.location AS server_location
     FROM jellyfin_accounts ja
     JOIN jellyfin_servers js ON js.id=ja.server_id
     WHERE ja.customer_id=$1
@@ -44,30 +46,26 @@ function accessKind(plan){
 
 async function selectServerForPlan(plan){
   const type=normalizeService(plan);
+  const assigned=await customerServerChoice.assignedServer(plan,type);
+  if(assigned)return{...assigned,placement_assigned:true};
   const kind=accessKind(plan);
   const available=(await planServers.eligibleServersForPlan(plan,{enabledOnly:true,forPlacement:true}))
+    .filter(server=>customerServerChoice.matchesPreference(server,plan?.media_location_preference||null))
     .filter(server=>normalizeService(server.media_server_type||type)===type)
     .filter(server=>Boolean(server.allow_new_users))
     .filter(server=>kind==='trial'?Boolean(server.trial_enabled):kind==='paid'?Boolean(server.paid_enabled):true);
   if(!available.length)return null;
 
-  const ids=available.map(server=>server.id);
-  const usage=await query(`
-    SELECT js.id,
-           COUNT(DISTINCT ja.id)::int AS assigned_users,
-           COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams
-    FROM jellyfin_servers js
-    LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id AND ja.disabled=FALSE
-    LEFT JOIN active_playback_sessions aps ON aps.server_id=js.id
-    WHERE js.id=ANY($1::uuid[])
-    GROUP BY js.id
-  `,[ids]);
-  const counts=new Map(usage.rows.map(row=>[String(row.id),row]));
-  const candidates=available.map(server=>({
-    ...server,
-    assigned_users:Number(counts.get(String(server.id))?.assigned_users||0),
-    active_streams:Number(counts.get(String(server.id))?.active_streams||0)
-  })).filter(server=>server.max_users==null||Number(server.max_users)===0||server.assigned_users<Number(server.max_users));
+  const candidates=await userCapacity.decorateServers(available);
+  const ids=candidates.map(server=>server.id);
+  const usage=ids.length?await query(`
+    SELECT server_id,COUNT(DISTINCT jellyfin_session_id)::int AS active_streams
+    FROM active_playback_sessions
+    WHERE server_id=ANY($1::uuid[])
+    GROUP BY server_id
+  `,[ids]):{rows:[]};
+  const streams=new Map(usage.rows.map(row=>[String(row.server_id),Number(row.active_streams||0)]));
+  for(const server of candidates)server.active_streams=streams.get(String(server.id))||0;
   return placement.selectServer(candidates,plan.placement_strategy);
 }
 
@@ -103,6 +101,9 @@ async function createForEntitlement(customerId,type,entitlement,effective){
   const server=await selectServerForPlan(entitlement);
   if(!server)throw new Error(`No eligible ${serviceCatalog.label(type)} server is currently available for plan ${entitlement.contract_plan_code||entitlement.code}`);
   const account=await core.createJellyfinAccount(customerId,server,effective,{makePrimary:type==='jellyfin'});
+  await customerServerChoice.persistAssignment(entitlement.subscription_id,server,{overwrite:Boolean(entitlement.admin_forced_server_id)});
+  entitlement.media_server_id=server.id;
+  entitlement.media_location_snapshot=customerServerChoice.locationLabel(server.location);
   if(type==='emby')await markPasswordSetupRequired(account);
   account.media_server_type=type;
   account.public_url=server.public_url||null;
@@ -139,11 +140,19 @@ async function reconcileCustomer(customerId,serviceType){
       return{active:false,disabled:accounts.length,serviceType:type,entitlement:null};
     }
 
+    if(!entitlement.media_server_id&&!entitlement.admin_forced_server_id){
+      const existing=accounts.find(account=>!account.disabled&&account.server_enabled)||accounts.find(account=>account.server_enabled)||accounts[0];
+      if(existing){
+        await customerServerChoice.persistAssignment(entitlement.subscription_id,existing);
+        entitlement.media_server_id=existing.server_id;
+        entitlement.media_location_snapshot=customerServerChoice.locationLabel(existing.server_location);
+      }
+    }
     const effective=await core.effectivePolicyForCustomer(customerId,entitlement);
-    const entitledServers=(await planServers.eligibleServersForPlan(entitlement,{enabledOnly:false,forPlacement:false}))
+    const entitledServers=entitlement.media_server_id?[]:(await planServers.eligibleServersForPlan(entitlement,{enabledOnly:false,forPlacement:false}))
       .filter(server=>normalizeService(server.media_server_type||type)===type);
     const entitledServerIds=new Set(entitledServers.map(server=>String(server.id)));
-    const matchesPlacement=account=>account.server_enabled&&entitledServerIds.has(String(account.server_id));
+    const matchesPlacement=account=>account.server_enabled&&(entitlement.media_server_id?String(account.server_id)===String(entitlement.media_server_id):entitledServerIds.has(String(account.server_id)));
     let account=type==='jellyfin'
       ? accounts.find(a=>a.is_primary&&matchesPlacement(a))
       : null;

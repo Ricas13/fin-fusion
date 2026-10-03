@@ -5,6 +5,7 @@ const { query, transaction } = require('../db');
 const commerce = require('./commerce-control');
 const serviceCreditReservations = require('./service-credit-reservations');
 const capacity = require('../entitlements/plan-capacity');
+const customerServerChoice = require('../jellyfin/customer-server-choice');
 
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
 const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
@@ -133,7 +134,7 @@ async function createIntent({
     if (!CHECKOUT_PROVIDERS.includes(provider)) throw new Error('Invalid checkout provider.');
     if (!['payment', 'subscription'].includes(checkoutMode)) throw new Error('Invalid checkout mode.');
     const nonce = rawNonce();
-    const snapshot = safeSnapshot(commercialSnapshot);
+    let snapshot = safeSnapshot(commercialSnapshot);
     const maxTtl = providerMaxTtl(provider);
     const expires = new Date(Date.now() + Math.max(5, Math.min(maxTtl, Number(ttlMinutes) || 30)) * 60000);
     if (planPriceId && String(snapshot.planPriceId || '') !== String(planPriceId)) {
@@ -190,19 +191,41 @@ async function createIntent({
         `, [customerId]);
         if (existing.rowCount) throw new Error(`A checkout is already in progress. Finish or cancel it, or wait up to ${CUSTOMER_CHECKOUT_LOCK_MINUTES} minutes before starting another one.`);
 
+        let mediaServerId=null;
         if (planId) {
             await capacity.lockAndAssert(client,planId,snapshot.planName || 'This plan', {
                 streams:snapshot.streams,
                 households:snapshot.stremioHouseholdNetworkLimit
             });
+            const plan=(await client.query('SELECT * FROM plans WHERE id=$1',[planId])).rows[0];
+            if(plan&&customerServerChoice.mediaServerType(plan)){
+                const selected=await customerServerChoice.selectServerForLocationLocked(plan,snapshot.mediaLocation,{db:(sql,params)=>client.query(sql,params)});
+                mediaServerId=selected?.id||null;
+                snapshot={...snapshot,mediaLocation:selected?.selected_location||snapshot.mediaLocation||null,mediaServerId};
+                if(mediaServerId&&customerId){
+                    // Rolling-deploy compatibility: N-1 web code cannot read the
+                    // new checkout.media_server_id reservation, but it already
+                    // understands placement leases. Keep a short bridge lease so
+                    // the old generation also sees this slot as occupied during
+                    // cutover. The exact checkout row remains the long-lived
+                    // authority in the new generation.
+                    await client.query(`
+                        INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at)
+                        VALUES($1,$2,LEAST($3::timestamptz,NOW()+INTERVAL '15 minutes'))
+                        ON CONFLICT(customer_id,server_id) DO UPDATE SET
+                          expires_at=GREATEST(jellyfin_server_placement_leases.expires_at,EXCLUDED.expires_at),
+                          updated_at=NOW()
+                    `,[customerId,mediaServerId,expires]);
+                }
+            }
         }
         const created = await client.query(`
             INSERT INTO billing_checkout_intents(
                 scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,
-                nonce_hash,expires_at,capacity_hold_until,commercial_snapshot
-            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9::jsonb)
+                nonce_hash,expires_at,capacity_hold_until,commercial_snapshot,media_server_id
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9::jsonb,$10)
             RETURNING *
-        `, [scope, customerId, planId, planPriceId, provider, checkoutMode, hash(nonce), expires, JSON.stringify(snapshot)]);
+        `, [scope, customerId, planId, planPriceId, provider, checkoutMode, hash(nonce), expires, JSON.stringify(snapshot),mediaServerId]);
         return created.rows[0];
     });
     return { ...row, nonce };

@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const planServers = require('./plan-servers');
 const provisioning = require('./provisioning-helpers');
 const reconciliationLock = require('./reconciliation-lock');
+const customerServerChoice = require('./customer-server-choice');
 
 const RUNNING_STALE_MINUTES = 45;
 
@@ -112,7 +113,10 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     if (!target) throw new ServerMigrationError('TARGET_NOT_ELIGIBLE', 'Target server is not in this plan\'s eligible server pool.', 'preflight');
     if (!target.allow_new_users) throw new ServerMigrationError('TARGET_CLOSED', 'Target server is closed to new users.', 'preflight');
     if (target.health_status === 'offline') throw new ServerMigrationError('TARGET_OFFLINE', 'Target Jellyfin server is offline.', 'preflight');
-    if (target.server_class !== entitlement.server_class) throw new ServerMigrationError('TARGET_CLASS_MISMATCH', 'Target server class does not match the active plan.', 'preflight');
+    // targetServerForPlan() is authoritative. An explicit plan-server pool
+    // intentionally overrides legacy server_class grouping (PR #877), so do
+    // not reject an explicitly eligible target just because its old class
+    // label differs from the plan.
     const kind = accessKind(entitlement);
     if (kind === 'trial' && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
     if (kind === 'paid' && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
@@ -243,6 +247,15 @@ async function executeMigrationUnlocked(migrationId) {
 
         stage = 'switch_primary';
         await provisioning.markPrimaryAccount(migration.customer_id, targetAccount.id);
+        // An administrator-requested migration is one of the few flows allowed
+        // to change a customer's sticky media assignment. Persist it explicitly
+        // so later reconciliation follows the migrated account instead of an
+        // older backfilled/source-server assignment.
+        await customerServerChoice.persistAssignment(
+            check.entitlement.subscription_id,
+            { id: targetAccount.server_id, location: check.target.location },
+            { overwrite: true }
+        );
 
         await query(`
             UPDATE customer_server_migrations
@@ -343,6 +356,13 @@ async function rollbackMigrationUnlocked(migrationId, actorUserId) {
 
         await provisioning.deleteJellyfinAccount(current, { reason: 'Server migration rollback', actorUserId: actorUserId || null });
         await provisioning.markPrimaryAccount(migration.customer_id, restoredSource.id);
+        // Rollback is also an explicit reassignment. Restore the subscription's
+        // sticky server/location together with the recreated source identity.
+        await customerServerChoice.persistAssignment(
+            entitlement.subscription_id,
+            { id: restoredSource.server_id, location: sourceServer.location },
+            { overwrite: true }
+        );
 
         await query(`
             UPDATE customer_server_migrations
