@@ -100,7 +100,18 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
         const synced=await billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id});if(!synced.ok)throw new Error(`Stripe accepted the plan change, but provider verification failed: ${synced.error}`);
         await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity)}});
         return{provider:'stripe',target,mapping,providerOperationId:op.id};
-    }catch(error){if(!providerMutationAttempted&&placementReservation?.placement_lease_id&&mediaServer?.id)await provisioningHelpers.releaseDefinitivePlacementFailure(current.customer_id,mediaServer.id,placementReservation.placement_lease_id).catch(()=>{});await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>{});throw error;}
+    }catch(error){
+        const recorded=await providerOps.recordError(op.id,error,error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}).catch(()=>null);
+        const terminal=recorded?.state==='failed'&&recorded?.failure_kind==='terminal';
+        if((!providerMutationAttempted||terminal)&&placementReservation?.placement_lease_id&&mediaServer?.id){
+            await provisioningHelpers.releaseDefinitivePlacementFailure(current.customer_id,mediaServer.id,placementReservation.placement_lease_id).catch(()=>{});
+        }
+        if(error&&typeof error==='object'){
+            error.providerOperationId=op.id;
+            error.providerOperationTerminal=terminal;
+        }
+        throw error;
+    }
 }
 
 async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null,targetMediaLocation=null,targetMediaServerId=null}={}){
