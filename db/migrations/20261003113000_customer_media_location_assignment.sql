@@ -10,7 +10,11 @@ ALTER TABLE subscriptions
   ADD COLUMN IF NOT EXISTS media_location_snapshot varchar(100);
 
 ALTER TABLE free_access_registration_reservations
-  ADD COLUMN IF NOT EXISTS media_location varchar(100);
+  ADD COLUMN IF NOT EXISTS media_location varchar(100),
+  ADD COLUMN IF NOT EXISTS media_server_id uuid;
+
+ALTER TABLE billing_checkout_intents
+  ADD COLUMN IF NOT EXISTS media_server_id uuid;
 
 DO $$
 BEGIN
@@ -29,11 +33,50 @@ BEGIN
 END
 $$;
 
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='free_access_registration_reservations_media_server_id_fkey'
+      AND conrelid='free_access_registration_reservations'::regclass
+  ) THEN
+    ALTER TABLE free_access_registration_reservations
+      ADD CONSTRAINT free_access_registration_reservations_media_server_id_fkey
+      FOREIGN KEY (media_server_id)
+      REFERENCES jellyfin_servers(id)
+      ON DELETE RESTRICT
+      NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='billing_checkout_intents_media_server_id_fkey'
+      AND conrelid='billing_checkout_intents'::regclass
+  ) THEN
+    ALTER TABLE billing_checkout_intents
+      ADD CONSTRAINT billing_checkout_intents_media_server_id_fkey
+      FOREIGN KEY (media_server_id)
+      REFERENCES jellyfin_servers(id)
+      ON DELETE RESTRICT
+      NOT VALID;
+  END IF;
+END
+$;
+
 ALTER TABLE subscriptions
   VALIDATE CONSTRAINT subscriptions_media_server_id_fkey;
+ALTER TABLE free_access_registration_reservations
+  VALIDATE CONSTRAINT free_access_registration_reservations_media_server_id_fkey;
+ALTER TABLE billing_checkout_intents
+  VALIDATE CONSTRAINT billing_checkout_intents_media_server_id_fkey;
 
 CREATE INDEX IF NOT EXISTS subscriptions_media_server_id_idx
   ON subscriptions(media_server_id)
+  WHERE media_server_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS free_access_registration_reservations_media_server_id_idx
+  ON free_access_registration_reservations(media_server_id)
+  WHERE media_server_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS billing_checkout_intents_media_server_id_idx
+  ON billing_checkout_intents(media_server_id)
   WHERE media_server_id IS NOT NULL;
 
 WITH current_assignments AS (
