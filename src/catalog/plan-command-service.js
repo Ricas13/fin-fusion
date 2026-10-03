@@ -1484,6 +1484,7 @@ module.exports = {
   createPlan,
   updateProduct,
   updateAvailability,
+  updateInactivityPolicy,
   updateDelivery,
   updateLibraries,
   updateCommerce,
