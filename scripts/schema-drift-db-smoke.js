@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { query, getPool } = require('../src/db');
+const compatibilityMigrations = require('../src/db-compatibility-migrations');
 
 const migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
 
@@ -70,7 +71,8 @@ async function main() {
 
     const ledger = await query('SELECT filename,checksum FROM public.schema_migrations ORDER BY filename');
     const ledgerFiles = ledger.rows.map(row => row.filename);
-    assert.deepStrictEqual(ledgerFiles, files, 'schema_migrations ledger does not exactly match the checked-in migration set');
+    const versionedFiles = files.filter(name => !compatibilityMigrations.isRepeatableCompatibilityMigration(name));
+    assert.deepStrictEqual(ledgerFiles, versionedFiles, 'schema_migrations ledger does not exactly match the checked-in versioned migration set');
     assert(ledger.rows.every(row => /^[0-9a-f]{64}$/i.test(String(row.checksum || ''))), 'Every applied migration must retain a SHA-256 checksum');
 
     const fingerprint = crypto.createHash('sha256').update([...actual].sort().join('\n')).digest('hex');
