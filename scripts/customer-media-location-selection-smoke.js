@@ -329,6 +329,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   const lifecycle = fs.readFileSync('src/payments/lifecycle.js', 'utf8');
   const pending = fs.readFileSync('src/security/pending-registration.js', 'utf8');
   const provisioning = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
+  const resilientProvisioningSource = fs.readFileSync('src/jellyfin/resilient-provisioning.js', 'utf8');
   const checkoutIntents = fs.readFileSync('src/payments/checkout-intents.js', 'utf8');
   const lifecyclePrimitives = fs.readFileSync('src/payments/lifecycle-primitives.js', 'utf8');
   const planChange = fs.readFileSync('src/payments/customer-plan-change.js', 'utf8');
@@ -353,7 +354,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert(pending.includes('freeMediaLocation') && pending.includes('media_location,media_server_id'), 'pre-login Free registration must persist its selected location and concrete server');
   assert(provisioning.includes('assignedServer'), 'Jellyfin provisioning must honor sticky subscription assignment before considering fresh placement');
   assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
-  assert(provisioning.includes("unambiguousLegacyAccount(outsidePrimary, 'Free-adoption')"), 'legacy Free-lane adoption must not guess between multiple eligible old accounts');
+  assert(resilientProvisioningSource.includes("unambiguousLegacyAccount(outsidePrimary, 'Free-adoption')"), 'legacy Free-lane adoption must not guess between multiple eligible old accounts');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
   assert(!migration.includes('\n$;\n'), 'PostgreSQL migration DO blocks must never contain a single-dollar terminator; every DO block must close with its matching dollar-quote delimiter.');
   assert(migration.includes('billing_checkout_intents') && migration.includes('free_access_registration_reservations'), 'paid checkout and Free registration must reserve exact physical server capacity');
