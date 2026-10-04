@@ -39,6 +39,7 @@ function label(value) {
     access_leak: 'Access leak',
     possible_duplicate: 'Possible duplicate',
     unlinked_entitled_customer: 'Entitled but unlinked',
+    free_access_repair: 'Free access needs repair',
     unlinked_customer: 'Customer match',
     possible_match: 'Weak match',
     ambiguous_match: 'Ambiguous',
@@ -49,7 +50,7 @@ function label(value) {
 function pill(value) {
   if (['access_leak','stremio_orphan'].includes(value)) return 'bad';
   if (['possible_duplicate','ambiguous_match','possible_match'].includes(value)) return 'warn';
-  if (value === 'unlinked_entitled_customer') return 'accent';
+  if (['unlinked_entitled_customer','free_access_repair'].includes(value)) return 'accent';
   return '';
 }
 
@@ -99,6 +100,10 @@ function actionForms(req, row) {
       <input type="hidden" name="lane" value="primary">
       <button class="button btn-sm">Link existing identity</button>
     </form>`;
+  }
+
+  if (candidate && row.classification === 'free_access_repair') {
+    forms += '<div class="subText" style="margin-top:8px">Free access is repaired by the canonical Free-access workflow. This unmanaged identity is not linked as a paid/primary account.</div>';
   }
 
   if (candidate && row.classification === 'possible_duplicate' && sameServer.length === 1) {
