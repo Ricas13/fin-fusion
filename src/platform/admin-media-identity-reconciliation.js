@@ -5,7 +5,10 @@ const csrf = require('../auth/csrf');
 const runtimeSettings = require('./runtime-settings');
 const reconciliation = require('../jellyfin/identity-reconciliation');
 const stremioOrphans = require('../stremio/orphan-account-cleanup');
+const routeRateLimit = require('../security/route-rate-limit');
 const { esc, layout } = require('./admin-html');
+
+const identityActionLimit = routeRateLimit.middleware({ scope: 'admin-media-identity-reconciliation', max: 30, windowSeconds: 3600 });
 
 function gate(req, res, next) {
   return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId
@@ -199,7 +202,7 @@ function createAdminMediaIdentityReconciliationRouter() {
     }
   });
 
-  router.post('/admin/servers/identity-reconciliation/delete', async (req, res, next) => {
+  router.post('/admin/servers/identity-reconciliation/delete', identityActionLimit, async (req, res, next) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     if (req.body?.confirm !== '1') return res.status(400).send(await page(req, { error: 'Confirm remote deletion first.' }));
     try {
@@ -217,7 +220,7 @@ function createAdminMediaIdentityReconciliationRouter() {
     }
   });
 
-  router.post('/admin/servers/identity-reconciliation/link', async (req, res, next) => {
+  router.post('/admin/servers/identity-reconciliation/link', identityActionLimit, async (req, res, next) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
       const linked = await reconciliation.linkRemoteIdentity({
@@ -234,7 +237,7 @@ function createAdminMediaIdentityReconciliationRouter() {
     }
   });
 
-  router.post('/admin/servers/identity-reconciliation/replace', async (req, res, next) => {
+  router.post('/admin/servers/identity-reconciliation/replace', identityActionLimit, async (req, res, next) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     if (req.body?.confirm !== '1') return res.status(400).send(await page(req, { error: 'Confirm canonical identity replacement first.' }));
     try {
