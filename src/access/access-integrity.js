@@ -52,6 +52,21 @@ function freeScopedAccessBlockedSql(alias = 's', planAlias = 'p') {
   )`;
 }
 
+function mediaAssignmentMatchesSql(subscriptionAlias = 's', accountAlias = 'ja') {
+  const effectiveServer = `COALESCE(
+    (
+      SELECT integrity_ctl.server_id
+      FROM customer_service_admin_control integrity_ctl
+      WHERE integrity_ctl.customer_id=${subscriptionAlias}.customer_id
+        AND integrity_ctl.service='jellyfin'
+        AND integrity_ctl.mode='admin_server_pin'
+      LIMIT 1
+    ),
+    ${subscriptionAlias}.media_server_id
+  )`;
+  return `(${effectiveServer} IS NULL OR ${accountAlias}.server_id=${effectiveServer})`;
+}
+
 function automaticAccessAllowedSql(alias = 's', { free = false, planAlias = 'p' } = {}) {
   const scopedFreeBlock = free ? ` OR ${freeScopedAccessBlockedSql(alias, planAlias)}` : '';
   return `(
@@ -133,7 +148,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
+            AND ${mediaAssignmentMatchesSql('s','ja')}
         )
       ORDER BY s.created_at
       LIMIT $1
@@ -171,7 +186,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
+            AND ${mediaAssignmentMatchesSql('s','ja')}
         )
       ORDER BY h.created_at
       LIMIT $1
@@ -211,7 +226,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
+            AND ${mediaAssignmentMatchesSql('s','ja')}
         )
       ORDER BY s.created_at
       LIMIT $1
@@ -253,7 +268,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
+            AND ${mediaAssignmentMatchesSql('s','ja')}
         )
         AND COALESCE(cps.status,'') NOT IN('pending','running','failed','blocked')
       ORDER BY s.created_at
@@ -312,6 +327,7 @@ module.exports = {
   finding,
   freeScopedAccessBlockedSql,
   automaticAccessAllowedSql,
+  mediaAssignmentMatchesSql,
   liveEntitlementSql,
   scan
 };
