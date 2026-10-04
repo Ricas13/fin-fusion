@@ -37,11 +37,17 @@ async function entitlementStillOwnsJellyfin(customerId, { client = null } = {}) 
     // Explicit administrator authority always wins. In particular, never let
     // orphan cleanup delete a remote identity while admin_present is active,
     // even during subscription churn when no ordinary entitlement row is live.
-    const adminOwns = admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin';
+    // admin_present grants access. admin_server_pin is placement-only and must
+    // never keep an account/intention alive after the underlying entitlement ends.
+    const adminOwns = admin?.mode === 'admin_present';
     const adminRemoved = admin?.mode === 'admin_removed';
     const primaryOwns = Boolean(primary && primary.admin_jellyfin_removed !== true);
     const freeOwns = Boolean(free && free.admin_jellyfin_removed !== true);
     return { owns: adminOwns || (!adminRemoved && (primaryOwns || freeOwns)), primary, free, admin };
+}
+
+function entitlementOwnsLane(row) {
+    return Boolean(row && row.admin_jellyfin_removed !== true);
 }
 
 function intentServerStillOwned(intent, authority) {
@@ -49,17 +55,52 @@ function intentServerStillOwned(intent, authority) {
     const serverId = String(intent?.server_id || '');
     if (!serverId) return false;
     if (authority.admin?.mode === 'admin_present') return true;
+    if (authority.admin?.mode === 'admin_removed') return false;
+
+    const lane = String(intent?.access_lane || '').trim();
+    let entitlements;
+    if (lane === 'free') entitlements = entitlementOwnsLane(authority.free) ? [authority.free] : [];
+    else if (lane === 'primary') entitlements = entitlementOwnsLane(authority.primary) ? [authority.primary] : [];
+    else {
+        // Rolling-deploy compatibility: old intents have no lane. Preserve them
+        // conservatively when any current Jellyfin lane could still own them.
+        entitlements = [authority.primary, authority.free].filter(entitlementOwnsLane);
+    }
+    if (!entitlements.length) return false;
+
+    // A server pin changes placement only. It is authoritative only while the
+    // corresponding entitlement lane still exists.
     if (authority.admin?.mode === 'admin_server_pin') {
         return String(authority.admin.server_id || '') === serverId;
     }
-    if (authority.admin?.mode === 'admin_removed') return false;
-    const entitlements = [authority.primary, authority.free]
-        .filter(row => row && row.admin_jellyfin_removed !== true);
-    if (!entitlements.length) return false;
+
     // A legacy entitlement without a persisted assignment cannot safely prove
-    // that this intent is stale, so preserve the old conservative behaviour.
+    // that this intent is stale, so preserve the conservative behaviour.
     if (entitlements.some(row => !row.media_server_id)) return true;
     return entitlements.some(row => String(row.media_server_id) === serverId);
+}
+
+async function resolveLegacyIntentLane(intent, authority) {
+    if (!intent || intent.access_lane) return intent;
+    const primary = entitlementOwnsLane(authority?.primary);
+    const free = entitlementOwnsLane(authority?.free);
+    if (primary === free) return intent;
+    const accessLane = free ? 'free' : 'primary';
+    const updated = await query(`
+        UPDATE jellyfin_account_creation_intents
+        SET access_lane=$2,updated_at=NOW()
+        WHERE id=$1 AND access_lane IS NULL
+        RETURNING *
+    `, [intent.id, accessLane]);
+    if (updated.rowCount) {
+        await query(`
+            UPDATE jellyfin_server_placement_leases
+            SET access_lane=COALESCE(access_lane,$3),updated_at=NOW()
+            WHERE customer_id=$1 AND server_id=$2
+        `, [intent.customer_id, intent.server_id, accessLane]).catch(() => {});
+        return updated.rows[0];
+    }
+    return { ...intent, access_lane: accessLane };
 }
 
 async function removeAbandonedIntent(intent) {
@@ -108,7 +149,12 @@ async function removeAbandonedIntent(intent) {
 
         await client.query('DELETE FROM jellyfin_account_creation_intents WHERE id=$1', [liveIntent.id]);
         await client.query(`DELETE FROM jellyfin_server_placement_leases
-            WHERE customer_id=$1 AND server_id=$2`, [liveIntent.customer_id, liveIntent.server_id]);
+            WHERE customer_id=$1 AND server_id=$2
+              AND (access_lane IS NULL OR access_lane=$3)`, [
+            liveIntent.customer_id,
+            liveIntent.server_id,
+            liveIntent.access_lane || null
+        ]);
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('jellyfin.creation_intent.abandoned_recovered','customer',$1,$2::jsonb)`, [
             liveIntent.customer_id,
@@ -130,6 +176,7 @@ async function recoverOne(intent) {
     // already-created remote account. That path is idempotent and retains the
     // durable intent until local persistence succeeds.
     const entitlement = await entitlementStillOwnsJellyfin(intent.customer_id);
+    intent = await resolveLegacyIntentLane(intent, entitlement);
     if (intentServerStillOwned(intent, entitlement)) {
         await provisioning.reconcileCustomer(intent.customer_id);
         const remaining = await durableCreation.loadIntent(intent.customer_id, intent.server_id);
@@ -164,4 +211,4 @@ async function run({ limit = 25 } = {}) {
     return summary;
 }
 
-module.exports = { STALE_MINUTES, safeError, due, entitlementStillOwnsJellyfin, intentServerStillOwned, removeAbandonedIntent, recoverOne, run };
+module.exports = { STALE_MINUTES, safeError, due, entitlementStillOwnsJellyfin, entitlementOwnsLane, intentServerStillOwned, resolveLegacyIntentLane, removeAbandonedIntent, recoverOne, run };
