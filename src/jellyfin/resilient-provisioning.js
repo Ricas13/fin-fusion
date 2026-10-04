@@ -299,11 +299,13 @@ async function adoptExistingFreeAccount(customerId, accounts, freeEntitlement, p
         && account.access_lane === 'primary'
         && accountMatchesEntitlementPlacement(account, freeEntitlement)
     );
-    let candidate = candidates.find(account => !primaryEntitlement || !accountMatchesEntitlementPlacement(account, primaryEntitlement));
+    const outsidePrimary = candidates.filter(account => !primaryEntitlement || !accountMatchesEntitlementPlacement(account, primaryEntitlement));
+    let candidate = outsidePrimary.length ? unambiguousLegacyAccount(outsidePrimary, 'Free-adoption') : null;
     if (!candidate && primaryStart) {
-        candidate = candidates.find(account => new Date(account.created_at || 0).getTime() < primaryStart);
+        const historical = candidates.filter(account => new Date(account.created_at || 0).getTime() < primaryStart);
+        candidate = historical.length ? unambiguousLegacyAccount(historical, 'historical Free-adoption') : null;
     }
-    if (!candidate && !primaryEntitlement) candidate = candidates[0];
+    if (!candidate && !primaryEntitlement) candidate = unambiguousLegacyAccount(candidates, 'Free-adoption');
     if (!candidate) return accounts;
 
     await query(`
