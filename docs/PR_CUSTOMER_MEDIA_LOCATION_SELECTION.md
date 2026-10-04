@@ -164,3 +164,8 @@ Do not merge until:
 - existing deployment, billing, provisioning, cancellation, reconciliation, Free lifecycle, access repair, and server-capacity regression suites still pass
 - new location-selection behavioural tests pass
 - the implementation has been reviewed specifically for places that still resolve media servers by legacy class/default rather than the persisted customer assignment
+
+
+## Regression audit trigger
+
+A full exact-head regression pass was requested on 2026-10-04 after the final implementation follow-ups. This note intentionally triggers the complete PR workflow set so release evidence is tied to the audited head rather than an earlier commit.
