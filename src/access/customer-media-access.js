@@ -43,7 +43,22 @@ async function accessContext(customerId, { accounts = null, accessSnapshot = nul
 
 function entitlementForAccountFromContext(account, context = {}) {
   if (!account) return null;
-  if (mediaType(account) === 'emby') return context.accessSnapshot?.emby?.entitlement || context.embyEntitlement || null;
+  if (mediaType(account) === 'emby') {
+    const entitlement = context.accessSnapshot?.emby?.entitlement || context.embyEntitlement || null;
+    if (!entitlement) return null;
+    const assignedServerId = String(entitlement.media_server_id || '').trim();
+    if (assignedServerId) return String(account.server_id || '') === assignedServerId ? entitlement : null;
+
+    // Rolling/legacy rows can predate persisted assignment. Only infer the
+    // account when there is exactly one enabled Emby candidate; multiple
+    // historical accounts are ambiguous and credential management must fail
+    // closed until the subscription is repaired/pinned.
+    const embyAccounts = (context.accounts || [])
+      .filter(row => mediaType(row) === 'emby' && !row.disabled && row.server_enabled);
+    return embyAccounts.length === 1 && String(embyAccounts[0].id) === String(account.id)
+      ? entitlement
+      : null;
+  }
   const access = context.accessSnapshot || null;
   if (String(account.access_lane || 'primary') === 'free') {
     return access?.free?.entitlement || null;
