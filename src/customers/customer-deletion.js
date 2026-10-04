@@ -159,13 +159,24 @@ async function processDeletionJob(jobId){
     // must not create/re-add it while cleanup identity is being snapshotted.
     job=await ensureDeletionHold(job);
 
-    // 2) snapshot every currently-owned cleanup identity before any destructive
+    // 2) Reconcile any in-flight media creation first. A remote account may
+    // already exist even though jellyfin_accounts has not been persisted yet.
+    // Customer deletion must not cascade-delete that intent and erase the only
+    // durable pointer to the remote identity.
+    const intentCleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(job.customer_id);
+    if(Number(intentCleanup?.failed||0)>0){
+      const error=new Error(intentCleanup.warning||'In-flight media account cleanup is incomplete.');
+      error.code='CUSTOMER_DELETE_MEDIA_INTENT_CLEANUP_INCOMPLETE';
+      throw error;
+    }
+
+    // 3) snapshot every currently-owned cleanup identity before any destructive
     // external API call. A crash immediately after this point is recoverable.
     await externalDeletion.persistTargets(job);
 
     let targets;
     try{
-      // 3) each target is an idempotent desired-state operation with durable
+      // 4) each target is an idempotent desired-state operation with durable
       // attempts/error/result. Discord removal is awaited and verified here.
       targets=await externalDeletion.reconcileJobTargets(job);
     }catch(error){
