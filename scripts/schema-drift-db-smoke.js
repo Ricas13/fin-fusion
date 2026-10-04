@@ -32,7 +32,7 @@ function tableOperations(sql) {
 }
 
 function expectedTables(files) {
-    const tables = new Set(['schema_migrations']);
+    const tables = new Set(['schema_migrations','schema_compatibility_migrations']);
     for (const filename of files) {
         const sql = fs.readFileSync(path.join(migrationsDir, filename), 'utf8');
         for (const op of tableOperations(sql)) {
@@ -74,6 +74,16 @@ async function main() {
     const versionedFiles = files.filter(name => !compatibilityMigrations.isRepeatableCompatibilityMigration(name));
     assert.deepStrictEqual(ledgerFiles, versionedFiles, 'schema_migrations ledger does not exactly match the checked-in versioned migration set');
     assert(ledger.rows.every(row => /^[0-9a-f]{64}$/i.test(String(row.checksum || ''))), 'Every applied migration must retain a SHA-256 checksum');
+
+    const compatibilityLedger = await query('SELECT filename,checksum FROM public.schema_compatibility_migrations ORDER BY filename');
+    const compatibilityFiles = files.filter(name => compatibilityMigrations.isRepeatableCompatibilityMigration(name));
+    assert.deepStrictEqual(
+        compatibilityLedger.rows.map(row => row.filename),
+        compatibilityFiles,
+        'compatibility migration ledger does not exactly match the checked-in compatibility migration set'
+    );
+    assert(compatibilityLedger.rows.every(row => /^[0-9a-f]{64}$/i.test(String(row.checksum || ''))),
+        'Every applied compatibility migration must retain a SHA-256 checksum');
 
     const fingerprint = crypto.createHash('sha256').update([...actual].sort().join('\n')).digest('hex');
     console.log(`schema drift DB smoke: ${actual.size} migration-owned public tables, fingerprint ${fingerprint}`);
