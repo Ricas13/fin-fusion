@@ -220,8 +220,13 @@ async function deleteRemoteIdentity({ serverId, jellyfinUserId, expectedName = n
   if (remote.administrator) throw new Error('Administrator media identities cannot be deleted from reconciliation.');
   if (stremioManagedUsername(remote.jellyfin_username)) {
     const orphanCleanup = require('../stremio/orphan-account-cleanup');
-    if (await orphanCleanup.activeEntitlementOwnsUsername(remote.jellyfin_username)) {
-      throw new Error('This managed Stremio identity still belongs to an active entitlement and cannot be deleted.');
+    const safety = await orphanCleanup.raceCheck({
+      server_id: serverId,
+      jellyfin_user_id: remote.jellyfin_user_id,
+      jellyfin_username: remote.jellyfin_username
+    });
+    if (!safety.safe) {
+      throw new Error(`This managed Stremio identity is not safe to delete (${safety.reason || 'safety check failed'}).`);
     }
   }
   await assertStillUnmanaged(serverId, remote);
