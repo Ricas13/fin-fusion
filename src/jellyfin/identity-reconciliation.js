@@ -16,12 +16,6 @@ function asId(value, label) {
   return id;
 }
 
-function remoteDate(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
 function pushMatch(map, key, value) {
   const normalized = norm(key);
   if (!normalized) return;
