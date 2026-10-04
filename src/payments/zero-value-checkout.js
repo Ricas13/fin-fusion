@@ -7,6 +7,7 @@ const discounts=require('./discounts');
 const checkoutIntents=require('./checkout-intents');
 const lifecyclePrimitives=require('./lifecycle-primitives');
 const inactivityHolds=require('../entitlements/inactivity-hold-reconciliation');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 function money(value){const n=Number(value);return Number.isInteger(n)&&n>=0?n:null;}
 function snapshotObject(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
@@ -36,8 +37,28 @@ async function activateFullyDiscountedPayment({customerId,intentId,nonce,provide
             households:snapshot.stremioHouseholdNetworkLimit
         });
 
-        const mediaLocation=snapshot.mediaLocation==null?null:String(snapshot.mediaLocation).trim().slice(0,100)||null;
-        const mediaServerId=intent.media_server_id||snapshot.mediaServerId||null;
+        let mediaLocation=snapshot.mediaLocation==null?null:String(snapshot.mediaLocation).trim().slice(0,100)||null;
+        let mediaServerId=intent.media_server_id||snapshot.mediaServerId||null;
+        if(customerServerChoice.mediaServerType(plan)){
+            let selected=await customerServerChoice.committedReservedServer(
+                plan,mediaServerId,mediaLocation,{db:(sql,params)=>client.query(sql,params)}
+            );
+            if(!selected){
+                selected=await customerServerChoice.selectServerForLocationLocked(
+                    plan,mediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true}
+                );
+            }
+            mediaServerId=selected?.id||null;
+            mediaLocation=selected?.selected_location||mediaLocation;
+            if(!mediaServerId){
+                const error=new Error('The reserved media server is no longer available for this fully discounted checkout.');
+                error.code='MEDIA_LOCATION_UNAVAILABLE';
+                throw error;
+            }
+            if(String(intent.media_server_id||'')!==String(mediaServerId)){
+                await client.query('UPDATE billing_checkout_intents SET media_server_id=$2,updated_at=NOW() WHERE id=$1',[intent.id,mediaServerId]);
+            }
+        }
         const startsAt=new Date(),endsAt=billingPeriods.addPlanDuration(snapshot,startsAt),storedSnapshot={...snapshot,mediaLocation,mediaServerId,checkoutIntentId:intent.id,settlementKind:'fully_discounted_local'};
         const inserted=await client.query(`INSERT INTO subscriptions(
             customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,
