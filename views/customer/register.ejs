@@ -45,7 +45,20 @@
     <div class="field"><label for="signup-username">Username <span>3–40 characters</span></label><input id="signup-username" name="username" minlength="3" maxlength="40" autocomplete="username" required><div class="helper">Your CAPTAiNFiN sign-in name. If you use Jellyfin, playback setup is handled separately after access is ready.</div></div>
     <div class="field"><label for="signup-password">Password <span>Minimum 8 characters</span></label><input id="signup-password" type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required></div>
     <% if (freeIntent && Array.isArray(freeMediaLocations) && freeMediaLocations.length > 1) { %>
-      <div class="field"><label for="signup-media-location">Server location</label><select id="signup-media-location" name="mediaLocation" required><option value="">Choose a location</option><% freeMediaLocations.forEach(function(location){ %><option value="<%= location.value %>"><%= location.label %><%= location.remaining==null?'':' · '+location.remaining+' place'+(location.remaining===1?'':'s')+' available' %></option><% }) %></select><div class="helper">Choose where your Free Jellyfin account will be created.</div></div>
+      <div class="field" data-media-location-test>
+        <label for="signup-media-location">Server location</label>
+        <select id="signup-media-location" name="mediaLocation" required>
+          <option value="">Choose a location</option>
+          <% freeMediaLocations.forEach(function(location){ %><option value="<%= location.value %>"><%= location.label %><%= location.remaining==null?'':' · '+location.remaining+' place'+(location.remaining===1?'':'s')+' available' %></option><% }) %>
+        </select>
+        <div class="helper">Choose where your Free Jellyfin account will be created. You can test the available locations before deciding.</div>
+        <div hidden aria-hidden="true">
+          <% freeMediaLocations.forEach(function(location){ %><span data-media-location-choice data-label="<%= location.label %>" data-test-url="<%= location.testUrl || '' %>"></span><% }) %>
+        </div>
+        <button type="button" data-test-media-locations>Test locations</button>
+        <div class="helper" data-media-location-status aria-live="polite"></div>
+      </div>
+      <script src="/js/media-location-test.js" defer></script>
     <% } else if (freeIntent && Array.isArray(freeMediaLocations) && freeMediaLocations.length === 1) { %>
       <input type="hidden" name="mediaLocation" value="<%= freeMediaLocations[0].value %>">
     <% } %>
