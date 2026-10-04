@@ -74,6 +74,8 @@ function source(file) {
   assert(!cleanup.includes("WHERE account_purpose='stremio_internal'"), 'Automatic orphan cleanup must protect any locally managed identity, not only Stremio-purpose rows.');
   assert(cleanup.includes('jellyfin_account_creation_intents'));
   assert(cleanup.includes("'/Sessions'"));
+  assert(cleanup.includes("if (!Array.isArray(sessions)) throw new Error('Media server did not return a valid session list.')"), 'Inventory must fail closed when session state is malformed.');
+  assert(cleanup.includes("reason: 'session_state_unavailable'"), 'Deletion race check must fail closed when session state is malformed.');
   assert(!cleanup.includes("'/Sessions', { timeoutMs: 10000 }).catch(() => [])"), 'Destructive orphan cleanup must fail closed when session state is unavailable.');
   assert(cleanup.includes("status = 'provisioning_in_flight'"));
   assert(cleanup.includes("status = 'active_session'"));
@@ -93,6 +95,7 @@ function source(file) {
   assert(reconcile.includes('ownershipPreserved: true'));
   assert(!reconcile.includes('canonical_replace_rolled_back'), 'Canonical ownership must not be rolled back after the replacement identity may have received access policy.');
   assert(reconcile.includes('This media identity has an active playback session'));
+  assert(reconcile.includes('Media server session state could not be verified.'), 'Manual destructive reconciliation must fail closed when session state is malformed.');
   assert(reconcile.includes('userImport.getRemoteUser(serverId, old.jellyfinUserId)') && reconcile.includes('await assertStillUnmanaged(serverId, oldRemoteNow)'), 'Canonical replacement must re-read old remote identity and local ownership immediately before deleting it.');
   assert(reconcile.includes('AND lower(jellyfin_user_id)=lower($6)') && reconcile.includes('if (!adopted.rowCount)'), 'Concurrent canonical replacements must use compare-and-swap ownership so a stale request cannot overwrite a newer adoption.');
   assert(reconcile.includes('await provisioning.reconcileCustomer(customerId)'));
