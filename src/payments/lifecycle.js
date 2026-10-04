@@ -223,8 +223,9 @@ async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason=
             targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
             if(targetIsCurrent){
                 const accounts=await mediaReconciliation.accountsFor(customerId,'emby');
+                const targetServerId=current.media_server_id?String(current.media_server_id):null;
                 for(const account of accounts){
-                    if(!account.disabled&&account.server_enabled){
+                    if(!account.disabled&&account.server_enabled&&(!targetServerId||String(account.server_id)===targetServerId)){
                         await provisioning.deleteJellyfinAccount(account,{reason:'Emby trial activation failed before server assignment completed'});
                     }
                 }
