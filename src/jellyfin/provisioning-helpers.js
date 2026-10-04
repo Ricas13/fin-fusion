@@ -179,34 +179,75 @@ async function selectServerForPlan(plan) {
 
 async function reservePlacement(customerId, server, { allowOverCapacity = false } = {}) {
   if (!customerId || !server?.id) throw new Error('Customer and Jellyfin server are required for placement reservation.');
+  const accessLane = server.requested_access_lane === 'free' ? 'free' : 'primary';
   return transaction(async db => {
     const locked = await db.query(`SELECT id,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`, [server.id]);
     if (!locked.rowCount) throw new Error('Selected Jellyfin server no longer exists.');
     await db.query(`DELETE FROM jellyfin_server_placement_leases WHERE server_id=$1 AND expires_at<=NOW()`, [server.id]);
 
-    const existing = await db.query(`SELECT id FROM jellyfin_server_placement_leases
+    const existing = await db.query(`SELECT id,access_lane FROM jellyfin_server_placement_leases
       WHERE customer_id=$1 AND server_id=$2 AND expires_at>NOW() LIMIT 1`, [customerId, server.id]);
     if (existing.rowCount) {
+      let storedLane = String(existing.rows[0].access_lane || '').trim();
+      if (!storedLane) {
+        const inferred = await durableCreation.inferUnambiguousLiveLane(customerId);
+        if (inferred !== accessLane) {
+          const error = new Error('An older in-flight media placement on this server has ambiguous access-lane ownership. Retry after recovery completes.');
+          error.code = 'JELLYFIN_PLACEMENT_LANE_CONFLICT';
+          throw error;
+        }
+        storedLane = accessLane;
+      }
+      if (storedLane !== accessLane) {
+        const error = new Error(`A ${storedLane} Jellyfin placement is already in progress on this server. Retry after it completes.`);
+        error.code = 'JELLYFIN_PLACEMENT_LANE_CONFLICT';
+        throw error;
+      }
       const renewed = await db.query(`UPDATE jellyfin_server_placement_leases
-        SET expires_at=NOW()+($2||' minutes')::interval,updated_at=NOW()
-        WHERE id=$1 RETURNING id`, [existing.rows[0].id, String(PLACEMENT_LEASE_MINUTES)]);
+        SET expires_at=NOW()+($2||' minutes')::interval,
+            access_lane=COALESCE(access_lane,$3),
+            updated_at=NOW()
+        WHERE id=$1 RETURNING id`, [existing.rows[0].id, String(PLACEMENT_LEASE_MINUTES), accessLane]);
       return { ...server, placement_lease_id: renewed.rows[0].id };
     }
 
     if (server.placement_forced !== true && allowOverCapacity !== true) {
       const ownCapacity = await db.query(`SELECT EXISTS(
-        SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND disabled=FALSE AND account_purpose='jellyfin'
+        SELECT 1
+        FROM jellyfin_accounts
+        WHERE customer_id=$1 AND server_id=$2
+          AND disabled=FALSE AND account_purpose='jellyfin'
+          AND COALESCE(access_lane,'primary')=$3
         UNION ALL
-        SELECT 1 FROM jellyfin_account_creation_intents WHERE customer_id=$1 AND server_id=$2
+        SELECT 1
+        FROM jellyfin_account_creation_intents
+        WHERE customer_id=$1 AND server_id=$2
+          AND (access_lane=$3 OR access_lane IS NULL)
         UNION ALL
-        SELECT 1 FROM subscriptions
-        WHERE customer_id=$1
-          AND media_server_id=$2
-          AND superseded_by IS NULL
-          AND status IN('active','trialing','past_due','paused')
-          AND starts_at<=NOW()
-          AND current_period_end>NOW()
-      ) yes`, [customerId, server.id]);
+        SELECT 1
+        FROM subscriptions capacity_subscription
+        JOIN plans capacity_plan ON capacity_plan.id=capacity_subscription.plan_id
+        LEFT JOIN customer_service_admin_control capacity_admin
+          ON capacity_admin.customer_id=capacity_subscription.customer_id
+         AND capacity_admin.service='jellyfin'
+        WHERE capacity_subscription.customer_id=$1
+          AND COALESCE(
+                CASE WHEN capacity_admin.mode='admin_server_pin' THEN capacity_admin.server_id END,
+                capacity_subscription.media_server_id
+              )=$2
+          AND (
+            CASE
+              WHEN COALESCE(NULLIF(capacity_subscription.service_type_snapshot,''),capacity_plan.service_type,'jellyfin') IN('jellyfin','bundle')
+               AND COALESCE(capacity_plan.is_free_tier,FALSE)=TRUE
+              THEN 'free'
+              ELSE 'primary'
+            END
+          )=$3
+          AND capacity_subscription.superseded_by IS NULL
+          AND capacity_subscription.status IN('active','trialing','past_due','paused')
+          AND capacity_subscription.starts_at<=NOW()
+          AND capacity_subscription.current_period_end>NOW()
+      ) yes`, [customerId, server.id, accessLane]);
       if (ownCapacity.rows[0]?.yes !== true) {
         const counts = await userCapacity.countsForServers([server.id], (sql, params) => db.query(sql, params));
         const used = Number(counts.get(String(server.id)) || 0);
@@ -219,10 +260,16 @@ async function reservePlacement(customerId, server, { allowOverCapacity = false 
       }
     }
 
-    const lease = await db.query(`INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at)
-      VALUES($1,$2,NOW()+($3||' minutes')::interval)
-      ON CONFLICT(customer_id,server_id) DO UPDATE SET expires_at=EXCLUDED.expires_at,updated_at=NOW()
-      RETURNING id`, [customerId, server.id, String(PLACEMENT_LEASE_MINUTES)]);
+    const lease = await db.query(`INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at,access_lane)
+      VALUES($1,$2,NOW()+($3||' minutes')::interval,$4)
+      ON CONFLICT(customer_id,server_id) DO UPDATE SET
+        expires_at=EXCLUDED.expires_at,
+        access_lane=CASE
+          WHEN jellyfin_server_placement_leases.access_lane IS NULL THEN EXCLUDED.access_lane
+          ELSE jellyfin_server_placement_leases.access_lane
+        END,
+        updated_at=NOW()
+      RETURNING id`, [customerId, server.id, String(PLACEMENT_LEASE_MINUTES), accessLane]);
     return { ...server, placement_lease_id: lease.rows[0].id };
   });
 }
