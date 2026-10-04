@@ -109,7 +109,8 @@ function source(file) {
   assert(!reconcile.includes('canonical_replace_rolled_back'), 'Canonical ownership must not be rolled back after the replacement identity may have received access policy.');
   assert(reconcile.includes('This media identity has an active playback session'));
   assert(reconcile.includes('Media server session state could not be verified.'), 'Manual destructive reconciliation must fail closed when session state is malformed.');
-  assert(reconcile.includes('This managed Stremio identity still belongs to an active entitlement and cannot be deleted.'), 'Manual deletion must protect active Stremio entitlement identities.');
+  assert(reconcile.includes('orphanCleanup.raceCheck({'), 'Manual managed-Stremio deletion must use the same fail-closed orphan race check as background cleanup.');
+  assert(reconcile.includes('This managed Stremio identity is not safe to delete'), 'Manual managed-Stremio deletion must reject unknown-age, recent, active, provisioning, managed or otherwise unsafe identities.');
   assert(reconcile.includes('Managed Stremio service identities cannot be linked as customer Jellyfin accounts.'), 'Internal Stremio identities must never be adopted as customer Jellyfin accounts.');
   assert(reconcile.includes('Managed Stremio service identities cannot become canonical customer Jellyfin accounts.'), 'Internal Stremio identities must never replace a canonical customer identity.');
   assert(reconcile.includes('userImport.getRemoteUser(serverId, old.jellyfinUserId)') && reconcile.includes('await assertStillUnmanaged(serverId, oldRemoteNow)'), 'Canonical replacement must re-read old remote identity and local ownership immediately before deleting it.');
