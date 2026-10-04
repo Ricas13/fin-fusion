@@ -174,8 +174,9 @@ assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
 const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
 const manualSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'manual-subscription-link.js'), 'utf8');
-assert.ok(discoverySource.includes("e.server_class='premium'"), 'discovery must be scoped to active Premium Server entitlements');
-assert.ok(discoverySource.includes("IN ('jellyfin','bundle')"), 'discovery must only cover Jellyfin-capable premium entitlements');
+assert.ok(!discoverySource.includes("e.server_class='premium'"), 'paid provider-link discovery must not depend on the legacy media server class when explicit plan pools are authoritative');
+assert.ok(discoverySource.includes("IN ('jellyfin','bundle')"), 'discovery must only cover Jellyfin-capable paid entitlements');
+assert.ok(discoverySource.includes("COALESCE(e.price_minor_snapshot,e.price_minor,0)>0") && discoverySource.includes("COALESCE(e.is_free_tier,FALSE)=FALSE"), 'paid/non-Free commercial state must define provider-link discovery eligibility');
 assert.ok(discoverySource.includes('s.commercial_snapshot'), 'provider-link classification must load the persisted paid-term disposition');
 assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must inspect all subscriptions before selecting current states');
 assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T0002', 'T0003'])"), 'PayPal discovery must cover subscription and preapproved recurring payments');
