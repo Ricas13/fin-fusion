@@ -345,6 +345,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   const providerRecovery = fs.readFileSync('src/payments/provider-operation-recovery.js', 'utf8');
   const adminServers = fs.readFileSync('src/platform/admin-servers.js', 'utf8');
   const adminServerUsers = fs.readFileSync('src/platform/admin-server-users.js', 'utf8');
+  const adminCustomerCreation = fs.readFileSync('src/customers/admin-customer-creation.js', 'utf8');
   const migration = fs.readFileSync('db/migrations/20261003113000_customer_media_location_assignment.sql', 'utf8');
   const application = fs.readFileSync('src/application.js', 'utf8');
   const registerView = fs.readFileSync('views/customer/register.ejs', 'utf8');
@@ -384,6 +385,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert(userImport.includes('media_server_id=COALESCE(media_server_id,$2)') && userImport.includes('(media_server_id IS NULL OR media_server_id=$2)'), 'Legacy link repair must atomically adopt a missing subscription server assignment without overwriting a concurrent assignment.');
   assert(userImport.includes('eligibleServersForPlan(plan, { enabledOnly: true, forPlacement })') && !userImport.includes('String(server.server_class) !== String(plan.server_class)'), 'Explicit plan server pools must remain authoritative for imports instead of being rejected by the legacy server-class shortcut.');
   assert(adminServerUsers.includes('FROM plan_server_eligibility pse') && adminServerUsers.includes('pse.server_id=$1') && adminServerUsers.includes('p.server_class=$2'), 'admin user-import plan picker must prefer explicit server pools and use server class only as legacy fallback');
+  assert(adminCustomerCreation.includes('logicalMediaPlanUsage') && adminCustomerCreation.includes('configuredServers') && adminCustomerCreation.includes("error.code='PLAN_CAPACITY_EXHAUSTED'"), 'deferred admin creation may postpone physical placement but must still enforce the product customer limit');
   assert(driftControl.includes('entitlement.media_server_id') && driftControl.includes('String(a.server_id)===assignedServerId'), 'policy-drift automation must resolve the persisted assigned server first');
   assert(driftControl.includes('planServers.eligibleServersForPlan') && driftControl.includes("error.code='AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT'"), 'legacy policy-drift fallback must use the explicit plan pool and fail closed instead of guessing between multiple accounts');
   assert(registrationProbe.includes("mode:'no-cors'") && registrationProbe.includes("credentials:'omit'") && registrationProbe.includes("referrerPolicy:'no-referrer'") && registrationProbe.includes("reason:'Unavailable'"), 'Free signup latency probes must be credential-free, referrer-free and report failed tests as unavailable');
