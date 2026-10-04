@@ -79,6 +79,10 @@ function source(file) {
   assert(cleanup.includes("reason: 'session_state_unavailable'"), 'Deletion race check must fail closed when session state is malformed.');
   assert(!cleanup.includes("'/Sessions', { timeoutMs: 10000 }).catch(() => [])"), 'Destructive orphan cleanup must fail closed when session state is unavailable.');
   assert(cleanup.includes("status = 'provisioning_in_flight'"));
+  assert(cleanup.includes("status = 'active_entitlement_unlinked'"), 'An active Stremio entitlement with a lost local mapping must be protected from orphan deletion.');
+  assert(cleanup.includes('effective_stremio_entitlements') && cleanup.includes('effective_customer_addons'), 'Orphan cleanup must independently consult active Stremio entitlement truth rather than relying only on the bounded managed sweep.');
+  assert(cleanup.includes("reason: 'active_entitlement_now'"), 'Deletion race check must re-read active entitlement ownership immediately before DELETE.');
+  assert(cleanup.indexOf("reason: 'active_entitlement_now'") < cleanup.indexOf("method: 'DELETE'"), 'Active-entitlement guard must run before remote deletion.');
   assert(cleanup.includes("status = 'active_session'"));
   assert(cleanup.includes("status = 'recent_activity'"));
   assert(cleanup.includes("const users = await registry.request(row.server_id, '/Users'"), 'Deletion race check must re-read the remote identity immediately before DELETE.');
