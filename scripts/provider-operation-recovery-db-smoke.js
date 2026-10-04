@@ -118,6 +118,17 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, access_variant_id: variantId, variant_kind: 'streams', access_quantity: 3, quantity: 3, streams: 3, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
     remote(providerId, `price_old_${tag}`);
     const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}`, targetMediaLocation: 'London', targetMediaServerId: targetServer.id, targetAccessQuantity: 3, targetVariantKind: 'streams' });
+    await query(`UPDATE provider_operations
+      SET provider_result=provider_result||'{"capacityReserved":true}'::jsonb
+      WHERE id=$1`, [op.id]);
+    const ownPreMutation = await provisioningHelpers.reservePlacement(c.id, targetServer);
+    assert(ownPreMutation.placement_lease_id, 'H: an immediate plan change must be able to materialize its own durable reservation when taking the final server slot');
+    await provisioningHelpers.releaseDefinitivePlacementFailure(c.id, targetServer.id, ownPreMutation.placement_lease_id);
+    await assert.rejects(
+        provisioningHelpers.reservePlacement(competing.id,targetServer),
+        error=>error?.code==='JELLYFIN_SERVER_CAPACITY_CHANGED',
+        'H: another customer must remain blocked by the durable immediate-change reservation after the short lease is released'
+    );
     const fake = new FakeStripe();
     await fake.subscriptions.update(providerId, { items: [{ id: `si_${providerId}`, price: targetPrice }] });
     const mutationsAfterSuccess = providerMutationCount;
