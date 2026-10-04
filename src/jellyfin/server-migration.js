@@ -131,7 +131,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
         throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on target Jellyfin server.`, 'preflight');
     }
 
-    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement, null, { serverId: target.id });
+    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement);
     let libraryAccess;
     try {
         libraryAccess = await provisioning.resolveLibraryAccessForServer(target.id, effective.unrestricted, effective.visibleNames, false);
@@ -336,7 +336,7 @@ async function rollbackMigrationUnlocked(migrationId, actorUserId) {
         throw new ServerMigrationError('ROLLBACK_SOURCE_USERNAME_EXISTS', `Username ${username} already exists on the original Jellyfin server.`, 'preflight');
     }
 
-    const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement, null, { serverId: sourceServer.id });
+    const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
     const sourceLibraries = await provisioning.resolveLibraryAccessForServer(sourceServer.id, effective.unrestricted, effective.visibleNames, false);
     if (sourceLibraries.missing.length) {
         throw new ServerMigrationError('ROLLBACK_LIBRARIES_MISSING', `Original server is missing required libraries: ${sourceLibraries.missing.join(', ')}`, 'preflight');
