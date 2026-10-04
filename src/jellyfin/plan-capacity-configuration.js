@@ -69,6 +69,11 @@ async function assertPlanLimitWithinPool(db, {
   serverIds = null,
   serverClass = null
 }) {
+  // Plan edits and physical server-capacity edits both validate through this
+  // function inside their surrounding transaction. Serialize those configuration
+  // writes so two individually-valid concurrent edits cannot commit an invalid
+  // plan_limit > physical_pool_capacity combination.
+  await db.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:media-capacity-configuration',77133))`);
   const plan = await loadPlan(db, planId);
   if (!plan) throw new Error('Plan not found.');
   if (!mediaServerType(plan)) return { plan, capacity: null, servers: [] };
