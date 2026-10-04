@@ -39,6 +39,26 @@ async function withPlanPlacement(entitlement) {
     return {...entitlement, eligible_server_ids:servers.map(server => server.id)};
 }
 
+function unambiguousLegacyAccount(accounts, label = 'media') {
+    const rows = Array.isArray(accounts) ? accounts : [];
+    if (!rows.length) return null;
+    const ready = rows.filter(account => !account.disabled && account.server_enabled);
+    if (ready.length === 1) return ready[0];
+    if (ready.length > 1) {
+        const error = new Error(`Multiple enabled legacy ${label} accounts exist without a persisted server assignment. Administrator repair is required before reconciliation can choose a server safely.`);
+        error.code = 'AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT';
+        throw error;
+    }
+    const reachable = rows.filter(account => account.server_enabled);
+    if (reachable.length === 1) return reachable[0];
+    if (reachable.length > 1 || rows.length > 1) {
+        const error = new Error(`Multiple legacy ${label} accounts exist without a persisted server assignment. Administrator repair is required before reconciliation can choose a server safely.`);
+        error.code = 'AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT';
+        throw error;
+    }
+    return rows[0];
+}
+
 function laneState(result) {
     return result ? {
         active: Boolean(result.active),
@@ -366,9 +386,7 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
     }
 
     if (!entitlement.media_server_id && !entitlement.admin_forced_server_id) {
-        const existing = laneAccounts.find(account => !account.disabled && account.server_enabled)
-            || laneAccounts.find(account => account.server_enabled)
-            || laneAccounts[0];
+        const existing = unambiguousLegacyAccount(laneAccounts, `${lane} Jellyfin`);
         if (existing) {
             await customerServerChoice.persistAssignment(entitlement.subscription_id, existing);
             entitlement = { ...entitlement, media_server_id: existing.server_id, media_location_snapshot: customerServerChoice.locationLabel(existing.server_location) };
