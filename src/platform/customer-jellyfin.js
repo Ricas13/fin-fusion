@@ -220,6 +220,7 @@ async function accessAccountsForCustomer(customerId,portal){
   const result=[];
   for(const account of rows){
     const entitlement=customerMediaAccess.entitlementForAccountFromContext(account,context);
+    if(!entitlement)continue;
     if(mediaType(account)!=='jellyfin'){
       result.push(mergeAccount(account,portalAccounts.get(String(account.id)),null,entitlement));
       continue;
