@@ -62,6 +62,7 @@ function source(file) {
   assert.strictEqual(orphanCleanup.recentEnough({ LastActivityDate: '2026-10-04T11:00:00Z' }, 12, now), true);
   assert.strictEqual(orphanCleanup.recentEnough({ LastActivityDate: '2026-10-03T20:00:00Z' }, 12, now), false);
   assert.strictEqual(orphanCleanup.recentEnough({}, 12, now), false);
+  assert.strictEqual(orphanCleanup.mostRecentRemoteActivity({}), null);
   assert.strictEqual(orphanCleanup.graceHours('0'), 1);
   assert.strictEqual(orphanCleanup.graceHours('999'), 168);
 })();
@@ -90,9 +91,10 @@ function source(file) {
   assert(cleanup.includes("reason: 'active_entitlement_now'"), 'Deletion race check must re-read active entitlement ownership immediately before DELETE.');
   assert(cleanup.indexOf("reason: 'active_entitlement_now'") < cleanup.indexOf("method: 'DELETE'"), 'Active-entitlement guard must run before remote deletion.');
   assert(cleanup.includes("status = 'active_session'"));
+  assert(cleanup.includes("status = 'activity_unknown'"), 'Remote identities without a trustworthy activity timestamp must require operator review instead of automatic deletion.');
   assert(cleanup.includes("status = 'recent_activity'"));
   assert(cleanup.includes("const users = await registry.request(row.server_id, '/Users'"), 'Deletion race check must re-read the remote identity immediately before DELETE.');
-  assert(cleanup.includes("reason: 'administrator_now'") && cleanup.includes("reason: 'recent_activity_now'") && cleanup.includes("reason: 'identity_changed_now'"), 'Late admin/activity/identity changes must fail closed.');
+  assert(cleanup.includes("reason: 'administrator_now'") && cleanup.includes("reason: 'activity_unknown_now'") && cleanup.includes("reason: 'recent_activity_now'") && cleanup.includes("reason: 'identity_changed_now'"), 'Late admin/activity/identity changes and unknown activity age must fail closed.');
   assert(cleanup.includes("method: 'DELETE'"));
   assert(cleanup.includes('limit = 5') && cleanup.includes('deletionAttempts >= deletionLimit'), 'Automatic orphan deletion must be bounded so the critical 5-minute Stremio job cannot drain an unlimited backlog in one run.');
 
