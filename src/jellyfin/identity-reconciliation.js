@@ -10,6 +10,10 @@ function norm(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function stremioManagedUsername(value) {
+  return /^cf_stremio_[0-9a-f]{12}(?:\d{4})?$/i.test(String(value || '').trim());
+}
+
 function asId(value, label) {
   const id = String(value || '').trim();
   if (!id || id.length > 160) throw new Error(`A valid ${label} is required.`);
@@ -214,6 +218,12 @@ async function deleteRemoteIdentity({ serverId, jellyfinUserId, expectedName = n
   const { user: remote } = await userImport.getRemoteUser(asId(serverId, 'server ID'), asId(jellyfinUserId, 'media user ID'));
   if (expectedName && norm(remote.jellyfin_username) !== norm(expectedName)) throw new Error('The remote username changed. Refresh before deleting it.');
   if (remote.administrator) throw new Error('Administrator media identities cannot be deleted from reconciliation.');
+  if (stremioManagedUsername(remote.jellyfin_username)) {
+    const orphanCleanup = require('../stremio/orphan-account-cleanup');
+    if (await orphanCleanup.activeEntitlementOwnsUsername(remote.jellyfin_username)) {
+      throw new Error('This managed Stremio identity still belongs to an active entitlement and cannot be deleted.');
+    }
+  }
   await assertStillUnmanaged(serverId, remote);
   const sessions = await activeSessions(serverId, remote.jellyfin_user_id);
   if (sessions.length) throw new Error('This media identity has an active playback session and cannot be deleted yet.');
@@ -230,6 +240,10 @@ async function deleteRemoteIdentity({ serverId, jellyfinUserId, expectedName = n
 }
 
 async function linkRemoteIdentity({ customerId, serverId, jellyfinUserId, actorUserId = null }) {
+  const { user: remote } = await userImport.getRemoteUser(asId(serverId, 'server ID'), asId(jellyfinUserId, 'media user ID'));
+  if (stremioManagedUsername(remote.jellyfin_username)) {
+    throw new Error('Managed Stremio service identities cannot be linked as customer Jellyfin accounts.');
+  }
   const primary = await accessState.primaryJellyfin(customerId, { includeBlocked: true });
   if (primary.state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) {
     throw new Error('This customer is blocked from paid Jellyfin access. Remove the rogue remote identity instead of linking it.');
@@ -265,6 +279,9 @@ async function replaceManagedIdentity({ customerId, accountId, serverId, jellyfi
   }
   if (target.administrator || target.disabled) {
     throw new Error('The replacement media identity must be an enabled non-administrator user.');
+  }
+  if (stremioManagedUsername(target.jellyfin_username)) {
+    throw new Error('Managed Stremio service identities cannot become canonical customer Jellyfin accounts.');
   }
 
   const currentResult = await query(`
