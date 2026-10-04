@@ -76,6 +76,38 @@ async function selectServerForPlan(plan){
     .filter(server=>kind==='trial'?Boolean(server.trial_enabled):kind==='paid'?Boolean(server.paid_enabled):true);
   if(!available.length)return null;
 
+  // Crash recovery must stay on the server that already owns an in-flight
+  // creation/placement reservation. Otherwise a remote create that succeeded
+  // before local persistence could be retried on a different server and create
+  // a duplicate paid media identity.
+  let recoveryServer=await core.reservedServerForCustomer(plan?.customer_id||null,available,'primary');
+  if(!recoveryServer&&type==='emby'&&plan?.customer_id){
+    // Rolling-deploy compatibility: older Emby intents/leases predate
+    // access_lane. Because the candidate set is Emby-only, a lane-less
+    // reservation here is unambiguously the Emby primary lane.
+    const ids=available.map(server=>server.id);
+    const legacy=ids.length?await query(`
+      WITH reservations AS (
+        SELECT server_id,0 AS kind_rank,updated_at
+        FROM jellyfin_account_creation_intents
+        WHERE customer_id=$1 AND server_id=ANY($2::uuid[]) AND access_lane IS NULL
+        UNION ALL
+        SELECT server_id,1 AS kind_rank,updated_at
+        FROM jellyfin_server_placement_leases
+        WHERE customer_id=$1 AND server_id=ANY($2::uuid[])
+          AND access_lane IS NULL AND expires_at>NOW()
+      )
+      SELECT server_id
+      FROM reservations
+      ORDER BY kind_rank ASC,updated_at DESC
+      LIMIT 1
+    `,[plan.customer_id,ids]):{rows:[]};
+    const row=legacy.rows[0];
+    const server=row?available.find(candidate=>String(candidate.id)===String(row.server_id)):null;
+    if(server)recoveryServer={...server,requested_access_lane:'primary',placement_recovery:true};
+  }
+  if(recoveryServer)return recoveryServer;
+
   const candidates=await userCapacity.decorateServers(available);
   const ids=candidates.map(server=>server.id);
   const usage=ids.length?await query(`
