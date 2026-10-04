@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const registry = require('../jellyfin/registry');
+const managedEntitlements = require('./managed-entitlements');
 
 const INTERNAL_USER_RE = /^cf_stremio_[0-9a-f]{12}(?:\d{4})?$/i;
 const DEFAULT_GRACE_HOURS = 12;
@@ -31,8 +32,29 @@ function recentEnough(user, hours, now = new Date()) {
   return now.getTime() - last.getTime() < hours * 60 * 60 * 1000;
 }
 
+async function activeEntitledCustomers() {
+  const result = await query(`
+    WITH effective AS (
+      SELECT customer_id,access_expires_at,blocked FROM effective_stremio_entitlements
+      UNION ALL
+      SELECT customer_id,access_expires_at,blocked FROM effective_customer_addons
+    )
+    SELECT DISTINCT customer_id
+    FROM effective
+    WHERE blocked=FALSE AND access_expires_at>NOW()
+  `);
+  return result.rows;
+}
+
+async function activeEntitlementOwnsUsername(username) {
+  const wanted = norm(username);
+  if (!wanted || !INTERNAL_USER_RE.test(String(username || ''))) return false;
+  const rows = await activeEntitledCustomers();
+  return rows.some(row => norm(managedEntitlements.hiddenUsername(row.customer_id)) === wanted);
+}
+
 async function ownershipRows() {
-  const [accounts, intents] = await Promise.all([
+  const [accounts, intents, activeCustomers] = await Promise.all([
     query(`
       SELECT id,customer_id,server_id,jellyfin_user_id,jellyfin_username,account_purpose
       FROM jellyfin_accounts
@@ -40,9 +62,14 @@ async function ownershipRows() {
     query(`
       SELECT id,customer_id,server_id,username,remote_user_id,status,updated_at
       FROM jellyfin_account_creation_intents
-    `)
+    `),
+    activeEntitledCustomers()
   ]);
-  return { accounts: accounts.rows, intents: intents.rows };
+  return {
+    accounts: accounts.rows,
+    intents: intents.rows,
+    activeEntitledNames: new Set(activeCustomers.map(row => norm(managedEntitlements.hiddenUsername(row.customer_id))))
+  };
 }
 
 async function inventory({ now = new Date(), hours = graceHours() } = {}) {
@@ -94,12 +121,14 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
 
         const nameOwner = accountByName.get(name) || null;
         const intent = intentById.get(id) || intentByName.get(name) || null;
+        const entitled = ownership.activeEntitledNames.has(name);
         const active = activeUserIds.has(id);
         const recent = recentEnough(user, hours, now);
         let status = 'orphan_ready';
         if (user?.Policy?.IsAdministrator) status = 'protected_admin';
         else if (nameOwner) status = 'identity_drift';
         else if (intent) status = 'provisioning_in_flight';
+        else if (entitled) status = 'active_entitlement_unlinked';
         else if (active) status = 'active_session';
         else if (recent) status = 'recent_activity';
 
@@ -141,6 +170,13 @@ async function raceCheck(row, { now = new Date(), hours = graceHours() } = {}) {
     LIMIT 1
   `, [row.server_id, row.jellyfin_username, row.jellyfin_user_id]);
   if (intent.rowCount) return { safe: false, reason: 'intent_now' };
+
+  // Local mapping loss must never turn a currently-paid Stremio service user
+  // into an orphan merely because the bounded managed sweep has not reached
+  // that entitlement page yet.
+  if (await activeEntitlementOwnsUsername(row.jellyfin_username)) {
+    return { safe: false, reason: 'active_entitlement_now' };
+  }
 
   // Re-read the remote identity immediately before the destructive action.
   // A user that was renamed, promoted to administrator or became recently
@@ -251,6 +287,8 @@ module.exports = {
   graceHours,
   mostRecentRemoteActivity,
   recentEnough,
+  activeEntitledCustomers,
+  activeEntitlementOwnsUsername,
   inventory,
   raceCheck,
   remove,
