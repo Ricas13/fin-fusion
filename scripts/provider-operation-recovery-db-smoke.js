@@ -461,6 +461,36 @@ async function testOScheduledStripeMediaCapacityReservation() {
     assert(afterCancel.placement_lease_id,'O: cancelling the scheduled change must release its durable physical-capacity reservation');
 }
 
+async function testPUnadmittedRecoveryCannotChargePastCapacity() {
+    const tag=suffix(), c=await customer(`p-owner-${tag}`), blocker=await customer(`p-blocker-${tag}`);
+    const oldPlan=await plan(`recovery-p-old-${tag}`,'Admission old',1000);
+    const target=await plan(`recovery-p-target-${tag}`,'Admission target',2000);
+    const targetServer=await mediaServer(`admission-${tag}`,'London',1);
+    const providerId=`sub_recovery_p_${tag}`, targetPrice=`price_recovery_p_target_${tag}`;
+    const sub=await subscription(c.id,oldPlan.id,providerId);
+    targetMappings.set(targetPrice,{id:target.id,plan_price_id:null,provider_mapping_id:null,external_id:targetPrice,checkout_mode:'subscription',price_minor:2000,currency:'GBP'});
+    remote(providerId,`price_recovery_p_old_${tag}`);
+    const blockerLease=await provisioningHelpers.reservePlacement(blocker.id,targetServer);
+    assert(blockerLease.placement_lease_id,'P: fixture must occupy the final target-server place');
+
+    const op=await immediateOp({
+        customerId:c.id,
+        subscriptionId:sub.id,
+        targetPlanId:target.id,
+        targetPriceId:targetPrice,
+        key:`recovery-p-${tag}`,
+        targetMediaLocation:'London',
+        targetMediaServerId:targetServer.id
+    });
+    const before=providerMutationCount;
+    await forceDue(op.id);
+    const result=await recovery.run({limit:10});
+    const stored=await providerOps.get(op.id);
+    assert.strictEqual(providerMutationCount,before,'P: recovery must never mutate Stripe when the crashed operation never won capacity admission');
+    assert.notStrictEqual(stored.state,'provider_applied','P: unadmitted recovery must remain pre-provider when physical capacity is no longer available');
+    assert(result.failed>0||result.retryable>0||result.manual>0,'P: lost capacity must remain visible/retryable instead of being silently treated as success');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -476,6 +506,7 @@ async function main() {
     await testMHistoricalDuplicateIdentityRemainsReconcileable();
     await testNOrphanedIncidentMetadataCustomer();
     await testOScheduledStripeMediaCapacityReservation();
+    await testPUnadmittedRecoveryCannotChargePastCapacity();
     console.log('provider operation recovery DB smoke: A-O ok');
 }
 
