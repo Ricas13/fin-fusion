@@ -265,8 +265,23 @@ async function reservePlacement(customerId, server, { allowOverCapacity = false 
           AND capacity_subscription.current_period_end>NOW()
       ) yes`, [customerId, server.id, accessLane]);
       if (ownCapacity.rows[0]?.yes !== true) {
+        const ownImmediateReservation = accessLane === 'primary'
+          ? await db.query(`SELECT 1
+              FROM provider_operations capacity_operation
+              WHERE capacity_operation.owner_id=$1
+                AND capacity_operation.provider='stripe'
+                AND capacity_operation.scope='customer'
+                AND capacity_operation.operation_type='plan_change_immediate'
+                AND capacity_operation.state IN('planned','provider_applied','local_applied')
+                AND COALESCE(capacity_operation.failure_kind,'') NOT IN('terminal','superseded')
+                AND COALESCE(capacity_operation.provider_result->>'capacityReserved','false')='true'
+                AND capacity_operation.request_snapshot->>'targetMediaServerId'=$2::text
+              LIMIT 1`, [customerId, server.id])
+          : { rowCount: 0 };
         const counts = await userCapacity.countsForServers([server.id], (sql, params) => db.query(sql, params));
-        const used = Number(counts.get(String(server.id)) || 0);
+        const used = Math.max(0,
+          Number(counts.get(String(server.id)) || 0) - (ownImmediateReservation.rowCount ? 1 : 0)
+        );
         const maxUsers = Number(locked.rows[0].max_users || 0);
         if (maxUsers > 0 && used >= maxUsers) {
           const error = new Error('Selected Jellyfin server became full before account creation. Provisioning will retry on another available server.');
