@@ -4,12 +4,15 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const choice = require('../src/jellyfin/customer-server-choice');
+const userCapacity = require('../src/jellyfin/user-capacity');
+const serviceAdminControl = require('../src/entitlements/service-admin-control');
 
 (async () => {
   const suffix = crypto.randomBytes(5).toString('hex');
   const planIds = [];
   const customerIds = [];
   let serverId = null;
+  let pinnedServerId = null;
   const clients = [];
 
   try {
@@ -112,6 +115,44 @@ const choice = require('../src/jellyfin/customer-server-choice');
     assert.strictEqual(occupancy.capacity_users, 1, 'physical capacity must record exactly one reserved customer');
     assert.strictEqual(occupancy.full, true, 'max-users=1 server must be full after the winning reservation');
 
+    const pinnedServer = await query(`
+      INSERT INTO jellyfin_servers(
+        name,slug,server_class,media_server_type,base_url,public_url,location,
+        api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,
+        priority,max_users,health_status,last_health_check,placement_mode
+      ) VALUES($1,$2,'custom','jellyfin','https://pinned.invalid','https://pinned.invalid',
+        'London','key',TRUE,TRUE,TRUE,TRUE,1,20,'healthy',NOW(),'active')
+      RETURNING id
+    `, [`Pinned capacity ${suffix}`, `pinned-capacity-${suffix}`]);
+    pinnedServerId = pinnedServer.rows[0].id;
+
+    const pinnedCustomer = await makeCustomer('pinned');
+    const pinnedSubscription = await query(`
+      INSERT INTO subscriptions(
+        customer_id,plan_id,status,source,starts_at,current_period_end,media_server_id
+      ) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days',$3)
+      RETURNING id
+    `, [pinnedCustomer, planA.id, serverId]);
+    assert.strictEqual(pinnedSubscription.rowCount, 1);
+
+    const oldBeforePin = await userCapacity.serverState(serverId);
+    const targetBeforePin = await userCapacity.serverState(pinnedServerId);
+    await serviceAdminControl.pinServer(pinnedCustomer, pinnedServerId, {
+      reason: 'capacity assignment smoke'
+    });
+    const oldAfterPin = await userCapacity.serverState(serverId);
+    const targetAfterPin = await userCapacity.serverState(pinnedServerId);
+    assert.strictEqual(
+      Number(oldAfterPin.capacity_users),
+      Number(oldBeforePin.capacity_users) - 1,
+      'admin pin must release the stale subscription-server capacity reservation'
+    );
+    assert.strictEqual(
+      Number(targetAfterPin.capacity_users),
+      Number(targetBeforePin.capacity_users) + 1,
+      'admin pin must reserve physical capacity on the effective pinned server'
+    );
+
     console.log('customer media location cross-plan concurrency DB smoke: ok');
   } finally {
     for (const client of clients.splice(0)) {
@@ -127,6 +168,7 @@ const choice = require('../src/jellyfin/customer-server-choice');
       await query('DELETE FROM plan_server_eligibility WHERE plan_id=ANY($1::uuid[])', [planIds]).catch(() => {});
       await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [planIds]).catch(() => {});
     }
+    if (pinnedServerId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [pinnedServerId]).catch(() => {});
     if (serverId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
     await getPool().end();
   }
