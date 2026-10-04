@@ -14,13 +14,16 @@ const legacyGrace = require('../src/entitlements/jellyfin-inactivity-grace');
 const inactivitySource = read('src/automation/customer-inactivity.js');
 const freeBackfillSource = read('src/automation/free-capacity-backfill.js');
 assert(
-    inactivitySource.includes('s.media_server_id') &&
-    inactivitySource.includes('(fa.media_server_id IS NULL OR ja.server_id=fa.media_server_id)'),
-    'Free inactivity must assess and remove only the persisted assigned Free media server when one exists'
+    inactivitySource.includes("admin_ctl.mode='admin_server_pin'") &&
+    inactivitySource.includes('fa.media_server_id') &&
+    inactivitySource.includes('ja.server_id=COALESCE('),
+    'Free inactivity must assess the effective admin-pinned server first, otherwise the persisted assigned Free server'
 );
 assert(
-    freeBackfillSource.includes('(s.media_server_id IS NULL OR ja.server_id=s.media_server_id)'),
-    'Free capacity backfill must treat only the persisted assigned Free server as a ready account when assignment exists'
+    freeBackfillSource.includes("admin_ctl.mode='admin_server_pin'") &&
+    freeBackfillSource.includes('s.media_server_id') &&
+    freeBackfillSource.includes('ja.server_id=COALESCE('),
+    'Free capacity backfill must treat the effective admin-pinned/persisted Free server as the ready account'
 );
 
 const policy = {
