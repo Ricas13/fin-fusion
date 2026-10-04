@@ -68,7 +68,7 @@ async function availableServers(plan, { db = query } = {}) {
   return decorated.filter(server => server.full !== true);
 }
 
-async function choicesForPlan(plan, { db = query, resolveTestHost = outbound.resolveHost } = {}) {
+async function choicesForPlan(plan, { db = query, resolveTestHost = outbound.resolveHost, includeTestUrls = true } = {}) {
   const provider = mediaServerType(plan);
   if (!provider) return [];
   const servers = await availableServers(plan, { db });
@@ -84,7 +84,7 @@ async function choicesForPlan(plan, { db = query, resolveTestHost = outbound.res
     group.servers.push(server);
     if (server.remaining_users == null) group.unlimited = true;
     else group.remaining += Math.max(0, Number(server.remaining_users || 0));
-    if (!group.testUrl) group.testUrl = await safeTestUrl(server, { resolveHost: resolveTestHost });
+    if (includeTestUrls && !group.testUrl) group.testUrl = await safeTestUrl(server, { resolveHost: resolveTestHost });
   }
   return Array.from(groups.values())
     .map(group => ({
@@ -148,7 +148,7 @@ async function selectServerForLocationLocked(plan, requested, { db = query, requ
 
 async function resolveAcquisitionLocation(plan, requested, { db = query, requireSelection = true } = {}) {
   if (!mediaServerType(plan)) return null;
-  const choices = await choicesForPlan(plan, { db });
+  const choices = await choicesForPlan(plan, { db, includeTestUrls: false });
   if (!choices.length) {
     const error = new Error(`No eligible ${mediaProvider.label(mediaServerType(plan))} server is currently available for this plan.`);
     error.code = 'MEDIA_LOCATION_UNAVAILABLE';
