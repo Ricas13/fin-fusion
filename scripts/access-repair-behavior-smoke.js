@@ -213,6 +213,82 @@ function accessState({ free = [], primary = [] } = {}) {
   }
 
   {
+    let rollbacks = 0;
+    let reconciles = 0;
+    const ambiguous = {
+      state: STATES.INCONSISTENT_UNPAID,
+      entitlement: { subscription_id: 'free-legacy-ambiguous' },
+      accounts: [{ id: 'free-a', server_id: 'server-a' }, { id: 'free-b', server_id: 'server-b' }]
+    };
+    const repair = createAccessRepair({
+      customerAccessState: accessState({ free: [ambiguous] }),
+      provisioning: { reconcileCustomer: async () => { reconciles += 1; } },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'free-legacy-ambiguous');
+    assert.strictEqual(result.status, 'protected');
+    assert.strictEqual(result.reason, 'ambiguous_legacy_assignment');
+    assert.strictEqual(reconciles, 0, 'ambiguous legacy Free access must require repair instead of guessing a server');
+    assert.strictEqual(rollbacks, 0, 'ambiguous legacy Free access must never be cancelled automatically');
+  }
+
+  {
+    let rollbacks = 0;
+    const unavailable = {
+      state: STATES.INCONSISTENT_UNPAID,
+      entitlement: { subscription_id: 'free-assigned-unavailable', media_server_id: 'server-assigned' },
+      accounts: [{ id: 'free-assigned', server_id: 'server-assigned', disabled: false, server_enabled: false }]
+    };
+    const repair = createAccessRepair({
+      customerAccessState: accessState({ free: [unavailable, unavailable] }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('assigned server unavailable'); } },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'free-assigned-unavailable');
+    assert.strictEqual(result.status, 'protected');
+    assert.strictEqual(result.reason, 'assigned_server_account_unavailable');
+    assert.strictEqual(rollbacks, 0, 'an outage on the persisted Free server must not cancel an existing Free entitlement');
+  }
+
+  {
+    let trialRollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'trial-ambiguous', billing_interval: 'trial', service_type: 'jellyfin' },
+          accounts: [{ id: 'trial-a', server_id: 'server-a' }, { id: 'trial-b', server_id: 'server-b' }]
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { trialRollbacks += 1; } })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.strictEqual(result.status, 'protected');
+    assert.strictEqual(result.reason, 'ambiguous_legacy_assignment');
+    assert.strictEqual(trialRollbacks, 0, 'ambiguous legacy trials must require repair instead of destructive rollback');
+  }
+
+  {
+    let trialRollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'trial-assigned', billing_interval: 'trial', service_type: 'jellyfin', media_server_id: 'server-assigned' },
+          accounts: [{ id: 'trial-existing', server_id: 'server-assigned', server_enabled: false }]
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { trialRollbacks += 1; } })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.strictEqual(result.status, 'protected');
+    assert.strictEqual(result.reason, 'assigned_server_account_unavailable');
+    assert.strictEqual(trialRollbacks, 0, 'an existing trial must not be cancelled merely because its assigned server is temporarily unavailable');
+  }
+
+  {
     let trialRollbacks = 0;
     const repair = createAccessRepair({
       customerAccessState: accessState({
