@@ -53,6 +53,7 @@ async function managedAccounts() {
            js.name AS server_name,COALESCE(js.media_server_type,'jellyfin') AS service_type
     FROM jellyfin_accounts ja
     JOIN jellyfin_servers js ON js.id=ja.server_id
+    WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
     ORDER BY ja.customer_id,ja.server_id,ja.created_at
   `);
   return result.rows;
@@ -62,6 +63,7 @@ async function recoveryIndex() {
   const result = await query(`
     SELECT customer_id,service_type,access_lane,preferred_username,last_remote_user_id,last_server_id,removal_history
     FROM customer_media_access_recovery
+    WHERE service_type='jellyfin'
   `);
   const byRemote = new Map();
   const byName = new Map();
@@ -127,12 +129,22 @@ function classificationFor({ remote, candidates, existingAccounts, access }) {
 }
 
 async function discover() {
-  const [remoteDiscovery, customers, accounts, recovery] = await Promise.all([
-    userImport.discover(),
+  // This repair engine applies Jellyfin canonical access and Jellyfin policy.
+  // Do not enumerate Emby identities until an Emby-specific ownership/policy
+  // reconciliation path exists.
+  const jellyfinServers = (await registry.listServers({ enabledOnly: true }))
+    .filter(server => String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin');
+  const [remoteParts, customers, accounts, recovery] = await Promise.all([
+    Promise.all(jellyfinServers.map(server => userImport.discover({ serverId: server.id }))),
     customerIndex(),
     managedAccounts(),
     recoveryIndex()
   ]);
+  const remoteDiscovery = {
+    servers: jellyfinServers,
+    rows: remoteParts.flatMap(part => part.rows || []),
+    failures: remoteParts.flatMap(part => part.failures || [])
+  };
   const byCustomer = new Map();
   for (const account of accounts) {
     if (!byCustomer.has(account.customer_id)) byCustomer.set(account.customer_id, []);
