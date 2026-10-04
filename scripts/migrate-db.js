@@ -161,15 +161,41 @@ async function adoptBaseline(pool, filename, checksum) {
     console.log(`adopt ${filename}`);
 }
 
-async function applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall) {
+async function ensureCompatibilityMigrationLedger(pool) {
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_compatibility_migrations (
+        filename TEXT PRIMARY KEY,
+        checksum TEXT NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+}
+
+async function applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall, checksum = migrationChecksum(sql)) {
+    await ensureCompatibilityMigrationLedger(pool);
+    const existing = await pool.query(
+        'SELECT checksum FROM public.schema_compatibility_migrations WHERE filename=$1',
+        [filename]
+    );
+    if (existing.rows[0]?.checksum === checksum) {
+        console.log(`compatibility skip ${filename}`);
+        return { applied: false, skipped: true };
+    }
+
+    const client = await pool.connect();
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         await client.query("SELECT pg_catalog.set_config('search_path','public',false)");
         await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
         await client.query(unwrapTransaction(sql));
+        await client.query(`
+            INSERT INTO public.schema_compatibility_migrations(filename,checksum,applied_at)
+            VALUES($1,$2,NOW())
+            ON CONFLICT(filename) DO UPDATE
+            SET checksum=EXCLUDED.checksum,applied_at=NOW()
+        `, [filename, checksum]);
         await client.query('COMMIT');
         console.log(`compatibility applied ${filename}`);
+        return { applied: true, skipped: false };
     } catch (err) {
         try { await client.query('ROLLBACK'); } catch (_) {}
         throw err;
@@ -244,7 +270,7 @@ async function runMigrations({ argv = process.argv.slice(2), pool = getPool(), c
             const checksum = migrationChecksum(sql);
 
             if (compatibilityMigrations.isRepeatableCompatibilityMigration(filename)) {
-                await applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall);
+                await applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall, checksum);
                 continue;
             }
 
@@ -295,6 +321,7 @@ module.exports = {
     parseArguments,
     databaseShape,
     verifyOrBaselineAppliedMigration,
+    ensureCompatibilityMigrationLedger,
     applyRepeatableCompatibilityMigration,
     runMigrations
 };
