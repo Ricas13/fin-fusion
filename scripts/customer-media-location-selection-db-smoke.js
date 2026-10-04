@@ -13,6 +13,7 @@ const serviceAdminControl = require('../src/entitlements/service-admin-control')
   const customerIds = [];
   let serverId = null;
   let pinnedServerId = null;
+  let laneServerId = null;
   const clients = [];
 
   try {
@@ -153,6 +154,40 @@ const serviceAdminControl = require('../src/entitlements/service-admin-control')
       'admin pin must reserve physical capacity on the effective pinned server'
     );
 
+    const laneServer = await query(`
+      INSERT INTO jellyfin_servers(
+        name,slug,server_class,media_server_type,base_url,public_url,location,
+        api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,
+        priority,max_users,health_status,last_health_check,placement_mode
+      ) VALUES($1,$2,'custom','jellyfin','https://lanes.invalid','https://lanes.invalid',
+        'London','key',TRUE,TRUE,TRUE,TRUE,1,10,'healthy',NOW(),'active')
+      RETURNING id
+    `, [`Lane capacity ${suffix}`, `lane-capacity-${suffix}`]);
+    laneServerId = laneServer.rows[0].id;
+    const laneCustomer = await makeCustomer('parallel-lanes');
+    await query(`
+      INSERT INTO jellyfin_accounts(
+        customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,access_lane
+      ) VALUES
+        ($1,$2,$3,$4,FALSE,FALSE,'primary'),
+        ($1,$2,$5,$6,FALSE,FALSE,'free')
+    `, [
+      laneCustomer, laneServerId,
+      `lane-primary-${suffix}`, `lane-primary-${suffix}`,
+      `lane-free-${suffix}`, `lane-free-${suffix}`
+    ]);
+    await query(`
+      INSERT INTO subscriptions(
+        customer_id,plan_id,status,source,starts_at,current_period_end,media_server_id
+      ) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days',$3)
+    `, [laneCustomer, planA.id, laneServerId]);
+    const laneOccupancy = await userCapacity.serverState(laneServerId);
+    assert.strictEqual(
+      Number(laneOccupancy.capacity_users),
+      2,
+      'parallel paid-primary and Free remote accounts on one physical server must consume two slots while the primary subscription deduplicates with its account'
+    );
+
     console.log('customer media location cross-plan concurrency DB smoke: ok');
   } finally {
     for (const client of clients.splice(0)) {
@@ -168,6 +203,7 @@ const serviceAdminControl = require('../src/entitlements/service-admin-control')
       await query('DELETE FROM plan_server_eligibility WHERE plan_id=ANY($1::uuid[])', [planIds]).catch(() => {});
       await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [planIds]).catch(() => {});
     }
+    if (laneServerId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [laneServerId]).catch(() => {});
     if (pinnedServerId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [pinnedServerId]).catch(() => {});
     if (serverId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
     await getPool().end();
