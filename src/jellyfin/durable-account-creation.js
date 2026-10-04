@@ -147,7 +147,7 @@ async function inferUnambiguousLiveLane(customerId) {
   return hasFree ? 'free' : 'primary';
 }
 
-async function ensureIntentLane(intent, customerId, accessLane) {
+async function ensureIntentLane(intent, customerId, accessLane, mediaType = 'jellyfin') {
   if (!intent) return intent;
   const stored = String(intent.access_lane || '').trim();
   if (stored) {
@@ -158,6 +158,12 @@ async function ensureIntentLane(intent, customerId, accessLane) {
     }
     return intent;
   }
+  const provider = String(mediaType || 'jellyfin').toLowerCase();
+  if (provider === 'emby' && accessLane === 'primary') {
+    // Emby has only the primary account lane. A lane-less intent created by an
+    // N-1 application on an Emby server is therefore unambiguous.
+    return setIntent(intent.id, { accessLane });
+  }
   const inferred = await inferUnambiguousLiveLane(customerId);
   if (inferred !== accessLane) {
     const error = new Error('A legacy in-flight Jellyfin account creation has ambiguous access-lane ownership. Automatic reconciliation will not guess which entitlement owns it.');
@@ -167,9 +173,9 @@ async function ensureIntentLane(intent, customerId, accessLane) {
   return setIntent(intent.id, { accessLane });
 }
 
-async function prepareIntent(customerId, serverId, preferred, requireExactUsername, accessLane = 'primary') {
+async function prepareIntent(customerId, serverId, preferred, requireExactUsername, accessLane = 'primary', mediaType = 'jellyfin') {
   let existing = await loadIntent(customerId, serverId);
-  if (existing) return ensureIntentLane(existing, customerId, accessLane);
+  if (existing) return ensureIntentLane(existing, customerId, accessLane, mediaType);
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const { names } = await takenNames(serverId);
@@ -188,7 +194,7 @@ async function prepareIntent(customerId, serverId, preferred, requireExactUserna
       `, [customerId, serverId, username, Boolean(requireExactUsername), accessLane]);
       if (inserted.rowCount) return inserted.rows[0];
       existing = await loadIntent(customerId, serverId);
-      if (existing) return ensureIntentLane(existing, customerId, accessLane);
+      if (existing) return ensureIntentLane(existing, customerId, accessLane, mediaType);
     } catch (error) {
       if (String(error?.code || '') !== '23505') throw error;
       if (requireExactUsername) {
@@ -297,7 +303,8 @@ async function rollbackUnsafeRemote(intent, customerId, created, stage, original
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
   const accessLane = options.accessLane === 'free' ? 'free' : 'primary';
   const preferred = String(options.preferredUsername || await preferredUsername(customerId)).slice(0, 40);
-  let intent = await prepareIntent(customerId, server.id, preferred, Boolean(options.requireExactUsername), accessLane);
+  const mediaType = String(server?.media_server_type || 'jellyfin').toLowerCase();
+  let intent = await prepareIntent(customerId, server.id, preferred, Boolean(options.requireExactUsername), accessLane, mediaType);
   let created = await recoverIntent(intent);
 
   if (!created) {
