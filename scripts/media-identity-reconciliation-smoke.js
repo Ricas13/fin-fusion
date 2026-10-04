@@ -83,6 +83,8 @@ function source(file) {
   const reconcile = source('src/jellyfin/identity-reconciliation.js');
   assert(reconcile.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Identity reconciliation must not offer Jellyfin-specific repair actions for Emby servers.');
   assert(reconcile.includes("WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'") && reconcile.includes("WHERE service_type='jellyfin'"), 'Candidate ownership and recovery evidence must stay provider-scoped.');
+  assert(reconcile.includes("access?.free_state === accessState.ACCESS_STATES.ACTIVE_BLOCKED"), 'Blocked Free access must classify an unmanaged remote identity as an access leak.');
+  assert(reconcile.includes("return 'free_access_repair'"), 'Missing Free access must not be offered the paid/primary link workflow.');
   assert(reconcile.includes('ACTIVE_BLOCKED'));
   assert(reconcile.includes('media.identity.canonical_policy_failed'));
   assert(reconcile.includes('ownershipPreserved: true'));
@@ -95,6 +97,7 @@ function source(file) {
   const page = source('src/platform/admin-media-identity-reconciliation.js');
   assert(page.includes('/admin/servers/identity-reconciliation'));
   assert(page.includes('Compare live Jellyfin identities') && !page.includes('Jellyfin/Emby identities'), 'Admin copy must not imply unsupported Emby identity repair.');
+  assert(page.includes('Free access needs repair') && page.includes('not linked as a paid/primary account'), 'Admin UI must keep Free repair separate from the primary-link action.');
   assert(page.includes('Confirm remote deletion'));
   assert(page.includes('Use this identity instead'));
   assert(page.includes('Invalid security token'));
