@@ -304,6 +304,29 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onA
                 if (typeof onAutoDowngradeError === 'function') onAutoDowngradeError(customerId, error);
             }
         }
+        // Expiry can race a remote media account create that has not yet
+        // persisted its local account row. Clean those durable intents
+        // immediately so expired access cannot survive until the stale-worker
+        // threshold. A successful Free downgrade is safe: lane-aware intent
+        // ownership preserves the new Free entitlement while retiring the old
+        // primary/Emby authority.
+        try {
+            const cleanup = await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId);
+            if (Number(cleanup?.failed || 0) > 0) {
+                failed += 1;
+                console.warn('Subscription expiry media creation-intent cleanup incomplete.', {
+                    customerId,
+                    failed: Number(cleanup.failed || 0),
+                    warning: cleanup.warning || null
+                });
+            }
+        } catch (error) {
+            failed += 1;
+            console.warn('Subscription expiry media creation-intent cleanup deferred.', {
+                customerId,
+                error: String(error?.message || error).slice(0, 500)
+            });
+        }
         if (downgraded) continue;
         try { await reconcileCustomer(customerId); }
         catch (error) {
