@@ -46,7 +46,8 @@ async function ownershipRows() {
 }
 
 async function inventory({ now = new Date(), hours = graceHours() } = {}) {
-  const servers = await registry.listServers({ enabledOnly: true });
+  const servers = (await registry.listServers({ enabledOnly: true }))
+    .filter(server => String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin');
   const ownership = await ownershipRows();
   const rows = [];
   const failures = [];
