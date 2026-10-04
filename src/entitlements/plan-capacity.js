@@ -444,6 +444,21 @@ async function assertAvailable(planId,{db=query,label='This plan',excludeReserva
   return state;
 }
 
+async function lockAndAssertLogicalMedia(client,planId,label='This plan'){
+  const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params));
+  if(capacityModel(plan)!=='fleet_users')return lockAndAssert(client,planId,label);
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,['fleet-users']);
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[`fleet-users:${serverClass(plan)||'unclassified'}`]);
+  const state=await logicalMediaPlanUsage(plan,(sql,params)=>client.query(sql,params));
+  if(state.soldOut){
+    const error=new Error(`${label} is currently sold out.`);
+    error.code='PLAN_CAPACITY_EXHAUSTED';
+    error.planId=String(planId);
+    throw error;
+  }
+  return state;
+}
+
 async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
   const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?'fleet-users':`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
@@ -660,4 +675,4 @@ function acquisitionSql(alias='p'){
   const planLimitAvailable=mediaPlanLimitAvailableSql(alias);return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${planLimitAvailable}))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql,managedMediaLimit,logicalMediaPlanUsage};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,lockAndAssertLogicalMedia,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql,managedMediaLimit,logicalMediaPlanUsage};
