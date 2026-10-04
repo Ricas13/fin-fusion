@@ -20,6 +20,75 @@ ALTER TABLE customer_plan_changes
   ADD COLUMN IF NOT EXISTS target_media_location varchar(100),
   ADD COLUMN IF NOT EXISTS target_media_server_id uuid;
 
+-- Capacity ownership is lane-scoped. A customer may legitimately have a
+-- primary paid Jellyfin identity and a parallel Free identity on the same
+-- physical server, so in-flight creation/placement state must retain which
+-- account lane it is reserving. Existing rows stay nullable and are only
+-- backfilled when the live entitlement lane is unambiguous.
+ALTER TABLE IF EXISTS jellyfin_account_creation_intents
+  ADD COLUMN IF NOT EXISTS access_lane varchar(16);
+
+ALTER TABLE IF EXISTS jellyfin_server_placement_leases
+  ADD COLUMN IF NOT EXISTS access_lane varchar(16);
+
+WITH live_lane_truth AS (
+  SELECT s.customer_id,
+         BOOL_OR(
+           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+           AND COALESCE(p.is_free_tier,FALSE)=TRUE
+         ) AS has_free,
+         BOOL_OR(
+           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+           AND COALESCE(p.is_free_tier,FALSE)=FALSE
+         ) AS has_primary
+  FROM subscriptions s
+  JOIN plans p ON p.id=s.plan_id
+  WHERE s.superseded_by IS NULL
+    AND s.starts_at<=NOW()
+    AND s.status IN('active','trialing','past_due','paused')
+    AND s.current_period_end>NOW()
+  GROUP BY s.customer_id
+)
+UPDATE jellyfin_account_creation_intents intent
+SET access_lane=CASE
+      WHEN truth.has_free AND NOT truth.has_primary THEN 'free'
+      WHEN truth.has_primary AND NOT truth.has_free THEN 'primary'
+      ELSE intent.access_lane
+    END
+FROM live_lane_truth truth
+WHERE truth.customer_id=intent.customer_id
+  AND intent.access_lane IS NULL
+  AND truth.has_free IS DISTINCT FROM truth.has_primary;
+
+WITH live_lane_truth AS (
+  SELECT s.customer_id,
+         BOOL_OR(
+           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+           AND COALESCE(p.is_free_tier,FALSE)=TRUE
+         ) AS has_free,
+         BOOL_OR(
+           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+           AND COALESCE(p.is_free_tier,FALSE)=FALSE
+         ) AS has_primary
+  FROM subscriptions s
+  JOIN plans p ON p.id=s.plan_id
+  WHERE s.superseded_by IS NULL
+    AND s.starts_at<=NOW()
+    AND s.status IN('active','trialing','past_due','paused')
+    AND s.current_period_end>NOW()
+  GROUP BY s.customer_id
+)
+UPDATE jellyfin_server_placement_leases lease
+SET access_lane=CASE
+      WHEN truth.has_free AND NOT truth.has_primary THEN 'free'
+      WHEN truth.has_primary AND NOT truth.has_free THEN 'primary'
+      ELSE lease.access_lane
+    END
+FROM live_lane_truth truth
+WHERE truth.customer_id=lease.customer_id
+  AND lease.access_lane IS NULL
+  AND truth.has_free IS DISTINCT FROM truth.has_primary;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
