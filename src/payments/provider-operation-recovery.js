@@ -174,14 +174,17 @@ async function recoverImmediate(op) {
   const subscription = (await query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2', [subscriptionId,op.owner_id])).rows[0];
   if (!subscription) throw manual('Plan-change subscription no longer exists.');
   const { target, mapping } = await loadTarget(request);
-  op = await ensureImmediateAdmission(op, subscription, target);
-  request = op.request_snapshot || request;
   const client = await stripeClient();
   let remote = await client.subscriptions.retrieve(subscription.provider_subscription_id, { expand:['items.data.price'] });
   let observedPrice = stripePriceId(remote);
   await providerOps.observed(op.id, { result:{observedPrice,status:remote.status||null} });
   if (observedPrice !== request.targetPriceId) {
     if (['provider_applied','local_applied'].includes(op.state)) throw manual('Stripe no longer reflects the already-applied target price; refusing to overwrite a later provider decision.');
+    // Provider has not changed yet. Re-win logical/physical admission before
+    // making any billable mutation after a crash that occurred before the
+    // original capacity reservation was durably recorded.
+    op = await ensureImmediateAdmission(op, subscription, target);
+    request = op.request_snapshot || request;
     const item = remote.items?.data?.[0];
     if (!item?.id) throw manual('Stripe subscription has no editable item.');
     remote = await client.subscriptions.update(subscription.provider_subscription_id, {
@@ -192,7 +195,19 @@ async function recoverImmediate(op) {
     observedPrice = stripePriceId(remote);
     if (observedPrice !== request.targetPriceId) throw manual('Stripe accepted recovery but did not expose the intended target price.');
   }
-  if (op.state === 'planned') await providerOps.providerApplied(op.id, { providerReference:remote.id, result:{priceId:observedPrice,status:remote.status||null,recovered:true} });
+  if (op.state === 'planned') {
+    const alreadyBilledDifferentPlan = observedPrice === request.targetPriceId
+      && String(subscription.plan_id) !== String(target.id);
+    await providerOps.providerApplied(op.id, {
+      providerReference:remote.id,
+      result:{
+        priceId:observedPrice,
+        status:remote.status||null,
+        recovered:true,
+        ...(alreadyBilledDifferentPlan ? { capacityReserved:true } : {})
+      }
+    });
+  }
   if (op.state !== 'local_applied') await finishImmediateLocal(op, subscription, target, mapping);
   const synced = await billingControl.syncSubscription(subscription.id, { expectedProviderPriceId:request.targetPriceId });
   if (!synced.ok) throw new Error(`Recovered local plan change but provider verification is still failing: ${synced.error}`);
