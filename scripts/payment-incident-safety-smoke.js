@@ -109,6 +109,11 @@ function main() {
     if (!incidentSource.includes('async function reconcileSuspendedAccessStrict') || !incidentSource.includes("require('../automation/jellyfin-creation-intent-recovery')") || !incidentSource.includes('PAYMENT_RISK_ACCESS_SUSPENSION_INCOMPLETE')) {
         throw new Error('Payment-risk suspension must remain retryable until persisted and remote-only media access is actually removed.');
     }
+    if (!incidentSource.includes('Always attempt durable creation-intent cleanup even when broader')
+        || !incidentSource.includes('customerFailures.push(`access reconciliation:')
+        || !incidentSource.includes('customerFailures.push(`creation-intent cleanup:')) {
+        throw new Error('Payment-risk suspension must attempt creation-intent cleanup even when broader customer reconciliation fails.');
+    }
 
     // Stripe webhook delivery is not guaranteed to arrive in lifecycle order.
     // Current verified provider state is authoritative over a historical event:
