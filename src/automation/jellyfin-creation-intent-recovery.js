@@ -42,15 +42,19 @@ async function entitlementStillOwnsJellyfin(customerId, { client = null } = {}) 
     // never keep an account/intention alive after the underlying entitlement ends.
     const adminOwns = admin?.mode === 'admin_present';
     const adminRemoved = admin?.mode === 'admin_removed';
-    const primaryOwns = Boolean(primary && primary.admin_jellyfin_removed !== true);
-    const freeOwns = Boolean(free && free.admin_jellyfin_removed !== true);
-    const embyOwns = Boolean(emby);
+    const primaryOwns = entitlementOwnsLane(primary);
+    const freeOwns = entitlementOwnsLane(free);
+    const embyOwns = entitlementOwnsLane(emby);
     const jellyfinOwns = adminOwns || (!adminRemoved && (primaryOwns || freeOwns));
     return { owns: jellyfinOwns || embyOwns, jellyfinOwns, embyOwns, primary, free, emby, admin };
 }
 
 function entitlementOwnsLane(row) {
-    return Boolean(row && row.admin_jellyfin_removed !== true);
+    return Boolean(
+        row
+        && row.blocked !== true
+        && row.admin_jellyfin_removed !== true
+    );
 }
 
 function intentServerStillOwned(intent, authority) {
