@@ -44,12 +44,30 @@ async function entitlementStillOwnsJellyfin(customerId, { client = null } = {}) 
     return { owns: adminOwns || (!adminRemoved && (primaryOwns || freeOwns)), primary, free, admin };
 }
 
+function intentServerStillOwned(intent, authority) {
+    if (!authority?.owns) return false;
+    const serverId = String(intent?.server_id || '');
+    if (!serverId) return false;
+    if (authority.admin?.mode === 'admin_present') return true;
+    if (authority.admin?.mode === 'admin_server_pin') {
+        return String(authority.admin.server_id || '') === serverId;
+    }
+    if (authority.admin?.mode === 'admin_removed') return false;
+    const entitlements = [authority.primary, authority.free]
+        .filter(row => row && row.admin_jellyfin_removed !== true);
+    if (!entitlements.length) return false;
+    // A legacy entitlement without a persisted assignment cannot safely prove
+    // that this intent is stale, so preserve the old conservative behaviour.
+    if (entitlements.some(row => !row.media_server_id)) return true;
+    return entitlements.some(row => String(row.media_server_id) === serverId);
+}
+
 async function removeAbandonedIntent(intent) {
     // Cheap preflight avoids taking a customer lock when authority has already
     // been restored. It is NOT the destructive decision: that is repeated while
     // holding the customer row lock below.
     const current = await entitlementStillOwnsJellyfin(intent.customer_id);
-    if (current.owns) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
+    if (intentServerStillOwned(intent, current)) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
 
     let discoveredRemoteUserId = intent.remote_user_id || null;
     if (!discoveredRemoteUserId && ['attempting', 'uncertain'].includes(String(intent.status))) {
@@ -70,7 +88,7 @@ async function removeAbandonedIntent(intent) {
 
         if (customer.rowCount) {
             const authoritative = await entitlementStillOwnsJellyfin(intent.customer_id, { client });
-            if (authoritative.owns) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
+            if (intentServerStillOwned(liveIntent, authoritative)) return { action: 'preserved', reason: 'entitlement_or_admin_authority_restored' };
         }
 
         let remoteUserId = liveIntent.remote_user_id || discoveredRemoteUserId || null;
@@ -112,7 +130,7 @@ async function recoverOne(intent) {
     // already-created remote account. That path is idempotent and retains the
     // durable intent until local persistence succeeds.
     const entitlement = await entitlementStillOwnsJellyfin(intent.customer_id);
-    if (entitlement.owns) {
+    if (intentServerStillOwned(intent, entitlement)) {
         await provisioning.reconcileCustomer(intent.customer_id);
         const remaining = await durableCreation.loadIntent(intent.customer_id, intent.server_id);
         return { action: remaining ? 'retry_pending' : 'adopted', remaining: Boolean(remaining) };
@@ -146,4 +164,4 @@ async function run({ limit = 25 } = {}) {
     return summary;
 }
 
-module.exports = { STALE_MINUTES, safeError, due, entitlementStillOwnsJellyfin, removeAbandonedIntent, recoverOne, run };
+module.exports = { STALE_MINUTES, safeError, due, entitlementStillOwnsJellyfin, intentServerStillOwned, removeAbandonedIntent, recoverOne, run };
