@@ -269,6 +269,23 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
     'same-plan stream/variant changes must keep the exact assigned server even after it is removed from the acquisition pool'
   );
 
+  const adminPinnedCurrent = {
+    ...stickyCurrent,
+    admin_forced_server_id: servers[2].id
+  };
+  const pinnedReuse = await choice.reusableAssignedServerForPlan(
+    adminPinnedCurrent,
+    plan,
+    'London',
+    { db: fakeDb({ fullGermany: true }) }
+  );
+  assert.strictEqual(
+    pinnedReuse.id,
+    servers[2].id,
+    'administrator server pins must remain the effective billing/capacity placement even when customer location input requests another server'
+  );
+  assert.strictEqual(pinnedReuse.selected_location, 'Germany');
+
   const selected = await choice.selectServerForLocation(plan, 'London', { db: fakeDb() });
   assert(['London A', 'London B'].includes(selected.name), 'location selection must never escape the chosen location');
   const lockedSelected = await choice.selectServerForLocationLocked(plan, 'London', { db: fakeDb() });
