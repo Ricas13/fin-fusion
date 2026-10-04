@@ -137,7 +137,7 @@ function createCustomerDashboardRouter(){
     let selectedLocation=null;
     const current=await planChange.currentRecurring(req.session.customerId,plan).catch(()=>null);
     if(current?.media_server_id){
-      const assigned=await customerServerChoice.existingAssignedServerForPlan(plan,current.media_server_id,null).catch(()=>null);
+      const assigned=await customerServerChoice.reusableAssignedServerForPlan(current,plan,null).catch(()=>null);
       if(assigned){
         selectedLocation=assigned.selected_location||customerServerChoice.locationLabel(assigned.location);
         if(!locations.some(location=>String(location.value)===String(selectedLocation))){
