@@ -6,6 +6,7 @@ const planServers = require('./plan-servers');
 const userCapacity = require('./user-capacity');
 const mediaProvider = require('../media-servers/provider');
 const placement = require('./placement');
+const outbound = require('../security/outbound-url-policy');
 
 function mediaServerType(plan) {
   const type = serviceCatalog.serviceType(plan);
@@ -38,12 +39,18 @@ function serverAllowsPlan(server, plan) {
   return true;
 }
 
-function safeTestUrl(server) {
+async function safeTestUrl(server, { resolveHost = outbound.resolveHost } = {}) {
   const value = String(server?.public_url || '').trim();
   if (!value) return null;
   try {
     const parsed = new URL(value);
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) return null;
+    const addresses = await resolveHost(parsed.hostname);
+    if (!Array.isArray(addresses) || !addresses.length) return null;
+    if (addresses.some(address => {
+      const info = outbound.classify(address);
+      return info.hard || info.private;
+    })) return null;
     return mediaProvider.apiUrl(parsed.toString(), server.media_server_type || 'jellyfin', mediaProvider.healthEndpoint(server.media_server_type || 'jellyfin')).toString();
   } catch (_) {
     return null;
@@ -61,7 +68,7 @@ async function availableServers(plan, { db = query } = {}) {
   return decorated.filter(server => server.full !== true);
 }
 
-async function choicesForPlan(plan, { db = query } = {}) {
+async function choicesForPlan(plan, { db = query, resolveTestHost = outbound.resolveHost } = {}) {
   const provider = mediaServerType(plan);
   if (!provider) return [];
   const servers = await availableServers(plan, { db });
@@ -77,7 +84,7 @@ async function choicesForPlan(plan, { db = query } = {}) {
     group.servers.push(server);
     if (server.remaining_users == null) group.unlimited = true;
     else group.remaining += Math.max(0, Number(server.remaining_users || 0));
-    if (!group.testUrl) group.testUrl = safeTestUrl(server);
+    if (!group.testUrl) group.testUrl = await safeTestUrl(server, { resolveHost: resolveTestHost });
   }
   return Array.from(groups.values())
     .map(group => ({
