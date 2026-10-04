@@ -66,13 +66,16 @@ function source(file) {
   assert(jobs.includes('const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply});'));
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
-  assert(cleanup.includes("account_purpose='stremio_internal'"));
+  assert(cleanup.includes('FROM jellyfin_accounts'));
+  assert(!cleanup.includes("WHERE account_purpose='stremio_internal'"), 'Automatic orphan cleanup must protect any locally managed identity, not only Stremio-purpose rows.');
   assert(cleanup.includes('jellyfin_account_creation_intents'));
   assert(cleanup.includes("'/Sessions'"));
   assert(!cleanup.includes("'/Sessions', { timeoutMs: 10000 }).catch(() => [])"), 'Destructive orphan cleanup must fail closed when session state is unavailable.');
   assert(cleanup.includes("status = 'provisioning_in_flight'"));
   assert(cleanup.includes("status = 'active_session'"));
   assert(cleanup.includes("status = 'recent_activity'"));
+  assert(cleanup.includes("const users = await registry.request(row.server_id, '/Users'"), 'Deletion race check must re-read the remote identity immediately before DELETE.');
+  assert(cleanup.includes("reason: 'administrator_now'") && cleanup.includes("reason: 'recent_activity_now'") && cleanup.includes("reason: 'identity_changed_now'"), 'Late admin/activity/identity changes must fail closed.');
   assert(cleanup.includes("method: 'DELETE'"));
 
   const reconcile = source('src/jellyfin/identity-reconciliation.js');
@@ -88,6 +91,7 @@ function source(file) {
   assert(page.includes('Confirm remote deletion'));
   assert(page.includes('Use this identity instead'));
   assert(page.includes('Invalid security token'));
+  assert(page.includes('identityActionLimit'), 'Destructive identity reconciliation routes must be rate-limited.');
 
   const routes = source('src/platform/admin-route-composition.js');
   assert(routes.includes('createAdminMediaIdentityReconciliationRouter'));
