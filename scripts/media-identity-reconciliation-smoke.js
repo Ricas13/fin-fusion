@@ -63,7 +63,7 @@ function source(file) {
 (function integrationSurfaceContracts() {
   const jobs = source('src/automation/jobs.js');
   assert(jobs.includes("const stremioOrphanCleanup=require('../stremio/orphan-account-cleanup');"));
-  assert(jobs.includes('const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply});'));
+  assert(jobs.includes("const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply,limit:5});"), 'Critical Stremio sync must finish first and automatic orphan deletion must be bounded per run.');
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
   assert(cleanup.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Stremio orphan cleanup must never sweep Emby servers.');
@@ -78,6 +78,7 @@ function source(file) {
   assert(cleanup.includes("const users = await registry.request(row.server_id, '/Users'"), 'Deletion race check must re-read the remote identity immediately before DELETE.');
   assert(cleanup.includes("reason: 'administrator_now'") && cleanup.includes("reason: 'recent_activity_now'") && cleanup.includes("reason: 'identity_changed_now'"), 'Late admin/activity/identity changes must fail closed.');
   assert(cleanup.includes("method: 'DELETE'"));
+  assert(cleanup.includes('limit = 5') && cleanup.includes('deletionAttempts >= deletionLimit'), 'Automatic orphan deletion must be bounded so the critical 5-minute Stremio job cannot drain an unlimited backlog in one run.');
 
   const reconcile = source('src/jellyfin/identity-reconciliation.js');
   assert(reconcile.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Identity reconciliation must not offer Jellyfin-specific repair actions for Emby servers.');
