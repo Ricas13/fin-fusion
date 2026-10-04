@@ -131,7 +131,10 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
         throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on target Jellyfin server.`, 'preflight');
     }
 
-    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement, null, { serverId: target.id });
+    // Migration preflight deliberately uses the full plan catalog, not only the target server.
+    // That keeps missing-library detection fail-closed: a target cannot silently narrow libraries
+    // the customer currently receives elsewhere in the eligible plan pool.
+    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement);
     let libraryAccess;
     try {
         libraryAccess = await provisioning.resolveLibraryAccessForServer(target.id, effective.unrestricted, effective.visibleNames, false);
