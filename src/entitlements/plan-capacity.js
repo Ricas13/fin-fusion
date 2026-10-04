@@ -178,14 +178,16 @@ async function logicalMediaPlanUsage(plan,db=query,{excludeReservationId=null,ex
   return{planLimit,planUsed,planReserved,planRemaining,soldOut:planRemaining!=null&&planRemaining<=0};
 }
 
-async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
       (SELECT COALESCE(SUM(GREATEST(1,COALESCE(
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
         s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit,1))),0)::int
        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=clock_timestamp() AND s.current_period_end>NOW()) AS household_used,
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[])
+         AND s.starts_at<=clock_timestamp() AND s.current_period_end>NOW()
+         AND ($5::uuid IS NULL OR s.id<>$5::uuid)) AS household_used,
       ((SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.stremio_household_network_limit,1))),0)::int
         FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
         WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
@@ -193,9 +195,47 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
           CASE WHEN jsonb_typeof(i.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (i.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
           p.stremio_household_network_limit,1))),0)::int
         FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
-        WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+        WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
+       (SELECT COALESCE(SUM(GREATEST(1,COALESCE(pc.target_access_quantity,p.stremio_household_network_limit,1))),0)::int
+        FROM customer_plan_changes pc
+        JOIN plans p ON p.id=pc.target_plan_id
+        JOIN subscriptions current_subscription ON current_subscription.id=pc.current_subscription_id
+        WHERE pc.target_plan_id=$1
+          AND pc.provider='stripe'
+          AND pc.state='pending'
+          AND current_subscription.superseded_by IS NULL
+          AND current_subscription.plan_id<>pc.target_plan_id) +
+       (SELECT COALESCE(SUM(
+          CASE
+            WHEN current_subscription.plan_id=target_plan.id THEN
+              GREATEST(0,
+                GREATEST(1,COALESCE(NULLIF(operation.request_snapshot->>'targetAccessQuantity','')::int,target_plan.stremio_household_network_limit,1))
+                -
+                GREATEST(1,COALESCE(
+                  CASE WHEN jsonb_typeof(current_subscription.commercial_snapshot->'stremioHouseholdNetworkLimit')='number'
+                    THEN (current_subscription.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
+                  current_subscription.stremio_household_network_limit_snapshot,current_plan.stremio_household_network_limit,1
+                ))
+              )
+            ELSE GREATEST(1,COALESCE(NULLIF(operation.request_snapshot->>'targetAccessQuantity','')::int,target_plan.stremio_household_network_limit,1))
+          END
+        ),0)::int
+        FROM provider_operations operation
+        JOIN subscriptions current_subscription
+          ON current_subscription.id::text=operation.request_snapshot->>'subscriptionId'
+        JOIN plans current_plan ON current_plan.id=current_subscription.plan_id
+        JOIN plans target_plan ON target_plan.id::text=operation.request_snapshot->>'targetPlanId'
+        WHERE target_plan.id=$1
+          AND operation.provider='stripe'
+          AND operation.scope='customer'
+          AND operation.operation_type='plan_change_immediate'
+          AND operation.state IN('planned','provider_applied','local_applied')
+          AND COALESCE(operation.failure_kind,'') NOT IN('terminal','superseded')
+          AND COALESCE(operation.provider_result->>'capacityReserved','false')='true'
+          AND current_subscription.superseded_by IS NULL)
+      ) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId]);
   const row=result.rows[0]||{},householdLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit),householdUsed=Number(row.household_used||0),householdReserved=Number(row.household_reserved||0),householdRemaining=householdLimit==null?null:Math.max(0,householdLimit-householdUsed-householdReserved),requiredHouseholds=positiveInt(households,positiveInt(plan.stremio_household_network_limit,1));
-  const limit=householdLimit==null?null:Math.floor(householdLimit/requiredHouseholds),remaining=householdRemaining==null?null:Math.floor(householdRemaining/requiredHouseholds),used=limit==null?householdUsed:Math.max(0,limit-remaining),state={planId:plan.id,plan,model:'manual_households',pool:'stremio',requiredHouseholds,householdLimit,householdUsed,householdReserved,householdRemaining,limit,used,reserved:0,remaining,soldOut:remaining!=null&&remaining<=0,manualLimit:householdLimit,manualUsed:householdUsed,manualReserved:householdReserved};
+  const limit=householdLimit==null?null:Math.floor(householdLimit/requiredHouseholds),remaining=householdRemaining==null?null:Math.floor(householdRemaining/requiredHouseholds),used=limit==null?householdUsed:Math.max(0,limit-remaining),state={planId:plan.id,plan,model:'manual_households',pool:'stremio',requiredHouseholds,householdLimit,householdUsed,householdReserved,householdRemaining,limit,used,reserved:householdReserved,remaining,soldOut:remaining!=null&&remaining<=0,manualLimit:householdLimit,manualUsed:householdUsed,manualReserved:householdReserved};
   return{...state,...scarcity(state)};
 }
 async function placementHealthMode(db=query){
@@ -425,9 +465,9 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
   };
 }
 
-async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
-  if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
+  if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
   if(model!=='fleet_users')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   const fleet=await fleetUsers(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   if(!fleet){
@@ -438,8 +478,8 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
   return{...state,...scarcity(state)};
 }
 
-async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
-  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,households});
+async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
+  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
   if(state.soldOut){const error=new Error(`${label} is currently sold out.`);error.code='PLAN_CAPACITY_EXHAUSTED';error.planId=String(planId);throw error;}
   return state;
 }
@@ -459,13 +499,13 @@ async function lockAndAssertLogicalMedia(client,planId,label='This plan'){
   return state;
 }
 
-async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
   const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?'fleet-users':`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
   // During a rolling deployment the previous release still takes the class
   // lock. Retain it after the global pool lock so both generations serialize.
   if(model==='fleet_users')await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[`fleet-users:${serverClass(plan)||'unclassified'}`]);
-  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,households});
+  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
 }
 
 function legacyAcquisitionSql(alias='p'){
