@@ -121,7 +121,8 @@ async function ensureImmediateAdmission(op, subscription, target) {
   const updated = await transaction(async db => {
     await planCapacity.lockAndAssert(db, target.id, target.name || 'This plan');
 
-    if (customerServerChoice.mediaServerType(target)) {
+    if (customerServerChoice.mediaServerType(target)
+        && (request.targetMediaLocation || request.targetMediaServerId)) {
       if (!selectedLocation && request.targetMediaServerId) {
         const prior = (await db.query('SELECT location FROM jellyfin_servers WHERE id=$1 LIMIT 1', [request.targetMediaServerId])).rows[0] || null;
         selectedLocation = prior ? customerServerChoice.locationLabel(prior.location) : null;
@@ -147,6 +148,9 @@ async function ensureImmediateAdmission(op, subscription, target) {
             updated_at=NOW()
       `, [op.owner_id, selectedServer.id]);
     }
+    // Rolling-deploy compatibility: an N-1 operation has no media commitment
+    // fields. It may re-win logical plan capacity, but must retain the existing
+    // subscription placement rather than inventing a location on recovery.
 
     const requestPatch = {
       ...(selectedLocation ? { targetMediaLocation:selectedLocation } : {}),
