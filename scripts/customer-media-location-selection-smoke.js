@@ -355,6 +355,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert(pending.includes('freeMediaLocation') && pending.includes('media_location,media_server_id'), 'pre-login Free registration must persist its selected location and concrete server');
   assert(provisioning.includes('assignedServer'), 'Jellyfin provisioning must honor sticky subscription assignment before considering fresh placement');
   assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
+  assert(mediaReconcile.includes('!entitlement||entitlement.blocked') && mediaReconcile.includes('Boolean(entitlement?.blocked)'), 'blocked Emby/media entitlements must disable existing accounts and must never be provisioned as active access');
+  assert(mediaReconcile.includes("effectivePolicyForCustomer(customerId,entitlement,null,{serverId:account.server_id})"), 'existing media accounts must reconcile libraries against their exact sticky physical server');
   assert(resilientProvisioningSource.includes("unambiguousLegacyAccount(outsidePrimary, 'Free-adoption')"), 'legacy Free-lane adoption must not guess between multiple eligible old accounts');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS media_server_id') && migration.includes('ON DELETE RESTRICT'), 'assignment schema must preserve server references and block destructive deletion');
   assert(!migration.includes('\n$;\n'), 'PostgreSQL migration DO blocks must never contain a single-dollar terminator; every DO block must close with its matching dollar-quote delimiter.');
