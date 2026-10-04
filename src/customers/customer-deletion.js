@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const registry=require('../jellyfin/registry');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const jellyfinAdminControl=require('../jellyfin/admin-control');
 const externalDeletion=require('./customer-external-deletion');
 
 const RUNNING_STALE_MINUTES=15;
@@ -139,6 +140,13 @@ async function currentJellyfinDeletionResults(jobId){
 
 async function ensureDeletionHold(job){
   if(job.access_held_at)return job;
+  // Hard customer deletion is stronger than an earlier admin_present override.
+  // Persist explicit Jellyfin removal first so ordinary reconciliation cannot
+  // recreate media access while external cleanup is being snapshotted.
+  await jellyfinAdminControl.remove(job.customer_id,null,{
+    actorUserId:job.actor_user_id||null,
+    reason:'Customer hard deletion in progress'
+  });
   await provisioning.holdAccess(job.customer_id,'jellyfin_deleted',job.actor_user_id||null);
   const held=await query(`UPDATE customer_deletion_jobs SET access_held_at=COALESCE(access_held_at,NOW()),updated_at=NOW() WHERE id=$1 RETURNING *`,[job.id]);
   return held.rows[0]||job;
