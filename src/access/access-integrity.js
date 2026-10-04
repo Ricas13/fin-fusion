@@ -133,6 +133,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
         )
       ORDER BY s.created_at
       LIMIT $1
@@ -170,6 +171,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
         )
       ORDER BY h.created_at
       LIMIT $1
@@ -209,6 +211,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
         )
       ORDER BY s.created_at
       LIMIT $1
@@ -250,6 +253,7 @@ async function scan({ limit = 100 } = {}) {
             AND ja.disabled=FALSE
             AND js.enabled=TRUE
             AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
         )
         AND COALESCE(cps.status,'') NOT IN('pending','running','failed','blocked')
       ORDER BY s.created_at
