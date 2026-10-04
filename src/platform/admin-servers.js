@@ -33,6 +33,7 @@ const SAFE_ERROR_PREFIXES = [
     'Could not validate the Jellyfin server securely.', 'Could not validate the Emby server securely.',
     'Jellyfin destination ', 'Emby destination ', 'Jellyfin hostname ', 'Emby hostname ',
     'Could not connect to Jellyfin at ', 'Could not connect to Emby at ',
+    'Customer/public URL hostname could not be resolved.', 'Customer/public URL must resolve only to public internet addresses',
     'Server name is required.', 'Server not found.'
 ];
 
@@ -69,6 +70,21 @@ function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
     if (parsed.username || parsed.password || parsed.hash) throw invalidField(fieldName, 'URLs may not contain credentials or fragments.');
     if (!parsed.hostname) throw invalidField(fieldName, 'URL hostname is required.');
     parsed.pathname = parsed.pathname.replace(/\/+$/, ''); parsed.search = ''; parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+}
+async function assertPublicCustomerUrl(value) {
+    let parsed;
+    try { parsed = new URL(String(value || '').trim()); }
+    catch (_) { throw invalidField('publicUrl', 'Enter a valid customer/public http/https URL.'); }
+    let addresses;
+    try { addresses = await outbound.resolveHost(parsed.hostname); }
+    catch (_) { throw invalidField('publicUrl', 'Customer/public URL hostname could not be resolved.'); }
+    if (!addresses.length || addresses.some(address => {
+        const info = outbound.classify(address);
+        return info.hard || info.private;
+    })) {
+        throw invalidField('publicUrl', 'Customer/public URL must resolve only to public internet addresses; private, loopback, link-local and reserved destinations cannot be exposed to customers.');
+    }
     return parsed.toString().replace(/\/$/, '');
 }
 function mediaServerType(value) {
@@ -194,6 +210,7 @@ async function persistHealthCheck(serverId, status) {
     if (!result.rowCount) throw new Error('Server not found.'); return result.rows[0].last_health_check;
 }
 async function createServer(actorUserId, form) {
+    await assertPublicCustomerUrl(form.publicUrl);
     await probeCredentials(form.baseUrl, form.apiKey, form.mediaServerType);
     return transaction(async client => {
         const result = await client.query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check)
@@ -205,6 +222,7 @@ async function createServer(actorUserId, form) {
 async function updateServer(actorUserId, serverId, form) {
     const current = await registry.getServerSecret(serverId); if (!current) throw new Error('Server not found.');
     const candidateKey = form.apiKey || current.apiKey, providerChanged=form.mediaServerType!==registry.mediaProvider.normalizeType(current.media_server_type), connectivityChanged = form.baseUrl !== current.base_url || Boolean(form.apiKey) || providerChanged;
+    await assertPublicCustomerUrl(form.publicUrl);
     if (connectivityChanged) await probeCredentials(form.baseUrl, candidateKey, form.mediaServerType);
     await transaction(async client => {
         const locked=(await client.query(`SELECT id,server_class,media_server_type,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`,[serverId])).rows[0];
@@ -264,4 +282,4 @@ function createAdminServersRouter() {
     router.use('/admin/servers', async (error,_req,res,_next) => { console.error('Admin servers route error:',error.message); await runtimeSettings.ensureLoaded().catch(()=>{}); return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Servers unavailable',message:'Server administration could not be loaded safely.',link:'/admin',linkText:'Return to Administration'}); });
     return router;
 }
-module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType,FREE_POLICY_DEFAULTS };
+module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,assertPublicCustomerUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType,FREE_POLICY_DEFAULTS };
