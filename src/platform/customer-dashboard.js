@@ -107,11 +107,11 @@ async function recentFreeInactivityRemoval(customerId){
     SELECT a.created_at
     FROM audit_log a
     WHERE a.entity_type='customer'
-      AND a.entity_id=$1
+      AND a.entity_id=$1::text
       AND a.action IN ('customer.inactivity.remove_jellyfin','customer.inactivity.finalize_free_plan')
       AND NOT EXISTS (
         SELECT 1 FROM subscriptions s
-        WHERE s.customer_id=$1
+        WHERE s.customer_id=$1::uuid
           AND s.created_at>a.created_at
       )
     ORDER BY a.created_at DESC
