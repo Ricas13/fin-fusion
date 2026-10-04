@@ -3,6 +3,8 @@
 const { query, transaction } = require('../db');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const manualSubscriptions = require('./manual-subscriptions');
+const planCapacity = require('./plan-capacity');
+const customerServerChoice = require('../jellyfin/customer-server-choice');
 const subscriptionState = require('./subscription-state');
 
 const METHODS = new Set(['paypal', 'stripe', 'bank', 'other']);
@@ -96,6 +98,20 @@ async function createManualGrant(customerId, actorUserId, input) {
     if (existing) throw new Error(`This customer already has a current primary subscription (${existing.contract_plan_name || existing.name || 'active plan'}). Use Manual entitlement edit instead.`);
     const recognizedReference = recognizedProviderReference(input.method, input.externalReference);
     const status = plan.billing_interval === 'trial' ? 'trialing' : 'active';
+
+    await planCapacity.lockAndAssert(client, plan.id, plan.name || 'This plan', {
+      households: plan.stremio_household_network_limit || null
+    });
+
+    let mediaServer = null;
+    let mediaLocation = null;
+    if (customerServerChoice.mediaServerType(plan)) {
+      mediaServer = await customerServerChoice.selectServerForLocationLocked(plan, null, {
+        db: (sql, params) => client.query(sql, params),
+        requireSelection: false
+      });
+      mediaLocation = mediaServer?.selected_location || customerServerChoice.locationLabel(mediaServer?.location);
+    }
     const sub = await manualSubscriptions.createManualSubscriptionTx(client, {
       customerId,
       planId: plan.id,
@@ -122,7 +138,19 @@ async function createManualGrant(customerId, actorUserId, input) {
         chargedProvider: false
       }
     });
-    return { subscriptionId: sub.id, planName: plan.name };
+    if (mediaServer) {
+      const assigned = await client.query(`
+        UPDATE subscriptions
+        SET media_server_id=$2,
+            media_location_preference=$3,
+            media_location_snapshot=$3,
+            updated_at=NOW()
+        WHERE id=$1 AND customer_id=$4
+        RETURNING id
+      `, [sub.id, mediaServer.id, mediaLocation, customerId]);
+      if (!assigned.rowCount) throw new Error('Manual entitlement changed before its media-server reservation could be persisted.');
+    }
+    return { subscriptionId: sub.id, planName: plan.name, mediaServerId: mediaServer?.id || null, mediaLocation };
   });
   try {
     await provisioning.reconcileCustomer(customerId);
