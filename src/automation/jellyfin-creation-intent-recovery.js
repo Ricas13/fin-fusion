@@ -222,6 +222,31 @@ async function recoverOne(intent) {
     );
 }
 
+async function recoverCustomer(customerId) {
+    const rows = (await query(`
+        SELECT i.*,COALESCE(s.media_server_type,'jellyfin') AS media_server_type
+        FROM jellyfin_account_creation_intents i
+        JOIN jellyfin_servers s ON s.id=i.server_id
+        WHERE i.customer_id=$1
+        ORDER BY i.updated_at,i.created_at
+    `, [customerId])).rows;
+    const summary = { total: rows.length, adopted: 0, removed: 0, preserved: 0, pending: 0, failed: 0, failures: [] };
+    for (const intent of rows) {
+        try {
+            const result = await recoverOne(intent);
+            if (result.action === 'adopted') summary.adopted++;
+            else if (result.action === 'removed') summary.removed++;
+            else if (result.action === 'preserved') summary.preserved++;
+            else summary.pending++;
+        } catch (error) {
+            summary.failed++;
+            summary.failures.push({ intentId: intent.id, serverId: intent.server_id, error: safeError(error) });
+        }
+    }
+    if (summary.failed) summary.warning = `${summary.failed} media creation intent cleanup operation${summary.failed === 1 ? '' : 's'} failed after entitlement change.`;
+    return summary;
+}
+
 async function run({ limit = 25 } = {}) {
     const rows = await due({ limit });
     const summary = { total: rows.length, processed: rows.length, adopted: 0, removed: 0, preserved: 0, pending: 0, failed: 0, failures: [] };
@@ -241,4 +266,4 @@ async function run({ limit = 25 } = {}) {
     return summary;
 }
 
-module.exports = { STALE_MINUTES, safeError, due, entitlementStillOwnsJellyfin, entitlementOwnsLane, intentServerStillOwned, resolveLegacyIntentLane, removeAbandonedIntent, recoverOne, run };
+module.exports = { STALE_MINUTES, safeError, due, entitlementStillOwnsJellyfin, entitlementOwnsLane, intentServerStillOwned, resolveLegacyIntentLane, removeAbandonedIntent, recoverOne, recoverCustomer, run };
