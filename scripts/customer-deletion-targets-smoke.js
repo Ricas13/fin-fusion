@@ -219,6 +219,8 @@ async function scenarioL(){
   assert(deletionSource.includes('Unable to persist customer deletion failure state.'),'L: best-effort failure-state persistence must log its own failure without masking the provider error');
   assert(deletionSource.includes("require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(job.customer_id)"),'L: hard deletion must clean in-flight remote media identities before customer-row cascade can erase their intent records');
   assert(deletionSource.includes("jellyfinAdminControl.remove(job.customer_id,null")&&deletionSource.includes('Customer hard deletion in progress'),'L: hard deletion must override any earlier admin-present Jellyfin authority before cleanup starts');
+  assert(deletionSource.indexOf("jellyfinAdminControl.remove(job.customer_id,null")<deletionSource.indexOf('if(job.access_held_at)return job'),'L: deletion retries from an older release must reassert admin removal before honoring an existing access-held marker');
+  assert(deletionSource.includes("SELECT 1 FROM customers WHERE id=$1 LIMIT 1"),'L: post-delete retries must not recreate service-control state after the customer row is already gone');
   assert(deletionSource.includes("error.code='CUSTOMER_DELETE_MEDIA_INTENT_CLEANUP_INCOMPLETE'"),'L: unresolved remote-only media cleanup must block portal deletion instead of orphaning access');
 }
 
