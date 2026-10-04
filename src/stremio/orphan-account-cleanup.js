@@ -11,6 +11,15 @@ function norm(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function managedUsernameToken(value) {
+  const match = /^cf_stremio_([0-9a-f]{12})(?:\d{4})?$/i.exec(String(value || '').trim());
+  return match ? String(match[1]).toLowerCase() : null;
+}
+
+function customerManagedToken(customerId) {
+  return managedUsernameToken(managedEntitlements.hiddenUsername(customerId));
+}
+
 function graceHours(value = process.env.STREMIO_ORPHAN_ACCOUNT_GRACE_HOURS) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return DEFAULT_GRACE_HOURS;
@@ -49,8 +58,10 @@ async function activeEntitledCustomers() {
 async function activeEntitlementOwnsUsername(username) {
   const wanted = norm(username);
   if (!wanted || !INTERNAL_USER_RE.test(String(username || ''))) return false;
+  const token = managedUsernameToken(wanted);
+  if (!token) return false;
   const rows = await activeEntitledCustomers();
-  return rows.some(row => norm(managedEntitlements.hiddenUsername(row.customer_id)) === wanted);
+  return rows.some(row => customerManagedToken(row.customer_id) === token);
 }
 
 async function ownershipRows() {
@@ -68,7 +79,7 @@ async function ownershipRows() {
   return {
     accounts: accounts.rows,
     intents: intents.rows,
-    activeEntitledNames: new Set(activeCustomers.map(row => norm(managedEntitlements.hiddenUsername(row.customer_id))))
+    activeEntitledTokens: new Set(activeCustomers.map(row => customerManagedToken(row.customer_id)).filter(Boolean))
   };
 }
 
@@ -121,7 +132,7 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
 
         const nameOwner = accountByName.get(name) || null;
         const intent = intentById.get(id) || intentByName.get(name) || null;
-        const entitled = ownership.activeEntitledNames.has(name);
+        const entitled = ownership.activeEntitledTokens.has(managedUsernameToken(name));
         const active = activeUserIds.has(id);
         const recent = recentEnough(user, hours, now);
         let status = 'orphan_ready';
@@ -283,6 +294,8 @@ async function run({ apply = true, now = new Date(), hours = graceHours(), limit
 
 module.exports = {
   INTERNAL_USER_RE,
+  managedUsernameToken,
+  customerManagedToken,
   DEFAULT_GRACE_HOURS,
   graceHours,
   mostRecentRemoteActivity,
