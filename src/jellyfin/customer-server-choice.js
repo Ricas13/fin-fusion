@@ -57,12 +57,16 @@ async function safeTestUrl(server, { resolveHost = outbound.resolveHost } = {}) 
   }
 }
 
-async function availableServers(plan, { db = query } = {}) {
+async function eligibleServers(plan, { db = query } = {}) {
   const provider = mediaServerType(plan);
   if (!provider) return [];
-  const servers = (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true, db }))
+  return (await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true, db }))
     .filter(server => mediaProvider.normalizeType(server.media_server_type || 'jellyfin') === provider)
     .filter(server => serverAllowsPlan(server, plan));
+}
+
+async function availableServers(plan, { db = query } = {}) {
+  const servers = await eligibleServers(plan, { db });
   if (!servers.length) return [];
   const decorated = await userCapacity.decorateServers(servers, db);
   return decorated.filter(server => server.full !== true);
@@ -132,8 +136,13 @@ async function selectServerForLocationLocked(plan, requested, { db = query, requ
   // order before the final capacity read so acquisitions from different plans
   // cannot reserve the same final place or deadlock while switching candidates.
   const location = await resolveAcquisitionLocation(plan, requested, { db, requireSelection });
-  const available = await availableServers(plan, { db });
-  const candidates = location ? available.filter(server => matchesPreference(server, location)) : available;
+  // Lock every server that could become the final candidate, including a
+  // currently-full server whose last reservation may expire or be released
+  // between the pre-lock availability read and the post-lock capacity check.
+  // Otherwise the final re-read could select a newly-available server that this
+  // transaction never locked, allowing cross-plan acquisitions to race on it.
+  const eligible = await eligibleServers(plan, { db });
+  const candidates = location ? eligible.filter(server => matchesPreference(server, location)) : eligible;
   if (!candidates.length) {
     const error = new Error('That server location is no longer available. Choose another location.');
     error.code = 'MEDIA_LOCATION_UNAVAILABLE';
@@ -289,6 +298,7 @@ module.exports = {
   accessKind,
   serverAllowsPlan,
   safeTestUrl,
+  eligibleServers,
   availableServers,
   choicesForPlan,
   resolveAcquisitionLocation,
