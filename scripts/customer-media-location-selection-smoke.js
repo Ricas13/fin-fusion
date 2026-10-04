@@ -93,6 +93,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
 }
 
 (async () => {
+  const publicResolver = async () => ['1.1.1.1'];
   assert.strictEqual(choice.locationLabel('  London   '), 'London');
   assert.strictEqual(choice.locationLabel(''), 'Default');
   assert.strictEqual(choice.matchesPreference({ location: ' london ' }, 'London'), true);
@@ -182,7 +183,6 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
     'ambiguous legacy Jellyfin accounts must fail closed until a server assignment is repaired'
   );
 
-  const publicResolver = async () => ['1.1.1.1'];
   const grouped = await choice.choicesForPlan(plan, { db: fakeDb(), resolveTestHost: publicResolver });
   assert.strictEqual(grouped.length, 2, 'two distinct locations must produce two customer choices');
   assert.strictEqual(grouped.find(item => item.value === 'London').serverCount, 2, 'same-location servers must be grouped behind one customer choice');
