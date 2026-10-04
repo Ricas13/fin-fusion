@@ -124,6 +124,14 @@ function kindsFor(findings, customerId) {
     await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [freeWrongSubscription, assignedFreeServerId]);
     await makeAccount(freeWrongServer, freeServerId, 'free', 'free-wrong-server');
 
+    const freeAdminPinned = await makeCustomer('free-admin-pinned');
+    const freeAdminPinnedSubscription = await makeSubscription(freeAdminPinned, freePlanId, { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [freeAdminPinnedSubscription, assignedFreeServerId]);
+    await makeAccount(freeAdminPinned, freeServerId, 'free', 'free-admin-pinned');
+    await serviceAdminControl.pinServer(freeAdminPinned, freeServerId, {
+      reason: 'access integrity admin pin smoke'
+    });
+
     const migratedBlockedFreeMissing = await makeCustomer('free-migrated-blocked-missing');
     const migratedBlockedSubscription = await makeSubscription(
       migratedBlockedFreeMissing,
@@ -227,6 +235,15 @@ function kindsFor(findings, customerId) {
     await makeAccount(paidWrongServer, premiumServerId, 'primary', 'paid-wrong-server');
     await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [paidWrongServer]);
 
+    const paidAdminPinned = await makeCustomer('paid-admin-pinned');
+    const paidAdminPinnedSubscription = await makeSubscription(paidAdminPinned, paidPlanId, { source: 'stripe' });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [paidAdminPinnedSubscription, assignedPremiumServerId]);
+    await makeAccount(paidAdminPinned, premiumServerId, 'primary', 'paid-admin-pinned');
+    await serviceAdminControl.pinServer(paidAdminPinned, premiumServerId, {
+      reason: 'access integrity paid admin pin smoke'
+    });
+    await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [paidAdminPinned]);
+
     const findings = await accessIntegrity.scan({ limit: 500 });
 
     assert(kindsFor(findings, freeMissing).has('free_plan_without_ready_server'),
@@ -235,6 +252,8 @@ function kindsFor(findings, customerId) {
       'ready Free plan+server must not be reported as inconsistent');
     assert(kindsFor(findings, freeWrongServer).has('free_plan_without_ready_server'),
       'a Free account on the wrong server must not satisfy the persisted assignment');
+    assert(!kindsFor(findings, freeAdminPinned).has('free_plan_without_ready_server'),
+      'an administrator-pinned Free account must override the stale persisted subscription assignment');
     assert(!kindsFor(findings, migratedBlockedFreeMissing).has('free_plan_without_ready_server'),
       'failed migrated Free restore must not be misclassified as a generic stranded entitlement');
     assert(kindsFor(findings, migratedBlockedFreeMissing).has('free_restore_reprovision_failed'),
@@ -259,6 +278,8 @@ function kindsFor(findings, customerId) {
       'paid plan without a server must retain a durable provisioning recovery state');
     assert(kindsFor(findings, paidWrongServer).has('paid_plan_without_recovery_state'),
       'a paid account on the wrong server must not hide missing provisioning recovery for the assigned server');
+    assert(!kindsFor(findings, paidAdminPinned).has('paid_plan_without_recovery_state'),
+      'an administrator-pinned paid account must override the stale persisted subscription assignment');
 
     console.log('access integrity DB smoke: ok');
   } finally {
