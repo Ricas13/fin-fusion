@@ -196,15 +196,29 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
           p.stremio_household_network_limit,1))),0)::int
         FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
         WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
-       (SELECT COALESCE(SUM(GREATEST(1,COALESCE(pc.target_access_quantity,p.stremio_household_network_limit,1))),0)::int
+       (SELECT COALESCE(SUM(
+          CASE
+            WHEN current_subscription.plan_id=pc.target_plan_id THEN
+              GREATEST(0,
+                GREATEST(1,COALESCE(pc.target_access_quantity,p.stremio_household_network_limit,1))
+                -
+                GREATEST(1,COALESCE(
+                  CASE WHEN jsonb_typeof(current_subscription.commercial_snapshot->'stremioHouseholdNetworkLimit')='number'
+                    THEN (current_subscription.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
+                  current_subscription.stremio_household_network_limit_snapshot,current_plan.stremio_household_network_limit,1
+                ))
+              )
+            ELSE GREATEST(1,COALESCE(pc.target_access_quantity,p.stremio_household_network_limit,1))
+          END
+        ),0)::int
         FROM customer_plan_changes pc
         JOIN plans p ON p.id=pc.target_plan_id
         JOIN subscriptions current_subscription ON current_subscription.id=pc.current_subscription_id
+        JOIN plans current_plan ON current_plan.id=current_subscription.plan_id
         WHERE pc.target_plan_id=$1
           AND pc.provider='stripe'
           AND pc.state='pending'
-          AND current_subscription.superseded_by IS NULL
-          AND current_subscription.plan_id<>pc.target_plan_id) +
+          AND current_subscription.superseded_by IS NULL) +
        (SELECT COALESCE(SUM(
           CASE
             WHEN current_subscription.plan_id=target_plan.id THEN
