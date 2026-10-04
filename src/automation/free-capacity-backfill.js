@@ -118,6 +118,7 @@ async function waitingCandidates(limit = 100, options = {}) {
             AND ja.disabled=FALSE
             AND ready_js.enabled=TRUE
             AND COALESCE(ready_js.media_server_type,'jellyfin')='jellyfin'
+            AND (s.media_server_id IS NULL OR ja.server_id=s.media_server_id)
         )
       ORDER BY s.customer_id,s.created_at DESC,s.id DESC
     )
