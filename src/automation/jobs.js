@@ -80,6 +80,7 @@ const JOB_METADATA=Object.freeze({
  activation_cleanup:{defaultIntervalSeconds:300,critical:true},
  pending_registration_cleanup:{defaultIntervalSeconds:300,critical:false},
  stremio_managed_accounts:{defaultIntervalSeconds:300,critical:true},
+ stremio_orphan_cleanup:{defaultIntervalSeconds:300,critical:false},
  stremio_external_tokens:{defaultIntervalSeconds:300,critical:true},
  stremio_media_index:{defaultIntervalSeconds:300,critical:false}
 });
@@ -214,7 +215,8 @@ const jobs={
  async winback_offers(){return winbackOffers.run({limit:100})},
  async activation_cleanup(){return activationCleanup.process()},
  async pending_registration_cleanup(){return pendingRegistrations.cleanupExpired(500)},
- async stremio_managed_accounts(){const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply,limit:5});const warning=[sync.warning,orphans.warning].filter(Boolean).join('; ').slice(0,1000)||null;return{total:Number(sync.total||0)+Number(orphans.total||0),processed:Number(sync.processed||0)+Number(orphans.processed||0),failed:Number(sync.failed||0)+Number(orphans.failed||0),revoked:Number(sync.revoked||0),orphanRemoteDeleted:Number(orphans.deleted||0),sync,orphans,...(warning?{warning}:{})}},
+ async stremio_managed_accounts(){return stremioManagedSweep.syncActiveBounded()},
+ async stremio_orphan_cleanup(){return stremioOrphanCleanup.run({apply:true,limit:5})},
  async stremio_external_tokens(){return stremioExternalTokens.maintain({rotateLimit:25,revokeLimit:100})},
  async stremio_media_index(){let external={total:0,processed:0,failed:0};try{external=await stremioSourceIndex.indexDueSources();}catch(error){external={total:0,processed:0,failed:1};console.error('External Stremio source index failed:',error.message);}let managed={total:0,processed:0,failed:0};try{managed=await stremioMediaIndex.indexAll();}catch(error){managed={total:0,processed:0,failed:1};console.error('Managed Stremio media index failed:',error.message);}return{total:Number(external.total||0)+Number(managed.total||0),processed:Number(external.processed||0)+Number(managed.processed||0),failed:Number(external.failed||0)+Number(managed.failed||0),external,managed}}
 };
