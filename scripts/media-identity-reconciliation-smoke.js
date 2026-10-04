@@ -66,6 +66,7 @@ function source(file) {
   assert(jobs.includes('const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply});'));
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
+  assert(cleanup.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Stremio orphan cleanup must never sweep Emby servers.');
   assert(cleanup.includes('FROM jellyfin_accounts'));
   assert(!cleanup.includes("WHERE account_purpose='stremio_internal'"), 'Automatic orphan cleanup must protect any locally managed identity, not only Stremio-purpose rows.');
   assert(cleanup.includes('jellyfin_account_creation_intents'));
@@ -79,6 +80,8 @@ function source(file) {
   assert(cleanup.includes("method: 'DELETE'"));
 
   const reconcile = source('src/jellyfin/identity-reconciliation.js');
+  assert(reconcile.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Identity reconciliation must not offer Jellyfin-specific repair actions for Emby servers.');
+  assert(reconcile.includes("WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'") && reconcile.includes("WHERE service_type='jellyfin'"), 'Candidate ownership and recovery evidence must stay provider-scoped.');
   assert(reconcile.includes('ACTIVE_BLOCKED'));
   assert(reconcile.includes('media.identity.canonical_policy_failed'));
   assert(reconcile.includes('ownershipPreserved: true'));
@@ -89,6 +92,7 @@ function source(file) {
 
   const page = source('src/platform/admin-media-identity-reconciliation.js');
   assert(page.includes('/admin/servers/identity-reconciliation'));
+  assert(page.includes('Compare live Jellyfin identities') && !page.includes('Jellyfin/Emby identities'), 'Admin copy must not imply unsupported Emby identity repair.');
   assert(page.includes('Confirm remote deletion'));
   assert(page.includes('Use this identity instead'));
   assert(page.includes('Invalid security token'));
