@@ -63,7 +63,7 @@ function source(file) {
 (function integrationSurfaceContracts() {
   const jobs = source('src/automation/jobs.js');
   assert(jobs.includes("const stremioOrphanCleanup=require('../stremio/orphan-account-cleanup');"));
-  assert(jobs.includes('const sync=await stremioManagedSweep.syncActiveBounded();const orphans=await stremioOrphanCleanup.run();'));
+  assert(jobs.includes('const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply});'));
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
   assert(cleanup.includes("account_purpose='stremio_internal'"));
