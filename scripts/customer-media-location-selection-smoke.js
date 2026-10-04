@@ -5,6 +5,8 @@ const assert = require('assert');
 const fs = require('fs');
 const choice = require('../src/jellyfin/customer-server-choice');
 const customerMediaAccess = require('../src/access/customer-media-access');
+const resilientProvisioning = require('../src/jellyfin/resilient-provisioning');
+const mediaServiceReconciliation = require('../src/jellyfin/media-service-reconciliation');
 
 const plan = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -177,6 +179,27 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
     null,
     'a stale Jellyfin account on another server must not inherit the current subscription entitlement'
   );
+  assert.strictEqual(
+    resilientProvisioning.unambiguousLegacyAccount([currentJellyfinAccount], 'primary Jellyfin'),
+    currentJellyfinAccount,
+    'one legacy Jellyfin account may be adopted as the sticky assignment'
+  );
+  assert.throws(
+    () => resilientProvisioning.unambiguousLegacyAccount([currentJellyfinAccount, staleJellyfinAccount], 'primary Jellyfin'),
+    error => error.code === 'AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT',
+    'central Jellyfin reconciliation must not guess between multiple legacy accounts'
+  );
+  assert.strictEqual(
+    mediaServiceReconciliation.unambiguousLegacyAccount([currentEmbyAccount], 'Emby'),
+    currentEmbyAccount,
+    'one legacy Emby account may be adopted as the sticky assignment'
+  );
+  assert.throws(
+    () => mediaServiceReconciliation.unambiguousLegacyAccount([currentEmbyAccount, staleEmbyAccount], 'Emby'),
+    error => error.code === 'AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT',
+    'central Emby reconciliation must not guess between multiple legacy accounts'
+  );
+
   const legacyJellyfinEntitlement = { subscription_id: 'legacy-jellyfin-sub', media_server_id: null, server_class: 'premium' };
   assert.strictEqual(
     customerMediaAccess.entitlementForAccountFromContext(currentJellyfinAccount, {
