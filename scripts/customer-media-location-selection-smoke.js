@@ -135,6 +135,49 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
     'ambiguous legacy Emby accounts must fail closed until a server assignment is repaired'
   );
 
+  const jellyfinEntitlement = { subscription_id: 'jellyfin-sub', media_server_id: 'jellyfin-server-current', server_class: 'premium' };
+  const currentJellyfinAccount = {
+    id: 'jellyfin-account-current',
+    server_id: 'jellyfin-server-current',
+    media_server_type: 'jellyfin',
+    access_lane: 'primary',
+    server_class: 'premium',
+    disabled: false,
+    server_enabled: true
+  };
+  const staleJellyfinAccount = {
+    id: 'jellyfin-account-stale',
+    server_id: 'jellyfin-server-old',
+    media_server_type: 'jellyfin',
+    access_lane: 'primary',
+    server_class: 'premium',
+    disabled: false,
+    server_enabled: true
+  };
+  const jellyfinContext = {
+    accounts: [currentJellyfinAccount, staleJellyfinAccount],
+    accessSnapshot: { primary: { entitlement: jellyfinEntitlement } }
+  };
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(currentJellyfinAccount, jellyfinContext),
+    jellyfinEntitlement,
+    'the Jellyfin account on the persisted subscription server must retain credential access'
+  );
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(staleJellyfinAccount, jellyfinContext),
+    null,
+    'a stale Jellyfin account on another server must not inherit the current subscription entitlement'
+  );
+  const legacyJellyfinEntitlement = { subscription_id: 'legacy-jellyfin-sub', media_server_id: null, server_class: 'premium' };
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(currentJellyfinAccount, {
+      accounts: [currentJellyfinAccount, staleJellyfinAccount],
+      accessSnapshot: { primary: { entitlement: legacyJellyfinEntitlement } }
+    }),
+    null,
+    'ambiguous legacy Jellyfin accounts must fail closed until a server assignment is repaired'
+  );
+
   const grouped = await choice.choicesForPlan(plan, { db: fakeDb() });
   assert.strictEqual(grouped.length, 2, 'two distinct locations must produce two customer choices');
   assert.strictEqual(grouped.find(item => item.value === 'London').serverCount, 2, 'same-location servers must be grouped behind one customer choice');
