@@ -57,12 +57,25 @@ async function reconcileSuspendedAccessStrict(ids){
   const intentRecovery=require('../automation/jellyfin-creation-intent-recovery');
   const failures=[];
   for(const customerId of ids){
+    const customerFailures=[];
     try{
       await provisioning.reconcileCustomer(customerId);
-      const cleanup=await intentRecovery.recoverCustomer(customerId);
-      if(Number(cleanup?.failed||0)>0)throw new Error(cleanup.warning||'In-flight media access cleanup is incomplete.');
     }catch(error){
-      failures.push({customerId,error:String(error?.message||error).slice(0,500)});
+      customerFailures.push(`access reconciliation: ${String(error?.message||error).slice(0,380)}`);
+    }
+    // Always attempt durable creation-intent cleanup even when broader
+    // reconciliation fails. A Discord/Emby/other integration error must not
+    // leave a just-created media identity alive after a payment-risk hold.
+    try{
+      const cleanup=await intentRecovery.recoverCustomer(customerId);
+      if(Number(cleanup?.failed||0)>0){
+        customerFailures.push(`creation-intent cleanup: ${String(cleanup.warning||'incomplete').slice(0,380)}`);
+      }
+    }catch(error){
+      customerFailures.push(`creation-intent cleanup: ${String(error?.message||error).slice(0,380)}`);
+    }
+    if(customerFailures.length){
+      failures.push({customerId,error:customerFailures.join('; ').slice(0,500)});
     }
   }
   if(failures.length){
