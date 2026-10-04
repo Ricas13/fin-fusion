@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const choice = require('../src/jellyfin/customer-server-choice');
+const customerMediaAccess = require('../src/access/customer-media-access');
 
 const plan = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -98,6 +99,41 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert.strictEqual(choice.mediaServerType({ service_type: 'bundle' }), 'jellyfin');
   assert.strictEqual(choice.mediaServerType({ service_type: 'emby' }), 'emby');
   assert.strictEqual(choice.mediaServerType({ service_type: 'stremio' }), null);
+
+  const embyEntitlement = { subscription_id: 'emby-sub', media_server_id: 'emby-server-current' };
+  const currentEmbyAccount = { id: 'emby-account-current', server_id: 'emby-server-current', media_server_type: 'emby', disabled: false, server_enabled: true };
+  const staleEmbyAccount = { id: 'emby-account-stale', server_id: 'emby-server-old', media_server_type: 'emby', disabled: false, server_enabled: true };
+  const embyContext = {
+    accounts: [currentEmbyAccount, staleEmbyAccount],
+    accessSnapshot: { emby: { entitlement: embyEntitlement } }
+  };
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(currentEmbyAccount, embyContext),
+    embyEntitlement,
+    'the Emby account on the persisted subscription server must retain credential access'
+  );
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(staleEmbyAccount, embyContext),
+    null,
+    'a stale Emby account on another server must not inherit the current subscription entitlement'
+  );
+  const legacyEmbyEntitlement = { subscription_id: 'legacy-emby-sub', media_server_id: null };
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(currentEmbyAccount, {
+      accounts: [currentEmbyAccount],
+      accessSnapshot: { emby: { entitlement: legacyEmbyEntitlement } }
+    }),
+    legacyEmbyEntitlement,
+    'one unambiguous legacy Emby account may remain manageable before assignment backfill'
+  );
+  assert.strictEqual(
+    customerMediaAccess.entitlementForAccountFromContext(currentEmbyAccount, {
+      accounts: [currentEmbyAccount, staleEmbyAccount],
+      accessSnapshot: { emby: { entitlement: legacyEmbyEntitlement } }
+    }),
+    null,
+    'ambiguous legacy Emby accounts must fail closed until a server assignment is repaired'
+  );
 
   const grouped = await choice.choicesForPlan(plan, { db: fakeDb() });
   assert.strictEqual(grouped.length, 2, 'two distinct locations must produce two customer choices');
