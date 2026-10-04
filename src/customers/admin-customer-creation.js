@@ -58,8 +58,17 @@ async function create({
       // Deferred admin creation intentionally allows a paid media entitlement
       // to exist before infrastructure is configured/healthy. That state is
       // reconciled after activation and remains operator-visible on failure.
-      // Do not, however, bypass a real configured-capacity sell-out.
-      if(!(deferredMediaProvisioning&&Number(capacityState?.configuredServers||0)===0)){
+      // Only the physical-server requirement is deferred: the product's own
+      // customer limit remains authoritative so an admin cannot oversubscribe
+      // a plan merely because its fleet has not been configured yet.
+      if(deferredMediaProvisioning&&Number(capacityState?.configuredServers||0)===0){
+        const logical=await planCapacity.logicalMediaPlanUsage(plan,(sql,params)=>client.query(sql,params));
+        if(logical.soldOut){
+          const error=new Error(`${plan.name||'This plan'} is currently sold out.`);
+          error.code='PLAN_CAPACITY_EXHAUSTED';
+          throw error;
+        }
+      }else{
         await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
           households:plan.stremio_household_network_limit||null
         });
