@@ -117,9 +117,10 @@ async function markPasswordSetupRequired(account){
   return account;
 }
 
-async function createForEntitlement(customerId,type,entitlement,effective){
+async function createForEntitlement(customerId,type,entitlement,_effective=null){
   const server=await selectServerForPlan(entitlement);
   if(!server)throw new Error(`No eligible ${serviceCatalog.label(type)} server is currently available for plan ${entitlement.contract_plan_code||entitlement.code}`);
+  const effective=await core.effectivePolicyForCustomer(customerId,entitlement,null,{serverId:server.id});
   const account=await core.createJellyfinAccount(customerId,server,effective,{makePrimary:type==='jellyfin'});
   await customerServerChoice.persistAssignment(entitlement.subscription_id,server,{overwrite:Boolean(entitlement.admin_forced_server_id)});
   entitlement.media_server_id=server.id;
@@ -168,7 +169,6 @@ async function reconcileCustomer(customerId,serviceType){
         entitlement.media_location_snapshot=customerServerChoice.locationLabel(existing.server_location);
       }
     }
-    const effective=await core.effectivePolicyForCustomer(customerId,entitlement);
     const entitledServers=entitlement.media_server_id?[]:(await planServers.eligibleServersForPlan(entitlement,{enabledOnly:false,forPlacement:false}))
       .filter(server=>normalizeService(server.media_server_type||type)===type);
     const entitledServerIds=new Set(entitledServers.map(server=>String(server.id)));
@@ -179,16 +179,20 @@ async function reconcileCustomer(customerId,serviceType){
     if(!account)account=accounts.find(a=>!a.disabled&&matchesPlacement(a));
     if(!account)account=accounts.find(a=>matchesPlacement(a));
     let created=false;
+    let effective=null;
 
     if(!account){
-      account=await createForEntitlement(customerId,type,entitlement,effective);
+      account=await createForEntitlement(customerId,type,entitlement);
+      effective=await core.effectivePolicyForCustomer(customerId,entitlement,null,{serverId:account.server_id});
       created=true;
     }else{
+      effective=await core.effectivePolicyForCustomer(customerId,entitlement,null,{serverId:account.server_id});
       try{
         await core.applyPolicy(account,effective,false);
       }catch(error){
         if(!remoteMissing(error))throw error;
         account=await recoverMissingAccount(customerId,type,account,entitlement,effective);
+        effective=await core.effectivePolicyForCustomer(customerId,entitlement,null,{serverId:account.server_id});
         created=true;
       }
       if(type==='jellyfin'&&!account.is_primary){
@@ -239,7 +243,7 @@ async function reconcileAccount(accountId){
   const type=normalizeService(account.media_server_type);
   const entitlement=await entitlementFor(account.customer_id,type);
   if(!entitlement||!account.server_enabled)return core.disableJellyfinAccount(account);
-  const effective=await core.effectivePolicyForCustomer(account.customer_id,entitlement);
+  const effective=await core.effectivePolicyForCustomer(account.customer_id,entitlement,null,{serverId:account.server_id});
   try{return await core.applyPolicy(account,effective,false);}
   catch(error){
     if(!remoteMissing(error))throw error;
