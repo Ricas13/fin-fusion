@@ -47,7 +47,10 @@ async function reserveScheduledMediaPlacement(customerId,server,effectiveAt){
 }
 async function releaseScheduledMediaPlacement(customerId,serverId){
     if(!customerId||!serverId)return;
-    const lease=await query(`SELECT id FROM jellyfin_server_placement_leases WHERE customer_id=$1 AND server_id=$2 ORDER BY updated_at DESC LIMIT 1`,[customerId,serverId]);
+    const lease=await query(`SELECT id FROM jellyfin_server_placement_leases
+        WHERE customer_id=$1 AND server_id=$2
+          AND (access_lane='primary' OR access_lane IS NULL)
+        ORDER BY updated_at DESC LIMIT 1`,[customerId,serverId]);
     if(lease.rowCount)await provisioningHelpers.releaseDefinitivePlacementFailure(customerId,serverId,lease.rows[0].id);
 }
 
