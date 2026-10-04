@@ -96,6 +96,9 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert.strictEqual(choice.locationLabel(''), 'Default');
   assert.strictEqual(choice.matchesPreference({ location: ' london ' }, 'London'), true);
   assert.strictEqual(choice.matchesPreference({ location: 'Germany' }, 'London'), false);
+  assert(await choice.safeTestUrl(servers[0], { resolveHost: publicResolver }).then(Boolean), 'public media URLs must remain available for browser latency tests');
+  assert.strictEqual(await choice.safeTestUrl(servers[0], { resolveHost: async () => ['10.0.0.5'] }), null, 'private media destinations must never be exposed as customer latency-test URLs');
+  assert.strictEqual(await choice.safeTestUrl(servers[0], { resolveHost: async () => ['127.0.0.1'] }), null, 'loopback media destinations must never be exposed as customer latency-test URLs');
   assert.strictEqual(choice.mediaServerType({ service_type: 'bundle' }), 'jellyfin');
   assert.strictEqual(choice.mediaServerType({ service_type: 'emby' }), 'emby');
   assert.strictEqual(choice.mediaServerType({ service_type: 'stremio' }), null);
@@ -178,7 +181,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
     'ambiguous legacy Jellyfin accounts must fail closed until a server assignment is repaired'
   );
 
-  const grouped = await choice.choicesForPlan(plan, { db: fakeDb() });
+  const publicResolver = async () => ['1.1.1.1'];
+  const grouped = await choice.choicesForPlan(plan, { db: fakeDb(), resolveTestHost: publicResolver });
   assert.strictEqual(grouped.length, 2, 'two distinct locations must produce two customer choices');
   assert.strictEqual(grouped.find(item => item.value === 'London').serverCount, 2, 'same-location servers must be grouped behind one customer choice');
   assert.strictEqual(grouped.find(item => item.value === 'London').remaining, 20);
@@ -186,7 +190,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   await assert.rejects(() => choice.resolveAcquisitionLocation(plan, null, { db: fakeDb(), requireSelection: true }), /Choose a server location/);
   assert.strictEqual(await choice.resolveAcquisitionLocation(plan, 'gErMaNy', { db: fakeDb(), requireSelection: true }), 'Germany');
 
-  const withFullGermany = await choice.choicesForPlan(plan, { db: fakeDb({ fullGermany: true }) });
+  const withFullGermany = await choice.choicesForPlan(plan, { db: fakeDb({ fullGermany: true }), resolveTestHost: publicResolver });
   assert.deepStrictEqual(withFullGermany.map(item => item.value), ['London'], 'full locations must not be offered to new placements');
   assert.strictEqual(await choice.resolveAcquisitionLocation(plan, null, { db: fakeDb({ fullGermany: true }), requireSelection: true }), 'London', 'single remaining location must auto-select without a dropdown');
   const existingFullGermany = await choice.existingAssignedServerForPlan(plan, servers[2].id, 'Germany', { db: fakeDb({ fullGermany: true }) });
@@ -280,6 +284,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(provisioning.includes('SELECT 1 FROM subscriptions') && provisioning.includes('media_server_id=$2'), 'provisioning capacity checks must recognize the customer\'s own active subscription reservation');
   assert(migration.includes('target_media_server_id') && migration.includes('customer_plan_changes_target_media_server_id_fkey'), 'scheduled paid media reservations must survive process restarts and block destructive server deletion');
   assert(adminServers.includes('providerChanged&&occupied>0'), 'server provider conversion must be blocked while paid/free customer capacity is occupied or reserved');
+  assert(adminServers.includes('assertPublicCustomerUrl') && adminServers.includes('outbound.resolveHost') && adminServers.includes('info.hard || info.private'), 'admin server saves must reject customer/public URLs that resolve to private or reserved network destinations');
   assert(fs.readFileSync('src/jellyfin/customer-server-choice.js','utf8').includes('$4::boolean OR media_location_preference'), 'explicit admin migration must overwrite the sticky location preference together with the server assignment');
 
   console.log('customer media location selection smoke: ok');
