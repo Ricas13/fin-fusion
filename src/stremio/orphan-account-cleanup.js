@@ -36,7 +36,6 @@ async function ownershipRows() {
     query(`
       SELECT id,customer_id,server_id,jellyfin_user_id,jellyfin_username,account_purpose
       FROM jellyfin_accounts
-      WHERE account_purpose='stremio_internal'
     `),
     query(`
       SELECT id,customer_id,server_id,username,remote_user_id,status,updated_at
@@ -124,11 +123,10 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
   return { rows, failures, graceHours: hours };
 }
 
-async function raceCheck(row) {
+async function raceCheck(row, { now = new Date(), hours = graceHours() } = {}) {
   const ownership = await query(`
     SELECT id FROM jellyfin_accounts
     WHERE server_id=$1
-      AND account_purpose='stremio_internal'
       AND (lower(jellyfin_user_id)=lower($2) OR lower(jellyfin_username)=lower($3))
     LIMIT 1
   `, [row.server_id, row.jellyfin_user_id, row.jellyfin_username]);
@@ -142,6 +140,19 @@ async function raceCheck(row) {
   `, [row.server_id, row.jellyfin_username, row.jellyfin_user_id]);
   if (intent.rowCount) return { safe: false, reason: 'intent_now' };
 
+  // Re-read the remote identity immediately before the destructive action.
+  // A user that was renamed, promoted to administrator or became recently
+  // active after inventory must fail closed rather than be deleted.
+  const users = await registry.request(row.server_id, '/Users', { timeoutMs: 10000 });
+  if (!Array.isArray(users)) return { safe: false, reason: 'remote_state_unavailable' };
+  const remote = users.find(user => norm(user?.Id) === norm(row.jellyfin_user_id));
+  if (!remote) return { safe: false, reason: 'remote_missing_now' };
+  if (norm(remote?.Name) !== norm(row.jellyfin_username) || !INTERNAL_USER_RE.test(String(remote?.Name || ''))) {
+    return { safe: false, reason: 'identity_changed_now' };
+  }
+  if (remote?.Policy?.IsAdministrator) return { safe: false, reason: 'administrator_now' };
+  if (recentEnough(remote, hours, now)) return { safe: false, reason: 'recent_activity_now' };
+
   const sessions = await registry.request(row.server_id, '/Sessions', { timeoutMs: 10000 });
   if ((Array.isArray(sessions) ? sessions : []).some(session => norm(session?.UserId) === norm(row.jellyfin_user_id))) {
     return { safe: false, reason: 'active_now' };
@@ -149,8 +160,8 @@ async function raceCheck(row) {
   return { safe: true };
 }
 
-async function remove(row) {
-  const check = await raceCheck(row);
+async function remove(row, options = {}) {
+  const check = await raceCheck(row, options);
   if (!check.safe) return { deleted: false, skipped: check.reason };
   await registry.request(
     row.server_id,
@@ -185,7 +196,7 @@ async function run({ apply = true, now = new Date(), hours = graceHours() } = {}
       continue;
     }
     try {
-      const result = await remove(row);
+      const result = await remove(row, { now, hours });
       if (result.deleted) deleted += 1;
       else skipped += 1;
     } catch (error) {
