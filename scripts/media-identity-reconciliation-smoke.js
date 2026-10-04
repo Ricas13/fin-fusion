@@ -63,8 +63,10 @@ function source(file) {
 (function integrationSurfaceContracts() {
   const jobs = source('src/automation/jobs.js');
   assert(jobs.includes("const stremioOrphanCleanup=require('../stremio/orphan-account-cleanup');"));
-  assert(jobs.includes("async stremio_managed_accounts(){return stremioManagedSweep.syncActiveBounded()}"), 'Existing critical Stremio managed-account sync must retain its independent failure domain.');
-  assert(jobs.includes("stremio_orphan_cleanup:{defaultIntervalSeconds:300,critical:false}") && jobs.includes("async stremio_orphan_cleanup(){return stremioOrphanCleanup.run({apply:true,limit:5})}"), 'Bounded orphan cleanup must run as a separate non-critical automation job.');
+  assert(jobs.includes("async stremio_managed_accounts(){const managed=await stremioManagedSweep.syncActiveBounded();"), 'Critical Stremio managed-account reconciliation must run before orphan cleanup.');
+  assert(jobs.includes("if(Number(managed?.failed||0)>0)return{...managed,orphanCleanup:{processed:0,deleted:0,skipped:0,failed:0,disabled:'managed_reconciliation_failed'}}"), 'A managed-account reconciliation failure must disable destructive orphan cleanup for that run.');
+  assert(jobs.includes("const orphanCleanup=await stremioOrphanCleanup.run({apply:true,limit:5});return{...managed,orphanCleanup}"), 'Bounded orphan cleanup may run only after a clean managed-account reconciliation.');
+  assert(!jobs.includes("stremio_orphan_cleanup:{defaultIntervalSeconds:300"), 'Orphan cleanup must not be independently scheduled from managed reconciliation.');
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
   assert(cleanup.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Stremio orphan cleanup must never sweep Emby servers.');
