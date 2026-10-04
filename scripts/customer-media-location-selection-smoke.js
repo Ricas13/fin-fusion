@@ -248,6 +248,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   const application = fs.readFileSync('src/application.js', 'utf8');
   const registerView = fs.readFileSync('views/customer/register.ejs', 'utf8');
   const registrationProbe = fs.readFileSync('public/js/media-location-test.js', 'utf8');
+  const customerJellyfin = fs.readFileSync('src/platform/customer-jellyfin.js', 'utf8');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(checkout.includes('existingAssignedServerForPlan(choice.plan,current.media_server_id,requested)'), 'paid checkout validation must not reject an existing customer simply because their already-occupied server is full or closed to new placements');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
@@ -269,6 +270,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(checkoutClient.includes('payload.selectedLocation') && checkoutClient.includes('setMediaLocation(card,preferred)'), 'checkout UI must preselect a reusable existing location without removing the customer choice');
   assert(application.includes("connect-src 'self' https: http:") && application.includes("script-src 'self'"), 'customer latency probes must be allowed to configured http/https media origins without relaxing script execution beyond same-origin');
   assert(registerView.includes('data-media-location-test') && registerView.includes('data-test-media-locations') && registerView.includes('/js/media-location-test.js'), 'Free signup with multiple locations must expose the customer latency-test control');
+  assert(customerJellyfin.includes('if(!entitlement)continue;'), 'My Access must not render orphan/stale media accounts that no longer match a current entitlement');
   assert(registrationProbe.includes("mode:'no-cors'") && registrationProbe.includes("credentials:'omit'") && registrationProbe.includes("referrerPolicy:'no-referrer'") && registrationProbe.includes("reason:'Unavailable'"), 'Free signup latency probes must be credential-free, referrer-free and report failed tests as unavailable');
   assert(planChange.includes('existingAssignedServerForPlan(target,current.media_server_id,mediaLocation||null)'), 'plan changes must reuse an eligible existing server before applying new-customer availability rules, even when that server is full or closed to new placements');
   assert(planChange.includes('assertNoAmbiguousLegacyMediaAssignment') && planChange.includes('needs administrator repair before this paid plan change can be made safely'), 'paid plan changes must fail closed when a legacy customer has media accounts but no unambiguous persisted server assignment');
