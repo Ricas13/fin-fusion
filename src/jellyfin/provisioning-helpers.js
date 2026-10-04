@@ -232,7 +232,11 @@ async function reservePlacement(customerId, server, { allowOverCapacity = false 
          AND capacity_admin.service='jellyfin'
         WHERE capacity_subscription.customer_id=$1
           AND COALESCE(
-                CASE WHEN capacity_admin.mode='admin_server_pin' THEN capacity_admin.server_id END,
+                CASE
+                  WHEN COALESCE(NULLIF(capacity_subscription.service_type_snapshot,''),capacity_plan.service_type,'jellyfin') IN('jellyfin','bundle')
+                   AND capacity_admin.mode='admin_server_pin'
+                  THEN capacity_admin.server_id
+                END,
                 capacity_subscription.media_server_id
               )=$2
           AND (
