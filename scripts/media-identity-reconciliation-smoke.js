@@ -63,7 +63,8 @@ function source(file) {
 (function integrationSurfaceContracts() {
   const jobs = source('src/automation/jobs.js');
   assert(jobs.includes("const stremioOrphanCleanup=require('../stremio/orphan-account-cleanup');"));
-  assert(jobs.includes("const sync=await stremioManagedSweep.syncActiveBounded();const orphanApply=Number(sync.failed||0)===0;const orphans=await stremioOrphanCleanup.run({apply:orphanApply,limit:5});"), 'Critical Stremio sync must finish first and automatic orphan deletion must be bounded per run.');
+  assert(jobs.includes("async stremio_managed_accounts(){return stremioManagedSweep.syncActiveBounded()}"), 'Existing critical Stremio managed-account sync must retain its independent failure domain.');
+  assert(jobs.includes("stremio_orphan_cleanup:{defaultIntervalSeconds:300,critical:false}") && jobs.includes("async stremio_orphan_cleanup(){return stremioOrphanCleanup.run({apply:true,limit:5})}"), 'Bounded orphan cleanup must run as a separate non-critical automation job.');
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
   assert(cleanup.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Stremio orphan cleanup must never sweep Emby servers.');
