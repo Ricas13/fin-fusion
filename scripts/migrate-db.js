@@ -171,19 +171,23 @@ async function ensureCompatibilityMigrationLedger(pool) {
 
 async function applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall, checksum = migrationChecksum(sql)) {
     await ensureCompatibilityMigrationLedger(pool);
-    const existing = await pool.query(
-        'SELECT checksum FROM public.schema_compatibility_migrations WHERE filename=$1',
-        [filename]
-    );
-    if (existing.rows[0]?.checksum === checksum) {
-        console.log(`compatibility skip ${filename}`);
-        return { applied: false, skipped: true };
-    }
-
-    const client = await pool.connect();
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('captainfin:compat-migration:'||$1::text, 91827))",
+            [filename]
+        );
+        const existing = await client.query(
+            'SELECT checksum FROM public.schema_compatibility_migrations WHERE filename=$1',
+            [filename]
+        );
+        if (existing.rows[0]?.checksum === checksum) {
+            await client.query('COMMIT');
+            console.log(`compatibility skip ${filename}`);
+            return { applied: false, skipped: true };
+        }
+
         await client.query("SELECT pg_catalog.set_config('search_path','public',false)");
         await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
         await client.query(unwrapTransaction(sql));
