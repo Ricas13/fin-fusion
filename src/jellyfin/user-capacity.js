@@ -52,9 +52,28 @@ async function countsForServers(serverIds, db = query) {
         AND operation.state IN('planned','provider_applied','local_applied')
         AND COALESCE(operation.failure_kind,'') NOT IN('terminal','superseded')
       UNION
-      SELECT subscription.media_server_id,subscription.customer_id::text
+      SELECT COALESCE(
+               CASE
+                 WHEN COALESCE(NULLIF(subscription.service_type_snapshot,''),subscription_plan.service_type,'jellyfin') IN('jellyfin','bundle')
+                  AND subscription_admin.mode='admin_server_pin'
+                 THEN subscription_admin.server_id
+               END,
+               subscription.media_server_id
+             ) AS server_id,
+             subscription.customer_id::text
       FROM subscriptions subscription
-      WHERE subscription.media_server_id=ANY($1::uuid[])
+      JOIN plans subscription_plan ON subscription_plan.id=subscription.plan_id
+      LEFT JOIN customer_service_admin_control subscription_admin
+        ON subscription_admin.customer_id=subscription.customer_id
+       AND subscription_admin.service='jellyfin'
+      WHERE COALESCE(
+              CASE
+                WHEN COALESCE(NULLIF(subscription.service_type_snapshot,''),subscription_plan.service_type,'jellyfin') IN('jellyfin','bundle')
+                 AND subscription_admin.mode='admin_server_pin'
+                THEN subscription_admin.server_id
+              END,
+              subscription.media_server_id
+            )=ANY($1::uuid[])
         AND subscription.superseded_by IS NULL
         AND subscription.status IN('active','trialing','past_due','paused')
         AND subscription.starts_at<=clock_timestamp()
