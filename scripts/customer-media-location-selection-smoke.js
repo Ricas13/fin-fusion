@@ -289,6 +289,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   const registerView = fs.readFileSync('views/customer/register.ejs', 'utf8');
   const registrationProbe = fs.readFileSync('public/js/media-location-test.js', 'utf8');
   const customerJellyfin = fs.readFileSync('src/platform/customer-jellyfin.js', 'utf8');
+  const userImport = fs.readFileSync('src/jellyfin/user-import.js', 'utf8');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(checkout.includes('reusableAssignedServerForPlan(current,choice.plan,requested)'), 'paid checkout validation must preserve an existing same-plan customer on their already-occupied sticky server even when it is full, drained, or removed from the new-placement pool');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
@@ -311,6 +312,10 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert(application.includes("connect-src 'self' https: http:") && application.includes("script-src 'self'"), 'customer latency probes must be allowed to configured http/https media origins without relaxing script execution beyond same-origin');
   assert(registerView.includes('data-media-location-test') && registerView.includes('data-test-media-locations') && registerView.includes('/js/media-location-test.js'), 'Free signup with multiple locations must expose the customer latency-test control');
   assert(customerJellyfin.includes('if(!entitlement)continue;'), 'My Access must not render orphan/stale media accounts that no longer match a current entitlement');
+  assert(userImport.includes('media_location_preference,media_server_id,media_location_snapshot'), 'Admin-created imported subscriptions must persist the exact media server assignment immediately.');
+  assert(userImport.includes('This subscription is already assigned to a different media server.'), 'Link-existing-user repair must not silently move a subscription to another physical server.');
+  assert(userImport.includes('media_server_id=COALESCE(media_server_id,$2)') && userImport.includes('(media_server_id IS NULL OR media_server_id=$2)'), 'Legacy link repair must atomically adopt a missing subscription server assignment without overwriting a concurrent assignment.');
+  assert(userImport.includes('eligibleServersForPlan(plan, { enabledOnly: true, forPlacement })') && !userImport.includes('String(server.server_class) !== String(plan.server_class)'), 'Explicit plan server pools must remain authoritative for imports instead of being rejected by the legacy server-class shortcut.');
   assert(registrationProbe.includes("mode:'no-cors'") && registrationProbe.includes("credentials:'omit'") && registrationProbe.includes("referrerPolicy:'no-referrer'") && registrationProbe.includes("reason:'Unavailable'"), 'Free signup latency probes must be credential-free, referrer-free and report failed tests as unavailable');
   assert(planChange.includes('reusableAssignedServerForPlan(current,target,mediaLocation||null)'), 'plan changes must reuse the current sticky server for same-plan changes and only apply target-pool eligibility when moving to a different plan');
   assert(planChange.includes('assertNoAmbiguousLegacyMediaAssignment') && planChange.includes('needs administrator repair before this paid plan change can be made safely'), 'paid plan changes must fail closed when a legacy customer has media accounts but no unambiguous persisted server assignment');
