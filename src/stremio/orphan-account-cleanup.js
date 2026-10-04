@@ -56,7 +56,7 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
     try {
       const [users, sessions] = await Promise.all([
         registry.request(server.id, '/Users', { timeoutMs: 10000 }),
-        registry.request(server.id, '/Sessions', { timeoutMs: 10000 }).catch(() => [])
+        registry.request(server.id, '/Sessions', { timeoutMs: 10000 })
       ]);
       if (!Array.isArray(users)) throw new Error('Media server did not return a valid user list.');
 
@@ -142,7 +142,7 @@ async function raceCheck(row) {
   `, [row.server_id, row.jellyfin_username, row.jellyfin_user_id]);
   if (intent.rowCount) return { safe: false, reason: 'intent_now' };
 
-  const sessions = await registry.request(row.server_id, '/Sessions', { timeoutMs: 10000 }).catch(() => []);
+  const sessions = await registry.request(row.server_id, '/Sessions', { timeoutMs: 10000 });
   if ((Array.isArray(sessions) ? sessions : []).some(session => norm(session?.UserId) === norm(row.jellyfin_user_id))) {
     return { safe: false, reason: 'active_now' };
   }
