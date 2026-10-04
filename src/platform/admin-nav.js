@@ -17,6 +17,7 @@ const hiddenPages=Object.freeze({
 
   'servers-dashboard':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['servers-dashboard','Fleet dashboard','/admin/servers/dashboard'])}),
   'fleet-operations':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['fleet-operations','Placement & capacity','/admin/servers/operations'])}),
+  'media-identity-reconciliation':Object.freeze({kind:'task',groupKey:'servers',parentKey:'servers',page:Object.freeze(['media-identity-reconciliation','Identity reconciliation','/admin/servers/identity-reconciliation'])}),
   libraries:Object.freeze({kind:'page',groupKey:'servers',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
   'my-activity':Object.freeze({kind:'view',groupKey:'servers',parentKey:'activity',page:Object.freeze(['my-activity','My activity','/admin/activity/me'])}),
 

@@ -171,6 +171,7 @@ module.exports = {
       "node scripts/customer-dashboard-readonly-smoke.js",
       "node scripts/free-access-customer-portal-smoke.js",
       "node scripts/admin-coherence-user-overrides-smoke.js",
+      "node scripts/media-identity-reconciliation-smoke.js",
       "node scripts/admin-navigation-coherence-smoke.js",
       "node scripts/notification-multicurrency-smoke.js",
       "node scripts/workflow-notification-correctness-smoke.js"
@@ -180,6 +181,7 @@ module.exports = {
       "node scripts/stremio-admin-smoke.js",
       "node scripts/stremio-zero-downtime-index-smoke.js",
       "node scripts/stremio-managed-sources-smoke.js",
+      "node scripts/media-identity-reconciliation-smoke.js",
       "node scripts/stremio-playback-compatibility-smoke.js",
       "node scripts/stremio-episode-resolution-smoke.js",
       "node scripts/stremio-plan-source-composition-smoke.js",
