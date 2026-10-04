@@ -121,10 +121,12 @@ function classificationFor({ remote, candidates, existingAccounts, access }) {
   if (candidates.length > 1) return 'ambiguous_match';
   const strong = confidence(candidates[0].match) === 'strong';
   if (!strong) return existingAccounts.length ? 'possible_duplicate' : 'possible_match';
-  if (access?.primary_state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) return 'access_leak';
+  if (access?.primary_state === accessState.ACCESS_STATES.ACTIVE_BLOCKED
+      || access?.free_state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) return 'access_leak';
   if (existingAccounts.some(row => row.account_purpose === 'jellyfin')) return 'possible_duplicate';
   if (access?.primary_state === accessState.ACCESS_STATES.PAID_PROVISIONING_FAILED
       || access?.primary_state === accessState.ACCESS_STATES.INCONSISTENT_UNPAID) return 'unlinked_entitled_customer';
+  if (access?.free_state === accessState.ACCESS_STATES.INCONSISTENT_UNPAID) return 'free_access_repair';
   return 'unlinked_customer';
 }
 
