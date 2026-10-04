@@ -172,6 +172,10 @@ assert(customerLockAt >= 0 && intentLockAt > customerLockAt && authorityRecheckA
     'stale Jellyfin creation cleanup must lock customer+intent and re-check authority before remote deletion');
 assert(creationIntentRecovery.includes("const adminOwns = admin?.mode === 'admin_present'"),
     'stale creation cleanup must treat admin-present as access authority while keeping server pins placement-only');
+const durableCreationSource = read('src/jellyfin/durable-account-creation.js');
+assert(durableCreationSource.includes("provider === 'emby' && accessLane === 'primary'")
+    && durableCreationSource.includes('return setIntent(intent.id, { accessLane })'),
+    'legacy lane-less Emby creation intents must be immediately adoptable as the Emby primary lane');
 assert(creationIntentRecovery.includes('intentServerStillOwned')
     && creationIntentRecovery.includes('intent?.access_lane')
     && creationIntentRecovery.includes('String(row.media_server_id) === serverId'),
