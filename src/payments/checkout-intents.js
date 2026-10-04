@@ -210,10 +210,11 @@ async function createIntent({
                     // cutover. The exact checkout row remains the long-lived
                     // authority in the new generation.
                     await client.query(`
-                        INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at)
-                        VALUES($1,$2,LEAST($3::timestamptz,NOW()+INTERVAL '15 minutes'))
+                        INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at,access_lane)
+                        VALUES($1,$2,LEAST($3::timestamptz,NOW()+INTERVAL '15 minutes'),'primary')
                         ON CONFLICT(customer_id,server_id) DO UPDATE SET
                           expires_at=GREATEST(jellyfin_server_placement_leases.expires_at,EXCLUDED.expires_at),
+                          access_lane=COALESCE(jellyfin_server_placement_leases.access_lane,EXCLUDED.access_lane),
                           updated_at=NOW()
                     `,[customerId,mediaServerId,expires]);
                 }
