@@ -241,6 +241,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   const providerRecovery = fs.readFileSync('src/payments/provider-operation-recovery.js', 'utf8');
   const adminServers = fs.readFileSync('src/platform/admin-servers.js', 'utf8');
   const migration = fs.readFileSync('db/migrations/20261003113000_customer_media_location_assignment.sql', 'utf8');
+  const application = fs.readFileSync('src/application.js', 'utf8');
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(checkout.includes('existingAssignedServerForPlan(choice.plan,current.media_server_id,requested)'), 'paid checkout validation must not reject an existing customer simply because their already-occupied server is full or closed to new placements');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
@@ -259,6 +260,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'recurring checkout must forward the chosen media location into the plan-change workflow');
   assert(dashboard.includes('selectedLocation') && dashboard.includes('existingAssignment:true') && dashboard.includes('existingAssignedServerForPlan') && dashboard.includes('safeTestUrl(assigned)'), 'customer location discovery must preserve an existing eligible assignment, including its safe performance-test URL, even when its physical server is full');
   assert(checkoutClient.includes('payload.selectedLocation') && checkoutClient.includes('setMediaLocation(card,preferred)'), 'checkout UI must preselect a reusable existing location without removing the customer choice');
+  assert(application.includes("connect-src 'self' https: http:") && application.includes("script-src 'self'"), 'customer latency probes must be allowed to configured http/https media origins without relaxing script execution beyond same-origin');
   assert(planChange.includes('existingAssignedServerForPlan(target,current.media_server_id,mediaLocation||null)'), 'plan changes must reuse an eligible existing server before applying new-customer availability rules, even when that server is full or closed to new placements');
   assert(planChange.includes('assertNoAmbiguousLegacyMediaAssignment') && planChange.includes('needs administrator repair before this paid plan change can be made safely'), 'paid plan changes must fail closed when a legacy customer has media accounts but no unambiguous persisted server assignment');
   assert(subscriptionActions.includes("if(!enable&&await planChange.pendingForCustomer") && subscriptionActions.includes('Cancel your scheduled plan change before stopping automatic renewal.'), 'renewal stop must not race an open scheduled plan change or leave its future commercial reservation ambiguous');
