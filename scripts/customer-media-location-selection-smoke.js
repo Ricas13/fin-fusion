@@ -201,6 +201,19 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   const existingFullGermany = await choice.existingAssignedServerForPlan(plan, servers[2].id, 'Germany', { db: fakeDb({ fullGermany: true }) });
   assert.strictEqual(existingFullGermany.id, servers[2].id, 'an existing paid assignment may remain on its already-occupied full server during a plan change');
 
+  const stickyCurrent = { ...plan, plan_id: plan.id, media_server_id: servers[0].id };
+  const noPoolLookupDbBase = fakeDb();
+  const noPoolLookupDb = async (sql, params = []) => {
+    if (sql.includes('WITH restriction AS')) throw new Error('same-plan sticky reuse must not consult the new-placement pool');
+    return noPoolLookupDbBase(sql, params);
+  };
+  const samePlanSticky = await choice.reusableAssignedServerForPlan(stickyCurrent, plan, null, { db: noPoolLookupDb });
+  assert.strictEqual(
+    samePlanSticky.id,
+    servers[0].id,
+    'same-plan stream/variant changes must keep the exact assigned server even after it is removed from the acquisition pool'
+  );
+
   const selected = await choice.selectServerForLocation(plan, 'London', { db: fakeDb() });
   assert(['London A', 'London B'].includes(selected.name), 'location selection must never escape the chosen location');
   const lockedSelected = await choice.selectServerForLocationLocked(plan, 'London', { db: fakeDb() });
@@ -253,6 +266,10 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
 
   const checkout = fs.readFileSync('src/platform/flexible-checkout.js', 'utf8');
   const dashboard = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
+  const planChangeSource = fs.readFileSync('src/payments/customer-plan-change.js', 'utf8');
+  assert(checkout.includes('reusableAssignedServerForPlan(current,choice.plan,requested)'), 'checkout preflight must preserve same-plan sticky media assignment');
+  assert(dashboard.includes('reusableAssignedServerForPlan(current,plan,null)'), 'dashboard location state must preserve the current plan sticky assignment');
+  assert(planChangeSource.includes('reusableAssignedServerForPlan(current,target,mediaLocation||null)'), 'plan-change execution must not silently migrate same-plan customers');
   const checkoutClient = fs.readFileSync('public/js/customer-checkout.js', 'utf8');
   const lifecycle = fs.readFileSync('src/payments/lifecycle.js', 'utf8');
   const pending = fs.readFileSync('src/security/pending-registration.js', 'utf8');
