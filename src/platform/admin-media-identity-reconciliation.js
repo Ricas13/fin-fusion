@@ -246,8 +246,9 @@ function createAdminMediaIdentityReconciliationRouter() {
         expectedName: req.body?.expectedName,
         actorUserId: req.session.authUserId
       });
-      const message = result.cleanupWarning
-        ? `Canonical identity changed, but old remote cleanup needs another pass: ${result.cleanupWarning}`
+      const warnings = [result.cleanupWarning, result.reconcileWarning].filter(Boolean);
+      const message = warnings.length
+        ? `Canonical identity changed safely. ${warnings.join(' ')}`
         : 'Canonical media identity changed and the old remote identity was retired.';
       return redirect(res, message);
     } catch (error) {
