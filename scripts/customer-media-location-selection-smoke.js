@@ -66,7 +66,11 @@ const servers = [
   }
 ];
 
-function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
+function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds = [] } = {}) {
+  const fullIds = new Set([
+    ...fullServerIds.map(String),
+    ...(fullGermany ? [String(servers[2].id)] : [])
+  ]);
   return async (sql, params = []) => {
     if (sql.includes("setting_key='operations_v1'")) {
       return { rowCount: 1, rows: [{ setting_value: { placementHealthMode: 'healthy_or_degraded' } }] };
@@ -75,10 +79,10 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
       return { rowCount: servers.length, rows: servers.map(server => ({ ...server, placement_weight: 100 })) };
     }
     if (sql.includes('WITH capacity_users AS')) {
-      return {
-        rowCount: fullGermany ? 1 : 0,
-        rows: fullGermany ? [{ server_id: servers[2].id, users: 5 }] : []
-      };
+      const rows = servers
+        .filter(server => fullIds.has(String(server.id)))
+        .map(server => ({ server_id: server.id, users: Number(server.max_users || 0) }));
+      return { rowCount: rows.length, rows };
     }
     if (sql.includes('WHERE id=ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
       return { rowCount: params[0]?.length || 0, rows: (params[0] || []).map(id => ({ id })) };
@@ -201,6 +205,24 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(['London A', 'London B'].includes(selected.name), 'location selection must never escape the chosen location');
   const lockedSelected = await choice.selectServerForLocationLocked(plan, 'London', { db: fakeDb() });
   assert(['London A', 'London B'].includes(lockedSelected.name), 'serialized reservation must stay inside the chosen location');
+
+  // The lock set must include currently-full servers in the selected location.
+  // They can become available between the pre-lock read and final capacity read;
+  // if omitted from FOR UPDATE, the final allocator could select an unlocked slot.
+  let lockedCandidateIds = [];
+  const partiallyFullDbBase = fakeDb({ fullServerIds: [servers[0].id] });
+  const partiallyFullDb = async (sql, params = []) => {
+    if (sql.includes('WHERE id=ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+      lockedCandidateIds = [...(params[0] || [])].map(String);
+    }
+    return partiallyFullDbBase(sql, params);
+  };
+  await choice.selectServerForLocationLocked(plan, 'London', { db: partiallyFullDb });
+  assert.deepStrictEqual(
+    lockedCandidateIds.sort(),
+    [servers[0].id, servers[1].id].map(String).sort(),
+    'atomic reservation must lock every eligible server in the selected location, including currently-full candidates'
+  );
 
   const sticky = await choice.assignedServer({ ...plan, media_server_id: servers[0].id }, 'jellyfin', { db: fakeDb() });
   assert.strictEqual(sticky.id, servers[0].id, 'persisted assignment must win over later pool ordering');
