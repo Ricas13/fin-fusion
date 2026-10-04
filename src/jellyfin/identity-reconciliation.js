@@ -298,11 +298,17 @@ async function replaceManagedIdentity({ customerId, accountId, serverId, jellyfi
   // row back after a later, unrelated reconciliation error could turn an
   // enabled/policy-updated target into an unmanaged access leak.
   await transaction(async db => {
-    await db.query(`
+    const adopted = await db.query(`
       UPDATE jellyfin_accounts
       SET jellyfin_user_id=$1,jellyfin_username=$2,disabled=FALSE,last_activity_at=$3,last_policy_sync=NULL,updated_at=NOW()
       WHERE id=$4 AND customer_id=$5
-    `, [target.jellyfin_user_id, target.jellyfin_username, target.last_activity_at, accountId, customerId]);
+        AND lower(jellyfin_user_id)=lower($6)
+        AND lower(jellyfin_username)=lower($7)
+      RETURNING id
+    `, [target.jellyfin_user_id, target.jellyfin_username, target.last_activity_at, accountId, customerId, old.jellyfinUserId, old.username]);
+    if (!adopted.rowCount) {
+      throw new Error('The managed media identity changed while replacement was in progress. Refresh reconciliation and retry.');
+    }
     await db.query(`
       UPDATE customer_media_access_recovery
       SET preferred_username=$2,last_remote_user_id=$3,last_server_id=$4,updated_at=NOW()
