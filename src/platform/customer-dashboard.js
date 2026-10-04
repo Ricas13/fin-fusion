@@ -133,7 +133,7 @@ function createCustomerDashboardRouter(){
             label:selectedLocation,
             remaining:0,
             serverCount:1,
-            testUrl:customerServerChoice.safeTestUrl(assigned),
+            testUrl:await customerServerChoice.safeTestUrl(assigned),
             existingAssignment:true
           });
         }
