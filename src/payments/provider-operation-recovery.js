@@ -8,6 +8,8 @@ const providerSettings = require('./provider-settings');
 const providerPricing = require('./provider-plan-pricing');
 const providerHttp = require('./provider-http');
 const billingControl = require('./billing-control');
+const planCapacity = require('../entitlements/plan-capacity');
+const customerServerChoice = require('../jellyfin/customer-server-choice');
 
 const PLAN_OPERATION_TYPES = ['plan_change_immediate','plan_change_schedule'];
 const RENEWAL_OPERATION_TYPES = ['renewal_stop','renewal_resume'];
@@ -108,14 +110,72 @@ async function finishImmediateLocal(op, subscription, target, mapping) {
     if (!updated.rowCount) throw providerOps.leaseLost(op.id);
   });
 }
+async function ensureImmediateAdmission(op, subscription, target) {
+  const request = op.request_snapshot || {};
+  if (op.state !== 'planned') return op;
+  if (String(subscription.plan_id) === String(target.id)) return op;
+  if (String(op.provider_result?.capacityReserved || '') === 'true' || op.provider_result?.capacityReserved === true) return op;
+
+  let selectedServer = null;
+  let selectedLocation = request.targetMediaLocation || null;
+  const updated = await transaction(async db => {
+    await planCapacity.lockAndAssert(db, target.id, target.name || 'This plan');
+
+    if (customerServerChoice.mediaServerType(target)) {
+      if (!selectedLocation && request.targetMediaServerId) {
+        const prior = (await db.query('SELECT location FROM jellyfin_servers WHERE id=$1 LIMIT 1', [request.targetMediaServerId])).rows[0] || null;
+        selectedLocation = prior ? customerServerChoice.locationLabel(prior.location) : null;
+      }
+      if (!selectedLocation) {
+        throw manual('Immediate plan-change recovery cannot prove the customer-selected media location. Refusing to mutate Stripe.');
+      }
+      selectedServer = await customerServerChoice.selectServerForLocationLocked(
+        target,
+        selectedLocation,
+        { db:(sql,params)=>db.query(sql,params), requireSelection:true }
+      );
+      selectedLocation = selectedServer?.selected_location || customerServerChoice.locationLabel(selectedServer?.location);
+
+      // N-1 web processes do not understand provider-operation capacity. Keep a
+      // short bridge lease while the newly-admitted operation is in flight.
+      await db.query(`
+        INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,access_lane,expires_at)
+        VALUES($1,$2,'primary',NOW()+INTERVAL '10 minutes')
+        ON CONFLICT(customer_id,server_id) DO UPDATE
+        SET access_lane=COALESCE(jellyfin_server_placement_leases.access_lane,'primary'),
+            expires_at=GREATEST(jellyfin_server_placement_leases.expires_at,EXCLUDED.expires_at),
+            updated_at=NOW()
+      `, [op.owner_id, selectedServer.id]);
+    }
+
+    const requestPatch = {
+      ...(selectedLocation ? { targetMediaLocation:selectedLocation } : {}),
+      ...(selectedServer?.id ? { targetMediaServerId:selectedServer.id } : {})
+    };
+    const result = await db.query(`
+      UPDATE provider_operations
+      SET request_snapshot=request_snapshot||$2::jsonb,
+          provider_result=provider_result||'{"capacityReserved":true}'::jsonb,
+          updated_at=NOW()
+      WHERE id=$1 AND state='planned'
+      RETURNING *
+    `, [op.id, JSON.stringify(requestPatch)]);
+    if (!result.rowCount) throw providerOps.leaseLost(op.id);
+    return result.rows[0];
+  });
+  return updated;
+}
+
 async function recoverImmediate(op) {
   await assertNewest(op, PLAN_OPERATION_TYPES);
-  const request = op.request_snapshot || {};
+  let request = op.request_snapshot || {};
   const subscriptionId = request.subscriptionId || op.local_reference;
   if (!subscriptionId || !request.targetPlanId || !request.targetPriceId) throw manual('Immediate plan-change recovery snapshot is incomplete.');
   const subscription = (await query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2', [subscriptionId,op.owner_id])).rows[0];
   if (!subscription) throw manual('Plan-change subscription no longer exists.');
   const { target, mapping } = await loadTarget(request);
+  op = await ensureImmediateAdmission(op, subscription, target);
+  request = op.request_snapshot || request;
   const client = await stripeClient();
   let remote = await client.subscriptions.retrieve(subscription.provider_subscription_id, { expand:['items.data.price'] });
   let observedPrice = stripePriceId(remote);
@@ -258,4 +318,4 @@ async function run({ limit=25 } = {}) {
 }
 async function attention({ limit=100 } = {}) { return providerOps.open({ limit }); }
 
-module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,recoverOne,run,attention };
+module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,ensureImmediateAdmission,recoverOne,run,attention };
