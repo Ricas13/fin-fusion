@@ -19,6 +19,8 @@ assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,statu
 assert(manual.includes("require('../entitlements/admin-manual-entitlement-service')"), 'manual grant route must delegate to the entitlement-domain service');
 assert(manualService.includes("require('./manual-subscriptions')"), 'manual grant domain service must delegate subscription creation to the canonical entitlement owner');
 assert(manualService.includes('manualSubscriptions.createManualSubscriptionTx'), 'manual grant must use the canonical transactional manual-subscription primitive');
+assert(manualService.includes('planCapacity.lockAndAssert(client, plan.id') && manualService.includes('selectServerForLocationLocked(plan, null'), 'manual grants must atomically reserve plan capacity and a concrete media server before committing access');
+assert(manualService.includes('media_server_id=$2') && manualService.includes('media_location_preference=$3'), 'manual Jellyfin grants must persist the concrete sticky server assignment in the same transaction');
 assert(!manual.includes('INSERT INTO subscriptions'), 'admin route must not own subscription INSERT SQL');
 assert(manualService.includes("auditAction: 'admin.customer.manual_grant'"), 'manual grants must be audit logged');
 assert(manualService.includes('await provisioning.reconcileCustomer(customerId);'), 'manual grants must reconcile customer access after commit');
