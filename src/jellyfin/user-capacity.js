@@ -62,6 +62,7 @@ async function countsForServers(serverIds, db = query) {
         AND operation.operation_type='plan_change_immediate'
         AND operation.state IN('planned','provider_applied','local_applied')
         AND COALESCE(operation.failure_kind,'') NOT IN('terminal','superseded')
+        AND COALESCE(operation.provider_result->>'capacityReserved','false')='true'
       UNION
       SELECT COALESCE(
                CASE
