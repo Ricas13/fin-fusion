@@ -33,6 +33,7 @@ const freeBackfill = read('src/automation/free-capacity-backfill.js');
 const customerAccessState = read('src/access/customer-access-state.js');
 const accessRepair = readMaybe('src/access/access-repair.js');
 const creationIntentRecovery = read('src/automation/jellyfin-creation-intent-recovery.js');
+const creationIntentRecoveryApi = require('../src/automation/jellyfin-creation-intent-recovery');
 const inactivity = read('src/automation/customer-inactivity.js');
 const scopedInactivity = read('src/automation/customer-inactivity-scoped.js');
 const inactivityGrace = read('src/entitlements/jellyfin-inactivity-grace.js');
@@ -171,6 +172,22 @@ assert(customerLockAt >= 0 && intentLockAt > customerLockAt && authorityRecheckA
     'stale Jellyfin creation cleanup must lock customer+intent and re-check authority before remote deletion');
 assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin'"),
     'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
+assert(creationIntentRecovery.includes('intentServerStillOwned')
+    && creationIntentRecovery.includes('row.media_server_id')
+    && creationIntentRecovery.includes('String(row.media_server_id) === serverId'),
+    'stale creation recovery must scope persisted entitlements to the exact assigned server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-old' },
+    { owns:true, primary:{ media_server_id:'server-new' }, free:null, admin:null }
+), false, 'an intent on a superseded server must no longer be preserved by a different persisted assignment');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-old' },
+    { owns:true, primary:{ media_server_id:null }, free:null, admin:null }
+), true, 'legacy entitlements without a persisted assignment must remain fail-closed and preserve the intent');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-pin' },
+    { owns:true, primary:null, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), true, 'admin server pins must preserve only the pinned creation intent');
 
 const compactScopedInactivity = compact(scopedInactivity);
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
