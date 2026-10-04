@@ -369,8 +369,7 @@ async function coverageStats() {
                    s.billing_mode,s.commercial_snapshot
               FROM effective_customer_entitlements e
               JOIN subscriptions s ON s.id=e.subscription_id
-             WHERE e.server_class='premium'
-               AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
+             WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
                AND COALESCE(e.price_minor_snapshot,e.price_minor,0)>0
                AND COALESCE(e.is_free_tier,FALSE)=FALSE
         ),
