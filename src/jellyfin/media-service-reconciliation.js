@@ -154,11 +154,17 @@ async function reconcileCustomer(customerId,serviceType){
   const entitlement=await entitlementFor(customerId,type);
   return recordRun(customerId,entitlement?.subscription_id||null,`${type}_${entitlement?'reconcile':'disable'}`,async()=>{
     const accounts=await accountsFor(customerId,type);
-    if(!entitlement){
+    if(!entitlement||entitlement.blocked){
       for(const account of accounts){
         if(!account.disabled&&account.server_enabled)await core.disableJellyfinAccount(account);
       }
-      return{active:false,disabled:accounts.length,serviceType:type,entitlement:null};
+      return{
+        active:false,
+        blocked:Boolean(entitlement?.blocked),
+        disabled:accounts.length,
+        serviceType:type,
+        entitlement:entitlement||null
+      };
     }
 
     if(!entitlement.media_server_id&&!entitlement.admin_forced_server_id){
@@ -242,7 +248,7 @@ async function reconcileAccount(accountId){
   const account=found.rows[0];
   const type=normalizeService(account.media_server_type);
   const entitlement=await entitlementFor(account.customer_id,type);
-  if(!entitlement||!account.server_enabled)return core.disableJellyfinAccount(account);
+  if(!entitlement||entitlement.blocked||!account.server_enabled)return core.disableJellyfinAccount(account);
   const effective=await core.effectivePolicyForCustomer(account.customer_id,entitlement,null,{serverId:account.server_id});
   try{return await core.applyPolicy(account,effective,false);}
   catch(error){
