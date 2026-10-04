@@ -12,17 +12,28 @@ async function countsForServers(serverIds, db = query) {
   if (!ids.length) return new Map();
   const result = await db(`
     WITH capacity_users AS (
-      SELECT ja.server_id,ja.customer_id::text AS capacity_owner
+      SELECT ja.server_id,
+             ja.customer_id::text||':'||COALESCE(ja.access_lane,'primary') AS capacity_owner
       FROM jellyfin_accounts ja
       WHERE ja.server_id=ANY($1::uuid[])
         AND ja.disabled=FALSE
         AND ja.account_purpose='jellyfin'
       UNION
-      SELECT intent.server_id,intent.customer_id::text
+      SELECT intent.server_id,
+             CASE
+               WHEN intent.access_lane IN('primary','free')
+               THEN intent.customer_id::text||':'||intent.access_lane
+               ELSE 'legacy-intent:'||intent.id::text
+             END
       FROM jellyfin_account_creation_intents intent
       WHERE intent.server_id=ANY($1::uuid[])
       UNION
-      SELECT lease.server_id,lease.customer_id::text
+      SELECT lease.server_id,
+             CASE
+               WHEN lease.access_lane IN('primary','free')
+               THEN lease.customer_id::text||':'||lease.access_lane
+               ELSE 'legacy-lease:'||lease.id::text
+             END
       FROM jellyfin_server_placement_leases lease
       WHERE lease.server_id=ANY($1::uuid[])
         AND lease.expires_at>NOW()
@@ -31,7 +42,7 @@ async function countsForServers(serverIds, db = query) {
       -- different media server weeks before it becomes the live subscription.
       -- Count that exact future server as occupied while the change is pending
       -- so the commercial promise cannot be oversold before Stripe switches.
-      SELECT change.target_media_server_id,change.customer_id::text
+      SELECT change.target_media_server_id,change.customer_id::text||':primary'
       FROM customer_plan_changes change
       WHERE change.target_media_server_id=ANY($1::uuid[])
         AND change.provider='stripe'
@@ -41,7 +52,7 @@ async function countsForServers(serverIds, db = query) {
       -- transaction completes. The provider-operation snapshot is the durable
       -- crash-recovery authority, so keep its promised target server occupied
       -- even after the short placement lease expires.
-      SELECT candidate.id,operation.owner_id::text
+      SELECT candidate.id,operation.owner_id::text||':primary'
       FROM provider_operations operation
       JOIN jellyfin_servers candidate
         ON candidate.id::text=operation.request_snapshot->>'targetMediaServerId'
@@ -60,7 +71,13 @@ async function countsForServers(serverIds, db = query) {
                END,
                subscription.media_server_id
              ) AS server_id,
-             subscription.customer_id::text
+             subscription.customer_id::text||':'||
+             CASE
+               WHEN COALESCE(NULLIF(subscription.service_type_snapshot,''),subscription_plan.service_type,'jellyfin') IN('jellyfin','bundle')
+                AND COALESCE(subscription_plan.is_free_tier,FALSE)=TRUE
+               THEN 'free'
+               ELSE 'primary'
+             END
       FROM subscriptions subscription
       JOIN plans subscription_plan ON subscription_plan.id=subscription.plan_id
       LEFT JOIN customer_service_admin_control subscription_admin
@@ -79,8 +96,11 @@ async function countsForServers(serverIds, db = query) {
         AND subscription.starts_at<=clock_timestamp()
         AND subscription.current_period_end>NOW()
       UNION
-      SELECT checkout.media_server_id,checkout.customer_id::text
+      SELECT checkout.media_server_id,
+             checkout.customer_id::text||':'||
+             CASE WHEN COALESCE(checkout_plan.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END
       FROM billing_checkout_intents checkout
+      JOIN plans checkout_plan ON checkout_plan.id=checkout.plan_id
       WHERE checkout.media_server_id=ANY($1::uuid[])
         AND checkout.state='open'
         AND (
@@ -96,7 +116,10 @@ async function countsForServers(serverIds, db = query) {
         )
       UNION
       SELECT reservation.media_server_id,
-             COALESCE(reservation.customer_id::text,'free-reservation:'||reservation.id::text)
+             CASE
+               WHEN reservation.customer_id IS NOT NULL THEN reservation.customer_id::text||':free'
+               ELSE 'free-reservation:'||reservation.id::text
+             END
       FROM free_access_registration_reservations reservation
       WHERE reservation.media_server_id=ANY($1::uuid[])
         AND reservation.consumed_at IS NULL
@@ -109,7 +132,11 @@ async function countsForServers(serverIds, db = query) {
       -- eligible pool so an N-1 instance cannot consume the final physical
       -- place behind the new location-aware allocator.
       SELECT candidate.id,
-             COALESCE(checkout.customer_id::text,'legacy-checkout:'||checkout.id::text)
+             CASE
+               WHEN checkout.customer_id IS NOT NULL THEN checkout.customer_id::text||':'||
+                 CASE WHEN COALESCE(checkout_plan.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END
+               ELSE 'legacy-checkout:'||checkout.id::text
+             END
       FROM billing_checkout_intents checkout
       JOIN plans checkout_plan ON checkout_plan.id=checkout.plan_id
       JOIN jellyfin_servers candidate ON candidate.id=ANY($1::uuid[])
@@ -147,7 +174,10 @@ async function countsForServers(serverIds, db = query) {
       UNION
       -- Same N-1 protection for pre-verification Free registration holds.
       SELECT candidate.id,
-             COALESCE(reservation.customer_id::text,'legacy-free-reservation:'||reservation.id::text)
+             CASE
+               WHEN reservation.customer_id IS NOT NULL THEN reservation.customer_id::text||':free'
+               ELSE 'legacy-free-reservation:'||reservation.id::text
+             END
       FROM free_access_registration_reservations reservation
       JOIN plans free_plan ON free_plan.id=reservation.plan_id
       JOIN jellyfin_servers candidate ON candidate.id=ANY($1::uuid[])
