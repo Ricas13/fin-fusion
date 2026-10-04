@@ -165,6 +165,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false } = {}) {
   assert(checkout.includes('mediaLocation:choice.mediaLocation||null'), 'paid checkout contract must freeze the chosen location');
   assert(checkout.includes('existingAssignedServerForPlan(choice.plan,current.media_server_id,requested)'), 'paid checkout validation must not reject an existing customer simply because their already-occupied server is full or closed to new placements');
   assert(lifecycle.includes('media_location_preference') && lifecycle.includes('resolveAcquisitionLocation'), 'Free and trial acquisition must persist a location preference before provisioning');
+  assert(lifecycle.includes("mediaType==='emby'") && lifecycle.includes('readyEmbyAccountForSubscription') && lifecycle.includes('rollbackUnprovisionedEmbyTrial') && lifecycle.includes("failureCode:'TRIAL_EMBY_PROVISIONING_FAILED'"), 'Emby trials must use the same strict provision-or-rollback invariant as Jellyfin trials');
   assert(pending.includes('freeMediaLocation') && pending.includes('media_location,media_server_id'), 'pre-login Free registration must persist its selected location and concrete server');
   assert(provisioning.includes('assignedServer'), 'Jellyfin provisioning must honor sticky subscription assignment before considering fresh placement');
   assert(mediaReconcile.includes('persistAssignment') && mediaReconcile.includes('assignedServer'), 'Emby/Jellyfin service reconciliation must use sticky assignment');
