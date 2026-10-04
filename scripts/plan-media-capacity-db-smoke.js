@@ -153,6 +153,26 @@ const capacity = require('../src/entitlements/plan-capacity');
     await query('UPDATE jellyfin_servers SET max_users=200 WHERE id=$1',[serverId]);
 
 
+    // Plan-capacity and server-capacity configuration edits share one
+    // transaction-scoped serialization lock, preventing a concurrent plan-limit
+    // raise and server-capacity reduction from both validating stale state.
+    const configLockA=await getPool().connect(),configLockB=await getPool().connect();
+    try {
+      await configLockA.query('BEGIN');
+      await require('../src/jellyfin/plan-capacity-configuration').assertPlanLimitWithinPool(configLockA,{planId:limitedPlan,limit:1});
+      await configLockB.query('BEGIN');
+      await configLockB.query("SET LOCAL lock_timeout='150ms'");
+      await assert.rejects(
+        ()=>require('../src/jellyfin/plan-capacity-configuration').assertPlanLimitWithinPool(configLockB,{planId:limitedPlan,limit:1}),
+        error=>error.code==='55P03',
+        'concurrent media-capacity configuration edits must serialize'
+      );
+    } finally {
+      await configLockB.query('ROLLBACK').catch(()=>{});
+      await configLockA.query('ROLLBACK').catch(()=>{});
+      configLockB.release();configLockA.release();
+    }
+
     // The previous release holds only the class lock during rolling deploys.
     const oldGeneration=await getPool().connect(),newGeneration=await getPool().connect();
     try {
