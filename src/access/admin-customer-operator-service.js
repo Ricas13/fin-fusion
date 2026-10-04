@@ -31,8 +31,17 @@ async function remove(customerId,{actorUserId=null,reason=''}={}){
     actorUserId,
     reason:clean(reason,500)||'Removed from Jellyfin by administrator'
   });
-  await provisioning.reconcileCustomer(customerId);
-  return{lane:access.lane,subscriptionId:entitlement.subscription_id};
+  let reconcileError=null;
+  try{await provisioning.reconcileCustomer(customerId);}
+  catch(error){reconcileError=error;}
+  const cleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId);
+  if(reconcileError)throw reconcileError;
+  if(Number(cleanup?.failed||0)>0){
+    const error=new Error(cleanup.warning||'Jellyfin access was blocked, but an in-flight remote media account still needs cleanup retry.');
+    error.code='MEDIA_CREATION_INTENT_CLEANUP_INCOMPLETE';
+    throw error;
+  }
+  return{lane:access.lane,subscriptionId:entitlement.subscription_id,creationIntentCleanup:cleanup};
 }
 
 async function automatic(customerId,{actorUserId=null}={}){
