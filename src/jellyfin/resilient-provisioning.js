@@ -695,5 +695,6 @@ module.exports = {
     reconciliationLock,
     assertDiscordSyncResult,
     assertLanePostcondition,
-    accountMatchesEntitlementPlacement
+    accountMatchesEntitlementPlacement,
+    unambiguousLegacyAccount
 };
