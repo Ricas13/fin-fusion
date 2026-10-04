@@ -195,7 +195,8 @@ async function activeSessions(serverId, userIds) {
   const wanted = new Set((Array.isArray(userIds) ? userIds : [userIds]).map(norm).filter(Boolean));
   if (!wanted.size) return [];
   const sessions = await registry.request(serverId, '/Sessions', { timeoutMs: 10000 });
-  return (Array.isArray(sessions) ? sessions : []).filter(session => wanted.has(norm(session?.UserId)));
+  if (!Array.isArray(sessions)) throw new Error('Media server session state could not be verified.');
+  return sessions.filter(session => wanted.has(norm(session?.UserId)));
 }
 
 async function assertStillUnmanaged(serverId, remote) {
