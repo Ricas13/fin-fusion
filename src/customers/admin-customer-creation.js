@@ -61,13 +61,8 @@ async function create({
       // Only the physical-server requirement is deferred: the product's own
       // customer limit remains authoritative so an admin cannot oversubscribe
       // a plan merely because its fleet has not been configured yet.
-      if(deferredMediaProvisioning&&Number(capacityState?.configuredServers||0)===0){
-        const logical=await planCapacity.logicalMediaPlanUsage(plan,(sql,params)=>client.query(sql,params));
-        if(logical.soldOut){
-          const error=new Error(`${plan.name||'This plan'} is currently sold out.`);
-          error.code='PLAN_CAPACITY_EXHAUSTED';
-          throw error;
-        }
+      if(deferredMediaProvisioning&&capacityState?.model==='fleet_users'&&Number(capacityState?.configuredServers||0)===0){
+        await planCapacity.lockAndAssertLogicalMedia(client,plan.id,plan.name||'This plan');
       }else{
         await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
           households:plan.stremio_household_network_limit||null
