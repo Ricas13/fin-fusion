@@ -224,10 +224,19 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
          AND ja.account_purpose='jellyfin'
          AND ja.access_lane='free'
          AND ja.disabled=FALSE
-         -- Once #880 has pinned a Free subscription to a physical server,
-         -- only that account is activity/removal authority. Preserve the
-         -- legacy single-lane behaviour for rows that predate assignment.
-         AND (fa.media_server_id IS NULL OR ja.server_id=fa.media_server_id)
+         -- Explicit administrator server pins are the current placement
+         -- authority; otherwise use the persisted subscription assignment.
+         -- Preserve legacy single-lane behaviour only when neither exists.
+         AND (
+           COALESCE(
+             CASE WHEN admin_ctl.mode='admin_server_pin' THEN admin_ctl.server_id END,
+             fa.media_server_id
+           ) IS NULL
+           OR ja.server_id=COALESCE(
+             CASE WHEN admin_ctl.mode='admin_server_pin' THEN admin_ctl.server_id END,
+             fa.media_server_id
+           )
+         )
         JOIN jellyfin_servers js ON js.id=ja.server_id
         LEFT JOIN LATERAL (
           SELECT MAX(revoked_at) resumed_at
