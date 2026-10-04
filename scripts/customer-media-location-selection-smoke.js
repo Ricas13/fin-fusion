@@ -7,6 +7,8 @@ const choice = require('../src/jellyfin/customer-server-choice');
 const customerMediaAccess = require('../src/access/customer-media-access');
 const resilientProvisioning = require('../src/jellyfin/resilient-provisioning');
 const mediaServiceReconciliation = require('../src/jellyfin/media-service-reconciliation');
+const customerAccessState = require('../src/access/customer-access-state');
+const planServers = require('../src/jellyfin/plan-servers');
 
 const plan = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -110,6 +112,36 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert.strictEqual(choice.mediaServerType({ service_type: 'bundle' }), 'jellyfin');
   assert.strictEqual(choice.mediaServerType({ service_type: 'emby' }), 'emby');
   assert.strictEqual(choice.mediaServerType({ service_type: 'stremio' }), null);
+
+  const originalEligibleServersForPlan = planServers.eligibleServersForPlan;
+  try {
+    planServers.eligibleServersForPlan = async () => [{ id: 'explicit-custom-server' }];
+    const scopedLegacyEntitlement = await customerAccessState.withPlacementScope({
+      id: 'legacy-plan',
+      service_type: 'jellyfin',
+      server_class: 'premium'
+    });
+    assert.deepStrictEqual(scopedLegacyEntitlement.eligible_server_ids, ['explicit-custom-server'],
+      'canonical access state must resolve the actual explicit plan pool before legacy readiness classification');
+    assert.strictEqual(customerAccessState.accountMatchesEntitlement({
+      server_id: 'explicit-custom-server',
+      server_class: 'custom',
+      access_lane: 'primary',
+      disabled: false,
+      server_enabled: true
+    }, scopedLegacyEntitlement, 'primary'), true,
+    'explicit pool membership must beat a legacy server_class mismatch');
+    assert.strictEqual(customerAccessState.accountMatchesEntitlement({
+      server_id: 'same-class-but-not-selected',
+      server_class: 'premium',
+      access_lane: 'primary',
+      disabled: false,
+      server_enabled: true
+    }, scopedLegacyEntitlement, 'primary'), false,
+    'same-class accounts outside an explicit pool must not satisfy canonical access state');
+  } finally {
+    planServers.eligibleServersForPlan = originalEligibleServersForPlan;
+  }
 
   const embyEntitlement = { subscription_id: 'emby-sub', media_server_id: 'emby-server-current' };
   const currentEmbyAccount = { id: 'emby-account-current', server_id: 'emby-server-current', media_server_type: 'emby', disabled: false, server_enabled: true };
