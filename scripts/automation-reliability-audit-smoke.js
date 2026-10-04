@@ -91,7 +91,7 @@ assert(
     'creation-intent recovery may honor an admin server pin only for a still-entitled matching access lane'
 );
 const creationCustomerLockAt = compactCreationRecovery.indexOf('SELECTidFROMcustomersWHEREid=$1FORUPDATE');
-const creationIntentLockAt = compactCreationRecovery.indexOf('SELECT*FROMjellyfin_account_creation_intentsWHEREid=$1FORUPDATE');
+const creationIntentLockAt = compactCreationRecovery.indexOf("SELECTi.*,COALESCE(s.media_server_type,'jellyfin')ASmedia_server_typeFROMjellyfin_account_creation_intentsiJOINjellyfin_serverssONs.id=i.server_idWHEREi.id=$1FORUPDATEOFi");
 const creationAuthorityRecheckAt = compactCreationRecovery.indexOf('constauthoritative=awaitentitlementStillOwnsJellyfin(intent.customer_id,{client})');
 const creationRemoteDeleteAt = compactCreationRecovery.indexOf('awaitcompensation.removeCreatedUser({');
 assert(
