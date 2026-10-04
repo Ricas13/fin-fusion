@@ -200,6 +200,19 @@ assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
     { server_id:'emby-a', access_lane:'primary', media_server_type:'emby' },
     { owns:true, jellyfinOwns:false, embyOwns:true, primary:null, free:null, emby:{ media_server_id:'emby-a' }, admin:null }
 ), true, 'an active Emby entitlement must preserve its durable creation intent on the assigned Emby server');
+assert.strictEqual(
+    creationIntentRecoveryApi.entitlementOwnsLane({ media_server_id:'server-a', blocked:true }),
+    false,
+    'blocked media entitlements must never retain creation-intent ownership'
+);
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'emby-a', access_lane:'primary', media_server_type:'emby' },
+    { owns:true, jellyfinOwns:false, embyOwns:true, primary:null, free:null, emby:{ media_server_id:'emby-a', blocked:true }, admin:null }
+), false, 'a blocked/refunded Emby entitlement must not preserve an unmanaged remote creation intent');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-a', access_lane:'primary', media_server_type:'jellyfin' },
+    { owns:true, jellyfinOwns:true, primary:{ media_server_id:'server-a', blocked:true }, free:null, admin:null }
+), false, 'a blocked paid Jellyfin entitlement must not preserve an unmanaged remote creation intent');
 assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
     { server_id:'emby-old', access_lane:'primary', media_server_type:'emby' },
     { owns:true, jellyfinOwns:true, embyOwns:true, primary:{ media_server_id:'jellyfin-a' }, free:null, emby:{ media_server_id:'emby-new' }, admin:{ mode:'admin_present' } }
