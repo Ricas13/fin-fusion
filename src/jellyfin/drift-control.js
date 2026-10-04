@@ -6,6 +6,7 @@ const registry=require('./registry');
 const provisioning=require('./provisioning-helpers');
 const policy=require('./policy');
 const laneOverrides=require('./lane-policy-overrides');
+const planServers=require('./plan-servers');
 
 // Access consistency deliberately audits only CAPTAiNFiN-owned technical and
 // lifecycle settings. Library/folder selection is intentionally excluded:
@@ -23,7 +24,47 @@ function sameValue(a,b){if(Array.isArray(a)||Array.isArray(b))return JSON.string
 function comparePolicy({desiredPolicy,remotePolicy,expectedUsername,remoteUsername}){const desired=normalizedPolicy(desiredPolicy),remote=normalizedPolicy(remotePolicy),differences=[];if(String(remoteUsername||'')!==String(expectedUsername||''))differences.push({field:'Username',expected:String(expectedUsername||''),actual:String(remoteUsername||'')});for(const field of CONTROLLED_FIELDS)if(!sameValue(desired[field],remote[field]))differences.push({field,expected:desired[field],actual:remote[field]});return{desired,remote,differences,desiredHash:hash({username:expectedUsername,policy:desired}),remoteHash:hash({username:remoteUsername,policy:remote})}}
 function compareAbsentAccount(account,remote){return{desired:{present:false},remote:{present:true},differences:[{field:'AccountPresence',expected:'absent',actual:'present'}],desiredHash:hash({accountId:account.id,present:false}),remoteHash:hash({username:remote?.Name||account.jellyfin_username,present:true})}}
 async function ensureRows(){await query(`INSERT INTO jellyfin_policy_drift(jellyfin_account_id,customer_id,server_id,status,next_check_at) SELECT ja.id,ja.customer_id,ja.server_id,'unknown',NOW() FROM jellyfin_accounts ja ON CONFLICT(jellyfin_account_id) DO UPDATE SET customer_id=EXCLUDED.customer_id,server_id=EXCLUDED.server_id`)}
-async function customerContext(customerId,catalogCache=new Map()){const[entitlement,accountsResult]=await Promise.all([provisioning.currentEntitlement(customerId),query(`SELECT ja.*,js.enabled server_enabled,js.server_class,js.name server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at ASC`,[customerId])]),accounts=accountsResult.rows;let activeAccount=null,effective=null;if(entitlement){const assignedServerId=entitlement.media_server_id?String(entitlement.media_server_id):null;if(assignedServerId){const assigned=accounts.filter(a=>String(a.server_id)===assignedServerId);activeAccount=assigned.find(a=>!a.disabled&&a.server_enabled)||assigned.find(a=>a.server_enabled)||assigned[0]||null}else{activeAccount=accounts.find(a=>a.is_primary&&a.server_class===entitlement.server_class&&a.server_enabled)||accounts.find(a=>!a.disabled&&a.server_class===entitlement.server_class&&a.server_enabled)||accounts.find(a=>a.server_class===entitlement.server_class&&a.server_enabled)||null}const accessLane=entitlement.is_free_tier?'free':'primary';const[override,libOverrides,selection]=await Promise.all([laneOverrides.getPolicyOverride(customerId,accessLane),provisioning.getLibraryOverrides(customerId,accessLane),provisioning.getLibrarySelection(customerId)]),planKey=String(entitlement.plan_id||entitlement.id||entitlement.code);let catalog=catalogCache.get(planKey);if(!catalog){catalog=await provisioning.libraryCatalogForPlan(entitlement);catalogCache.set(planKey,catalog)}const technicalRows=policy.effectiveTechnicalPolicy(entitlement,override),entitlementRows=policy.libraryEntitlement(entitlement,libOverrides,catalog.names),visibleNames=policy.customerVisibleLibraries(entitlementRows,selection),mode=['all','exclude','include'].includes(entitlement.library_access_mode)?entitlement.library_access_mode:'all';effective={technical:policy.flattenEffective(technicalRows),visibleNames,unrestricted:mode==='all'&&libOverrides.length===0&&!selection,catalog}}return{customerId,entitlement,accounts,activeAccount,effective}}
+async function customerContext(customerId,catalogCache=new Map()){
+ const[entitlement,accountsResult]=await Promise.all([
+  provisioning.currentEntitlement(customerId),
+  query(`SELECT ja.*,js.enabled server_enabled,js.server_class,js.name server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at ASC`,[customerId])
+ ]);
+ const accounts=accountsResult.rows;
+ let activeAccount=null,effective=null;
+ if(entitlement){
+  const assignedServerId=entitlement.media_server_id?String(entitlement.media_server_id):null;
+  if(assignedServerId){
+   const assigned=accounts.filter(a=>String(a.server_id)===assignedServerId);
+   activeAccount=assigned.find(a=>!a.disabled&&a.server_enabled)||assigned.find(a=>a.server_enabled)||assigned[0]||null;
+  }else{
+   const eligible=await planServers.eligibleServersForPlan(entitlement,{enabledOnly:false,forPlacement:false});
+   const eligibleIds=new Set(eligible.map(server=>String(server.id)));
+   const candidates=accounts.filter(a=>a.server_enabled&&eligibleIds.has(String(a.server_id)));
+   const ready=candidates.filter(a=>!a.disabled);
+   if(ready.length>1||(ready.length===0&&candidates.length>1)){
+    const error=new Error('Multiple legacy Jellyfin accounts match the current plan pool without a persisted server assignment.');
+    error.code='AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT';
+    throw error;
+   }
+   activeAccount=ready[0]||candidates[0]||null;
+  }
+  const accessLane=entitlement.is_free_tier?'free':'primary';
+  const[override,libOverrides,selection]=await Promise.all([
+   laneOverrides.getPolicyOverride(customerId,accessLane),
+   provisioning.getLibraryOverrides(customerId,accessLane),
+   provisioning.getLibrarySelection(customerId)
+  ]);
+  const planKey=String(entitlement.plan_id||entitlement.id||entitlement.code);
+  let catalog=catalogCache.get(planKey);
+  if(!catalog){catalog=await provisioning.libraryCatalogForPlan(entitlement);catalogCache.set(planKey,catalog)}
+  const technicalRows=policy.effectiveTechnicalPolicy(entitlement,override),
+   entitlementRows=policy.libraryEntitlement(entitlement,libOverrides,catalog.names),
+   visibleNames=policy.customerVisibleLibraries(entitlementRows,selection),
+   mode=['all','exclude','include'].includes(entitlement.library_access_mode)?entitlement.library_access_mode:'all';
+  effective={technical:policy.flattenEffective(technicalRows),visibleNames,unrestricted:mode==='all'&&libOverrides.length===0&&!selection,catalog};
+ }
+ return{customerId,entitlement,accounts,activeAccount,effective};
+}
 async function desiredState(account,context){const shouldExist=Boolean(context.entitlement&&context.activeAccount&&String(context.activeAccount.id)===String(account.id));if(!shouldExist)return{disabled:false,shouldExist:false,policy:null,missingLibraries:[]};const libraryAccess=await provisioning.resolveLibraryAccessForServer(account.server_id,context.effective.unrestricted,context.effective.visibleNames,false);return{disabled:false,shouldExist:true,policy:provisioning.policyBody(context.effective.technical,false,libraryAccess),missingLibraries:libraryAccess.missing||[]}}
 async function persistSuccess(account,desired,comparison){const cfg=await settings(),status=comparison.differences.length?'drift':'in_sync',now=new Date(),next=new Date(now.getTime()+(status==='drift'?cfg.driftMinutes:cfg.healthyMinutes)*60000);await query(`INSERT INTO jellyfin_policy_drift(jellyfin_account_id,customer_id,server_id,status,desired_disabled,desired_hash,remote_hash,differences,last_checked_at,last_success_at,last_error,consecutive_failures,next_check_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$9,NULL,0,$10,NOW()) ON CONFLICT(jellyfin_account_id) DO UPDATE SET customer_id=EXCLUDED.customer_id,server_id=EXCLUDED.server_id,status=EXCLUDED.status,desired_disabled=EXCLUDED.desired_disabled,desired_hash=EXCLUDED.desired_hash,remote_hash=EXCLUDED.remote_hash,differences=EXCLUDED.differences,last_checked_at=EXCLUDED.last_checked_at,last_success_at=EXCLUDED.last_success_at,last_error=NULL,consecutive_failures=0,next_check_at=EXCLUDED.next_check_at,updated_at=NOW()`,[account.id,account.customer_id,account.server_id,status,false,comparison.desiredHash,comparison.remoteHash,JSON.stringify(comparison.differences),now,next]);return{accountId:account.id,customerId:account.customer_id,status,differences:comparison.differences,nextCheckAt:next}}
 async function persistFailure(account,status,error){const cfg=await settings(),prior=await query('SELECT consecutive_failures FROM jellyfin_policy_drift WHERE jellyfin_account_id=$1',[account.id]),failures=Number(prior.rows[0]?.consecutive_failures||0)+1,delay=Math.min(cfg.failureMaxMinutes,cfg.failureBaseMinutes*(2**Math.min(6,Math.max(0,failures-1)))),now=new Date(),next=new Date(now.getTime()+delay*60000);await query(`INSERT INTO jellyfin_policy_drift(jellyfin_account_id,customer_id,server_id,status,differences,last_checked_at,last_error,consecutive_failures,next_check_at,updated_at) VALUES($1,$2,$3,$4,'[]'::jsonb,$5,$6,$7,$8,NOW()) ON CONFLICT(jellyfin_account_id) DO UPDATE SET customer_id=EXCLUDED.customer_id,server_id=EXCLUDED.server_id,status=EXCLUDED.status,differences='[]'::jsonb,last_checked_at=EXCLUDED.last_checked_at,last_error=EXCLUDED.last_error,consecutive_failures=EXCLUDED.consecutive_failures,next_check_at=EXCLUDED.next_check_at,updated_at=NOW()`,[account.id,account.customer_id,account.server_id,status,now,String(error?.message||error).slice(0,1500),failures,next]);return{accountId:account.id,customerId:account.customer_id,status,error:String(error?.message||error),failures,nextCheckAt:next}}
