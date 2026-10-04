@@ -65,7 +65,8 @@ function source(file) {
   assert(jobs.includes("const stremioOrphanCleanup=require('../stremio/orphan-account-cleanup');"));
   assert(jobs.includes("async stremio_managed_accounts(){const managed=await stremioManagedSweep.syncActiveBounded();"), 'Critical Stremio managed-account reconciliation must run before orphan cleanup.');
   assert(jobs.includes("if(Number(managed?.failed||0)>0)return{...managed,orphanCleanup:{processed:0,deleted:0,skipped:0,failed:0,disabled:'managed_reconciliation_failed'}}"), 'A managed-account reconciliation failure must disable destructive orphan cleanup for that run.');
-  assert(jobs.includes("const orphanCleanup=await stremioOrphanCleanup.run({apply:true,limit:5});return{...managed,orphanCleanup}"), 'Bounded orphan cleanup may run only after a clean managed-account reconciliation.');
+  assert(jobs.includes("try{orphanCleanup=await stremioOrphanCleanup.run({apply:true,limit:5})}catch(error)"), 'Non-critical orphan cleanup failures must not throw the critical managed-account job.');
+  assert(jobs.includes("return{...managed,...(warning?{warning}:{}),orphanCleanup}"), 'Orphan cleanup degradation must be surfaced as a warning while preserving managed reconciliation status.');
   assert(!jobs.includes("stremio_orphan_cleanup:{defaultIntervalSeconds:300"), 'Orphan cleanup must not be independently scheduled from managed reconciliation.');
 
   const cleanup = source('src/stremio/orphan-account-cleanup.js');
