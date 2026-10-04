@@ -77,7 +77,9 @@ function source(file) {
 
   const reconcile = source('src/jellyfin/identity-reconciliation.js');
   assert(reconcile.includes('ACTIVE_BLOCKED'));
-  assert(reconcile.includes('media.identity.canonical_replace_rolled_back'));
+  assert(reconcile.includes('media.identity.canonical_policy_failed'));
+  assert(reconcile.includes('ownershipPreserved: true'));
+  assert(!reconcile.includes('canonical_replace_rolled_back'), 'Canonical ownership must not be rolled back after the replacement identity may have received access policy.');
   assert(reconcile.includes('This media identity has an active playback session'));
   assert(reconcile.includes('await provisioning.reconcileCustomer(customerId)'));
 
