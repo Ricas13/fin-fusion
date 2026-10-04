@@ -338,6 +338,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   const subscriptionTermination = fs.readFileSync('src/payments/subscription-termination.js', 'utf8');
   const subscriptionExpiry = fs.readFileSync('src/entitlements/subscription-expiry.js', 'utf8');
   const adminOperatorService = fs.readFileSync('src/access/admin-customer-operator-service.js', 'utf8');
+  const bulkOperations = fs.readFileSync('src/customers/operator-bulk-operations.js', 'utf8');
   const userCapacity = fs.readFileSync('src/jellyfin/user-capacity.js', 'utf8');
   const mediaReconcile = fs.readFileSync('src/jellyfin/media-service-reconciliation.js', 'utf8');
   const providerRecovery = fs.readFileSync('src/payments/provider-operation-recovery.js', 'utf8');
@@ -393,6 +394,8 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert(subscriptionTermination.includes("require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId)"), 'subscription termination/refund must immediately reconcile in-flight media creation intents so remote-only accounts cannot outlive billing authority');
   assert(subscriptionExpiry.includes("require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId)"), 'natural subscription expiry must also retire remote-only media creation intents without waiting for the stale worker');
   assert(adminOperatorService.includes("require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId)") && adminOperatorService.includes("MEDIA_CREATION_INTENT_CLEANUP_INCOMPLETE"), 'administrator access removal must not report success while an in-flight remote media identity remains usable');
+  assert(bulkOperations.includes("jellyfinAdminControl.remove(item.customer_id,null") && bulkOperations.includes("Customer banned:"), 'bulk bans must override stale admin-present Jellyfin authority before enforcing the hold');
+  assert((bulkOperations.match(/jellyfin-creation-intent-recovery/g)||[]).length>=2, 'bulk ban and bulk Jellyfin deletion must both clean in-flight remote media creation intents');
   assert(subscriptionTermination.includes('Billing/provider termination is authoritative') && subscriptionTermination.includes('normal stale-intent worker remains the durable retry owner'), 'media cleanup failure must never roll back confirmed billing termination and must remain retryable');
   assert(planChange.includes('target_media_location') && planChange.includes('media_location_preference=$13') && planChange.includes('media_server_id=$14'), 'plan changes must persist their target location and concrete sticky assignment');
   assert(planChange.includes('change.target_media_location') && planChange.includes('reservedServerIfEligible') && planChange.includes('selectServerForLocationLocked'), 'scheduled plan changes must revalidate their chosen location under row locks and reuse the old server only when it remains eligible');
