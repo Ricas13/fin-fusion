@@ -170,24 +170,32 @@ const authorityRecheckAt = compactIntentRecovery.indexOf('constauthoritative=awa
 const remoteDeleteAt = compactIntentRecovery.indexOf('awaitcompensation.removeCreatedUser({');
 assert(customerLockAt >= 0 && intentLockAt > customerLockAt && authorityRecheckAt > intentLockAt && remoteDeleteAt > authorityRecheckAt,
     'stale Jellyfin creation cleanup must lock customer+intent and re-check authority before remote deletion');
-assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin'"),
-    'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
+assert(creationIntentRecovery.includes("const adminOwns = admin?.mode === 'admin_present'"),
+    'stale creation cleanup must treat admin-present as access authority while keeping server pins placement-only');
 assert(creationIntentRecovery.includes('intentServerStillOwned')
-    && creationIntentRecovery.includes('row.media_server_id')
+    && creationIntentRecovery.includes('intent?.access_lane')
     && creationIntentRecovery.includes('String(row.media_server_id) === serverId'),
-    'stale creation recovery must scope persisted entitlements to the exact assigned server');
+    'stale creation recovery must scope persisted entitlements to the exact access lane and assigned server');
 assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
-    { server_id:'server-old' },
+    { server_id:'server-old', access_lane:'primary' },
     { owns:true, primary:{ media_server_id:'server-new' }, free:null, admin:null }
 ), false, 'an intent on a superseded server must no longer be preserved by a different persisted assignment');
 assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
-    { server_id:'server-old' },
+    { server_id:'server-old', access_lane:'primary' },
     { owns:true, primary:{ media_server_id:null }, free:null, admin:null }
-), true, 'legacy entitlements without a persisted assignment must remain fail-closed and preserve the intent');
+), true, 'legacy entitlements without a persisted assignment must remain fail-closed and preserve the matching lane intent');
 assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
-    { server_id:'server-pin' },
-    { owns:true, primary:null, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
-), true, 'admin server pins must preserve only the pinned creation intent');
+    { server_id:'server-pin', access_lane:'primary' },
+    { owns:false, primary:null, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), false, 'a placement-only admin pin must never preserve a creation intent after entitlement authority ends');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-pin', access_lane:'free' },
+    { owns:true, primary:{ media_server_id:'server-pin' }, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), false, 'a paid primary entitlement must not preserve a stale Free-lane creation intent on the same pinned server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-pin', access_lane:'primary' },
+    { owns:true, primary:{ media_server_id:'server-old' }, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), true, 'a server pin may redirect the still-entitled matching lane to the pinned server');
 
 const compactScopedInactivity = compact(scopedInactivity);
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
