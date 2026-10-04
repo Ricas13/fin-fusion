@@ -193,7 +193,7 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
     await assertNoAmbiguousLegacyMediaAssignment(customerId,current,target);
     let targetMediaLocation=null,targetMediaServer=null;
     if(customerServerChoice.mediaServerType(target)){
-        targetMediaServer=await customerServerChoice.existingAssignedServerForPlan(target,current.media_server_id,mediaLocation||null).catch(()=>null);
+        targetMediaServer=await customerServerChoice.reusableAssignedServerForPlan(current,target,mediaLocation||null);
         if(targetMediaServer){
             targetMediaLocation=targetMediaServer.selected_location||customerServerChoice.locationLabel(targetMediaServer.location);
         }else{
