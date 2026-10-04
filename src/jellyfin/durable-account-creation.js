@@ -101,6 +101,7 @@ async function setIntent(intentId, values = {}) {
         remote_user_id=CASE WHEN $4::boolean THEN $5 ELSE remote_user_id END,
         attempted_at=CASE WHEN $6::boolean THEN NOW() ELSE attempted_at END,
         last_error=$7,
+        access_lane=CASE WHEN $8::boolean THEN $9 ELSE access_lane END,
         updated_at=NOW()
     WHERE id=$1
     RETURNING *
@@ -111,7 +112,9 @@ async function setIntent(intentId, values = {}) {
     Object.prototype.hasOwnProperty.call(values, 'remoteUserId'),
     values.remoteUserId || null,
     Boolean(values.attempted),
-    values.lastError == null ? null : safeError(values.lastError)
+    values.lastError == null ? null : safeError(values.lastError),
+    Object.prototype.hasOwnProperty.call(values, 'accessLane'),
+    values.accessLane || null
   ]);
   return result.rows[0] || null;
 }
@@ -120,9 +123,53 @@ async function deleteIntent(intentId) {
   if (intentId) await query('DELETE FROM jellyfin_account_creation_intents WHERE id=$1', [intentId]);
 }
 
-async function prepareIntent(customerId, serverId, preferred, requireExactUsername) {
+async function inferUnambiguousLiveLane(customerId) {
+  const result = await query(`
+    SELECT
+      BOOL_OR(COALESCE(p.is_free_tier,FALSE)=TRUE) FILTER(
+        WHERE COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+      ) AS has_free,
+      BOOL_OR(COALESCE(p.is_free_tier,FALSE)=FALSE) FILTER(
+        WHERE COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+      ) AS has_primary
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    WHERE s.customer_id=$1
+      AND s.superseded_by IS NULL
+      AND s.starts_at<=NOW()
+      AND s.status IN('active','trialing','past_due','paused')
+      AND s.current_period_end>NOW()
+  `, [customerId]);
+  const row = result.rows[0] || {};
+  const hasFree = row.has_free === true;
+  const hasPrimary = row.has_primary === true;
+  if (hasFree === hasPrimary) return null;
+  return hasFree ? 'free' : 'primary';
+}
+
+async function ensureIntentLane(intent, customerId, accessLane) {
+  if (!intent) return intent;
+  const stored = String(intent.access_lane || '').trim();
+  if (stored) {
+    if (stored !== accessLane) {
+      const error = new Error(`An in-flight Jellyfin account creation already owns the ${stored} lane on this server. Retry after that recovery completes.`);
+      error.code = 'JELLYFIN_CREATION_INTENT_LANE_CONFLICT';
+      throw error;
+    }
+    return intent;
+  }
+  const inferred = await inferUnambiguousLiveLane(customerId);
+  if (inferred !== accessLane) {
+    const error = new Error('A legacy in-flight Jellyfin account creation has ambiguous access-lane ownership. Automatic reconciliation will not guess which entitlement owns it.');
+    error.code = 'AMBIGUOUS_LEGACY_CREATION_INTENT_LANE';
+    throw error;
+  }
+  return setIntent(intent.id, { accessLane });
+}
+
+async function prepareIntent(customerId, serverId, preferred, requireExactUsername, accessLane = 'primary') {
   let existing = await loadIntent(customerId, serverId);
-  if (existing) return existing;
+  if (existing) return ensureIntentLane(existing, customerId, accessLane);
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const { names } = await takenNames(serverId);
@@ -134,14 +181,14 @@ async function prepareIntent(customerId, serverId, preferred, requireExactUserna
     const username = requireExactUsername ? preferred : chooseCandidate(preferred, names);
     try {
       const inserted = await query(`
-        INSERT INTO jellyfin_account_creation_intents(customer_id,server_id,username,require_exact_username,status)
-        VALUES($1,$2,$3,$4,'prepared')
+        INSERT INTO jellyfin_account_creation_intents(customer_id,server_id,username,require_exact_username,status,access_lane)
+        VALUES($1,$2,$3,$4,'prepared',$5)
         ON CONFLICT(customer_id,server_id) DO NOTHING
         RETURNING *
-      `, [customerId, serverId, username, Boolean(requireExactUsername)]);
+      `, [customerId, serverId, username, Boolean(requireExactUsername), accessLane]);
       if (inserted.rowCount) return inserted.rows[0];
       existing = await loadIntent(customerId, serverId);
-      if (existing) return existing;
+      if (existing) return ensureIntentLane(existing, customerId, accessLane);
     } catch (error) {
       if (String(error?.code || '') !== '23505') throw error;
       if (requireExactUsername) {
@@ -250,7 +297,7 @@ async function rollbackUnsafeRemote(intent, customerId, created, stage, original
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
   const accessLane = options.accessLane === 'free' ? 'free' : 'primary';
   const preferred = String(options.preferredUsername || await preferredUsername(customerId)).slice(0, 40);
-  let intent = await prepareIntent(customerId, server.id, preferred, Boolean(options.requireExactUsername));
+  let intent = await prepareIntent(customerId, server.id, preferred, Boolean(options.requireExactUsername), accessLane);
   let created = await recoverIntent(intent);
 
   if (!created) {
@@ -355,5 +402,7 @@ module.exports = {
   retryableCreateError,
   preferredUsername,
   loadIntent,
+  inferUnambiguousLiveLane,
+  ensureIntentLane,
   findRemoteByName
 };
