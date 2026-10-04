@@ -92,12 +92,15 @@ async function replacementMapping(current,target,provider,currency,quantity){
 
 async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null,mediaLocation=null,mediaServer=null}={}){
     mapping=mapping||await replacementMapping(current,target,'stripe',currency,accessQuantity);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
-    const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_immediate',localReference:subscriptionId,idempotencyKey:`customer-plan-immediate:${subscriptionId}:${target.id}:${identity}:${proration?'prorate':'no-prorate'}`,request:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity),targetVariantKind:normalizedKind(target,mapping),targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration),targetMediaLocation:mediaLocation||null,targetMediaServerId:mediaServer?.id||null}});
+    const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),targetKind=targetKind,targetQuantity=targetQuantity,currentQuantity=subscriptionAccessQuantity(current,targetKind),samePlan=String(current.plan_id)===String(target.id),reserveCapacity=!samePlan||(targetKind==='households'&&targetQuantity>currentQuantity),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_immediate',localReference:subscriptionId,idempotencyKey:`customer-plan-immediate:${subscriptionId}:${target.id}:${identity}:${proration?'prorate':'no-prorate'}`,request:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity,targetVariantKind:targetKind,targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration),targetMediaLocation:mediaLocation||null,targetMediaServerId:mediaServer?.id||null}});
     let providerMutationAttempted=false,placementReservation=null;
     try{
-        if(String(current.plan_id)!==String(target.id)){
+        if(reserveCapacity){
             await transaction(async db=>{
-                await planCapacity.lockAndAssert(db,target.id,target.name||'This plan');
+                await planCapacity.lockAndAssert(db,target.id,target.name||'This plan',{
+                    households:targetKind==='households'?targetQuantity:null,
+                    excludeSubscriptionId:samePlan?subscriptionId:null
+                });
                 await db.query(`UPDATE provider_operations
                     SET provider_result=provider_result||'{"capacityReserved":true}'::jsonb,updated_at=NOW()
                     WHERE id=$1`,[op.id]);
@@ -106,11 +109,11 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
         if(mediaServer)placementReservation=await provisioningHelpers.reservePlacement(current.customer_id,mediaServer);
         const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);if(remote.schedule)throw planChangeRefusal('This Stripe subscription already has a scheduled change. Cancel the pending change first.');const item=remote.items?.data?.[0];if(!item?.id)throw planChangeRefusal('Stripe subscription has no editable item.');
         providerMutationAttempted=true;
-        const updated=await client.subscriptions.update(current.provider_subscription_id,{items:[{id:item.id,price:mapping.external_id}],proration_behavior:proration?'create_prorations':'none',metadata:{...(remote.metadata||{}),internal_customer_id:current.customer_id,internal_plan_id:target.id,internal_plan_price_id:mapping.plan_price_id||'',internal_access_quantity:String(mappingQuantity(target,mapping,accessQuantity))}},{idempotencyKey:op.idempotency_key});
+        const updated=await client.subscriptions.update(current.provider_subscription_id,{items:[{id:item.id,price:mapping.external_id}],proration_behavior:proration?'create_prorations':'none',metadata:{...(remote.metadata||{}),internal_customer_id:current.customer_id,internal_plan_id:target.id,internal_plan_price_id:mapping.plan_price_id||'',internal_access_quantity:String(targetQuantity)}},{idempotencyKey:op.idempotency_key});
         await providerOps.providerApplied(op.id,{providerReference:updated.id,result:{priceId:mapping.external_id,status:updated.status||null}});
         await transaction(async db=>{await applySnapshot(db,subscriptionId,target,mapping,{mediaLocation,mediaServerId:mediaServer?.id||null});await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,updated_at=NOW() WHERE id=$1`,[op.id]);});
         const synced=await billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id});if(!synced.ok)throw new Error(`Stripe accepted the plan change, but provider verification failed: ${synced.error}`);
-        await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity)}});
+        await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity}});
         return{provider:'stripe',target,mapping,providerOperationId:op.id};
     }catch(error){
         const recorded=await providerOps.recordError(
@@ -132,8 +135,14 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
 
 async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null,targetMediaLocation=null,targetMediaServerId=null}={}){
     return transaction(async client=>{
-        if(provider==='stripe'&&String(current.plan_id)!==String(target.id)){
-            await planCapacity.lockAndAssert(client,target.id,target.name||'This plan');
+        const samePlan=String(current.plan_id)===String(target.id);
+        const currentQuantity=subscriptionAccessQuantity(current,targetVariantKind||accessVariants.variantKind(target));
+        const householdIncrease=targetVariantKind==='households'&&Number(targetAccessQuantity||0)>currentQuantity;
+        if(provider==='stripe'&&(!samePlan||householdIncrease)){
+            await planCapacity.lockAndAssert(client,target.id,target.name||'This plan',{
+                households:targetVariantKind==='households'?targetAccessQuantity:null,
+                excludeSubscriptionId:samePlan?(current.subscription_id||current.id):null
+            });
         }
         const prior=await client.query(`SELECT id FROM customer_plan_changes WHERE customer_id=$1 AND state IN ('pending','awaiting_checkout') LIMIT 1 FOR UPDATE`,[customerId]);if(prior.rowCount)throw new Error('A plan change is already open. Cancel or complete it before requesting another one.');
         const effective=new Date(current.current_period_end),created=await client.query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,requested_by,provider_action_required,target_access_quantity,target_variant_kind,target_media_location,target_media_server_id) VALUES($1,$2,$3,$4,'period_end','pending',$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[customerId,current.subscription_id||current.id,target.id,provider,effective,actorUserId,Boolean(providerActionRequired),targetAccessQuantity,targetVariantKind,targetMediaLocation,targetMediaServerId]);
@@ -144,7 +153,7 @@ async function createLocalChange(customerId,current,target,provider,actorUserId=
 
 async function scheduleStripeProvider(current,target,change,{currency,mapping=null,accessQuantity=null}={}){
     const requested=accessQuantity||change.target_access_quantity||null;mapping=mapping||await replacementMapping(current,target,'stripe',currency,requested);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
-    const identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_schedule',localReference:change.id,idempotencyKey:`customer-plan-schedule:${change.id}:${identity}`,request:{changeId:change.id,subscriptionId:current.provider_subscription_id,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,requested),targetVariantKind:normalizedKind(target,mapping),targetPriceId:mapping.external_id,currency:mapping.currency,targetMediaLocation:change.target_media_location||null,targetMediaServerId:change.target_media_server_id||null}});
+    const identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_schedule',localReference:change.id,idempotencyKey:`customer-plan-schedule:${change.id}:${identity}`,request:{changeId:change.id,subscriptionId:current.provider_subscription_id,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,requested),targetVariantKind:targetKind,targetPriceId:mapping.external_id,currency:mapping.currency,targetMediaLocation:change.target_media_location||null,targetMediaServerId:change.target_media_server_id||null}});
     let providerMutationAttempted=false;
     try{
         const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id,{expand:['items.data.price','schedule']}),item=remote.items?.data?.[0],sourcePrice=typeof item?.price==='string'?item.price:item?.price?.id;if(!item?.id||!sourcePrice)throw planChangeRefusal('Stripe subscription has no editable item.');
@@ -152,7 +161,7 @@ async function scheduleStripeProvider(current,target,change,{currency,mapping=nu
         let schedule=remote.schedule;if(typeof schedule==='string')schedule=await client.subscriptionSchedules.retrieve(schedule);
         if(schedule){const owner=String(schedule.metadata?.internal_customer_id||''),scheduleChangeId=String(schedule.metadata?.captainfin_plan_change_id||'');if(owner&&owner!==String(current.customer_id))throw planChangeRefusal('Stripe subscription is controlled by another schedule. Review it in Stripe before changing the plan.');if(!scheduleChangeId)throw planChangeRefusal('Stripe subscription already has an external schedule. Review it in Stripe before changing the plan.');if(scheduleChangeId!==String(change.id))throw planChangeRefusal('Stripe subscription is already controlled by another CAPTAiNFiN plan change. Cancel or reconcile it before changing the plan.');}
         else{providerMutationAttempted=true;schedule=await client.subscriptionSchedules.create({from_subscription:current.provider_subscription_id},{idempotencyKey:`${op.idempotency_key}:create`});}
-        const phaseStart=Number(schedule.current_phase?.start_date||start),quantity=Math.max(1,Number(item.quantity||1)),targetQuantity=mappingQuantity(target,mapping,requested),targetKind=normalizedKind(target,mapping);
+        const phaseStart=Number(schedule.current_phase?.start_date||start),quantity=Math.max(1,Number(item.quantity||1)),targetQuantity=mappingQuantity(target,mapping,requested),targetKind=targetKind;
         await providerOps.observed(op.id,{result:{preparedScheduleId:schedule.id,sourcePrice}});providerMutationAttempted=true;
         const updated=await client.subscriptionSchedules.update(schedule.id,{end_behavior:'release',proration_behavior:'none',metadata:{...(schedule.metadata||{}),internal_customer_id:String(current.customer_id),captainfin_plan_change_id:String(change.id),target_plan_id:String(target.id),target_plan_price_id:String(mapping.plan_price_id||''),target_access_quantity:String(targetQuantity),target_variant_kind:String(targetKind||'')},phases:[{start_date:phaseStart,end_date:end,items:[{price:sourcePrice,quantity}],proration_behavior:'none'},{start_date:end,iterations:1,items:[{price:mapping.external_id,quantity}],proration_behavior:'none',metadata:{internal_customer_id:String(current.customer_id),internal_plan_id:String(target.id),internal_plan_price_id:String(mapping.plan_price_id||''),internal_access_quantity:String(targetQuantity)}}]},{idempotencyKey:`${op.idempotency_key}:phases`});
         await providerOps.providerApplied(op.id,{providerReference:updated.id,result:{scheduleStatus:updated.status||'active',sourcePrice,targetPrice:mapping.external_id,targetAccessQuantity:targetQuantity,effectiveAt:new Date(end*1000).toISOString()}});
