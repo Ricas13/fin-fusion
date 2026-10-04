@@ -60,10 +60,24 @@ function entitlementForAccountFromContext(account, context = {}) {
       : null;
   }
   const access = context.accessSnapshot || null;
-  if (String(account.access_lane || 'primary') === 'free') {
-    return access?.free?.entitlement || null;
+  const lane = String(account.access_lane || 'primary') === 'free' ? 'free' : 'primary';
+  const entitlement = lane === 'free' ? access?.free?.entitlement || null : access?.primary?.entitlement || null;
+  if (!entitlement || !customerAccessState.accountMatchesEntitlement(account, entitlement, lane)) return null;
+
+  // A persisted server assignment is authoritative. For legacy rows without
+  // one, only expose credential controls when exactly one account in the lane
+  // can satisfy the entitlement; otherwise an old same-class account could be
+  // mistaken for the current one.
+  if (entitlement.media_server_id || entitlement.admin_forced_server_id || !Array.isArray(context.accounts)) {
+    return entitlement;
   }
-  return access?.primary?.entitlement || null;
+  const candidates = context.accounts.filter(row =>
+    mediaType(row) === 'jellyfin' &&
+    customerAccessState.accountMatchesEntitlement(row, entitlement, lane)
+  );
+  return candidates.length === 1 && String(candidates[0].id) === String(account.id)
+    ? entitlement
+    : null;
 }
 
 async function entitlementForAccount(customerId, account, { accessSnapshot = null, embyEntitlement } = {}) {
