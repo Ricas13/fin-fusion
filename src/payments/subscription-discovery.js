@@ -89,8 +89,7 @@ async function premiumEntitlements() {
           JOIN subscriptions s ON s.id=e.subscription_id
           JOIN customers c ON c.id=e.customer_id
           LEFT JOIN app_users u ON u.id=c.user_id
-         WHERE e.server_class='premium'
-           AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
+         WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
            AND COALESCE(e.price_minor_snapshot,e.price_minor,0)>0
            AND COALESCE(e.is_free_tier,FALSE)=FALSE
          ORDER BY c.email,e.customer_id
