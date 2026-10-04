@@ -153,7 +153,7 @@ async function setLibrarySelection(customerId, names) {
 
 // ---- Effective policy computation --------------------------------------
 
-async function effectivePolicyForCustomer(customerId, plan, accessLane = null) {
+async function effectivePolicyForCustomer(customerId, plan, accessLane = null, { serverId = null } = {}) {
     const lane = accessLane || laneFor(plan);
     const [override, libOverrides, selection] = await Promise.all([
         laneOverrides.getPolicyOverride(customerId, lane),
@@ -161,9 +161,17 @@ async function effectivePolicyForCustomer(customerId, plan, accessLane = null) {
         getLibrarySelection(customerId)
     ]);
     const technicalRows = policy.effectiveTechnicalPolicy(plan, override);
-    const catalog = plan
-        ? await libraryCatalogForPlan(plan)
-        : { names: [], failedServers: [], serverCount: 0 };
+    let catalog = { names: [], failedServers: [], serverCount: 0 };
+    if (plan && serverId) {
+        const folders = await discoverServerLibraries(serverId);
+        catalog = {
+            names: folders.map(folder => folder.name).sort((a, b) => a.localeCompare(b)),
+            failedServers: [],
+            serverCount: 1
+        };
+    } else if (plan) {
+        catalog = await libraryCatalogForPlan(plan);
+    }
     const entitlementRows = policy.libraryEntitlement(plan, libOverrides, catalog.names);
     const visibleNames = policy.customerVisibleLibraries(entitlementRows, selection);
     const mode = ['all', 'exclude', 'include'].includes(plan?.library_access_mode) ? plan.library_access_mode : 'all';
