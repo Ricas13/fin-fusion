@@ -135,6 +135,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.customer_id,
             s.id subscription_id,
             s.plan_id,
+            s.media_server_id,
             s.starts_at,
             s.current_period_end,
             s.created_at subscription_created_at,
@@ -223,6 +224,10 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
          AND ja.account_purpose='jellyfin'
          AND ja.access_lane='free'
          AND ja.disabled=FALSE
+         -- Once #880 has pinned a Free subscription to a physical server,
+         -- only that account is activity/removal authority. Preserve the
+         -- legacy single-lane behaviour for rows that predate assignment.
+         AND (fa.media_server_id IS NULL OR ja.server_id=fa.media_server_id)
         JOIN jellyfin_servers js ON js.id=ja.server_id
         LEFT JOIN LATERAL (
           SELECT MAX(revoked_at) resumed_at
