@@ -118,6 +118,9 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, access_variant_id: variantId, variant_kind: 'streams', access_quantity: 3, quantity: 3, streams: 3, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
     remote(providerId, `price_old_${tag}`);
     const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}`, targetMediaLocation: 'London', targetMediaServerId: targetServer.id, targetAccessQuantity: 3, targetVariantKind: 'streams' });
+    const preAdmission = await provisioningHelpers.reservePlacement(competing.id, targetServer);
+    assert(preAdmission.placement_lease_id, 'H: merely creating a provider operation must not reserve physical capacity before admission succeeds');
+    await provisioningHelpers.releaseDefinitivePlacementFailure(competing.id, targetServer.id, preAdmission.placement_lease_id);
     await query(`UPDATE provider_operations
       SET provider_result=provider_result||'{"capacityReserved":true}'::jsonb
       WHERE id=$1`, [op.id]);
