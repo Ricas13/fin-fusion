@@ -139,14 +139,18 @@ async function currentJellyfinDeletionResults(jobId){
 }
 
 async function ensureDeletionHold(job){
+  // Re-assert explicit removal on every retry while the customer still exists.
+  // Jobs created by an older release may already have access_held_at but lack
+  // the newer admin_removed authority. Conversely, a crash after the customer
+  // row was deleted must remain retryable without recreating service control.
+  const customerExists=await query('SELECT 1 FROM customers WHERE id=$1 LIMIT 1',[job.customer_id]);
+  if(customerExists.rowCount){
+    await jellyfinAdminControl.remove(job.customer_id,null,{
+      actorUserId:job.actor_user_id||null,
+      reason:'Customer hard deletion in progress'
+    });
+  }
   if(job.access_held_at)return job;
-  // Hard customer deletion is stronger than an earlier admin_present override.
-  // Persist explicit Jellyfin removal first so ordinary reconciliation cannot
-  // recreate media access while external cleanup is being snapshotted.
-  await jellyfinAdminControl.remove(job.customer_id,null,{
-    actorUserId:job.actor_user_id||null,
-    reason:'Customer hard deletion in progress'
-  });
   await provisioning.holdAccess(job.customer_id,'jellyfin_deleted',job.actor_user_id||null);
   const held=await query(`UPDATE customer_deletion_jobs SET access_held_at=COALESCE(access_held_at,NOW()),updated_at=NOW() WHERE id=$1 RETURNING *`,[job.id]);
   return held.rows[0]||job;
