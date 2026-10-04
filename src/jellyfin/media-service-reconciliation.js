@@ -16,6 +16,26 @@ function normalizeService(value){
 }
 function remoteMissing(error){return Number(error?.status||0)===404||/\b404\b|not found|not\s+exist/i.test(String(error?.message||error||''));}
 
+function unambiguousLegacyAccount(accounts, label = 'media') {
+  const rows=Array.isArray(accounts)?accounts:[];
+  if(!rows.length)return null;
+  const ready=rows.filter(account=>!account.disabled&&account.server_enabled);
+  if(ready.length===1)return ready[0];
+  if(ready.length>1){
+    const error=new Error(`Multiple enabled legacy ${label} accounts exist without a persisted server assignment. Administrator repair is required before reconciliation can choose a server safely.`);
+    error.code='AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT';
+    throw error;
+  }
+  const reachable=rows.filter(account=>account.server_enabled);
+  if(reachable.length===1)return reachable[0];
+  if(reachable.length>1||rows.length>1){
+    const error=new Error(`Multiple legacy ${label} accounts exist without a persisted server assignment. Administrator repair is required before reconciliation can choose a server safely.`);
+    error.code='AMBIGUOUS_LEGACY_MEDIA_ASSIGNMENT';
+    throw error;
+  }
+  return rows[0];
+}
+
 async function entitlementFor(customerId,serviceType,{includeBlocked=false}={}){
   const type=normalizeService(serviceType);
   return type==='emby'
@@ -141,7 +161,7 @@ async function reconcileCustomer(customerId,serviceType){
     }
 
     if(!entitlement.media_server_id&&!entitlement.admin_forced_server_id){
-      const existing=accounts.find(account=>!account.disabled&&account.server_enabled)||accounts.find(account=>account.server_enabled)||accounts[0];
+      const existing=unambiguousLegacyAccount(accounts,`${serviceCatalog.label(type)}`);
       if(existing){
         await customerServerChoice.persistAssignment(entitlement.subscription_id,existing);
         entitlement.media_server_id=existing.server_id;
@@ -227,4 +247,4 @@ async function reconcileAccount(accountId){
   }
 }
 
-module.exports={normalizeService,remoteMissing,entitlementFor,accountsFor,selectServerForPlan,reconcileCustomer,reconcileAll,reconcileAccount,markPasswordSetupRequired,createForEntitlement,recoverMissingAccount};
+module.exports={normalizeService,remoteMissing,unambiguousLegacyAccount,entitlementFor,accountsFor,selectServerForPlan,reconcileCustomer,reconcileAll,reconcileAccount,markPasswordSetupRequired,createForEntitlement,recoverMissingAccount};
