@@ -161,9 +161,9 @@ async function ensureImmediateAdmission(op, subscription, target) {
       SET request_snapshot=request_snapshot||$2::jsonb,
           provider_result=provider_result||'{"capacityReserved":true}'::jsonb,
           updated_at=NOW()
-      WHERE id=$1 AND state='planned'
+      WHERE id=$1 AND state='planned' AND attempt_count=$3
       RETURNING *
-    `, [op.id, JSON.stringify(requestPatch)]);
+    `, [op.id, JSON.stringify(requestPatch), op.attempt_count]);
     if (!result.rowCount) throw providerOps.leaseLost(op.id);
     return result.rows[0];
   });
