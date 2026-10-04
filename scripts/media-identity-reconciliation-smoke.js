@@ -44,6 +44,9 @@ function source(file) {
 
   assert.strictEqual(identity.confidence('portal_email'), 'strong');
   assert.strictEqual(identity.confidence('display_name'), 'weak');
+  assert.strictEqual(identity.stremioManagedUsername('cf_stremio_1d25afae216c'), true);
+  assert.strictEqual(identity.stremioManagedUsername('cf_stremio_1d25afae216c7585'), true);
+  assert.strictEqual(identity.stremioManagedUsername('ordinary-user'), false);
 })();
 
 (function orphanContracts() {
@@ -104,6 +107,9 @@ function source(file) {
   assert(!reconcile.includes('canonical_replace_rolled_back'), 'Canonical ownership must not be rolled back after the replacement identity may have received access policy.');
   assert(reconcile.includes('This media identity has an active playback session'));
   assert(reconcile.includes('Media server session state could not be verified.'), 'Manual destructive reconciliation must fail closed when session state is malformed.');
+  assert(reconcile.includes('This managed Stremio identity still belongs to an active entitlement and cannot be deleted.'), 'Manual deletion must protect active Stremio entitlement identities.');
+  assert(reconcile.includes('Managed Stremio service identities cannot be linked as customer Jellyfin accounts.'), 'Internal Stremio identities must never be adopted as customer Jellyfin accounts.');
+  assert(reconcile.includes('Managed Stremio service identities cannot become canonical customer Jellyfin accounts.'), 'Internal Stremio identities must never replace a canonical customer identity.');
   assert(reconcile.includes('userImport.getRemoteUser(serverId, old.jellyfinUserId)') && reconcile.includes('await assertStillUnmanaged(serverId, oldRemoteNow)'), 'Canonical replacement must re-read old remote identity and local ownership immediately before deleting it.');
   assert(reconcile.includes('AND lower(jellyfin_user_id)=lower($6)') && reconcile.includes('if (!adopted.rowCount)'), 'Concurrent canonical replacements must use compare-and-swap ownership so a stale request cannot overwrite a newer adoption.');
   assert(reconcile.includes('await provisioning.reconcileCustomer(customerId)'));
