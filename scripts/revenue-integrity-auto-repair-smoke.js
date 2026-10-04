@@ -35,6 +35,10 @@ const { repairFindings } = require('../src/automation/revenue-integrity-repair')
   assert.strictEqual(calls.length, 4);
   assert(!calls.some(call => call.id === 'paid-1'));
 
+  const integritySource = fs.readFileSync(path.join(__dirname, '..', 'src/automation/revenue-integrity.js'), 'utf8');
+  assert(integritySource.includes('FROM plan_server_eligibility pse') && integritySource.includes('WHERE pse.plan_id=p.id'),
+    'paid-plan legacy free-pool warning must not flag plans with an explicit media server pool');
+
   const jobs = fs.readFileSync(path.join(__dirname, '..', 'src/automation/jobs.js'), 'utf8');
   const repairAt = jobs.indexOf('revenueIntegrityRepair.repairFindings(findings)');
   const rescanAt = jobs.indexOf('scanned=await revenueIntegrity.scan();', repairAt + 1);
