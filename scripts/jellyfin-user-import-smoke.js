@@ -69,6 +69,10 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     `, [driftCustomer, premiumServer]);
 
     const linkCustomer = await addBareCustomer('Charlie Existing');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','migration',NOW(),NOW()+INTERVAL '30 days')
+    `, [linkCustomer, premiumPlan.id]);
 
     remoteByServer.set(String(premiumServer), [
         jellyUser('alice-id', 'Alice'),
