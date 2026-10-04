@@ -213,6 +213,26 @@ async function existingAssignedServerForPlan(plan, serverId, requestedLocation =
   return { ...server, selected_location: locationLabel(server.location) };
 }
 
+async function reusableAssignedServerForPlan(current, targetPlan, requestedLocation = null, { db = query } = {}) {
+  if (!current?.media_server_id || !mediaServerType(targetPlan)) return null;
+  const samePlan = current.plan_id != null && targetPlan?.id != null
+    && String(current.plan_id) === String(targetPlan.id);
+
+  if (samePlan) {
+    // Pool membership controls new placement, not an existing subscription's
+    // sticky assignment. A same-plan stream/variant/currency change must not
+    // silently migrate the customer merely because an administrator later
+    // removed that server from the plan's acquisition pool.
+    const server = await assignedServer(current, mediaServerType(targetPlan), { db });
+    if (requestedLocation && !matchesPreference(server, requestedLocation)) return null;
+    return { ...server, selected_location: locationLabel(server.location) };
+  }
+
+  // Moving to a different plan is an explicit commercial transition. Reuse
+  // the current server only when the target plan itself permits that server.
+  return existingAssignedServerForPlan(targetPlan, current.media_server_id, requestedLocation, { db });
+}
+
 async function committedReservedServer(plan, serverId, requestedLocation = null, { db = query } = {}) {
   if (!serverId || !mediaServerType(plan)) return null;
   const provider = mediaServerType(plan);
@@ -307,6 +327,7 @@ module.exports = {
   matchesPreference,
   reservedServerIfEligible,
   existingAssignedServerForPlan,
+  reusableAssignedServerForPlan,
   committedReservedServer,
   assignedServer,
   persistAssignment
