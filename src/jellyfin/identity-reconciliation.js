@@ -459,5 +459,6 @@ module.exports = {
   replaceManagedIdentity,
   activeSessions,
   classificationFor,
-  confidence
+  confidence,
+  stremioManagedUsername
 };
