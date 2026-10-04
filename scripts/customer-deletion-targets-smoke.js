@@ -217,6 +217,8 @@ async function scenarioL(){
   assert(!deletionSource.includes('listTargets(job.id).catch(()=>[])'),'L: target reload failures must not silently become an empty durable result set');
   assert(!deletionSource.includes('markDeletionFailed(job,error).catch(()=>{})'),'L: failure-state persistence errors must be observable instead of silently extending a running lease');
   assert(deletionSource.includes('Unable to persist customer deletion failure state.'),'L: best-effort failure-state persistence must log its own failure without masking the provider error');
+  assert(deletionSource.includes("require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(job.customer_id)"),'L: hard deletion must clean in-flight remote media identities before customer-row cascade can erase their intent records');
+  assert(deletionSource.includes("error.code='CUSTOMER_DELETE_MEDIA_INTENT_CLEANUP_INCOMPLETE'"),'L: unresolved remote-only media cleanup must block portal deletion instead of orphaning access');
 }
 
 (async()=>{
