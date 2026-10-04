@@ -1,4 +1,5 @@
 'use strict';
+// Exact-head regression audit trigger: 2026-10-04; no production behavior change.
 
 const assert = require('assert');
 const fs = require('fs');
