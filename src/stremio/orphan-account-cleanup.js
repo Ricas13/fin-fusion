@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const registry = require('../jellyfin/registry');
 const managedEntitlements = require('./managed-entitlements');
+const operationLock = require('./operation-lock');
 
 const INTERNAL_USER_RE = /^cf_stremio_[0-9a-f]{12}(?:\d{4})?$/i;
 const DEFAULT_GRACE_HOURS = 12;
@@ -18,6 +19,31 @@ function managedUsernameToken(value) {
 
 function customerManagedToken(customerId) {
   return managedUsernameToken(managedEntitlements.hiddenUsername(customerId));
+}
+
+async function potentialOwnerCustomerIds(username) {
+  const token = managedUsernameToken(username);
+  if (!token) return [];
+  const result = await query(`
+    SELECT id
+    FROM customers
+    WHERE LEFT(REPLACE(id::text,'-',''),12)=$1
+    ORDER BY id
+  `, [token]);
+  return result.rows.map(row => String(row.id));
+}
+
+async function withPotentialOwnerLocks(row, fn) {
+  const owners = await potentialOwnerCustomerIds(row?.jellyfin_username);
+  let wrapped = fn;
+  for (const customerId of owners.slice().reverse()) {
+    const next = wrapped;
+    wrapped = () => operationLock.withLock(
+      `managed-account:${customerId}:${row.server_id}`,
+      next
+    );
+  }
+  return wrapped();
 }
 
 function graceHours(value = process.env.STREMIO_ORPHAN_ACCOUNT_GRACE_HOURS) {
@@ -214,22 +240,24 @@ async function raceCheck(row, { now = new Date(), hours = graceHours() } = {}) {
 }
 
 async function remove(row, options = {}) {
-  const check = await raceCheck(row, options);
-  if (!check.safe) return { deleted: false, skipped: check.reason };
-  await registry.request(
-    row.server_id,
-    `/Users/${encodeURIComponent(row.jellyfin_user_id)}`,
-    { method: 'DELETE', timeoutMs: 10000 }
-  );
-  await query(`
-    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
-    VALUES('stremio.managed.orphan_remote_deleted','jellyfin_server',$1,$2::jsonb)
-  `, [row.server_id, JSON.stringify({
-    jellyfinUserId: row.jellyfin_user_id,
-    username: row.jellyfin_username,
-    serverName: row.server_name
-  })]).catch(() => {});
-  return { deleted: true };
+  return withPotentialOwnerLocks(row, async () => {
+    const check = await raceCheck(row, options);
+    if (!check.safe) return { deleted: false, skipped: check.reason };
+    await registry.request(
+      row.server_id,
+      `/Users/${encodeURIComponent(row.jellyfin_user_id)}`,
+      { method: 'DELETE', timeoutMs: 10000 }
+    );
+    await query(`
+      INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+      VALUES('stremio.managed.orphan_remote_deleted','jellyfin_server',$1,$2::jsonb)
+    `, [row.server_id, JSON.stringify({
+      jellyfinUserId: row.jellyfin_user_id,
+      username: row.jellyfin_username,
+      serverName: row.server_name
+    })]).catch(() => {});
+    return { deleted: true };
+  });
 }
 
 async function run({ apply = true, now = new Date(), hours = graceHours(), limit = 5 } = {}) {
@@ -299,6 +327,8 @@ module.exports = {
   INTERNAL_USER_RE,
   managedUsernameToken,
   customerManagedToken,
+  potentialOwnerCustomerIds,
+  withPotentialOwnerLocks,
   DEFAULT_GRACE_HOURS,
   graceHours,
   mostRecentRemoteActivity,
