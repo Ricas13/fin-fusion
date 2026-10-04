@@ -211,10 +211,19 @@ async function scan() {
             LIMIT 100
         `),
         query(`
-            SELECT id,code,name,server_class,is_free_tier,price_minor,billing_interval
-            FROM plans
-            WHERE server_class='free' AND COALESCE(is_free_tier,FALSE)=FALSE
-            ORDER BY updated_at DESC
+            SELECT p.id,p.code,p.name,p.server_class,p.is_free_tier,p.price_minor,p.billing_interval
+            FROM plans p
+            WHERE p.server_class='free'
+              AND COALESCE(p.is_free_tier,FALSE)=FALSE
+              AND NOT EXISTS(
+                SELECT 1
+                FROM plan_server_eligibility pse
+                JOIN jellyfin_servers js ON js.id=pse.server_id
+                WHERE pse.plan_id=p.id
+                  AND COALESCE(js.media_server_type,'jellyfin')=
+                      CASE WHEN p.service_type='emby' THEN 'emby' ELSE 'jellyfin' END
+              )
+            ORDER BY p.updated_at DESC
             LIMIT 100
         `),
         query(`
