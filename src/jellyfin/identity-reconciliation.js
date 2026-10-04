@@ -346,7 +346,17 @@ async function replaceManagedIdentity({ customerId, accountId, serverId, jellyfi
   let oldRemoteDeleted = false;
   let cleanupWarning = null;
   try {
-    // Re-check active playback immediately before the destructive step.
+    // Re-read both remote identity and local ownership immediately before the
+    // destructive step. If another repair adopted the old identity, if it was
+    // renamed/promoted to administrator, or if playback started, leave it alone.
+    const { user: oldRemoteNow } = await userImport.getRemoteUser(serverId, old.jellyfinUserId);
+    if (norm(oldRemoteNow.jellyfin_username) !== norm(old.username)) {
+      throw new Error('The old remote username changed after canonical adoption; cleanup was deferred.');
+    }
+    if (oldRemoteNow.administrator) {
+      throw new Error('The old remote identity became an administrator; cleanup was deferred.');
+    }
+    await assertStillUnmanaged(serverId, oldRemoteNow);
     const lateSessions = await activeSessions(serverId, old.jellyfinUserId);
     if (lateSessions.length) {
       cleanupWarning = 'Canonical identity changed, but the old remote user started playback before cleanup and was left in place.';
