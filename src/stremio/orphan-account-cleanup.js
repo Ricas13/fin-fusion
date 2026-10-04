@@ -256,7 +256,7 @@ async function run({ apply = true, now = new Date(), hours = graceHours(), limit
     }
   }
 
-  const attention = found.rows.filter(row => ['identity_drift','protected_admin'].includes(row.status));
+  const attention = found.rows.filter(row => ['identity_drift','protected_admin','active_entitlement_unlinked'].includes(row.status));
   const ready = found.rows.filter(row => row.status === 'orphan_ready').length;
   const remainingReady = apply ? Math.max(0, ready - deletionAttempts) : ready;
   const warningParts = [];
