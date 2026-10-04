@@ -196,6 +196,14 @@ assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
     { server_id:'server-pin', access_lane:'primary' },
     { owns:true, primary:{ media_server_id:'server-old' }, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
 ), true, 'a server pin may redirect the still-entitled matching lane to the pinned server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'emby-a', access_lane:'primary', media_server_type:'emby' },
+    { owns:true, jellyfinOwns:false, embyOwns:true, primary:null, free:null, emby:{ media_server_id:'emby-a' }, admin:null }
+), true, 'an active Emby entitlement must preserve its durable creation intent on the assigned Emby server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'emby-old', access_lane:'primary', media_server_type:'emby' },
+    { owns:true, jellyfinOwns:true, embyOwns:true, primary:{ media_server_id:'jellyfin-a' }, free:null, emby:{ media_server_id:'emby-new' }, admin:{ mode:'admin_present' } }
+), false, 'Jellyfin admin authority must never preserve an Emby creation intent on a superseded Emby server');
 
 const compactScopedInactivity = compact(scopedInactivity);
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")
