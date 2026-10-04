@@ -165,7 +165,7 @@ execFileSync(process.execPath, [path.join(root, 'scripts/access-repair-behavior-
 
 const compactIntentRecovery = compact(creationIntentRecovery);
 const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");
-const intentLockAt = compactIntentRecovery.indexOf("SELECT*FROMjellyfin_account_creation_intentsWHEREid=$1FORUPDATE");
+const intentLockAt = compactIntentRecovery.indexOf("SELECTi.*,COALESCE(s.media_server_type,'jellyfin')ASmedia_server_typeFROMjellyfin_account_creation_intentsiJOINjellyfin_serverssONs.id=i.server_idWHEREi.id=$1FORUPDATEOFi");
 const authorityRecheckAt = compactIntentRecovery.indexOf('constauthoritative=awaitentitlementStillOwnsJellyfin(intent.customer_id,{client})');
 const remoteDeleteAt = compactIntentRecovery.indexOf('awaitcompensation.removeCreatedUser({');
 assert(customerLockAt >= 0 && intentLockAt > customerLockAt && authorityRecheckAt > intentLockAt && remoteDeleteAt > authorityRecheckAt,
