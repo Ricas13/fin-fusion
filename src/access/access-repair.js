@@ -13,6 +13,20 @@ function jellyfinEntitlement(entitlement) {
   );
 }
 
+function automaticRollbackBlocker(access) {
+  const entitlement = access?.entitlement || null;
+  const accounts = Array.isArray(access?.accounts) ? access.accounts : [];
+  if (!entitlement) return null;
+  const assignedServerId = String(entitlement.media_server_id || entitlement.admin_forced_server_id || '').trim();
+  if (assignedServerId && accounts.some(account => String(account?.server_id || '') === assignedServerId)) {
+    return 'assigned_server_account_unavailable';
+  }
+  if (!assignedServerId && accounts.length > 1) {
+    return 'ambiguous_legacy_assignment';
+  }
+  return null;
+}
+
 function createAccessRepair(deps = {}) {
   const accessState = deps.customerAccessState || customerAccessState;
   const provisioningApi = deps.provisioning || provisioning;
@@ -29,6 +43,10 @@ function createAccessRepair(deps = {}) {
     }
     if (access.state === accessState.ACCESS_STATES.ACTIVE_READY) {
       return { status: 'ready', account: access.account };
+    }
+    const initialBlocker = automaticRollbackBlocker(access);
+    if (initialBlocker === 'ambiguous_legacy_assignment') {
+      return { status: 'protected', reason: initialBlocker };
     }
 
     let reconcileError = null;
@@ -52,6 +70,10 @@ function createAccessRepair(deps = {}) {
     }
     if (access.state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) {
       return { status: 'skipped', reason: 'blocked_after_reconcile' };
+    }
+    const rollbackBlocker = automaticRollbackBlocker(access);
+    if (rollbackBlocker) {
+      return { status: 'protected', reason: rollbackBlocker, reconcileError };
     }
     if (isOperatorProtected(access.entitlement)) {
       // Permanent Access and explicit administrator-present are stronger than
@@ -78,6 +100,10 @@ function createAccessRepair(deps = {}) {
       return { status: 'skipped' };
     }
 
+    const rollbackBlocker = automaticRollbackBlocker(access);
+    if (rollbackBlocker) {
+      return { status: 'protected', reason: rollbackBlocker, subscriptionId: entitlement.subscription_id };
+    }
     if (isOperatorProtected(entitlement)) {
       return { status: 'protected', reason: 'admin_protected', subscriptionId: entitlement.subscription_id };
     }
@@ -148,6 +174,7 @@ const defaultRepair = createAccessRepair();
 module.exports = {
   trialEntitlement,
   jellyfinEntitlement,
+  automaticRollbackBlocker,
   createAccessRepair,
   ...defaultRepair
 };
