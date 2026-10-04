@@ -11,6 +11,13 @@ const inactivity = require('../src/automation/customer-inactivity');
 const scoped = require('../src/automation/customer-inactivity-scoped');
 const legacyGrace = require('../src/entitlements/jellyfin-inactivity-grace');
 
+const inactivitySource = read('src/automation/customer-inactivity.js');
+assert(
+    inactivitySource.includes('s.media_server_id') &&
+    inactivitySource.includes('(fa.media_server_id IS NULL OR ja.server_id=fa.media_server_id)'),
+    'Free inactivity must assess and remove only the persisted assigned Free media server when one exists'
+);
+
 const policy = {
     firstPlaybackGraceDays: 3,
     playbackWindowDays: 7,
