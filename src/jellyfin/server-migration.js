@@ -131,7 +131,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
         throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on target Jellyfin server.`, 'preflight');
     }
 
-    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement);
+    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement, null, { serverId: target.id });
     let libraryAccess;
     try {
         libraryAccess = await provisioning.resolveLibraryAccessForServer(target.id, effective.unrestricted, effective.visibleNames, false);
