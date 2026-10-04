@@ -38,9 +38,30 @@ async function currentJellyfinSubscription(customerId){
     return row;
 }
 
+async function cleanupCreationIntentsAfterEntitlementChange(customerId){
+    try{
+        const result=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId);
+        if(Number(result?.failed||0)>0)console.warn('Immediate media creation-intent cleanup incomplete after entitlement change.',{
+            customerId,
+            failed:Number(result.failed||0),
+            warning:result.warning||null
+        });
+        return result;
+    }catch(error){
+        // Billing/provider termination is authoritative and must never be rolled
+        // back because remote media cleanup is temporarily unavailable. The
+        // normal stale-intent worker remains the durable retry owner.
+        console.warn('Immediate media creation-intent cleanup deferred after entitlement change.',{
+            customerId,
+            error:String(error?.message||error).slice(0,800)
+        });
+        return{failed:1,deferred:true,error:String(error?.message||error).slice(0,800)};
+    }
+}
+
 async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason='',providerBillingChanged=false,reference=null}={}){
     const note=reasonText(reason),auditReference=reference?String(reference).slice(0,200):null;
-    return transaction(async client=>{
+    const result=await transaction(async client=>{
         const row=await client.query(`
             SELECT s.*,p.is_addon,p.is_free_tier,p.service_type,
                    COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
@@ -84,6 +105,8 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_local','subscription',$2,$3::jsonb)`,[actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription),provider:subscription.source||null,providerBillingChanged:Boolean(providerBillingChanged),permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary})]);
         return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference};
     });
+    result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);
+    return result;
 }
 
 async function continueRecurringOperation(op,row,{adapter=null,actorUserId=null,reason='',recovered=false}={}){
@@ -203,7 +226,9 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
         return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked};
     });
-    return hardRevokeRefundedStremio(customerId,local);
+    const result=await hardRevokeRefundedStremio(customerId,local);
+    result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);
+    return result;
 }
 
-module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};
+module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,cleanupCreationIntentsAfterEntitlementChange,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};
