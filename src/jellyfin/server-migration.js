@@ -5,6 +5,7 @@ const planServers = require('./plan-servers');
 const provisioning = require('./provisioning-helpers');
 const reconciliationLock = require('./reconciliation-lock');
 const customerServerChoice = require('./customer-server-choice');
+const userCapacity = require('./user-capacity');
 
 const RUNNING_STALE_MINUTES = 45;
 
@@ -121,8 +122,9 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     if (kind === 'trial' && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
     if (kind === 'paid' && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
 
-    const assignedUsers = await activeAccountCount(target.id);
-    const maxUsers = Number(target.max_users || 0);
+    const capacityState = await userCapacity.serverState(target.id);
+    const assignedUsers = Number(capacityState?.capacity_users || 0);
+    const maxUsers = Number(capacityState?.max_users || target.max_users || 0);
     const targetAtCapacity = maxUsers > 0 && assignedUsers >= maxUsers;
     if (targetAtCapacity && !allowOverCapacity) {
         throw new ServerMigrationError('TARGET_AT_CAPACITY', 'Target server has reached its configured user capacity.', 'preflight');
@@ -134,7 +136,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
         throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on target Jellyfin server.`, 'preflight');
     }
 
-    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement);
+    const effective = await provisioning.effectivePolicyForCustomer(customerId, entitlement, null, { serverId: target.id });
     let libraryAccess;
     try {
         libraryAccess = await provisioning.resolveLibraryAccessForServer(target.id, effective.unrestricted, effective.visibleNames, false);
@@ -339,7 +341,7 @@ async function rollbackMigrationUnlocked(migrationId, actorUserId) {
         throw new ServerMigrationError('ROLLBACK_SOURCE_USERNAME_EXISTS', `Username ${username} already exists on the original Jellyfin server.`, 'preflight');
     }
 
-    const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
+    const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement, null, { serverId: sourceServer.id });
     const sourceLibraries = await provisioning.resolveLibraryAccessForServer(sourceServer.id, effective.unrestricted, effective.visibleNames, false);
     if (sourceLibraries.missing.length) {
         throw new ServerMigrationError('ROLLBACK_LIBRARIES_MISSING', `Original server is missing required libraries: ${sourceLibraries.missing.join(', ')}`, 'preflight');
