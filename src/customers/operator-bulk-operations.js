@@ -83,8 +83,12 @@ bulkWorker.registerHandler('ban',async item=>{
   if(!existing.rowCount){
     await query(`INSERT INTO customer_bans(customer_id,normalized_email,reason,blocks_registration,blocks_service_access,created_by) VALUES($1,$2,$3,TRUE,TRUE,$4)`,[item.customer_id,email,reason,actor]);
   }
+  // A hard ban must supersede any earlier admin-present Jellyfin override.
+  await jellyfinAdminControl.remove(item.customer_id,null,{actorUserId:actor,reason:`Customer banned: ${reason}`});
   await provisioning.holdAccess(item.customer_id,'banned',actor);
-  await audit('admin.bulk.ban',item.customer_id,actor,{email,reason});
+  const banIntentCleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(item.customer_id);
+  if(Number(banIntentCleanup?.failed||0)>0)throw new Error(banIntentCleanup.warning||'Customer was banned, but in-flight media access cleanup is incomplete.');
+  await audit('admin.bulk.ban',item.customer_id,actor,{email,reason,creationIntentCleanup:banIntentCleanup});
   return {banned:true,emailBlocked:Boolean(email),portalAccountPreserved:true};
 });
 
@@ -95,7 +99,9 @@ bulkWorker.registerHandler('jellyfin_delete',async item=>{
   // while independently valid Stremio/Emby access remains untouched.
   await jellyfinAdminControl.remove(item.customer_id,null,{actorUserId:actor,reason});
   const result=await deletion.deleteJellyfinAccounts(item.customer_id,{actorUserId:actor,reason,holdAccess:false,removeLocal:true,continueOnMissing:true});
-  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true,service:'jellyfin',serviceControl:'admin_removed'});
+  const intentCleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(item.customer_id);
+  if(Number(intentCleanup?.failed||0)>0)throw new Error(intentCleanup.warning||'Jellyfin access was removed locally, but in-flight remote media cleanup is incomplete.');
+  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true,service:'jellyfin',serviceControl:'admin_removed',creationIntentCleanup:intentCleanup});
   return {...result,portalAccountPreserved:true,serviceHold:false,serviceControl:'admin_removed'};
 });
 
