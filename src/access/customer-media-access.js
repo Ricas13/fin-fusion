@@ -82,8 +82,11 @@ function entitlementForAccountFromContext(account, context = {}) {
 
 async function entitlementForAccount(customerId, account, { accessSnapshot = null, embyEntitlement } = {}) {
   if (!account) return null;
-  const access = accessSnapshot || await customerAccessState.snapshot(customerId).catch(() => null);
-  return entitlementForAccountFromContext(account, { accessSnapshot: access, embyEntitlement });
+  const [access, accounts] = await Promise.all([
+    accessSnapshot ? Promise.resolve(accessSnapshot) : customerAccessState.snapshot(customerId).catch(() => null),
+    mediaRows(customerId)
+  ]);
+  return entitlementForAccountFromContext(account, { accessSnapshot: access, embyEntitlement, accounts });
 }
 
 function evaluateCredentialAccess(account, entitlement) {
