@@ -180,8 +180,10 @@ async function remove(row, options = {}) {
   return { deleted: true };
 }
 
-async function run({ apply = true, now = new Date(), hours = graceHours() } = {}) {
+async function run({ apply = true, now = new Date(), hours = graceHours(), limit = 5 } = {}) {
   const found = await inventory({ now, hours });
+  const deletionLimit = Math.max(1, Math.min(25, Number.parseInt(String(limit), 10) || 5));
+  let deletionAttempts = 0;
   let deleted = 0;
   let skipped = 0;
   let failed = Number(found.failures.length || 0);
@@ -196,6 +198,11 @@ async function run({ apply = true, now = new Date(), hours = graceHours() } = {}
       skipped += 1;
       continue;
     }
+    if (deletionAttempts >= deletionLimit) {
+      skipped += 1;
+      continue;
+    }
+    deletionAttempts += 1;
     try {
       const result = await remove(row, { now, hours });
       if (result.deleted) deleted += 1;
@@ -212,8 +219,11 @@ async function run({ apply = true, now = new Date(), hours = graceHours() } = {}
   }
 
   const attention = found.rows.filter(row => ['identity_drift','protected_admin'].includes(row.status));
+  const ready = found.rows.filter(row => row.status === 'orphan_ready').length;
+  const remainingReady = apply ? Math.max(0, ready - deletionAttempts) : ready;
   const warningParts = [];
   if (attention.length) warningParts.push(`${attention.length} managed Stremio remote identity issue(s) require operator review`);
+  if (remainingReady) warningParts.push(`${remainingReady} safe orphan remote identity(s) remain queued for a later bounded cleanup run`);
   if (failed) warningParts.push(`${failed} orphan cleanup operation(s) failed`);
 
   return {
@@ -223,6 +233,9 @@ async function run({ apply = true, now = new Date(), hours = graceHours() } = {}
     skipped,
     failed,
     graceHours: found.graceHours,
+    deletionLimit,
+    deletionAttempts,
+    remainingReady,
     findings: found.rows,
     serverFailures: found.failures,
     errors,
