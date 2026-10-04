@@ -84,6 +84,7 @@ function source(file) {
   assert(reconcile.includes('ownershipPreserved: true'));
   assert(!reconcile.includes('canonical_replace_rolled_back'), 'Canonical ownership must not be rolled back after the replacement identity may have received access policy.');
   assert(reconcile.includes('This media identity has an active playback session'));
+  assert(reconcile.includes('userImport.getRemoteUser(serverId, old.jellyfinUserId)') && reconcile.includes('await assertStillUnmanaged(serverId, oldRemoteNow)'), 'Canonical replacement must re-read old remote identity and local ownership immediately before deleting it.');
   assert(reconcile.includes('await provisioning.reconcileCustomer(customerId)'));
 
   const page = source('src/platform/admin-media-identity-reconciliation.js');
