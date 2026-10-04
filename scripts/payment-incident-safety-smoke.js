@@ -106,6 +106,10 @@ function main() {
         throw new Error('Payment incident identity must downgrade deleted or malformed metadata customer references to unresolved instead of violating the customer foreign key.');
     }
 
+    if (!incidentSource.includes('async function reconcileSuspendedAccessStrict') || !incidentSource.includes("require('../automation/jellyfin-creation-intent-recovery')") || !incidentSource.includes('PAYMENT_RISK_ACCESS_SUSPENSION_INCOMPLETE')) {
+        throw new Error('Payment-risk suspension must remain retryable until persisted and remote-only media access is actually removed.');
+    }
+
     // Stripe webhook delivery is not guaranteed to arrive in lifecycle order.
     // Current verified provider state is authoritative over a historical event:
     // terminal subscriptions stay terminal and already-recovered subscriptions
