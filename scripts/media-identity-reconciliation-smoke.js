@@ -49,6 +49,9 @@ function source(file) {
 (function orphanContracts() {
   assert(orphanCleanup.INTERNAL_USER_RE.test('cf_stremio_1d25afae216c'));
   assert(orphanCleanup.INTERNAL_USER_RE.test('cf_stremio_1d25afae216c7585'));
+  assert.strictEqual(orphanCleanup.managedUsernameToken('cf_stremio_1d25afae216c'), '1d25afae216c');
+  assert.strictEqual(orphanCleanup.managedUsernameToken('cf_stremio_1d25afae216c7585'), '1d25afae216c');
+  assert.strictEqual(orphanCleanup.managedUsernameToken('cf_stremio_customer'), null);
   assert(!orphanCleanup.INTERNAL_USER_RE.test('cf_stremio_customer'));
   assert(!orphanCleanup.INTERNAL_USER_RE.test('normal-user'));
 
