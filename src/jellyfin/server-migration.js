@@ -38,11 +38,6 @@ async function primaryAccount(customerId) {
     return result.rows[0] || null;
 }
 
-async function activeAccountCount(serverId) {
-    const result = await query(`SELECT COUNT(*)::int AS count FROM jellyfin_accounts WHERE server_id=$1`, [serverId]);
-    return Number(result.rows[0]?.count || 0);
-}
-
 async function targetServerForPlan(plan, targetServerId) {
     const candidates = await planServers.eligibleServersForPlan(plan, { enabledOnly: true });
     return candidates.find(server => same(server.id, targetServerId)) || null;
