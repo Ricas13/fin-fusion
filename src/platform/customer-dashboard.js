@@ -69,7 +69,20 @@ async function catalogPlans(){
   return variantCapacity.decoratePlans(catalogue);
 }
 async function sellablePlans(includePlanIds=[]){return readySalePlans(await catalogPlans(),includePlanIds);}
-function accountForEntitlement(portal,entitlement){if(!Array.isArray(portal?.accounts)||!entitlement)return null;const lane=entitlement.is_free_tier?'free':'primary';return portal.accounts.find(a=>String(a.media_server_type||'jellyfin')==='jellyfin'&&a.access_lane===lane&&!a.disabled)||portal.accounts.find(a=>String(a.media_server_type||'jellyfin')==='jellyfin'&&a.access_lane===lane)||null;}
+function accountForEntitlement(portal,entitlement){
+  if(!Array.isArray(portal?.accounts)||!entitlement)return null;
+  const lane=entitlement.is_free_tier?'free':'primary';
+  const candidates=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'&&account.access_lane===lane);
+  const assignedServerId=String(entitlement.admin_forced_server_id||entitlement.media_server_id||'').trim();
+  if(assignedServerId){
+    return candidates.find(account=>String(account.server_id||'')===assignedServerId&&!account.disabled)
+      ||candidates.find(account=>String(account.server_id||'')===assignedServerId)
+      ||null;
+  }
+  const enabled=candidates.filter(account=>!account.disabled);
+  if(enabled.length===1)return enabled[0];
+  return candidates.length===1?candidates[0]:null;
+}
 function onboardingMessage(portal,currentPlan){if(!currentPlan||!['jellyfin','bundle'].includes(deliveryType(currentPlan)))return null;const account=accountForEntitlement(portal,currentPlan);if(!account||account.disabled||account.last_activity_at)return null;const username=account.jellyfin_username||portal.customer?.login_username||'your Jellyfin username';if(account.password_setup_required)return 'Your Jellyfin account is ready. Choose your password below to start watching.';return `Your Jellyfin account is ready. Open Jellyfin and sign in as ${username}.`;}
 function customerProvisioningMessage(state){const message=String(state?.last_error||'');if(/no eligible (?:jellyfin|emby) server|no (?:jellyfin|emby) server|no suitable server/i.test(message))return 'No suitable streaming server is available for this plan right now. We will retry automatically, or you can retry now.';if(/username .* already exists|target_username_exists/i.test(message))return 'That streaming username is already in use on the target server. Please retry; if it continues, contact support.';if(/capacity|max_users|sold out/i.test(message))return 'The eligible streaming server is currently at capacity. We will retry automatically when space is available.';if(state&&['blocked','failed','pending','running'].includes(String(state.status||'')))return 'One of your streaming services is still being prepared. CAPTAiNFiN will keep retrying automatically.';return null;}
 function stremioDeepLink(manifestUrl){if(!manifestUrl)return null;const url=new URL(manifestUrl);return `stremio://${url.host}${url.pathname}${url.search}`;}
