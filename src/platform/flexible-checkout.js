@@ -50,7 +50,8 @@ const CHECKOUT_SAFE=[
  /^An existing (Stripe|PayPal|Plisio) checkout is still awaiting completion\./,
  /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
  'Choose a server location before continuing.',
- 'That server location is no longer available. Choose another location.'
+ 'That server location is no longer available. Choose another location.',
+ 'Another media account placement is still being completed on this server. Try this checkout again shortly.'
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
