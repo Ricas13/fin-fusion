@@ -173,7 +173,7 @@ async function page(req, { message = null, error = null } = {}) {
     ${failures.length ? `<div class="notice warn"><strong>Some media servers could not be inspected.</strong> Refresh after the server is reachable. No automatic destructive action is taken against unreadable servers.</div>` : ''}
     ${metrics(result, stremio)}
     <section class="section">
-      <div class="sectionHead"><div><h2>Media identity reconciliation</h2><div class="muted">Compare live Jellyfin/Emby identities against CAPTAiNFiN ownership. Nothing is deleted merely because a username looks similar.</div></div><div class="buttonRow"><a class="button secondary btn-sm" href="/admin/jellyfin-import">Import customers</a><a class="button secondary btn-sm" href="/admin/servers">Servers</a></div></div>
+      <div class="sectionHead"><div><h2>Media identity reconciliation</h2><div class="muted">Compare live Jellyfin identities against CAPTAiNFiN ownership. Nothing is deleted merely because a username looks similar.</div></div><div class="buttonRow"><a class="button secondary btn-sm" href="/admin/jellyfin-import">Import customers</a><a class="button secondary btn-sm" href="/admin/servers">Servers</a></div></div>
       <div class="operatorCallout"><strong>Automatic cleanup is intentionally narrow.</strong> Only orphaned <code>cf_stremio_*</code> service identities are eligible for background deletion, and only when they are not managed, not being provisioned, not administrators, not in an active session and outside the activity grace period. Normal customer identities always require an operator decision.</div>
       ${table(req, result)}
     </section>`;
@@ -181,7 +181,7 @@ async function page(req, { message = null, error = null } = {}) {
     siteName: runtimeSettings.siteName(),
     active: 'media-identity-reconciliation',
     title: 'Media identity reconciliation',
-    subtitle: 'Find duplicate, orphaned and out-of-band Jellyfin/Emby access',
+    subtitle: 'Find duplicate, orphaned and out-of-band Jellyfin access',
     body
   });
 }
