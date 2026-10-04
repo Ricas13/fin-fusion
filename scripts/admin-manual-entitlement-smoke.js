@@ -15,6 +15,8 @@ const customerCreation = fs.readFileSync(path.join(root, 'src/customers/admin-cu
 const clientScript = fs.readFileSync(path.join(root, 'public/js/admin-manual-entitlement.js'), 'utf8');
 
 assert(customerActions.includes('adminCustomerCreation.create({') && customerCreation.includes('manualSubscriptions.createManualSubscriptionTx') && !customerActions.includes('INSERT INTO subscriptions'), 'Add customer flow must delegate subscription creation to the canonical entitlement owner');
+assert(customerCreation.includes('planCapacity.lockAndAssert(client,plan.id') && customerCreation.includes('selectServerForLocationLocked(plan,null'), 'Add customer with a plan must reserve plan capacity and a concrete media server inside the creation transaction');
+assert(customerCreation.includes('media_server_id=$2') && customerCreation.includes('media_location_preference=$3'), 'Add customer must persist the sticky media assignment before the creation transaction commits');
 assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)'), 'canonical manual subscription owner must retain the subscription INSERT');
 assert(manual.includes("require('../entitlements/admin-manual-entitlement-service')"), 'manual grant route must delegate to the entitlement-domain service');
 assert(manualService.includes("require('./manual-subscriptions')"), 'manual grant domain service must delegate subscription creation to the canonical entitlement owner');
