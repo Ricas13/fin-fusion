@@ -69,6 +69,7 @@ function source(file) {
   assert(cleanup.includes("account_purpose='stremio_internal'"));
   assert(cleanup.includes('jellyfin_account_creation_intents'));
   assert(cleanup.includes("'/Sessions'"));
+  assert(!cleanup.includes("'/Sessions', { timeoutMs: 10000 }).catch(() => [])"), 'Destructive orphan cleanup must fail closed when session state is unavailable.');
   assert(cleanup.includes("status = 'provisioning_in_flight'"));
   assert(cleanup.includes("status = 'active_session'"));
   assert(cleanup.includes("status = 'recent_activity'"));
