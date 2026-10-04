@@ -76,7 +76,7 @@ async function withMediaLocation(req,choice){
  if(customerServerChoice.mediaServerType(choice.plan)&&req.session?.customerId){
   const current=await planChange.currentRecurring(req.session.customerId,choice.plan);
   if(current?.media_server_id){
-   const existing=await customerServerChoice.existingAssignedServerForPlan(choice.plan,current.media_server_id,requested);
+   const existing=await customerServerChoice.reusableAssignedServerForPlan(current,choice.plan,requested);
    if(existing)return{...choice,mediaLocation:existing.selected_location||customerServerChoice.locationLabel(existing.location)};
   }
  }
