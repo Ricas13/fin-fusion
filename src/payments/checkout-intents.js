@@ -203,6 +203,17 @@ async function createIntent({
                 mediaServerId=selected?.id||null;
                 snapshot={...snapshot,mediaLocation:selected?.selected_location||snapshot.mediaLocation||null,mediaServerId};
                 if(mediaServerId&&customerId){
+                    const laneLease = await client.query(`
+                        SELECT id,access_lane
+                        FROM jellyfin_server_placement_leases
+                        WHERE customer_id=$1 AND server_id=$2 AND expires_at>NOW()
+                        LIMIT 1
+                    `, [customerId,mediaServerId]);
+                    if(laneLease.rowCount && String(laneLease.rows[0].access_lane||'') !== 'primary'){
+                        const error=new Error('Another media account placement is still being completed on this server. Try this checkout again shortly.');
+                        error.code='MEDIA_PLACEMENT_LANE_BUSY';
+                        throw error;
+                    }
                     // Rolling-deploy compatibility: N-1 web code cannot read the
                     // new checkout.media_server_id reservation, but it already
                     // understands placement leases. Keep a short bridge lease so
