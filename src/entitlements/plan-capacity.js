@@ -181,7 +181,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         AND ${health}
         AND ${serviceFlag}
     ), server_occupancy AS (
-      SELECT es.id,es.max_users,COUNT(DISTINCT ja.customer_id)::int AS managed_users
+      SELECT es.id,es.max_users,COUNT(DISTINCT (ja.customer_id::text||':'||COALESCE(ja.access_lane,'primary')))::int AS managed_users
       FROM eligible_servers es
       LEFT JOIN jellyfin_accounts ja ON ja.server_id=es.id AND ja.disabled=FALSE AND ja.account_purpose='jellyfin'
       GROUP BY es.id,es.max_users
@@ -203,7 +203,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
   // An already-entitled customer who has not yet received an enabled account
   // owns one place. This prevents a failed setup from reopening that place to
   // somebody else before the owed customer is repaired.
-  const pending=await db(`SELECT COUNT(DISTINCT s.customer_id)::int AS pending_users
+  const pending=await db(`SELECT COUNT(DISTINCT (s.customer_id::text||':'||CASE WHEN COALESCE(p.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END))::int AS pending_users
     FROM subscriptions s
     JOIN plans p ON p.id=s.plan_id
     LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
@@ -255,6 +255,8 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         WHERE existing.customer_id=s.customer_id
           AND existing.disabled=FALSE
           AND existing.account_purpose='jellyfin'
+          AND COALESCE(existing.access_lane,'primary')=
+              CASE WHEN COALESCE(p.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END
           AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_map WHERE current_existing_map.plan_id=$4 AND current_existing_map.server_id=existing_server.id)
@@ -526,7 +528,7 @@ function fleetAvailableSql(alias='p'){
   const managedUsers=`(
     SELECT COALESCE(SUM(server_load.managed_users),0)
     FROM (
-      SELECT occupancy_server.id,COUNT(DISTINCT capacity_account.customer_id) AS managed_users
+      SELECT occupancy_server.id,COUNT(DISTINCT (capacity_account.customer_id::text||':'||COALESCE(capacity_account.access_lane,'primary'))) AS managed_users
       FROM jellyfin_servers occupancy_server
       LEFT JOIN jellyfin_accounts capacity_account ON capacity_account.server_id=occupancy_server.id
         AND capacity_account.disabled=FALSE AND capacity_account.account_purpose='jellyfin'
@@ -542,7 +544,7 @@ function fleetAvailableSql(alias='p'){
     ) server_load
   )`;
   const pendingUsers=`(
-    SELECT COUNT(DISTINCT pending_subscription.customer_id)
+    SELECT COUNT(DISTINCT (pending_subscription.customer_id::text||':'||CASE WHEN COALESCE(pending_plan.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END))
     FROM subscriptions pending_subscription
     JOIN plans pending_plan ON pending_plan.id=pending_subscription.plan_id
     LEFT JOIN customer_entitlement_overrides pending_override ON pending_override.customer_id=pending_subscription.customer_id AND pending_override.subscription_id=pending_subscription.id
@@ -577,6 +579,8 @@ function fleetAvailableSql(alias='p'){
         WHERE existing_account.customer_id=pending_subscription.customer_id
           AND existing_account.disabled=FALSE
           AND existing_account.account_purpose='jellyfin'
+          AND COALESCE(existing_account.access_lane,'primary')=
+              CASE WHEN COALESCE(pending_plan.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END
           AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
           AND ${planPoolServerSql(alias,'existing_server')}
       )
