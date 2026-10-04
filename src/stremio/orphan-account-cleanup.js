@@ -59,6 +59,7 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
         registry.request(server.id, '/Sessions', { timeoutMs: 10000 })
       ]);
       if (!Array.isArray(users)) throw new Error('Media server did not return a valid user list.');
+      if (!Array.isArray(sessions)) throw new Error('Media server did not return a valid session list.');
 
       const accountById = new Map(
         ownership.accounts
@@ -155,7 +156,8 @@ async function raceCheck(row, { now = new Date(), hours = graceHours() } = {}) {
   if (recentEnough(remote, hours, now)) return { safe: false, reason: 'recent_activity_now' };
 
   const sessions = await registry.request(row.server_id, '/Sessions', { timeoutMs: 10000 });
-  if ((Array.isArray(sessions) ? sessions : []).some(session => norm(session?.UserId) === norm(row.jellyfin_user_id))) {
+  if (!Array.isArray(sessions)) return { safe: false, reason: 'session_state_unavailable' };
+  if (sessions.some(session => norm(session?.UserId) === norm(row.jellyfin_user_id))) {
     return { safe: false, reason: 'active_now' };
   }
   return { safe: true };
