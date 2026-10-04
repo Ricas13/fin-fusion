@@ -111,7 +111,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
 
   const acquisition=capacity.acquisitionSql('p');
   assert(acquisition.includes('SUM(capacity_server.max_users)'),'fleet SQL must derive capacity from server max_users');
-  assert(acquisition.includes('COUNT(DISTINCT capacity_account.customer_id)'),'fleet SQL must count one enabled managed customer per server');
+  assert(acquisition.includes("COUNT(DISTINCT (capacity_account.customer_id::text||':'||COALESCE(capacity_account.access_lane,'primary')))"),'fleet SQL must count each enabled customer access lane as a separate physical media account slot');
   assert(acquisition.includes('pending_subscription.customer_id'),'fleet SQL must reserve one place for already-entitled customers still awaiting an account');
   assert(acquisition.includes('capacity_free_hold.consumed_at IS NULL')&&acquisition.includes('capacity_free_hold.released_at IS NULL'),'fleet SQL must count pending Free Access registration holds');
   assert(!acquisition.includes("commercial_snapshot->'streams'")&&!acquisition.includes('GREATEST(1,COALESCE(p.streams,1))'),'fleet SQL must never weight capacity by concurrent-stream allowance');
