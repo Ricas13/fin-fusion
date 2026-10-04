@@ -48,15 +48,34 @@ async function create({
     let mediaServer=null;
     let mediaLocation=null;
     if(plan){
-      await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
-        households:plan.stremio_household_network_limit||null
-      });
-      if(customerServerChoice.mediaServerType(plan)){
-        mediaServer=await customerServerChoice.selectServerForLocationLocked(plan,null,{
-          db:(sql,params)=>client.query(sql,params),
-          requireSelection:false
+      const mediaPlan=Boolean(customerServerChoice.mediaServerType(plan));
+      const deferredMediaProvisioning=mediaPlan&&provisioningMode==='after_activation';
+      const capacityState=deferredMediaProvisioning
+        ?await planCapacity.usage(plan.id,(sql,params)=>client.query(sql,params),{
+            households:plan.stremio_household_network_limit||null
+          })
+        :null;
+      // Deferred admin creation intentionally allows a paid media entitlement
+      // to exist before infrastructure is configured/healthy. That state is
+      // reconciled after activation and remains operator-visible on failure.
+      // Do not, however, bypass a real configured-capacity sell-out.
+      if(!(deferredMediaProvisioning&&Number(capacityState?.configuredServers||0)===0)){
+        await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
+          households:plan.stremio_household_network_limit||null
         });
-        mediaLocation=mediaServer?.selected_location||customerServerChoice.locationLabel(mediaServer?.location);
+      }
+      if(mediaPlan){
+        try{
+          mediaServer=await customerServerChoice.selectServerForLocationLocked(plan,null,{
+            db:(sql,params)=>client.query(sql,params),
+            requireSelection:false
+          });
+          mediaLocation=mediaServer?.selected_location||customerServerChoice.locationLabel(mediaServer?.location);
+        }catch(error){
+          if(!(deferredMediaProvisioning&&error?.code==='MEDIA_LOCATION_UNAVAILABLE'))throw error;
+          mediaServer=null;
+          mediaLocation=null;
+        }
       }
 
       const now=new Date();
