@@ -46,6 +46,7 @@ function entitlementForAccountFromContext(account, context = {}) {
   if (mediaType(account) === 'emby') {
     const entitlement = context.accessSnapshot?.emby?.entitlement || context.embyEntitlement || null;
     if (!entitlement) return null;
+    if (!Array.isArray(context.accounts)) return entitlement;
     const assignedServerId = String(entitlement.media_server_id || '').trim();
     if (assignedServerId) return String(account.server_id || '') === assignedServerId ? entitlement : null;
 
@@ -62,7 +63,9 @@ function entitlementForAccountFromContext(account, context = {}) {
   const access = context.accessSnapshot || null;
   const lane = String(account.access_lane || 'primary') === 'free' ? 'free' : 'primary';
   const entitlement = lane === 'free' ? access?.free?.entitlement || null : access?.primary?.entitlement || null;
-  if (!entitlement || !customerAccessState.accountMatchesEntitlement(account, entitlement, lane)) return null;
+  if (!entitlement) return null;
+  if (!Array.isArray(context.accounts)) return entitlement;
+  if (!customerAccessState.accountMatchesEntitlement(account, entitlement, lane)) return null;
 
   // A persisted server assignment is authoritative. For legacy rows without
   // one, only expose credential controls when exactly one account in the lane
