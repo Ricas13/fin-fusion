@@ -107,25 +107,37 @@ function requestedAccessLane(plan) {
 
 async function reservedServerForCustomer(customerId, available, lane) {
   const ids = (available || []).map(server => server.id).filter(Boolean);
+  const wantedLane = lane === 'free' ? 'free' : 'primary';
   if (!customerId || !ids.length) return null;
   const found = await query(`
     WITH reservations AS (
-      SELECT server_id,0 AS kind_rank,updated_at
+      SELECT server_id,access_lane,0 AS kind_rank,updated_at
       FROM jellyfin_account_creation_intents
       WHERE customer_id=$1 AND server_id=ANY($2::uuid[])
       UNION ALL
-      SELECT server_id,1 AS kind_rank,updated_at
+      SELECT server_id,access_lane,1 AS kind_rank,updated_at
       FROM jellyfin_server_placement_leases
       WHERE customer_id=$1 AND server_id=ANY($2::uuid[]) AND expires_at>NOW()
     )
-    SELECT server_id
+    SELECT server_id,access_lane
     FROM reservations
-    ORDER BY kind_rank ASC,updated_at DESC
+    WHERE access_lane=$3 OR access_lane IS NULL
+    ORDER BY
+      CASE WHEN access_lane=$3 THEN 0 ELSE 1 END,
+      kind_rank ASC,
+      updated_at DESC
     LIMIT 1
-  `, [customerId, ids]);
+  `, [customerId, ids, wantedLane]);
   if (!found.rowCount) return null;
-  const server = available.find(candidate => String(candidate.id) === String(found.rows[0].server_id));
-  return server ? { ...server, requested_access_lane: lane, placement_recovery: true } : null;
+  const reservation = found.rows[0];
+  if (!reservation.access_lane) {
+    // Rolling-deploy compatibility: old code created lane-less reservations.
+    // Reuse one only when current entitlement truth proves which lane owns it.
+    const inferred = await durableCreation.inferUnambiguousLiveLane(customerId);
+    if (inferred !== wantedLane) return null;
+  }
+  const server = available.find(candidate => String(candidate.id) === String(reservation.server_id));
+  return server ? { ...server, requested_access_lane: wantedLane, placement_recovery: true } : null;
 }
 
 async function selectServerForPlan(plan) {
