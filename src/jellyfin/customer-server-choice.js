@@ -214,7 +214,24 @@ async function existingAssignedServerForPlan(plan, serverId, requestedLocation =
 }
 
 async function reusableAssignedServerForPlan(current, targetPlan, requestedLocation = null, { db = query } = {}) {
-  if (!current?.media_server_id || !mediaServerType(targetPlan)) return null;
+  if (!current || !mediaServerType(targetPlan)) return null;
+  const forcedServerId = current.admin_forced_server_id || null;
+  const persistedServerId = current.media_server_id || null;
+  if (!forcedServerId && !persistedServerId) return null;
+
+  if (forcedServerId) {
+    // Admin server pins are service-scoped break-glass placement authority and
+    // deliberately survive plan churn. Billing/capacity must reserve the same
+    // server that reconciliation will actually use; customer location input
+    // cannot silently override an administrator pin.
+    const server = await assignedServer(
+      { ...current, media_server_id: forcedServerId },
+      mediaServerType(targetPlan),
+      { db }
+    );
+    return { ...server, selected_location: locationLabel(server.location) };
+  }
+
   const samePlan = current.plan_id != null && targetPlan?.id != null
     && String(current.plan_id) === String(targetPlan.id);
 
@@ -230,7 +247,7 @@ async function reusableAssignedServerForPlan(current, targetPlan, requestedLocat
 
   // Moving to a different plan is an explicit commercial transition. Reuse
   // the current server only when the target plan itself permits that server.
-  return existingAssignedServerForPlan(targetPlan, current.media_server_id, requestedLocation, { db });
+  return existingAssignedServerForPlan(targetPlan, persistedServerId, requestedLocation, { db });
 }
 
 async function committedReservedServer(plan, serverId, requestedLocation = null, { db = query } = {}) {
