@@ -134,6 +134,7 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
         const intent = intentById.get(id) || intentByName.get(name) || null;
         const entitled = ownership.activeEntitledTokens.has(managedUsernameToken(name));
         const active = activeUserIds.has(id);
+        const lastRemoteActivity = mostRecentRemoteActivity(user);
         const recent = recentEnough(user, hours, now);
         let status = 'orphan_ready';
         if (user?.Policy?.IsAdministrator) status = 'protected_admin';
@@ -141,6 +142,7 @@ async function inventory({ now = new Date(), hours = graceHours() } = {}) {
         else if (intent) status = 'provisioning_in_flight';
         else if (entitled) status = 'active_entitlement_unlinked';
         else if (active) status = 'active_session';
+        else if (!lastRemoteActivity) status = 'activity_unknown';
         else if (recent) status = 'recent_activity';
 
         rows.push({
@@ -200,6 +202,7 @@ async function raceCheck(row, { now = new Date(), hours = graceHours() } = {}) {
     return { safe: false, reason: 'identity_changed_now' };
   }
   if (remote?.Policy?.IsAdministrator) return { safe: false, reason: 'administrator_now' };
+  if (!mostRecentRemoteActivity(remote)) return { safe: false, reason: 'activity_unknown_now' };
   if (recentEnough(remote, hours, now)) return { safe: false, reason: 'recent_activity_now' };
 
   const sessions = await registry.request(row.server_id, '/Sessions', { timeoutMs: 10000 });
@@ -267,7 +270,7 @@ async function run({ apply = true, now = new Date(), hours = graceHours(), limit
     }
   }
 
-  const attention = found.rows.filter(row => ['identity_drift','protected_admin','active_entitlement_unlinked'].includes(row.status));
+  const attention = found.rows.filter(row => ['identity_drift','protected_admin','active_entitlement_unlinked','activity_unknown'].includes(row.status));
   const ready = found.rows.filter(row => row.status === 'orphan_ready').length;
   const remainingReady = apply ? Math.max(0, ready - deletionAttempts) : ready;
   const warningParts = [];
