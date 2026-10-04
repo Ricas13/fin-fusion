@@ -12,6 +12,7 @@ const planExpiry = require('../entitlements/plan-expiry');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const mediaReconciliation = require('../jellyfin/media-service-reconciliation');
 const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
 
@@ -145,6 +146,17 @@ async function readyPrimaryJellyfinAccountForSubscription(customerId,subscriptio
     return access.state===customerAccessState.ACCESS_STATES.ACTIVE_READY?access.account:null;
 }
 
+async function readyEmbyAccountForSubscription(customerId,subscriptionId){
+    const entitlement=await state.effectiveEmbySubscription(customerId,{includeBlocked:true});
+    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    const accounts=await mediaReconciliation.accountsFor(customerId,'emby');
+    return accounts.find(account=>
+        !account.disabled&&
+        account.server_enabled&&
+        (!entitlement.media_server_id||String(account.server_id)===String(entitlement.media_server_id))
+    )||null;
+}
+
 async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
     let targetIsCurrent=false;
     try{
@@ -203,6 +215,61 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
     }
 }
 
+async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason='Emby trial server assignment failed'}={}){
+    let targetIsCurrent=false;
+    try{
+        return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+            const current=await state.effectiveEmbySubscription(customerId,{includeBlocked:true});
+            targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+            if(targetIsCurrent){
+                const accounts=await mediaReconciliation.accountsFor(customerId,'emby');
+                for(const account of accounts){
+                    if(!account.disabled&&account.server_enabled){
+                        await provisioning.deleteJellyfinAccount(account,{reason:'Emby trial activation failed before server assignment completed'});
+                    }
+                }
+            }
+
+            return transaction(async client=>{
+                const ended=await client.query(`
+                    UPDATE subscriptions
+                    SET status='cancelled',
+                        current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                        service_extension_days=0,
+                        cancel_at_period_end=TRUE,
+                        replacement_reason='trial_activation_failed',
+                        updated_at=NOW()
+                    WHERE id=$1 AND customer_id=$2
+                    RETURNING id,status,current_period_end,superseded_by
+                `,[subscriptionId,customerId]);
+                await client.query(`
+                    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                    VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
+                `,[subscriptionId,JSON.stringify({
+                    customerId,
+                    serviceType:'emby',
+                    reason:String(reason||'Emby trial activation failed').slice(0,500),
+                    targetWasCurrent:targetIsCurrent,
+                    noPlanNoServer:targetIsCurrent
+                })]);
+                return ended.rows[0]||null;
+            });
+        });
+    }catch(error){
+        // If remote account cleanup succeeded but the trial row could not be
+        // ended, restore the exact current entitlement rather than leaving an
+        // unpaid live plan with no Emby identity.
+        if(targetIsCurrent){
+            await provisioning.reconcileCustomer(customerId).catch(repairError=>{
+                console.error('Emby trial rollback compensation failed to restore server assignment.',{
+                    customerId,subscriptionId,error:repairError.message
+                });
+            });
+        }
+        throw error;
+    }
+}
+
 async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {}) {
     await commerce.assertOpen();
     const plan = await assertDirectPlan(planCode, { trial: true });
@@ -240,8 +307,8 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
 
     const type=serviceScope.serviceType(plan);
-    const jellyfinTrial=serviceScope.capabilities(plan).has('jellyfin');
-    if(jellyfinTrial){
+    const mediaType=customerServerChoice.mediaServerType(plan);
+    if(mediaType==='jellyfin'){
         await unpaidAccessActivation.activateOrRollback({
             customerId,
             subscriptionId:created.id,
@@ -251,6 +318,17 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
             missingReason:'Jellyfin trial reconciliation completed without an enabled primary account.',
             failureMessage:'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.',
             failureCode:'TRIAL_JELLYFIN_PROVISIONING_FAILED'
+        });
+    }else if(mediaType==='emby'){
+        await unpaidAccessActivation.activateOrRollback({
+            customerId,
+            subscriptionId:created.id,
+            reconcile:primitives.reconcileCommittedCustomerStrict,
+            verify:readyEmbyAccountForSubscription,
+            rollback:rollbackUnprovisionedEmbyTrial,
+            missingReason:'Emby trial reconciliation completed without an enabled Emby account.',
+            failureMessage:'The Emby trial could not be activated because a server account could not be created. No trial plan was retained.',
+            failureCode:'TRIAL_EMBY_PROVISIONING_FAILED'
         });
     }else{
         await primitives.reconcileCommittedCustomer(customerId, 'Trial');
@@ -570,7 +648,9 @@ module.exports = {
     getProviderPlanByExternalId,
     startFreeTrial,
     readyPrimaryJellyfinAccountForSubscription,
+    readyEmbyAccountForSubscription,
     rollbackUnprovisionedJellyfinTrial,
+    rollbackUnprovisionedEmbyTrial,
     readyFreeAccountForSubscription,
     rollbackUnprovisionedFreeClaim,
     claimFreePlan,
