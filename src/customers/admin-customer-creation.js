@@ -3,6 +3,8 @@
 const {query,transaction}=require('../db');
 const accountCommands=require('../security/customer-account-provisioning');
 const manualSubscriptions=require('../entitlements/manual-subscriptions');
+const planCapacity=require('../entitlements/plan-capacity');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 async function create({
   username,
@@ -43,7 +45,20 @@ async function create({
     );
 
     let subscription=null;
+    let mediaServer=null;
+    let mediaLocation=null;
     if(plan){
+      await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
+        households:plan.stremio_household_network_limit||null
+      });
+      if(customerServerChoice.mediaServerType(plan)){
+        mediaServer=await customerServerChoice.selectServerForLocationLocked(plan,null,{
+          db:(sql,params)=>client.query(sql,params),
+          requireSelection:false
+        });
+        mediaLocation=mediaServer?.selected_location||customerServerChoice.locationLabel(mediaServer?.location);
+      }
+
       const now=new Date();
       const days=Number(plan.duration_days||30);
       const end=new Date(now.getTime()+days*86400000);
@@ -60,9 +75,23 @@ async function create({
           planCode:plan.code,
           serviceType:plan.service_type||null,
           activationRequired:true,
-          provisioningMode
+          provisioningMode,
+          mediaServerId:mediaServer?.id||null,
+          mediaLocation
         }
       });
+      if(mediaServer){
+        const assigned=await client.query(`
+          UPDATE subscriptions
+          SET media_server_id=$2,
+              media_location_preference=$3,
+              media_location_snapshot=$3,
+              updated_at=NOW()
+          WHERE id=$1 AND customer_id=$4
+          RETURNING id
+        `,[subscription.id,mediaServer.id,mediaLocation,customer.rows[0].id]);
+        if(!assigned.rowCount)throw new Error('New customer subscription changed before its media-server reservation could be persisted.');
+      }
     }
 
     await client.query(
