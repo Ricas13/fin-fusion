@@ -115,9 +115,10 @@ function source(file) {
   const manualDeleteEnd = reconcile.indexOf('async function linkRemoteIdentity', manualDeleteStart);
   const manualDeleteBody = reconcile.slice(manualDeleteStart, manualDeleteEnd);
   assert(
-    manualDeleteBody.indexOf('orphanCleanup.raceCheck({') >= 0
-      && manualDeleteBody.indexOf('orphanCleanup.raceCheck({') < manualDeleteBody.indexOf("method: 'DELETE'"),
-    'Manual managed-Stremio safety checks must complete before that action attempts its remote DELETE.'
+    manualDeleteBody.includes("method: 'DELETE'")
+      && manualDeleteBody.indexOf('orphanCleanup.raceCheck({') >= 0
+      && manualDeleteBody.indexOf('orphanCleanup.raceCheck({') < manualDeleteBody.indexOf('await destructiveDelete();', manualDeleteBody.indexOf('orphanCleanup.raceCheck({')),
+    'Manual managed-Stremio safety gate must run before invoking the destructive remote-delete closure.'
   );
   assert(reconcile.includes('orphanCleanup.withPotentialOwnerLocks({'), 'Manual managed-Stremio deletion must serialize against managed-account recovery before its final safety check and DELETE.');
   assert(reconcile.includes('This managed Stremio identity is not safe to delete'), 'Manual managed-Stremio deletion must reject unknown-age, recent, active, provisioning, managed or otherwise unsafe identities.');
