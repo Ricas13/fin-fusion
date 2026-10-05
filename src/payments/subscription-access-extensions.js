@@ -5,7 +5,7 @@ const billingPeriods = require('./billing-periods');
 const subscriptionState = require('../entitlements/subscription-state');
 
 const PROVIDERS=new Set(['stripe','paypal','plisio']);
-const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled']);
+const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled','expired']);
 
 function cleanProvider(value){
   const provider=String(value||'').trim().toLowerCase();
