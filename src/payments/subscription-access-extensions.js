@@ -17,6 +17,25 @@ function cleanReference(value,label='Payment reference'){
   if(!reference)throw new Error(`${label} is required.`);
   return reference;
 }
+function objectValue(value){
+  if(value&&typeof value==='object'&&!Array.isArray(value))return value;
+  if(typeof value==='string'){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:{};}catch(_){return {};}}
+  return {};
+}
+function extensionAccessKind(snapshot,target){
+  const explicit=String(snapshot?.accessVariantKind||'').trim().toLowerCase();
+  if(['streams','households'].includes(explicit))return explicit;
+  return String(target?.effective_service_type||'').toLowerCase()==='stremio'?'households':'streams';
+}
+function currentAccessQuantity(target,kind){
+  const snapshot=objectValue(target?.commercial_snapshot);
+  const snapshotKind=String(snapshot.accessVariantKind||'').trim().toLowerCase();
+  const snapshotQuantity=Number(snapshot.accessQuantity);
+  if(Number.isInteger(snapshotQuantity)&&snapshotQuantity>0&&(!snapshotKind||snapshotKind===kind))return snapshotQuantity;
+  const value=kind==='households'?target?.stremio_household_network_limit:target?.streams;
+  const n=Number(value);
+  return Number.isInteger(n)&&n>0?n:1;
+}
 function wholeDaysBetween(from,to){
   const start=new Date(from),end=new Date(to);
   const exact=(end.getTime()-start.getTime())/86400000;
@@ -67,6 +86,7 @@ async function assertCanonicalCurrentTx(client,row){
 async function lockedTarget(client,{customerId,subscriptionId,planId}){
   const result=await client.query(`
     SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
+           p.streams,p.stremio_household_network_limit,
            COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
@@ -139,6 +159,14 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   providerPaymentId=cleanReference(providerPaymentId);
   subscriptionId=cleanReference(subscriptionId,'Subscription');
   let target=await lockedTarget(client,{customerId,subscriptionId,planId});
+  const accessKind=extensionAccessKind(commercialSnapshot,target);
+  const purchasedQuantity=Number(commercialSnapshot?.accessQuantity);
+  const currentQuantity=currentAccessQuantity(target,accessKind);
+  if(!Number.isInteger(purchasedQuantity)||purchasedQuantity<1||purchasedQuantity!==currentQuantity){
+    const error=new Error('The current access allowance changed after this extension checkout started. Start a new extension checkout for the current allowance.');
+    error.code='ACCESS_EXTENSION_ALLOWANCE_CHANGED';
+    throw error;
+  }
   const rebased=await recomputeActivePurchasedDaysTx(client,subscriptionId,customerId);
   target={...target,...(rebased.subscription||{})};
   const cursor=new Date(new Date(target.current_period_end).getTime()+Math.max(0,Number(target.service_extension_days||0))*86400000);
@@ -243,4 +271,4 @@ async function restoreActivePurchasedDays(subscriptionId,customerId){
   return transaction(client=>recomputeActivePurchasedDaysTx(client,subscriptionId,customerId));
 }
 
-module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,wholeDaysBetween,purchasedDays,assertCanonicalCurrentTx,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
+module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,objectValue,extensionAccessKind,currentAccessQuantity,wholeDaysBetween,purchasedDays,assertCanonicalCurrentTx,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
