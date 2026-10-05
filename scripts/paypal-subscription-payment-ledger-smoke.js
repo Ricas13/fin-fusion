@@ -103,6 +103,11 @@ assert(
   'scheduled PayPal reconciliation must ingest recurring subscription receipts'
 );
 assert(
+  reconciliationSource.includes('ambiguousSubscriptionIds') &&
+  reconciliationSource.includes('group.customerIds.size !== 1'),
+  'scheduled PayPal reconciliation must fail closed when one provider subscription ID maps to multiple local customers'
+);
+assert(
   reconciliationSource.includes("row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE && !paypalSubscriptionReference(row)"),
   'one-time capture lookup and recurring subscription reconciliation must remain separate'
 );
