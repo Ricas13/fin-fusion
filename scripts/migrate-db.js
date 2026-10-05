@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { getPool } = require('../src/db');
 const migrationEpochs = require('./migration-epochs');
+const compatibilityMigrations = require('../src/db-compatibility-migrations');
 
 const LEGACY_BRIDGE_COMMIT = migrationEpochs.CURRENT_EPOCH.legacyBridgeCommit;
 const CURRENT_BASELINE_FILE = migrationEpochs.CURRENT_EPOCH.baselineFile;
@@ -160,6 +161,53 @@ async function adoptBaseline(pool, filename, checksum) {
     console.log(`adopt ${filename}`);
 }
 
+async function ensureCompatibilityMigrationLedger(pool) {
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_compatibility_migrations (
+        filename TEXT PRIMARY KEY,
+        checksum TEXT NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+}
+
+async function applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall, checksum = migrationChecksum(sql)) {
+    await ensureCompatibilityMigrationLedger(pool);
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('captainfin:compat-migration:'||$1::text, 91827))",
+            [filename]
+        );
+        const existing = await client.query(
+            'SELECT checksum FROM public.schema_compatibility_migrations WHERE filename=$1',
+            [filename]
+        );
+        if (existing.rows[0]?.checksum === checksum) {
+            await client.query('COMMIT');
+            console.log(`compatibility skip ${filename}`);
+            return { applied: false, skipped: true };
+        }
+
+        await client.query("SELECT pg_catalog.set_config('search_path','public',false)");
+        await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
+        await client.query(unwrapTransaction(sql));
+        await client.query(`
+            INSERT INTO public.schema_compatibility_migrations(filename,checksum,applied_at)
+            VALUES($1,$2,NOW())
+            ON CONFLICT(filename) DO UPDATE
+            SET checksum=EXCLUDED.checksum,applied_at=NOW()
+        `, [filename, checksum]);
+        await client.query('COMMIT');
+        console.log(`compatibility applied ${filename}`);
+        return { applied: true, skipped: false };
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 async function applyMigration(pool, filename, sql, checksum, freshInstall) {
     const client = await pool.connect();
     try {
@@ -224,6 +272,12 @@ async function runMigrations({ argv = process.argv.slice(2), pool = getPool(), c
         for (const filename of files) {
             const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
             const checksum = migrationChecksum(sql);
+
+            if (compatibilityMigrations.isRepeatableCompatibilityMigration(filename)) {
+                await applyRepeatableCompatibilityMigration(pool, filename, sql, freshInstall, checksum);
+                continue;
+            }
+
             const verification = await verifyOrBaselineAppliedMigration(pool, filename, checksum, options);
             repairedDrift = repairedDrift || verification.repairedDrift;
             if (verification.applied) {
@@ -271,5 +325,7 @@ module.exports = {
     parseArguments,
     databaseShape,
     verifyOrBaselineAppliedMigration,
+    ensureCompatibilityMigrationLedger,
+    applyRepeatableCompatibilityMigration,
     runMigrations
 };
