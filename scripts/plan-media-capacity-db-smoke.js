@@ -120,6 +120,33 @@ const capacity = require('../src/entitlements/plan-capacity');
     assert.equal((await capacity.usage(limitedPlan)).planUsed,1);
     assert.equal(await available(),false,'manual presence must occupy storefront capacity');
     await query('DELETE FROM customer_service_admin_control WHERE customer_id=$1',[planCustomer.id]);
+
+    const embyLogicalPlan=(await query(`
+      INSERT INTO plans(
+        code,name,description,service_type,audience,billing_interval,duration_days,
+        price_minor,currency,capacity_limit,inactivity_policy,is_addon,server_class,
+        visible,active,streams
+      ) VALUES($1,$2,'Emby logical capacity smoke','emby','direct','month',30,500,'GBP',1,$3::jsonb,FALSE,'custom',TRUE,TRUE,1)
+      RETURNING id
+    `,[`emby-logical-${suffix}`,`Emby logical ${suffix}`,JSON.stringify({mediaCapacityManaged:true})])).rows[0];
+    planIds.push(embyLogicalPlan.id);
+    const embyLogicalCustomer=(await query(
+      `INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,
+      [`Emby logical customer ${suffix}`,`emby-logical-${suffix}@example.invalid`]
+    )).rows[0];
+    customerIds.push(embyLogicalCustomer.id);
+    await query(`
+      INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot)
+      VALUES($1,$2,'active','manual',NOW()-INTERVAL '1 day',NOW()+INTERVAL '30 days','emby')
+    `,[embyLogicalCustomer.id,embyLogicalPlan.id]);
+    await query(`
+      INSERT INTO customer_service_admin_control(customer_id,service,mode)
+      VALUES($1,'jellyfin','admin_removed')
+    `,[embyLogicalCustomer.id]);
+    const embyLogical=await capacity.logicalMediaPlanUsage(embyLogicalPlan);
+    assert.equal(embyLogical.planUsed,1,'Jellyfin admin removal must not erase an active Emby customer from logical plan capacity');
+    await query('DELETE FROM customer_service_admin_control WHERE customer_id=$1',[embyLogicalCustomer.id]);
+
     await query("UPDATE plans SET inactivity_policy='{}',capacity_limit=0 WHERE id=$1",[limitedPlan]);
     assert.equal((await capacity.usage(limitedPlan)).planUserLimit,null);
     assert.equal(await available(),true,'legacy zero must not close acquisition');
