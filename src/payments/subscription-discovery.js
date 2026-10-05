@@ -405,7 +405,14 @@ async function coverageStats() {
                        AND (
                            LOWER(BTRIM(COALESCE(billing_mode,'')))='payment'
                            OR (
-                               LOWER(BTRIM(COALESCE(billing_mode,'')))='manual'
+                               (
+                                 LOWER(BTRIM(COALESCE(billing_mode,'')))='manual'
+                                 OR (
+                                   BTRIM(COALESCE(billing_mode,''))=''
+                                   AND LOWER(BTRIM(COALESCE(source,''))) IN('manual','admin_grant')
+                                   AND NULLIF(BTRIM(COALESCE(provider_subscription_id,'')),'') IS NULL
+                                 )
+                               )
                                AND NOT legacy_import
                            )
                            OR (
