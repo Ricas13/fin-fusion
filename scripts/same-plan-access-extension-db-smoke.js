@@ -146,6 +146,55 @@ async function main(){
   );
   await query(`UPDATE subscriptions SET commercial_snapshot='{}'::jsonb WHERE id=$1`,[subscription.id]);
 
+  // Once the provider base term ends, prepaid extension time must keep the
+  // customer's existing capacity occupied. Otherwise a full plan can be
+  // oversold while the original customer still has paid access.
+  const extendedEmbyPlan=(await query(`
+    INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active)
+    VALUES($1,$1,'emby','direct','month',30,600,'GBP',1,TRUE,TRUE)
+    RETURNING *
+  `,[`extension-emby-${suffix}`])).rows[0];
+  const extendedEmbyCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[
+    `extension-emby-${suffix}`,`extension-emby-${suffix}@example.invalid`
+  ])).rows[0];
+  await query(`
+    INSERT INTO subscriptions(
+      customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,service_extension_days,
+      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot
+    )
+    VALUES($1,$2,'cancelled','manual','manual',NOW()-INTERVAL '31 days',NOW()-INTERVAL '1 day',30,'month',30,'emby')
+  `,[extendedEmbyCustomer.id,extendedEmbyPlan.id]);
+  const extendedEmbyCapacity=await planCapacity.usage(extendedEmbyPlan.id);
+  assert.equal(Number(extendedEmbyCapacity.used||0),1,'extension-backed Emby access must keep its logical plan place after the base term ends');
+  assert.equal(extendedEmbyCapacity.soldOut,true,'an extension-backed customer must keep a one-place Emby plan sold out');
+  const extendedEmbyAdmission=await query(
+    `SELECT ${planCapacity.acquisitionSql('p')} AS available FROM plans p WHERE p.id=$1`,
+    [extendedEmbyPlan.id]
+  );
+  assert.equal(extendedEmbyAdmission.rows[0].available,false,'catalog acquisition SQL must not advertise capacity already occupied by extension-backed access');
+
+  const extendedStremioPlan=(await query(`
+    INSERT INTO plans(
+      code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,
+      capacity_limit,visible,active,stremio_household_network_limit
+    )
+    VALUES($1,$1,'stremio','direct','month',30,600,'GBP',2,TRUE,TRUE,2)
+    RETURNING *
+  `,[`extension-stremio-${suffix}`])).rows[0];
+  const extendedStremioCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[
+    `extension-stremio-${suffix}`,`extension-stremio-${suffix}@example.invalid`
+  ])).rows[0];
+  await query(`
+    INSERT INTO subscriptions(
+      customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,service_extension_days,
+      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot,commercial_snapshot
+    )
+    VALUES($1,$2,'expired','manual','manual',NOW()-INTERVAL '31 days',NOW()-INTERVAL '1 day',30,'month',30,'stremio',$3::jsonb)
+  `,[extendedStremioCustomer.id,extendedStremioPlan.id,JSON.stringify({accessVariantKind:'households',accessQuantity:2,stremioHouseholdNetworkLimit:2})]);
+  const extendedStremioCapacity=await planCapacity.usage(extendedStremioPlan.id);
+  assert.equal(Number(extendedStremioCapacity.householdUsed||0),2,'extension-backed Stremio access must keep its purchased households occupied after the base term ends');
+  assert.equal(extendedStremioCapacity.soldOut,true,'extension-backed Stremio households must remain unavailable for resale');
+
   const collisionCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`collision-${suffix}`,`collision-${suffix}@example.invalid`])).rows[0];
   await query(`
     INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,
