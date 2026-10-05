@@ -37,7 +37,7 @@ WHERE applied_days IS NULL;
 ALTER TABLE public.subscription_access_extensions
     ALTER COLUMN applied_days SET NOT NULL;
 
-DO $
+DO $extension$
 BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -49,7 +49,8 @@ BEGIN
             ADD CONSTRAINT subscription_access_extensions_applied_days_check
             CHECK (applied_days >= 0 AND applied_days <= 3650);
     END IF;
-END $;
+END
+$extension$;
 
 CREATE INDEX IF NOT EXISTS subscription_access_extensions_subscription_idx
     ON public.subscription_access_extensions(subscription_id,status,created_at);
