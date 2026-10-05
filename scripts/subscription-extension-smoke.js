@@ -64,6 +64,10 @@ assert(
   'PayPal extension checkout must retain canonical verified capture settlement/accounting while recurring-payment ledger reconciliation evolves independently'
 );
 assert(
+  paypal.indexOf('await recordCompletedCapture(capture') < paypal.indexOf('const activated=await lifecycle.activatePurchase', paypal.indexOf('async function activateCompletedOrder')),
+  'verified PayPal capture money must be ledgered before local extension fulfillment so paid-but-unfulfilled checkouts remain automatically recoverable'
+);
+assert(
   lifecycle.includes('Paid extension fulfillment incident could not be recorded') &&
   lifecycle.includes('recordCapacitySettlementIncident') &&
   lifecycle.includes('resolveCapacitySettlementIncident'),
