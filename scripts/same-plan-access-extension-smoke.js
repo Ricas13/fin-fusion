@@ -85,3 +85,4 @@ assert(
   'production readiness must not classify prepaid extension-backed access as stale or unaffected by server loss'
 );
 console.log('same-plan access extension smoke: ok');
+
