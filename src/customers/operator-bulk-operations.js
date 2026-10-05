@@ -48,7 +48,13 @@ bulkWorker.registerHandler('cancel_plan',async item=>{
   const actor=await actorFor(item),reason=String(item.params?.reason||'Plan cancelled by administrator').trim().slice(0,500);
   if(reason.length<3)throw new Error('Reason must be at least 3 characters');
   const rows=await subscriptionRevoke.subscriptions(item.customer_id);
-  const primary=rows.find(row=>!row.is_addon);
+  const primaries=rows.filter(row=>!row.is_addon);
+  if(primaries.length>1){
+    const error=new Error('This customer has multiple independent primary services. Bulk cancel refuses to guess which paid plan to terminate; use the customer-specific subscription action instead.');
+    error.code='AMBIGUOUS_PRIMARY_SUBSCRIPTION';
+    throw error;
+  }
+  const primary=primaries[0]||null;
   if(!primary){
     // A prior attempt may have committed the cancellation before failing in
     // downstream cleanup/reconciliation. Converge those effects before marking
