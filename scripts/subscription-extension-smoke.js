@@ -29,6 +29,13 @@ assert.equal(
   365,
   'calendar-year extension must be measured from the exact existing boundary'
 );
+const leapSpanningYear = new Date('2027-03-01T08:00:00.000Z');
+const leapSpanningDays = extensions.wholeDaysBetween(
+  leapSpanningYear,
+  extensions.projectedEnd(leapSpanningYear,{billingInterval:'year',durationDays:365})
+);
+assert.equal(leapSpanningDays,366,'calendar-year extension spanning leap day must keep all 366 service days');
+assert.equal(extensions.eventDaysForAudit(leapSpanningDays),365,'legacy audit-row day cap must not require a live schema migration; exact applied duration stays in metadata');
 assert(extensions.isExtensionSnapshot({
   kind:'direct_plan',
   purchaseKind:'subscription_extension',
