@@ -52,6 +52,8 @@ assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_ex
 assert(zeroValue.includes("snapshot.kind==='subscription_extension'"),'fully discounted extensions must use the extension lifecycle rather than creating another subscription');
 assert(migration.includes('UNIQUE(provider,provider_payment_id)'),'provider payment replay must be database-idempotent');
 assert(migration.includes('UNIQUE(checkout_intent_id)'),'checkout replay must be database-idempotent');
+assert(migration.includes('applied_days integer NOT NULL')&&migration.includes('ADD COLUMN IF NOT EXISTS applied_days'),'extension ledger must separate immutable purchase history from current aggregate contribution and remain rolling-compatible');
+assert(extension.includes('recordedAppliedDays')&&extension.includes('SET applied_days=$2'),'refund/rebase logic must remove revoked time once without erasing unrelated extension days later');
 assert(compatibility.includes("'20261005151000_same_plan_access_extensions.sql'"),'extension schema must be classified as rolling-compatible so N-1 readiness is preserved');
 assert(migrateDb.includes('applyRepeatableCompatibilityMigration'),'migration runner must apply extension schema outside the versioned readiness ledger');
 assert(health.includes('latestVersionedMigration'),'candidate readiness must ignore repeatable compatibility migrations');
