@@ -90,13 +90,14 @@ function projectedEnd(from, snapshot, fallbackDays = 30) {
 function appliedDaysFromMetadata(event) {
   const metadata = safeObject(event?.metadata);
   const stored = Number(metadata.appliedDays);
-  if (Number.isInteger(stored) && stored >= 0 && stored <= 366) return stored;
+  if (Number.isInteger(stored) && stored >= 0 && stored <= 3650) return stored;
   const fallback = Number(event?.days);
   return Number.isInteger(fallback) && fallback > 0 ? fallback : 0;
 }
 
 function paidEventActive(event) {
-  return safeObject(event?.metadata).refunded !== true;
+  const metadata = safeObject(event?.metadata);
+  return metadata.refunded !== true && metadata.consumed !== true && metadata.invalidated !== true;
 }
 
 async function loadSubscriptionTx(client, subscriptionId, customerId = null) {
@@ -159,17 +160,35 @@ async function recomputeForSubscriptionTx(client, subscriptionId) {
   const events = (await client.query(`
     SELECT id,subscription_id,customer_id,source,days,reference_id,metadata,created_at
     FROM subscription_service_extension_events
-    WHERE subscription_id=$1 AND source LIKE $2
+    WHERE subscription_id=$1 AND LEFT(source,$2)=$3
     ORDER BY created_at,id
     FOR UPDATE
-  `, [row.id, `${EVENT_SOURCE_PREFIX}%`])).rows;
+  `, [row.id, EVENT_SOURCE_PREFIX.length, EVENT_SOURCE_PREFIX])).rows;
 
-  const oldPaidDays = events.reduce((sum, event) => sum + appliedDaysFromMetadata(event), 0);
+  let oldPaidDays = events.reduce((sum, event) => sum + appliedDaysFromMetadata(event), 0);
   const currentTotal = Math.max(0, Number(row.service_extension_days || 0));
-  if (!Number.isInteger(currentTotal) || currentTotal < oldPaidDays) {
-    const error = new Error('Stored service-extension totals no longer match the paid-extension ledger. Manual review is required before changing this subscription.');
-    error.code = 'SUBSCRIPTION_EXTENSION_LEDGER_DIVERGENCE';
-    throw error;
+  if (!Number.isInteger(currentTotal)) throw new Error('Stored service-extension total is invalid.');
+  if (currentTotal < oldPaidDays) {
+    // Another canonical lifecycle action (natural expiry, explicit set-expiry,
+    // refund termination, etc.) has already cleared or shortened service time.
+    // Never resurrect paid time from an audit event after canonical entitlement
+    // truth has removed it. Retire the old applied contribution and preserve the
+    // current subscription total as the new non-paid baseline.
+    for (const event of events) {
+      const metadata = safeObject(event.metadata);
+      if (appliedDaysFromMetadata(event) <= 0) continue;
+      const nextMetadata = {
+        ...metadata,
+        appliedDays:0,
+        invalidated:true,
+        invalidatedAt:new Date().toISOString(),
+        invalidatedReason:'canonical_service_extension_reset'
+      };
+      await client.query('UPDATE subscription_service_extension_events SET metadata=$2::jsonb WHERE id=$1', [event.id, JSON.stringify(nextMetadata)]);
+      event.metadata = nextMetadata;
+    }
+    await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription_extension.state_reset_detected','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({customerId:row.customer_id,currentServiceExtensionDays:currentTotal,recordedPaidExtensionDays:oldPaidDays})]);
+    oldPaidDays = 0;
   }
 
   const baseDays = currentTotal - oldPaidDays;
