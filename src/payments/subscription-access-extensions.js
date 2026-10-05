@@ -83,7 +83,7 @@ async function assertCanonicalCurrentTx(client,row){
   return row;
 }
 
-async function lockedTarget(client,{customerId,subscriptionId,planId}){
+async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId=null}){
   const result=await client.query(`
     SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
            p.streams,p.stremio_household_network_limit,p.audience,p.active AS plan_active,p.visible AS plan_visible,
@@ -100,15 +100,66 @@ async function lockedTarget(client,{customerId,subscriptionId,planId}){
   if(row.superseded_by)throw new Error('This subscription has already been replaced.');
   if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw new Error('Only a current paid plan can be extended.');
   if(row.refund_terminated_at)throw new Error('A refunded or charged-back subscription cannot be extended.');
-  if(!['direct','both'].includes(String(row.audience||'direct')))throw new Error('This plan is not available to direct customers.');
-  if(!row.plan_active||!row.plan_visible||row.archived_at)throw new Error('This plan is no longer available for extension.');
-  const now=Date.now(),effectiveFrom=row.effective_from?new Date(row.effective_from).getTime():null,effectiveUntil=row.effective_until?new Date(row.effective_until).getTime():null;
-  if(effectiveFrom&&effectiveFrom>now)throw new Error('This plan is not yet available for extension.');
-  if(effectiveUntil&&effectiveUntil<=now)throw new Error('This plan is no longer available for extension.');
-  if(!LIVE_STATUSES.has(String(row.status||'')))throw new Error('This paid plan is no longer current.');
-  const accessEnd=new Date(row.current_period_end||0).getTime()+Math.max(0,Number(row.service_extension_days||0))*86400000;
-  if(!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('This paid plan has already expired.');
-  await assertCanonicalCurrentTx(client,row);
+
+  let committedCheckout=null;
+  if(checkoutIntentId){
+    committedCheckout=(await client.query(`
+      SELECT id,state,customer_id,plan_id,commercial_snapshot
+      FROM billing_checkout_intents
+      WHERE id=$1
+      FOR SHARE
+    `,[checkoutIntentId])).rows[0]||null;
+    const snapshot=objectValue(committedCheckout?.commercial_snapshot);
+    if(!committedCheckout
+      ||String(committedCheckout.customer_id)!==String(customerId)
+      ||String(committedCheckout.plan_id)!==String(planId)
+      ||snapshot.kind!=='subscription_extension'
+      ||String(snapshot.extensionSubscriptionId||'')!==String(subscriptionId)){
+      const error=new Error('Access-extension checkout ownership no longer matches the paid purchase.');
+      error.code='ACCESS_EXTENSION_CHECKOUT_IDENTITY_CONFLICT';
+      throw error;
+    }
+  }
+
+  if(!committedCheckout){
+    if(!['direct','both'].includes(String(row.audience||'direct')))throw new Error('This plan is not available to direct customers.');
+    if(!row.plan_active||!row.plan_visible||row.archived_at)throw new Error('This plan is no longer available for extension.');
+    const now=Date.now(),effectiveFrom=row.effective_from?new Date(row.effective_from).getTime():null,effectiveUntil=row.effective_until?new Date(row.effective_until).getTime():null;
+    if(effectiveFrom&&effectiveFrom>now)throw new Error('This plan is not yet available for extension.');
+    if(effectiveUntil&&effectiveUntil<=now)throw new Error('This plan is no longer available for extension.');
+    if(!LIVE_STATUSES.has(String(row.status||'')))throw new Error('This paid plan is no longer current.');
+    const accessEnd=new Date(row.current_period_end||0).getTime()+Math.max(0,Number(row.service_extension_days||0))*86400000;
+    if(!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('This paid plan has already expired.');
+  }
+
+  const service=String(row?.effective_service_type||row?.service_type_snapshot||'jellyfin').toLowerCase();
+  let current=null;
+  if(service==='stremio')current=await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='emby')current=await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='jellyfin'||service==='bundle')current=await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
+  else throw new Error('This service type cannot be extended through customer checkout.');
+  if(current&&String(current.subscription_id||current.id||'')!==String(row.id)){
+    const error=new Error('This subscription was replaced before the extension payment could be fulfilled.');
+    error.code='ACCESS_EXTENSION_TARGET_REPLACED';
+    throw error;
+  }
+  if(current?.blocked){
+    const error=new Error('This subscription currently has an access hold. The extension payment is recorded but access remains blocked until the hold is resolved.');
+    error.code='ACCESS_EXTENSION_ACCESS_BLOCKED';
+    throw error;
+  }
+
+  const openChange=await client.query(`
+    SELECT id FROM customer_plan_changes
+    WHERE customer_id=$1 AND current_subscription_id=$2
+      AND state IN('pending','awaiting_checkout')
+    LIMIT 1 FOR SHARE
+  `,[row.customer_id,row.id]);
+  if(openChange.rowCount){
+    const error=new Error('A plan change is already scheduled for this subscription. The extension payment requires reconciliation before fulfillment.');
+    error.code='ACCESS_EXTENSION_PLAN_CHANGE_OPEN';
+    throw error;
+  }
   return row;
 }
 async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=null){
@@ -177,7 +228,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   provider=cleanProvider(provider);
   providerPaymentId=cleanReference(providerPaymentId);
   subscriptionId=cleanReference(subscriptionId,'Subscription');
-  let target=await lockedTarget(client,{customerId,subscriptionId,planId});
+  let target=await lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId});
   const accessKind=extensionAccessKind(commercialSnapshot,target);
   const purchasedQuantity=Number(commercialSnapshot?.accessQuantity);
   const currentQuantity=currentAccessQuantity(target,accessKind);
