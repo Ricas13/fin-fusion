@@ -40,6 +40,58 @@ const ACTORLESS_ADMIN_HOLDS_SQL = `
     LIMIT 100
 `;
 
+const JELLYFIN_ADMIN_AUTHORITY_VIOLATIONS_SQL = `
+    SELECT ctl.customer_id,ctl.mode,ctl.server_id,ctl.reason,ctl.updated_at,
+           CASE
+             WHEN ctl.mode='admin_removed' THEN 'active_account_despite_admin_removed'
+             WHEN ctl.mode='admin_server_pin' THEN 'pinned_account_missing_on_target_server'
+             ELSE 'account_missing_despite_admin_present'
+           END AS violation
+    FROM customer_service_admin_control ctl
+    WHERE ctl.service='jellyfin'
+      AND ctl.updated_at<NOW()-INTERVAL '2 minutes'
+      AND (
+        (ctl.mode='admin_present' AND NOT EXISTS(
+            SELECT 1 FROM jellyfin_accounts ja
+            WHERE ja.customer_id=ctl.customer_id
+              AND ja.account_purpose='jellyfin'
+              AND ja.disabled=FALSE
+        ))
+        OR
+        (
+          ctl.mode='admin_server_pin'
+          -- A pin owns placement only. It must not create/extend entitlement or
+          -- bypass billing/inactivity holds. Only require an account on the
+          -- pinned server when canonical Jellyfin entitlement says access is
+          -- currently present.
+          AND EXISTS(
+            SELECT 1
+            FROM effective_customer_entitlements e
+            WHERE e.customer_id=ctl.customer_id
+              AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN('jellyfin','bundle')
+              AND COALESCE(e.blocked,FALSE)=FALSE
+              AND e.access_expires_at>NOW()
+          )
+          AND NOT EXISTS(
+            SELECT 1 FROM jellyfin_accounts ja
+            WHERE ja.customer_id=ctl.customer_id
+              AND ja.account_purpose='jellyfin'
+              AND ja.disabled=FALSE
+              AND ja.server_id=ctl.server_id
+          )
+        )
+        OR
+        (ctl.mode='admin_removed' AND EXISTS(
+            SELECT 1 FROM jellyfin_accounts ja
+            WHERE ja.customer_id=ctl.customer_id
+              AND ja.account_purpose='jellyfin'
+              AND ja.disabled=FALSE
+        ))
+      )
+    ORDER BY ctl.updated_at
+    LIMIT 100
+`;
+
 function clean(value, max = 500) {
     return String(value == null ? '' : value)
         .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
@@ -276,42 +328,7 @@ async function scan() {
             ORDER BY updated_at
             LIMIT 100
         `),
-        query(`
-            SELECT ctl.customer_id,ctl.mode,ctl.server_id,ctl.reason,ctl.updated_at,
-                   CASE
-                     WHEN ctl.mode='admin_removed' THEN 'active_account_despite_admin_removed'
-                     WHEN ctl.mode='admin_server_pin' THEN 'pinned_account_missing_on_target_server'
-                     ELSE 'account_missing_despite_admin_present'
-                   END AS violation
-            FROM customer_service_admin_control ctl
-            WHERE ctl.service='jellyfin'
-              AND ctl.updated_at<NOW()-INTERVAL '2 minutes'
-              AND (
-                (ctl.mode='admin_present' AND NOT EXISTS(
-                    SELECT 1 FROM jellyfin_accounts ja
-                    WHERE ja.customer_id=ctl.customer_id
-                      AND ja.account_purpose='jellyfin'
-                      AND ja.disabled=FALSE
-                ))
-                OR
-                (ctl.mode='admin_server_pin' AND NOT EXISTS(
-                    SELECT 1 FROM jellyfin_accounts ja
-                    WHERE ja.customer_id=ctl.customer_id
-                      AND ja.account_purpose='jellyfin'
-                      AND ja.disabled=FALSE
-                      AND ja.server_id=ctl.server_id
-                ))
-                OR
-                (ctl.mode='admin_removed' AND EXISTS(
-                    SELECT 1 FROM jellyfin_accounts ja
-                    WHERE ja.customer_id=ctl.customer_id
-                      AND ja.account_purpose='jellyfin'
-                      AND ja.disabled=FALSE
-                ))
-              )
-            ORDER BY ctl.updated_at
-            LIMIT 100
-        `),
+        query(JELLYFIN_ADMIN_AUTHORITY_VIOLATIONS_SQL),
         query(`
             SELECT customer_id,access_lane,COUNT(*)::int AS active_count,
                    array_agg(id::text ORDER BY created_at) AS account_ids,
@@ -416,6 +433,7 @@ module.exports = {
     ADMIN_ACTOR_ENFORCED_AT,
     LEGACY_ACTORLESS_ADMIN_REPAIR,
     ACTORLESS_ADMIN_HOLDS_SQL,
+    JELLYFIN_ADMIN_AUTHORITY_VIOLATIONS_SQL,
     clean,
     finding,
     retireObsoleteManualRenewalOperations,
