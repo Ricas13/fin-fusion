@@ -183,9 +183,7 @@ async function main(){
     provider:'stripe',providerPaymentId:`pi_extension_baseline_${suffix}`,customerId:baselineCustomer.id,reason:'baseline refund',reference:'baseline-smoke'
   });
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[baselineSubscription.id])).rows[0].service_extension_days),7,'refund must remove only purchased time and preserve unrelated/manual extension days');
-  await lifecyclePrimitives.updateProviderSubscription({
-    provider:'manual',providerSubscriptionId:null,providerStatus:'active',periodEnd:'2030-02-28T00:00:00Z',cancelAtPeriodEnd:false
-  }).catch(()=>null);
+  await query("UPDATE subscriptions SET current_period_end='2030-02-28T00:00:00Z' WHERE id=$1",[baselineSubscription.id]);
   const baselineRecomputed=await transaction(client=>extensions.recomputeActivePurchasedDaysTx(client,baselineSubscription.id,baselineCustomer.id));
   assert.equal(Number(baselineRecomputed.subscription.service_extension_days),7,'later rebasing must not subtract a revoked extension from unrelated/manual extension days a second time');
 
