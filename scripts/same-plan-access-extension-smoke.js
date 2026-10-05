@@ -43,6 +43,8 @@ assert(incidents.includes('accessExtensions.restoreActivePurchasedDays'),'an unr
 assert(incidents.includes('extensionPaymentLoss'),'payment incidents must identify extension-only money loss separately from the base subscription');
 assert(paymentReconciliation.includes('FROM subscription_access_extensions WHERE provider=$1'),'provider payment reconciliation must load extension purchases as first-class local financial matches');
 assert(paymentReconciliation.includes('const purchase = subscription || extension'),'healthy extension payments must not be reported as provider money with no local purchase');
+assert(paymentReconciliation.includes("FROM subscription_access_extensions")&&paymentReconciliation.includes("TRUE AS is_extension"),'PayPal capture reconciliation must include extension-ledger ownership');
+assert(paymentReconciliation.includes('!subscription && !extension && checkout'),'PayPal reconciliation must not mark a captured extension as fulfillment-pending once its extension ledger exists');
 assert(paypal.includes('incidentResult?.extensionPaymentLoss')&&read('src/payments/stripe.js').includes('incidentResult?.extensionPaymentLoss'),'extension refunds/chargebacks must not reverse affiliate rewards earned by the base subscription');
 assert(extension.includes('service_extension_days=COALESCE(service_extension_days,0)+$2'),'extension must add paid time to the existing entitlement');
 assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)-$2)'),'reversal must remove only its own extension time');
