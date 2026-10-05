@@ -1,0 +1,362 @@
+'use strict';
+
+const { transaction } = require('../db');
+const billingPeriods = require('./billing-periods');
+const subscriptionState = require('../entitlements/subscription-state');
+
+const PROVIDERS=new Set(['stripe','paypal','plisio']);
+const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled','expired']);
+
+function cleanProvider(value){
+  const provider=String(value||'').trim().toLowerCase();
+  if(!PROVIDERS.has(provider))throw new Error('Unsupported access-extension payment provider.');
+  return provider;
+}
+function cleanReference(value,label='Payment reference'){
+  const reference=String(value||'').trim();
+  if(!reference)throw new Error(`${label} is required.`);
+  return reference;
+}
+function objectValue(value){
+  if(value&&typeof value==='object'&&!Array.isArray(value))return value;
+  if(typeof value==='string'){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:{};}catch(_){return {};}}
+  return {};
+}
+function extensionAccessKind(snapshot,target){
+  const explicit=String(snapshot?.accessVariantKind||'').trim().toLowerCase();
+  if(['streams','households'].includes(explicit))return explicit;
+  return String(target?.effective_service_type||'').toLowerCase()==='stremio'?'households':'streams';
+}
+function currentAccessQuantity(target,kind){
+  const snapshot=objectValue(target?.commercial_snapshot);
+  const snapshotKind=String(snapshot.accessVariantKind||'').trim().toLowerCase();
+  const snapshotQuantity=Number(snapshot.accessQuantity);
+  if(Number.isInteger(snapshotQuantity)&&snapshotQuantity>0&&(!snapshotKind||snapshotKind===kind))return snapshotQuantity;
+  const value=kind==='households'?target?.stremio_household_network_limit:target?.streams;
+  const n=Number(value);
+  return Number.isInteger(n)&&n>0?n:1;
+}
+function wholeDaysBetween(from,to){
+  const start=new Date(from),end=new Date(to);
+  const exact=(end.getTime()-start.getTime())/86400000;
+  const rounded=Math.round(exact);
+  if(!Number.isFinite(exact)||rounded<1||Math.abs(exact-rounded)>1e-7)throw new Error('This plan extension could not be represented safely as whole service days.');
+  return rounded;
+}
+function purchasedDays(snapshot={},from=new Date()){
+  const interval=String(snapshot?.billingInterval||snapshot?.billing_interval||'').trim().toLowerCase();
+  const durationDays=Number(snapshot?.durationDays??snapshot?.duration_days);
+  if(!['month','6_months','year'].includes(interval)&&(!Number.isInteger(durationDays)||durationDays<1||durationDays>3650)){
+    throw new Error('This plan does not have a valid extension duration.');
+  }
+  const end=billingPeriods.addPlanDuration({billingInterval:interval,durationDays},new Date(from));
+  return wholeDaysBetween(from,end);
+}
+async function assertCanonicalCurrentTx(client,row){
+  const service=String(row?.effective_service_type||row?.service_type_snapshot||'jellyfin').toLowerCase();
+  let current=null;
+  if(service==='stremio')current=await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='emby')current=await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='jellyfin'||service==='bundle')current=await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
+  else throw new Error('This service type cannot be extended through customer checkout.');
+  if(!current||String(current.subscription_id||current.id||'')!==String(row.id||'')){
+    const error=new Error('This is no longer your current subscription for that service. Refresh your account before extending it.');
+    error.code='ACCESS_EXTENSION_TARGET_STALE';
+    throw error;
+  }
+  if(current.blocked){
+    const error=new Error('This subscription currently has an access hold. Resolve the account or payment issue before buying extra time.');
+    error.code='ACCESS_EXTENSION_ACCESS_BLOCKED';
+    throw error;
+  }
+  const openChange=await client.query(`
+    SELECT id FROM customer_plan_changes
+    WHERE customer_id=$1 AND current_subscription_id=$2
+      AND state IN('pending','awaiting_checkout')
+    LIMIT 1 FOR SHARE
+  `,[row.customer_id,row.id]);
+  if(openChange.rowCount){
+    const error=new Error('A plan change is already scheduled for this subscription. Cancel or complete that change before buying extra time.');
+    error.code='ACCESS_EXTENSION_PLAN_CHANGE_OPEN';
+    throw error;
+  }
+  return row;
+}
+
+async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId=null}){
+  const result=await client.query(`
+    SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
+           p.streams,p.stremio_household_network_limit,p.audience,p.active AS plan_active,p.visible AS plan_visible,
+           p.archived_at,p.effective_from,p.effective_until,
+           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
+      FROM subscriptions s
+      JOIN plans p ON p.id=s.plan_id
+     WHERE s.id=$1 AND s.customer_id=$2
+     FOR UPDATE OF s
+  `,[subscriptionId,customerId]);
+  const row=result.rows[0]||null;
+  if(!row)throw new Error('The subscription being extended no longer exists.');
+  if(String(row.plan_id)!==String(planId))throw new Error('The selected extension no longer matches your current plan.');
+  if(row.superseded_by)throw new Error('This subscription has already been replaced.');
+  if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw new Error('Only a current paid plan can be extended.');
+  if(row.refund_terminated_at)throw new Error('A refunded or charged-back subscription cannot be extended.');
+
+  let committedCheckout=null;
+  if(checkoutIntentId){
+    committedCheckout=(await client.query(`
+      SELECT id,state,customer_id,plan_id,commercial_snapshot
+      FROM billing_checkout_intents
+      WHERE id=$1
+      FOR SHARE
+    `,[checkoutIntentId])).rows[0]||null;
+    const snapshot=objectValue(committedCheckout?.commercial_snapshot);
+    if(!committedCheckout
+      ||String(committedCheckout.customer_id)!==String(customerId)
+      ||String(committedCheckout.plan_id)!==String(planId)
+      ||snapshot.kind!=='subscription_extension'
+      ||String(snapshot.extensionSubscriptionId||'')!==String(subscriptionId)){
+      const error=new Error('Access-extension checkout ownership no longer matches the paid purchase.');
+      error.code='ACCESS_EXTENSION_CHECKOUT_IDENTITY_CONFLICT';
+      throw error;
+    }
+  }
+
+  if(!committedCheckout){
+    if(!['direct','both'].includes(String(row.audience||'direct')))throw new Error('This plan is not available to direct customers.');
+    if(!row.plan_active||!row.plan_visible||row.archived_at)throw new Error('This plan is no longer available for extension.');
+    const now=Date.now(),effectiveFrom=row.effective_from?new Date(row.effective_from).getTime():null,effectiveUntil=row.effective_until?new Date(row.effective_until).getTime():null;
+    if(effectiveFrom&&effectiveFrom>now)throw new Error('This plan is not yet available for extension.');
+    if(effectiveUntil&&effectiveUntil<=now)throw new Error('This plan is no longer available for extension.');
+    if(!LIVE_STATUSES.has(String(row.status||'')))throw new Error('This paid plan is no longer current.');
+    const accessEnd=new Date(row.current_period_end||0).getTime()+Math.max(0,Number(row.service_extension_days||0))*86400000;
+    if(!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('This paid plan has already expired.');
+  }
+
+  const service=String(row?.effective_service_type||row?.service_type_snapshot||'jellyfin').toLowerCase();
+  let current=null;
+  if(service==='stremio')current=await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='emby')current=await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='jellyfin'||service==='bundle')current=await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
+  else throw new Error('This service type cannot be extended through customer checkout.');
+  if(current&&String(current.subscription_id||current.id||'')!==String(row.id)){
+    const error=new Error('This subscription was replaced before the extension payment could be fulfilled.');
+    error.code='ACCESS_EXTENSION_TARGET_REPLACED';
+    throw error;
+  }
+  if(current?.blocked&&!committedCheckout){
+    const error=new Error('This subscription currently has an access hold. Resolve the account or payment issue before buying extra time.');
+    error.code='ACCESS_EXTENSION_ACCESS_BLOCKED';
+    throw error;
+  }
+
+  const openChange=await client.query(`
+    SELECT id FROM customer_plan_changes
+    WHERE customer_id=$1 AND current_subscription_id=$2
+      AND state IN('pending','awaiting_checkout')
+    LIMIT 1 FOR SHARE
+  `,[row.customer_id,row.id]);
+  if(openChange.rowCount){
+    const error=new Error('A plan change is already scheduled for this subscription. The extension payment requires reconciliation before fulfillment.');
+    error.code='ACCESS_EXTENSION_PLAN_CHANGE_OPEN';
+    throw error;
+  }
+  return row;
+}
+async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=null){
+  const params=[subscriptionId];
+  let customerSql='';
+  if(customerId){params.push(customerId);customerSql=' AND customer_id=$2';}
+  const subscription=(await client.query(`SELECT * FROM subscriptions WHERE id=$1${customerSql} FOR UPDATE`,params)).rows[0]||null;
+  if(!subscription)return{changed:false,purchasedDays:0,subscription:null};
+  const rows=(await client.query(`
+    SELECT * FROM subscription_access_extensions
+    WHERE subscription_id=$1
+    ORDER BY created_at,id
+    FOR UPDATE
+  `,[subscriptionId])).rows;
+  const active=rows.filter(row=>row.status==='active');
+  // service_extension_days contains unrelated/manual extension time plus the
+  // CURRENTLY APPLIED contribution of access-extension purchases. Keep that
+  // contribution separate from purchased_days so a revoked row can retain its
+  // commercial history without being subtracted again on every later renewal.
+  const recordedAppliedDays=rows.reduce((sum,row)=>sum+Math.max(0,Number(row.applied_days||0)),0);
+  const currentTotal=Math.max(0,Number(subscription.service_extension_days||0));
+  let baseDays=currentTotal-recordedAppliedDays;
+  if(baseDays<0){
+    // Canonical lifecycle truth has already shortened/reset the aggregate.
+    // Do not manufacture unrelated extension time from stale applied markers.
+    baseDays=0;
+  }
+  let cursor=new Date(new Date(subscription.current_period_end).getTime()+baseDays*86400000);
+  let activeDays=0;
+  for(const row of rows){
+    let appliedDays=0;
+    if(row.status==='active'){
+      const snapshot=row.commercial_snapshot&&typeof row.commercial_snapshot==='object'?row.commercial_snapshot:{};
+      appliedDays=purchasedDays(snapshot,cursor);
+      activeDays+=appliedDays;
+      cursor=new Date(cursor.getTime()+appliedDays*86400000);
+    }
+    if(appliedDays!==Number(row.applied_days||0)){
+      await client.query('UPDATE subscription_access_extensions SET applied_days=$2,updated_at=NOW() WHERE id=$1',[row.id,appliedDays]);
+      row.applied_days=appliedDays;
+    }
+  }
+  const nextTotal=baseDays+activeDays;
+  if(nextTotal>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  let updated=subscription;
+  if(nextTotal!==currentTotal){
+    updated=(await client.query('UPDATE subscriptions SET service_extension_days=$2,updated_at=NOW() WHERE id=$1 RETURNING *',[subscriptionId,nextTotal])).rows[0];
+  }
+  return{changed:nextTotal!==currentTotal,purchasedDays:activeDays,baseDays,subscription:updated,accessExpiresAt:cursor};
+}
+
+async function existingExtension(client,{provider,providerPaymentId,checkoutIntentId}){
+  const result=await client.query(`
+    SELECT *
+      FROM subscription_access_extensions
+     WHERE (provider=$1 AND provider_payment_id=$2)
+        OR ($3::uuid IS NOT NULL AND checkout_intent_id=$3)
+     ORDER BY created_at DESC
+     LIMIT 1
+     FOR UPDATE
+  `,[provider,providerPaymentId,checkoutIntentId||null]);
+  return result.rows[0]||null;
+}
+async function applyPurchase(client,{customerId,subscriptionId,planId,provider,providerPaymentId,checkoutIntentId=null,commercialSnapshot={}}){
+  if(!client||typeof client.query!=='function')throw new Error('Access extension requires an active database transaction.');
+  provider=cleanProvider(provider);
+  providerPaymentId=cleanReference(providerPaymentId);
+  subscriptionId=cleanReference(subscriptionId,'Subscription');
+  // Serialize by subscription before touching any extension rows, matching
+  // renewal/recompute and reversal. Replays acknowledge the original purchase
+  // without applying current sale eligibility or counting the purchase twice.
+  const replayTarget=(await client.query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subscriptionId,customerId])).rows[0]||null;
+  const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
+  if(prior){
+    const identityMismatch=String(prior.customer_id)!==String(customerId)
+      ||String(prior.subscription_id)!==String(subscriptionId)
+      ||String(prior.plan_id)!==String(planId)
+      ||String(prior.provider||'')!==String(provider)
+      ||String(prior.provider_payment_id||'')!==String(providerPaymentId)
+      ||(checkoutIntentId&&prior.checkout_intent_id&&String(prior.checkout_intent_id)!==String(checkoutIntentId));
+    if(identityMismatch){
+      const error=new Error('This provider payment or checkout is already attached to a different access extension.');
+      error.code='ACCESS_EXTENSION_PAYMENT_IDENTITY_CONFLICT';
+      throw error;
+    }
+    if(!replayTarget)throw new Error('The subscription being extended no longer exists.');
+    return{subscription:replayTarget,extension:prior,replay:true};
+  }
+  let target=await lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId});
+  const accessKind=extensionAccessKind(commercialSnapshot,target);
+  const purchasedQuantity=Number(commercialSnapshot?.accessQuantity);
+  const currentQuantity=currentAccessQuantity(target,accessKind);
+  if(!Number.isInteger(purchasedQuantity)||purchasedQuantity<1||purchasedQuantity!==currentQuantity){
+    const error=new Error('The current access allowance changed after this extension checkout started. Start a new extension checkout for the current allowance.');
+    error.code='ACCESS_EXTENSION_ALLOWANCE_CHANGED';
+    throw error;
+  }
+  const rebased=await recomputeActivePurchasedDaysTx(client,subscriptionId,customerId);
+  target={...target,...(rebased.subscription||{})};
+  const cursor=new Date(new Date(target.current_period_end).getTime()+Math.max(0,Number(target.service_extension_days||0))*86400000);
+  const days=purchasedDays(commercialSnapshot,cursor);
+  if(Number(target.service_extension_days||0)+days>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  const directCollision=await client.query(`
+    SELECT id,customer_id
+    FROM subscriptions
+    WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+      AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+    LIMIT 1
+    FOR SHARE
+  `,[provider,providerPaymentId]);
+  if(directCollision.rowCount){
+    const error=new Error('This provider payment is already attached to a subscription and cannot also be used as an access extension.');
+    error.code='ACCESS_EXTENSION_PAYMENT_ALREADY_USED';
+    throw error;
+  }
+  const inserted=(await client.query(`
+    INSERT INTO subscription_access_extensions(
+      customer_id,subscription_id,plan_id,provider,provider_payment_id,checkout_intent_id,
+      purchased_days,applied_days,commercial_snapshot
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8::jsonb)
+    RETURNING *
+  `,[customerId,subscriptionId,planId,provider,providerPaymentId,checkoutIntentId||null,days,JSON.stringify(commercialSnapshot||{})])).rows[0];
+  const updated=(await client.query(`
+    UPDATE subscriptions
+       SET service_extension_days=COALESCE(service_extension_days,0)+$2,
+           updated_at=NOW()
+     WHERE id=$1
+     RETURNING *
+  `,[subscriptionId,days])).rows[0];
+  await client.query(`
+    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+    VALUES('subscription.access_extension.purchase','subscription',$1,$2::jsonb)
+  `,[subscriptionId,JSON.stringify({customerId,planId,provider,providerPaymentId,checkoutIntentId,purchasedDays:days,extensionId:inserted.id})]);
+  return{subscription:updated,extension:inserted,replay:false};
+}
+async function extensionIdentity(provider,providerPaymentId){
+  provider=cleanProvider(provider);providerPaymentId=cleanReference(providerPaymentId);
+  const { query }=require('../db');
+  const result=await query(`
+    SELECT customer_id,subscription_id,plan_id,status,purchased_days
+      FROM subscription_access_extensions
+     WHERE provider=$1 AND provider_payment_id=$2
+     LIMIT 1
+  `,[provider,providerPaymentId]);
+  return result.rows[0]||null;
+}
+async function revokeByProviderPayment({provider,providerPaymentId,customerId=null,reason='Provider payment was reversed',reference=null}){
+  provider=cleanProvider(provider);providerPaymentId=cleanReference(providerPaymentId);
+  return transaction(async client=>{
+    // All purchase, renewal and reversal paths lock the parent first. Locking
+    // an extension first deadlocks concurrent refunds against recomputation.
+    await client.query(`
+      SELECT s.id FROM subscriptions s
+      JOIN subscription_access_extensions e ON e.subscription_id=s.id
+      WHERE e.provider=$1 AND e.provider_payment_id=$2
+      FOR UPDATE OF s
+    `,[provider,providerPaymentId]);
+    const extension=(await client.query(`
+      SELECT * FROM subscription_access_extensions
+       WHERE provider=$1 AND provider_payment_id=$2
+       LIMIT 1
+       FOR UPDATE
+    `,[provider,providerPaymentId])).rows[0]||null;
+    if(!extension)return{matched:false,changed:false,customerId:null,subscriptionId:null};
+    if(customerId&&String(extension.customer_id)!==String(customerId)){
+      const error=new Error('Access-extension payment belongs to a different customer.');
+      error.code='ACCESS_EXTENSION_CUSTOMER_MISMATCH';
+      throw error;
+    }
+    if(extension.status==='revoked')return{matched:true,changed:false,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension};
+    const revoked=(await client.query(`
+      UPDATE subscription_access_extensions
+         SET status='revoked',revoked_at=COALESCE(revoked_at,NOW()),
+             revoke_reason=COALESCE(NULLIF($2,''),revoke_reason),updated_at=NOW()
+       WHERE id=$1
+       RETURNING *
+    `,[extension.id,String(reason||'').slice(0,1000)])).rows[0];
+    // Calendar terms are cursor-dependent. Removing an earlier purchase can
+    // change the applied day-count of every later month/6-month/year extension,
+    // so never subtract this row's historical purchased_days in isolation.
+    const recomputed=await recomputeActivePurchasedDaysTx(client,extension.subscription_id,extension.customer_id);
+    await client.query(`
+      INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+      VALUES('subscription.access_extension.revoke','subscription',$1,$2::jsonb)
+    `,[extension.subscription_id,JSON.stringify({
+      customerId:extension.customer_id,provider,providerPaymentId,
+      purchasedDays:Number(extension.purchased_days||0),extensionId:extension.id,
+      remainingPurchasedDays:Number(recomputed.purchasedDays||0),
+      reference:reference||null,reason:String(reason||'').slice(0,500)
+    })]);
+    return{matched:true,changed:true,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension:revoked,subscription:recomputed.subscription};
+  });
+}
+
+async function restoreActivePurchasedDays(subscriptionId,customerId){
+  subscriptionId=cleanReference(subscriptionId,'Subscription');
+  return transaction(client=>recomputeActivePurchasedDaysTx(client,subscriptionId,customerId));
+}
+
+module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,objectValue,extensionAccessKind,currentAccessQuantity,wholeDaysBetween,purchasedDays,assertCanonicalCurrentTx,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
