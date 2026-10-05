@@ -67,7 +67,8 @@ async function validateExtensionChoice(customerId,subscriptionId,plan,option){
   if(!subscriptionId)return null;
   if(!option||option.checkout_mode!=='payment')throw new Error('Only your current paid plan can be extended. Refresh the page and try again.');
   const result=await query(`
-    SELECT s.*,p.streams,p.stremio_household_network_limit,p.is_free_tier,p.is_addon,p.price_minor,p.billing_interval
+    SELECT s.*,p.streams,p.stremio_household_network_limit,p.is_free_tier,p.is_addon,p.price_minor,p.billing_interval,
+           public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
      WHERE s.id=$1 AND s.customer_id=$2 AND s.superseded_by IS NULL
@@ -76,6 +77,7 @@ async function validateExtensionChoice(customerId,subscriptionId,plan,option){
   const current=result.rows[0]||null;
   if(!current||String(current.plan_id)!==String(plan.id))throw new Error('The selected extension no longer matches your current plan.');
   if(current.is_free_tier||current.is_addon||Number(current.price_minor||0)<=0||String(current.billing_interval||'')==='trial')throw new Error('Only your current paid plan can be extended. Refresh the page and try again.');
+  if(current.blocked)throw new Error('Resolve the current account or payment hold before buying extra time.');
   const accessEnd=new Date(current.current_period_end||0).getTime()+Math.max(0,Number(current.service_extension_days||0))*86400000;
   if(!['active','trialing','past_due','paused','cancelled'].includes(String(current.status||''))||!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('Only your current paid plan can be extended. Refresh the page and try again.');
   const kind=planChange.normalizedKind(plan,option),selected=choiceQuantity(option),currentQuantity=planChange.subscriptionAccessQuantity(current,kind);
