@@ -64,12 +64,12 @@ async function main(){
     provider:'stripe',providerPaymentId:`pi_extension_1_${suffix}`,customerId:customer.id,reason:'test full refund',reference:'smoke'
   });
   assert.equal(revoked.changed,true,'confirmed reversal must remove the purchased extension');
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),31,'reversal must remove only its own rebased purchased period');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),28,'reversal must rebase the remaining monthly purchase from the earlier cursor');
   const revokedAgain=await extensions.revokeByProviderPayment({
     provider:'stripe',providerPaymentId:`pi_extension_1_${suffix}`,customerId:customer.id,reason:'duplicate refund',reference:'smoke-replay'
   });
   assert.equal(revokedAgain.changed,false,'reversal replay must be idempotent');
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),31,'duplicate reversal must not remove time twice');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),28,'duplicate reversal must not remove time twice');
 
   await query('UPDATE subscriptions SET status=\'cancelled\',current_period_end=NOW(),service_extension_days=0 WHERE id=$1',[subscription.id]);
   const restored=await extensions.restoreActivePurchasedDays(subscription.id,customer.id);
@@ -91,6 +91,20 @@ async function main(){
     'extension must fail closed while the current subscription has a pending plan change'
   );
   await query('DELETE FROM customer_plan_changes WHERE id=$1',[pendingChange.id]);
+
+  await query(`UPDATE subscriptions SET commercial_snapshot=$2::jsonb WHERE id=$1`,[
+    subscription.id,
+    JSON.stringify({accessVariantKind:'streams',accessQuantity:5})
+  ]);
+  await assert.rejects(
+    transaction(client=>extensions.applyPurchase(client,{
+      customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
+      providerPaymentId:`pi_extension_stale_allowance_${suffix}`,commercialSnapshot:snapshot
+    })),
+    /access allowance changed/i,
+    'a checkout priced for an old access allowance must not extend a newly upgraded allowance'
+  );
+  await query(`UPDATE subscriptions SET commercial_snapshot='{}'::jsonb WHERE id=$1`,[subscription.id]);
 
   const collisionCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`collision-${suffix}`,`collision-${suffix}@example.invalid`])).rows[0];
   await query(`
