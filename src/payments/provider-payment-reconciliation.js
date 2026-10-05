@@ -98,6 +98,32 @@ function paypalOrderReference(row) {
     return id || null;
 }
 
+function paypalReportingFinancials(info = {}) {
+    const amount = info.transaction_amount || {};
+    const fee = info.fee_amount || null;
+    const amountMinor = livePaypalHistory.moneyMinor(amount);
+    const currency = livePaypalHistory.moneyCurrency(amount);
+    const rawFeeMinor = fee ? livePaypalHistory.moneyMinor(fee) : 0;
+    const feeCurrency = fee ? livePaypalHistory.moneyCurrency(fee) : currency;
+    const feeCurrencyMatches = !fee || (feeCurrency && currency && feeCurrency === currency);
+    const feeAmountValid = !fee || Number.isInteger(rawFeeMinor);
+    const feeMinor = feeCurrencyMatches && feeAmountValid ? Math.abs(Number(rawFeeMinor || 0)) : 0;
+    const feeDataAvailable = Boolean(Number.isInteger(amountMinor) && currency && feeCurrencyMatches && feeAmountValid);
+    return {
+        amountMinor,
+        feeMinor,
+        netMinor: Number.isInteger(amountMinor) ? amountMinor - feeMinor : null,
+        currency,
+        feeDataAvailable
+    };
+}
+
+function paypalSubscriptionReference(row) {
+    if (String(row?.referenceType || '').trim().toUpperCase() !== 'SUB') return null;
+    const id = String(row?.referenceId || '').trim();
+    return /^I-/i.test(id) ? id : null;
+}
+
 async function paypalRecent(since) {
     const config = await providerSettings.get('paypal');
     if (!config?.clientId || !config?.clientSecret) return { provider: 'paypal', configured: false, rows: [] };
@@ -112,13 +138,14 @@ async function paypalRecent(since) {
         page += 1;
     }
     const rows = details.map(detail => {
-        const info = detail.transaction_info || {}, amount = info.transaction_amount || {}, status = String(info.transaction_status || '');
+        const info = detail.transaction_info || {}, status = String(info.transaction_status || '');
         const referenceId = info.paypal_reference_id || null, referenceType = info.paypal_reference_id_type || null;
+        const financials = paypalReportingFinancials(info);
         return {
             provider: 'paypal', id: info.transaction_id || null, referenceId, referenceType,
             invoiceId: info.invoice_id || null, customId: info.custom_field || null,
-            amountMinor: livePaypalHistory.moneyMinor(amount),
-            currency: amount.currency_code || null, createdAt: info.transaction_initiation_date || info.transaction_updated_date || null,
+            ...financials,
+            createdAt: info.transaction_initiation_date || info.transaction_updated_date || null,
             status, eventCode: info.transaction_event_code || null, email: detail.payer_info?.email_address || null, raw: detail
         };
     }).filter(row => row.id && classifyProviderTransaction({
@@ -141,6 +168,81 @@ async function authoritativePayPalCaptureIds(ids) {
         status: row.transaction_status,
         grossMinor: row.gross_amount_minor
     }) === 'payment').map(row => String(row.provider_transaction_id)));
+}
+
+async function syncReportedPayPalSubscriptionPayments(rows, { limit = 500 } = {}) {
+    const reported = (rows || []).filter(row => paypalSubscriptionReference(row));
+    if (!reported.length) return { processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, skippedIds: [], truncated: false, warning: null };
+
+    const ids = reported.map(row => String(row.id));
+    const authoritativeIds = await authoritativePayPalCaptureIds(ids);
+    const pending = reported.filter(row => !authoritativeIds.has(String(row.id)));
+    const alreadyAuthoritative = reported.length - pending.length;
+    if (!pending.length) return { processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, skippedIds: [], truncated: false, warning: null };
+
+    const subscriptionIds = [...new Set(pending.map(paypalSubscriptionReference).filter(Boolean))];
+    const mapped = subscriptionIds.length ? await query(`
+        SELECT provider_subscription_id,customer_id,provider_customer_id
+        FROM subscriptions
+        WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+        ORDER BY updated_at DESC,created_at DESC
+    `, [subscriptionIds]) : { rows: [] };
+    const bySubscription = new Map();
+    for (const row of mapped.rows) {
+        const key = String(row.provider_subscription_id || '');
+        if (!key || !row.customer_id || bySubscription.has(key)) continue;
+        bySubscription.set(key, row);
+    }
+
+    const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
+    const candidates = pending.slice(0, boundedLimit);
+    const truncated = pending.length > candidates.length;
+    let recorded = 0, skipped = 0;
+    const skippedIds = [];
+
+    for (const row of candidates) {
+        const subscriptionId = paypalSubscriptionReference(row);
+        const local = subscriptionId ? bySubscription.get(subscriptionId) || null : null;
+        if (!local?.customer_id || !Number.isInteger(row.amountMinor) || row.amountMinor <= 0 || !row.currency) {
+            skipped += 1;
+            skippedIds.push(String(row.id));
+            continue;
+        }
+        await financialState.recordTransaction({
+            provider: 'paypal',
+            providerTransactionId: String(row.id),
+            transactionType: String(row.eventCode || 'paypal_subscription_payment'),
+            transactionStatus: String(row.status || 'S'),
+            occurredAt: row.createdAt || new Date(),
+            currency: String(row.currency).toUpperCase(),
+            grossMinor: row.amountMinor,
+            feeMinor: Number(row.feeMinor || 0),
+            netMinor: Number(row.netMinor == null ? row.amountMinor - Number(row.feeMinor || 0) : row.netMinor),
+            providerCustomerId: local.provider_customer_id || null,
+            providerReferenceId: subscriptionId,
+            customerId: local.customer_id,
+            metadata: {
+                providerAuthoritative: true,
+                feeDataAvailable: Boolean(row.feeDataAvailable),
+                referenceType: 'SUB',
+                source: 'paypal_transaction_search_reconciliation'
+            }
+        });
+        recorded += 1;
+    }
+
+    const warningParts = [];
+    if (skipped) warningParts.push(`${skipped} successful recurring PayPal payment${skipped === 1 ? '' : 's'} could not be matched to a local PayPal subscription and were not booked.`);
+    if (truncated) warningParts.push('PayPal recurring-payment reconciliation was truncated; not every recent recurring payment was inspected.');
+    return {
+        processed: candidates.length,
+        recorded,
+        alreadyAuthoritative,
+        skipped,
+        skippedIds,
+        truncated,
+        warning: warningParts.length ? warningParts.join(' ') : null
+    };
 }
 
 function checkoutIndex(rows) {
@@ -216,16 +318,31 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     const remote = await paypalRecent(since);
     if (!remote.configured) return { provider: 'paypal', configured: false, processed: 0, recorded: 0, alreadyAuthoritative: 0, skipped: 0, fulfillmentPending: 0, deferredUnmatched: 0, truncated: false };
 
-    const allCandidates = remote.rows.filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE);
+    const recurring = await syncReportedPayPalSubscriptionPayments(remote.rows, { limit });
+    const combineRecurring = result => {
+        const warnings = [recurring.warning, result.warning].filter(Boolean);
+        return {
+            ...result,
+            processed: Number(result.processed || 0) + Number(recurring.processed || 0),
+            recorded: Number(result.recorded || 0) + Number(recurring.recorded || 0),
+            alreadyAuthoritative: Number(result.alreadyAuthoritative || 0) + Number(recurring.alreadyAuthoritative || 0),
+            skipped: Number(result.skipped || 0) + Number(recurring.skipped || 0),
+            skippedIds: [...(result.skippedIds || []), ...(recurring.skippedIds || [])],
+            truncated: Boolean(result.truncated || recurring.truncated),
+            warning: warnings.length ? warnings.join(' ') : null
+        };
+    };
+
+    const allCandidates = remote.rows.filter(row => row.eventCode === livePaypalHistory.LIVE_CAPTURE_PAYMENT_TYPE && !paypalSubscriptionReference(row));
     const allCandidateIds = allCandidates.map(row => String(row.id));
     const authoritativeIds = await authoritativePayPalCaptureIds(allCandidateIds);
     const allPending = allCandidates.filter(row => !authoritativeIds.has(String(row.id)));
     const alreadyAuthoritative = allCandidates.length - allPending.length;
     if (!allPending.length) {
-        return {
+        return combineRecurring({
             provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0, deferredUnmatched: 0,
             truncated: Boolean(remote.truncated), warning: remote.truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
-        };
+        });
     }
 
     // Rank before applying the provider-call budget. A shared/busy PayPal account can
@@ -264,10 +381,10 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     const limited = eligiblePending.length > candidates.length;
     const truncated = Boolean(remote.truncated || limited);
     if (!candidates.length) {
-        return {
+        return combineRecurring({
             provider: 'paypal', configured: true, processed: 0, recorded: 0, alreadyAuthoritative, skipped: 0, fulfillmentPending: 0, deferredUnmatched,
             truncated, warning: truncated ? 'PayPal reconciliation results were truncated; not every recent provider payment was inspected.' : null
-        };
+        });
     }
 
     const config = await providerSettings.get('paypal');
@@ -351,11 +468,11 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     if (skipped) warningParts.push(`${skipped} successful PayPal capture${skipped === 1 ? '' : 's'} could not be matched to a local customer and were not booked.`);
     if (fulfillmentPending) warningParts.push(`${fulfillmentPending} paid PayPal checkout${fulfillmentPending === 1 ? '' : 's'} matched a customer but has no capture-linked local purchase; accounting was repaired without changing fulfillment state.`);
     if (truncated) warningParts.push('PayPal reconciliation results were truncated; not every recent provider payment was inspected.');
-    return {
+    return combineRecurring({
         provider: 'paypal', configured: true, processed: candidates.length, recorded, alreadyAuthoritative, skipped, skippedIds,
         fulfillmentPending, fulfillmentPendingIds, deferredUnmatched,
         truncated, warning: warningParts.length ? warningParts.join(' ') : null
-    };
+    });
 }
 
 function stripeChargeRow(charge) {
@@ -454,6 +571,9 @@ module.exports = {
     PAYPAL_UNMATCHED_RECHECK_MS,
     recentUnmapped,
     paypalRecent,
+    paypalReportingFinancials,
+    paypalSubscriptionReference,
+    syncReportedPayPalSubscriptionPayments,
     paypalCapture,
     paypalOrder,
     paypalOrderById,
