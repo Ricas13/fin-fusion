@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const discovery = require('../src/payments/subscription-discovery');
+const unlinkedPaidTerm = require('../src/payments/unlinked-paid-term');
 const manualLink = require('../src/payments/manual-subscription-link');
 const adminBilling = require('../src/platform/admin-billing');
 
@@ -21,6 +22,7 @@ assert(discovery.endingWithoutRenewal(legacyEnding), 'an explicitly marked legac
 assert(!discovery.needsProviderLink(legacyEnding), 'an explicitly ending legacy paid term must not be queued for provider repair');
 assert(discovery.needsProviderLink(legacyUnmarked), 'legacy imports must not be hidden merely because their fixed local term has cancel_at_period_end=true');
 assert(discovery.endingWithoutRenewal({ source:'stripe', billing_mode:'payment', provider_subscription_id:null, commercial_snapshot:{ checkoutMode:'payment' } }), 'a genuine one-time provider payment never needs a recurring provider link');
+assert(unlinkedPaidTerm.fixedTermWithoutProvider({ source:'admin_grant', billing_mode:'manual', commercial_snapshot:{}, cancel_at_period_end:false }), 'manual paid terms remain fixed-term without a provider even when they use an explicit custom media pool');
 
 const stripe = discovery.normalizeStripeSubscription({
     id: 'sub_live', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
@@ -172,9 +174,11 @@ assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:
 assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,billing_mode:'subscription',source:'stripe',provider_subscription_id:'sub_valid',status:'past_due',cancel_at_period_end:true,last_error:'provider sync failed' }] }).length, 1, 'provider sync failures must remain operator work even when renewal is stopped');
 
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
+const unlinkedPaidTermSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'unlinked-paid-term.js'), 'utf8');
 const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
 const manualSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'manual-subscription-link.js'), 'utf8');
 assert.ok(!discoverySource.includes("e.server_class='premium'"), 'paid provider-link discovery must not depend on the legacy media server class when explicit plan pools are authoritative');
+assert.ok(!unlinkedPaidTermSource.includes("row.effective_server_class !== 'premium'"), 'operator classification of paid fixed terms must not depend on the legacy media server class');
 assert.ok(discoverySource.includes("IN ('jellyfin','emby','bundle')"), 'provider-link discovery must cover every paid media service that can use recurring Stripe/PayPal billing');
 assert.ok(discoverySource.includes("COALESCE(e.price_minor_snapshot,e.price_minor,0)>0") && discoverySource.includes("COALESCE(e.is_free_tier,FALSE)=FALSE"), 'paid/non-Free commercial state must define provider-link discovery eligibility');
 assert.ok(discoverySource.includes('s.commercial_snapshot'), 'provider-link classification must load the persisted paid-term disposition');
