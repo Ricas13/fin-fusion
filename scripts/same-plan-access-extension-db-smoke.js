@@ -38,7 +38,7 @@ async function main(){
   });
   const capacityWithExtensionCheckout=await planCapacity.usage(plan.id);
   assert.equal(Number(capacityWithExtensionCheckout.reserved||0),0,'an open extension checkout must not reserve another logical plan place');
-  assert.equal(Number(capacityWithExtensionCheckout.used||0),1,'the existing subscriber must remain the only occupied plan place');
+  assert.equal(Number(capacityWithExtensionCheckout.planUsed||0),1,'the existing subscriber must remain the only occupied logical plan place');
 
   const first=await transaction(client=>extensions.applyPurchase(client,{
     customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
