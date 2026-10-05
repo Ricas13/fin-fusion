@@ -264,6 +264,7 @@ async function requestChange(input){
 async function applyDueStripe(){
     const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND pc.provider='stripe' AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,succeeded:0,failed:0,pending:0},failures=[];
     for(const change of due.rows){
+        await withPlanChangeLock(change.customer_id,async()=>{
         try{
             const current=await scheduledStripeSubscription(change),target=(await query('SELECT * FROM plans WHERE id=$1',[change.target_plan_id])).rows[0];if(!target)throw planChangeRefusal('Target plan no longer exists.');
             const targetPrice=String(change.target_price_id||'');if(!targetPrice)throw planChangeRefusal('Scheduled Stripe target price is missing. Review the pending provider schedule.');
@@ -323,6 +324,7 @@ async function applyDueStripe(){
             const scheduledTarget=scheduleTargetPrice(schedule);if(scheduledTarget&&scheduledTarget!==targetPrice)throw planChangeRefusal('Stripe schedule target no longer matches the intended plan price. Manual review is required.');if(['released','completed','canceled'].includes(String(schedule.status)))throw planChangeRefusal(`Stripe schedule ${schedule.status} without applying the target price.`);
             await query(`UPDATE customer_plan_changes SET provider_schedule_id=COALESCE(provider_schedule_id,$2),provider_schedule_state=$3,error=NULL,updated_at=NOW() WHERE id=$1`,[change.id,schedule.id,schedule.status||'waiting_provider']);summary.pending++;
         }catch(error){if(error.planChangeRefusal)await query(`UPDATE customer_plan_changes SET state='failed',error=$2,updated_at=NOW() WHERE id=$1`,[change.id,String(error.message).slice(0,1000)]);else await query(`UPDATE customer_plan_changes SET error=$2,updated_at=NOW() WHERE id=$1 AND state='pending'`,[change.id,String(error.message).slice(0,1000)]);summary.failed++;failures.push(String(error.message||error).replace(/[\r\n\t]+/g,' ').slice(0,300));}
+        });
     }
     if(failures.length)summary.warning=`${summary.failed} Stripe plan change${summary.failed===1?'':'s'} failed: ${[...new Set(failures)].slice(0,2).join('; ')}`.slice(0,1000);
     return summary;
