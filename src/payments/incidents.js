@@ -187,6 +187,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
           if(terminationDecision.terminate){
             const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
             const terminated=await subscriptionTermination.terminateForRefund(matchedRow.id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
+            if(terminated.changed)await accessExtensions.restoreActivePurchasedDays(matchedRow.id,effectIdentity.customerId);
             terminatedAny=terminatedAny||Boolean(terminated.changed);
           }else skipped.push({subscriptionId:matchedRow.id,reason:terminationDecision.reason,transactionAt:terminationDecision.transactionAt||null,currentTermStartApprox:terminationDecision.currentTermStartApprox||null,currentTermEnd:terminationDecision.currentTermEnd||null});
         }
