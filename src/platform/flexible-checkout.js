@@ -97,6 +97,10 @@ async function chooseOrResolve(req,res,provider){
  const planCode=String(req.body.planCode||'').trim();if(!planCode)throw new Error('Plan is required');
  const currency=await requestedCurrency(req),quantity=requestedAccessQuantity(req),extensionSubscriptionId=String(req.body.extensionSubscriptionId||'').trim()||null,requested=extensionSubscriptionId?'payment':(['payment','subscription'].includes(req.body.checkoutMode)?req.body.checkoutMode:null);
  let options=await providerPricing.getProviderOptions(planCode,provider,currency,quantity);
+ if(extensionSubscriptionId&&options.length&&!options.some(option=>option.checkout_mode==='payment')){
+   const priced=options[0];
+   options=[{...priced,checkout_mode:'payment',external_id:null,provider_mapping_id:null}];
+ }
  if(!options.length){const replacement=await existingRecurringReplacementOption(req,provider,planCode,currency,quantity,requested);if(replacement)options=[replacement];}
  if(!options.length)throw new Error(`This plan is not configured for ${providerLabel(provider)} in ${currency}`);
  if(requested){
