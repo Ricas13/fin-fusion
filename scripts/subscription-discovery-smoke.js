@@ -107,7 +107,7 @@ function baseContext() {
 
 const local = {
     customer_id: 'customer-1', subscription_id: 'local-sub-1', plan_id: 'plan-premium',
-    source: 'manual', provider_subscription_id: null, provider_customer_id: null,
+    source: 'stripe', billing_mode: 'subscription', provider_subscription_id: null, provider_customer_id: null,
     email: 'premium@example.com', plan_name: 'Premium Monthly', plan_code: 'premium-monthly'
 };
 let matches = discovery.matchPremiumRows([local], [stripe], baseContext());
@@ -121,6 +121,8 @@ const sharedPayPalContext=baseContext();
 sharedPayPalContext.providerIdentityToCustomers.set('paypal:PAYER-1',new Set(['customer-2','customer-other']));
 const localPayPal={
     ...local,
+    source:'paypal',
+    billing_mode:'subscription',
     customer_id:'customer-2',
     subscription_id:'local-paypal-2',
     plan_id:'plan-premium-paypal',
