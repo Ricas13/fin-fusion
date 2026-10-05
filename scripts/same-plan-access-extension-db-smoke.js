@@ -61,6 +61,11 @@ async function main(){
   assert.equal(revokedAgain.changed,false,'reversal replay must be idempotent');
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),30,'duplicate reversal must not remove time twice');
 
+  await query('UPDATE subscriptions SET status=\'cancelled\',current_period_end=NOW(),service_extension_days=0 WHERE id=$1',[subscription.id]);
+  const restored=await extensions.restoreActivePurchasedDays(subscription.id,customer.id);
+  assert.equal(restored.purchasedDays,30,'a separate base-term reversal must discover the still-paid extension');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),30,'a base-term reversal must not erase independently paid extension time');
+
   await assert.rejects(
     transaction(client=>extensions.applyPurchase(client,{
       customerId:customer.id,subscriptionId:subscription.id,planId:other.id,provider:'stripe',
