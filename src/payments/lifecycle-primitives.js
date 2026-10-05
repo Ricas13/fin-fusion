@@ -227,7 +227,15 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
     `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
         reason: error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
             ? 'service_credit_unavailable_after_provider_settlement'
-            : 'capacity_exhausted_after_provider_settlement',
+            : error?.code === 'PLAN_CAPACITY_EXHAUSTED'
+                ? 'capacity_exhausted_after_provider_settlement'
+                : error?.code === 'SUBSCRIPTION_EXTENSION_TARGET_STALE'
+                    ? 'extension_target_changed_after_provider_settlement'
+                    : error?.code === 'SUBSCRIPTION_EXTENSION_ACCESS_BLOCKED'
+                        ? 'extension_target_blocked_after_provider_settlement'
+                        : error?.code === 'SUBSCRIPTION_EXTENSION_PLAN_CHANGE_OPEN'
+                            ? 'extension_plan_change_open_after_provider_settlement'
+                            : 'provider_payment_settled_but_local_fulfillment_failed',
         planId,
         checkoutIntentId,
         providerSubscriptionId,
