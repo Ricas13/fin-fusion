@@ -133,6 +133,7 @@ module.exports = {
       "node scripts/support-ticket-notifications-smoke.js",
       "node scripts/paypal-return-race-smoke.js",
       "node scripts/paypal-subscription-payment-ledger-smoke.js",
+      "node scripts/customer-payment-ledger-surface-smoke.js",
       "node scripts/provider-financial-state-smoke.js",
       "node scripts/payment-history-import-smoke.js",
       "node scripts/financial-date-boundary-smoke.js",
