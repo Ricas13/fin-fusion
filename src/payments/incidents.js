@@ -53,8 +53,40 @@ async function identityFromMetadata(metadata={}){
   return existingCustomerIdentity({scope:'direct',customerId});
 }
 async function reconcileMany(ids){for(const id of ids){try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Payment incident reconcile failed for customer ${id}:`,error.message)}}}
+async function reconcileSuspendedAccessStrict(ids){
+  const intentRecovery=require('../automation/jellyfin-creation-intent-recovery');
+  const failures=[];
+  for(const customerId of ids){
+    const customerFailures=[];
+    try{
+      await provisioning.reconcileCustomer(customerId);
+    }catch(error){
+      customerFailures.push(`access reconciliation: ${String(error?.message||error).slice(0,380)}`);
+    }
+    // Always attempt durable creation-intent cleanup even when broader
+    // reconciliation fails. A Discord/Emby/other integration error must not
+    // leave a just-created media identity alive after a payment-risk hold.
+    try{
+      const cleanup=await intentRecovery.recoverCustomer(customerId);
+      if(Number(cleanup?.failed||0)>0){
+        customerFailures.push(`creation-intent cleanup: ${String(cleanup.warning||'incomplete').slice(0,380)}`);
+      }
+    }catch(error){
+      customerFailures.push(`creation-intent cleanup: ${String(error?.message||error).slice(0,380)}`);
+    }
+    if(customerFailures.length){
+      failures.push({customerId,error:customerFailures.join('; ').slice(0,500)});
+    }
+  }
+  if(failures.length){
+    const error=new Error(`Payment-risk access suspension is incomplete for ${failures.length} customer${failures.length===1?'':'s'}.`);
+    error.code='PAYMENT_RISK_ACCESS_SUSPENSION_INCOMPLETE';
+    error.failures=failures;
+    throw error;
+  }
+}
 function holdSource(provider,caseId){return `${provider}:${String(caseId||'').slice(0,170)}`}
-async function applyHold(identity,provider,caseId,reason){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.addHold({customerId,type:'payment_risk',sourceKey,reason,metadata:{provider,caseId,scope:identity.scope}});await reconcileMany(ids);return ids.length}
+async function applyHold(identity,provider,caseId,reason){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.addHold({customerId,type:'payment_risk',sourceKey,reason,metadata:{provider,caseId,scope:identity.scope}});await reconcileSuspendedAccessStrict(ids);return ids.length}
 async function releaseHold(identity,provider,caseId){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.releaseHold({customerId,type:'payment_risk',sourceKey});await reconcileMany(ids);return ids.length}
 function policyAction(kind,cfg,metadata){if(kind==='checkout_completion')return'preserve';if(kind==='refund')return cfg.refundAction==='suspend_full_refund'&&metadata?.fullRefund===true?'suspend':'preserve';if(kind==='dispute')return cfg.disputeAction;if(kind==='chargeback')return cfg.chargebackAction;return cfg.failedRenewalAction}
 function parseProviderTimestamp(value){
@@ -213,4 +245,4 @@ async function reopen(id,actorUserId){
 }
 async function notes(id){const r=await query(`SELECT n.*,u.username actor_username FROM payment_incident_notes n LEFT JOIN app_users u ON u.id=n.actor_user_id WHERE n.incident_id=$1 ORDER BY n.created_at DESC`,[id]);return r.rows}
 async function recent(limit=100){const result=await query(`SELECT pi.*,c.display_name customer_name,au.username assigned_username FROM payment_incidents pi LEFT JOIN customers c ON c.id=pi.customer_id LEFT JOIN app_users au ON au.id=pi.assigned_to ORDER BY pi.created_at DESC LIMIT $1`,[Math.max(1,Math.min(500,Number(limit)||100))]);return result.rows}
-module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,existingCustomerIdentity,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};
+module.exports={reconcileSuspendedAccessStrict,policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,existingCustomerIdentity,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};

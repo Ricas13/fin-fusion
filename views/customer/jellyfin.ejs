@@ -68,7 +68,7 @@
       </div>
       <% } %>
       <div class="jellyfinAccountHead">
-        <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLabel %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
+        <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><% if(account.serverLocation){ %><span class="pill"><%= account.serverLocation %></span><% } %><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLabel %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
         <% if(account.publicUrl&&!account.disabled&&!account.passwordSetupRequired){ %><a class="button primary" href="<%= account.publicUrl %>" target="_blank" rel="noopener noreferrer">Open <%= player %></a><% } %>
       </div>
 
@@ -90,7 +90,7 @@
       <% } %>
 
       <div class="jellyfinCredentialGrid">
-        <div class="jellyfinCredential"><span>Server URL</span><strong><%= account.publicUrl||'Being prepared' %></strong></div>
+        <div class="jellyfinCredential"><span>Server URL</span><strong><%= account.publicUrl||'Being prepared' %></strong></div><% if(account.serverLocation){ %><div class="jellyfinCredential"><span>Location</span><strong><%= account.serverLocation %></strong></div><% } %>
         <div class="jellyfinCredential"><span>Username</span><strong><%= account.username||'Being prepared' %></strong></div>
         <div class="jellyfinCredential"><span>Password</span><strong><%= account.passwordSetupRequired?'Choose a password':'Set by you' %></strong></div>
         <div class="jellyfinCredential"><span>Stream allowance</span><strong><%= account.streams?`${account.streams} stream${account.streams===1?'':'s'}`:'Plan controlled' %></strong></div>

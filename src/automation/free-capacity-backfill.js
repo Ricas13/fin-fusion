@@ -90,6 +90,9 @@ async function waitingCandidates(limit = 100, options = {}) {
       JOIN plans p ON p.id=s.plan_id
       LEFT JOIN customer_entitlement_overrides o
         ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+      LEFT JOIN customer_service_admin_control admin_ctl
+        ON admin_ctl.customer_id=s.customer_id
+       AND admin_ctl.service='jellyfin'
       WHERE p.is_free_tier=TRUE
         ${planFilter}
         AND COALESCE(p.is_addon,FALSE)=FALSE
@@ -118,6 +121,16 @@ async function waitingCandidates(limit = 100, options = {}) {
             AND ja.disabled=FALSE
             AND ready_js.enabled=TRUE
             AND COALESCE(ready_js.media_server_type,'jellyfin')='jellyfin'
+            AND (
+              COALESCE(
+                CASE WHEN admin_ctl.mode='admin_server_pin' THEN admin_ctl.server_id END,
+                s.media_server_id
+              ) IS NULL
+              OR ja.server_id=COALESCE(
+                CASE WHEN admin_ctl.mode='admin_server_pin' THEN admin_ctl.server_id END,
+                s.media_server_id
+              )
+            )
         )
       ORDER BY s.customer_id,s.created_at DESC,s.id DESC
     )

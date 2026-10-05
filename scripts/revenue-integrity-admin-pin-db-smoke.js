@@ -121,7 +121,7 @@ async function authorityViolations() {
   `);
   if (stremioPlan.rowCount) {
     await query('DELETE FROM jellyfin_accounts WHERE customer_id=$1', [customerId]);
-    await query('UPDATE subscriptions SET superseded_by=NULL,status=\'cancelled\',current_period_end=NOW()-INTERVAL \'1 minute\' WHERE customer_id=$1', [customerId]);
+    await query('UPDATE subscriptions SET status=\'cancelled\',current_period_end=NOW()-INTERVAL \'1 minute\' WHERE customer_id=$1', [customerId]);
     await query(`
       INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot)
       VALUES($1,$2,'active','manual',NOW()-INTERVAL '1 day',NOW()+INTERVAL '30 days','stremio')

@@ -26,8 +26,9 @@ function isLegacyImport(row) {
 function fixedTermWithoutProvider(row) {
     if (billingMode.isRecurring(row)) return false;
     const mode = billingMode.modeFor(row);
+    const source = String(row?.source || '').trim().toLowerCase();
     if (mode === 'payment') return true;
-    if (mode === 'manual' && !isLegacyImport(row)) return true;
+    if ((mode === 'manual' || (!mode && ['manual','admin_grant'].includes(source) && !row?.provider_subscription_id)) && !isLegacyImport(row)) return true;
     return Boolean(row?.cancel_at_period_end) && disposition(row) === ENDING;
 }
 
@@ -45,8 +46,8 @@ async function setEnding({ subscriptionId, actorUserId = null, ending = true }) 
         `, [subscriptionId]);
         const row = result.rows[0];
         if (!row) throw new Error('Subscription not found.');
-        if (row.effective_server_class !== 'premium' || !['jellyfin','bundle'].includes(row.effective_service_type) || Number(row.effective_price_minor) <= 0 || row.is_free_tier || row.is_addon) {
-            throw new Error('Only an active paid Premium Server term can use this billing disposition.');
+        if (!['jellyfin','emby','bundle'].includes(row.effective_service_type) || Number(row.effective_price_minor) <= 0 || row.is_free_tier || row.is_addon) {
+            throw new Error('Only an active paid Jellyfin/Emby/bundle term can use this billing disposition.');
         }
         if (!['active','trialing','past_due','paused'].includes(String(row.status || '')) || new Date(row.current_period_end).getTime() <= Date.now()) {
             throw new Error('This paid term is no longer active.');

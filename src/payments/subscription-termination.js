@@ -38,9 +38,49 @@ async function currentJellyfinSubscription(customerId){
     return row;
 }
 
+async function cleanupCreationIntentsAfterEntitlementChange(customerId){
+    try{
+        const result=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId);
+        if(Number(result?.failed||0)>0)console.warn('Immediate media creation-intent cleanup incomplete after entitlement change.',{
+            customerId,
+            failed:Number(result.failed||0),
+            warning:result.warning||null
+        });
+        return result;
+    }catch(error){
+        // Billing/provider termination is authoritative and must never be rolled
+        // back because remote media cleanup is temporarily unavailable. The
+        // normal stale-intent worker remains the durable retry owner.
+        console.warn('Immediate media creation-intent cleanup deferred after entitlement change.',{
+            customerId,
+            error:String(error?.message||error).slice(0,800)
+        });
+        return{failed:1,deferred:true,error:String(error?.message||error).slice(0,800)};
+    }
+}
+
+async function releaseCancelledPlanChangeLeases(customerId, serverIds = []) {
+    const unique = [...new Set((serverIds || []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!unique.length) return { released: 0, failed: 0 };
+    const planChange = require('./customer-plan-change');
+    let released = 0, failed = 0;
+    for (const serverId of unique) {
+        try {
+            await planChange.releaseScheduledMediaPlacement(customerId, serverId);
+            released += 1;
+        } catch (error) {
+            failed += 1;
+            console.warn('Cancelled plan-change placement lease release deferred.', {
+                customerId, serverId, error: String(error?.message || error).slice(0, 500)
+            });
+        }
+    }
+    return { released, failed };
+}
+
 async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason='',providerBillingChanged=false,reference=null}={}){
     const note=reasonText(reason),auditReference=reference?String(reference).slice(0,200):null;
-    return transaction(async client=>{
+    const result=await transaction(async client=>{
         const row=await client.query(`
             SELECT s.*,p.is_addon,p.is_free_tier,p.service_type,
                    COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
@@ -76,9 +116,18 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         if(!ended.rowCount)throw new Error('Subscription changed before it could be ended.');
+        const cancelledChanges=await client.query(`
+            UPDATE customer_plan_changes
+            SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated.'),updated_at=NOW()
+            WHERE current_subscription_id=$1 AND state IN('pending','awaiting_checkout')
+            RETURNING target_media_server_id
+        `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_local','subscription',$2,$3::jsonb)`,[actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription),provider:subscription.source||null,providerBillingChanged:Boolean(providerBillingChanged),permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary})]);
-        return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference};
+        return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
     });
+    result.planChangeLeaseCleanup=await releaseCancelledPlanChangeLeases(customerId,result.cancelledPlanChangeServerIds);
+    result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);
+    return result;
 }
 
 async function continueRecurringOperation(op,row,{adapter=null,actorUserId=null,reason='',recovered=false}={}){
@@ -189,11 +238,20 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             WHERE id=$1 AND customer_id=$2
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
+        const cancelledChanges=await client.query(`
+            UPDATE customer_plan_changes
+            SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated by refund/reversal.'),updated_at=NOW()
+            WHERE current_subscription_id=$1 AND state IN('pending','awaiting_checkout')
+            RETURNING target_media_server_id
+        `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_for_refund','subscription',$2,$3::jsonb)`,
             [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
-        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked};
+        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
     });
-    return hardRevokeRefundedStremio(customerId,local);
+    const result=await hardRevokeRefundedStremio(customerId,local);
+    result.planChangeLeaseCleanup=await releaseCancelledPlanChangeLeases(customerId,result.cancelledPlanChangeServerIds);
+    result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);
+    return result;
 }
 
-module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};
+module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,cleanupCreationIntentsAfterEntitlementChange,releaseCancelledPlanChangeLeases,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};

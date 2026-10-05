@@ -67,11 +67,22 @@ const hardeningMigration=fs.readFileSync('db/migrations/20260908221500_post_681_
 const acquisition=capacity.acquisitionSql('p');
 assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'fleet capacity must be expressed as customer users, pending owed users and reservations');
 assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'Jellyfin fleet capacity must not depend on stream entitlements or raw Jellyfin user metrics');
-assert(acquisition.includes("capacity_account.account_purpose='jellyfin'")&&acquisition.includes('COUNT(DISTINCT capacity_account.customer_id)')&&acquisition.includes('pending_subscription.customer_id'),'acquisition SQL must count one managed customer per server and reserve pending entitled customers');
+assert(acquisition.includes("capacity_account.account_purpose='jellyfin'")
+    && acquisition.includes("capacity_account.customer_id::text||':'||COALESCE(capacity_account.access_lane,'primary')")
+    && acquisition.includes("pending_subscription.customer_id::text||':'")
+    && acquisition.includes("COALESCE(existing_account.access_lane,'primary')="),
+    'acquisition SQL must count physical media account lanes and only let the matching lane satisfy a pending entitlement');
 assert(!acquisition.includes("commercial_snapshot->'streams'")&&!acquisition.includes('occupancy_metric'),'acquisition SQL must not use stream weighting or Jellyfin total_users');
-assert(userCapacitySource.includes('WITH capacity_users AS')&&userCapacitySource.includes('jellyfin_account_creation_intents')&&userCapacitySource.includes('jellyfin_server_placement_leases')&&userCapacitySource.includes('COUNT(DISTINCT customer_id)'),'server capacity truth must count durable users, creation intents and active leases exactly once per customer/server');
+assert(userCapacitySource.includes('WITH capacity_users AS')
+    && userCapacitySource.includes("ja.customer_id::text||':'||COALESCE(ja.access_lane,'primary')")
+    && userCapacitySource.includes("intent.access_lane IN('primary','free')")
+    && userCapacitySource.includes("lease.access_lane IN('primary','free')")
+    && userCapacitySource.includes('COUNT(DISTINCT capacity_owner)'),
+    'server capacity truth must deduplicate one entitlement lane while counting parallel primary and Free media accounts as separate physical slots');
 assert(provisioningSource.includes('async function reservePlacement')&&provisioningSource.includes('FOR UPDATE')&&provisioningSource.includes("error.code = 'JELLYFIN_SERVER_CAPACITY_CHANGED'")&&provisioningSource.includes('placementLeaseId: reservedServer.placement_lease_id'),'remote user creation must be preceded by a serialized server-capacity lease');
 assert(durableSource.includes('access_lane,access_lane_changed_at')&&durableSource.includes('access_lane=EXCLUDED.access_lane')&&durableSource.includes('jellyfin_server_placement_leases'),'account lane and placement-lease consumption must persist in the same local transaction');
+assert(provisioningSource.includes('WHERE access_lane=$3 OR access_lane IS NULL')&&provisioningSource.includes('CASE WHEN access_lane=$3 THEN 0 ELSE 1 END'),'placement recovery must prefer the requested access lane instead of reusing another lane\'s reservation');
+assert(provisioningSource.includes('inferUnambiguousLiveLane(customerId)')&&provisioningSource.includes('if (inferred !== wantedLane) return null'),'legacy lane-less placement reservations may only be reused when live entitlement truth proves their lane');
 assert(hardeningMigration.includes('CREATE TABLE IF NOT EXISTS jellyfin_server_placement_leases')&&hardeningMigration.includes('UNIQUE(customer_id,server_id)'),'placement leases must be durable and unique per customer/server');
 assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a plan capacity_limit');
 assert(
@@ -131,5 +142,5 @@ assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'p
     assert.strictEqual(noServer.soldOut,true,'fleet plans with no Jellyfin server user capacity must fail closed');
     assert.match(noServer.fallbackReason,/server user capacity/);
 
-    console.log('server placement + plans list + one-user-one-place capacity smoke: ok');
+    console.log('server placement + plans list + lane-aware physical capacity smoke: ok');
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});

@@ -24,8 +24,8 @@ async function createManualSubscriptionTx(client, {
         : endsAt || planExpiry.endForPlan(plan, { now: startsAt ? new Date(startsAt) : new Date() });
 
     const result = await client.query(`
-        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
-        VALUES($1,$2,$3,$4,$5,$6)
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end)
+        VALUES($1,$2,$3,$4,'manual',$5,$6)
         RETURNING *
     `, [customerId, planId, status, source, startsAt, periodEnd]);
 

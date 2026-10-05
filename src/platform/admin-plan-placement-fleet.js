@@ -4,6 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const placement = require('../jellyfin/placement');
+const userCapacity = require('../jellyfin/user-capacity');
 const { esc, layout } = require('./admin-html');
 const { planSubnav } = require('./admin-plans');
 
@@ -43,7 +44,7 @@ async function placementData(plan) {
     const result = await query(`
         SELECT js.id,js.name,js.slug,js.server_class,js.location,js.enabled,js.allow_new_users,
                js.trial_enabled,js.paid_enabled,js.priority,js.max_users,js.health_status,
-               COUNT(DISTINCT ja.customer_id)::int AS assigned_users,
+               COUNT(DISTINCT ja.id)::int AS persisted_media_accounts,
                COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams,
                pse.weight AS placement_weight,
                (pse.server_id IS NOT NULL) AS selected,
@@ -62,13 +63,14 @@ async function placementData(plan) {
         ORDER BY js.priority,js.name
     `, [plan.id]);
     const restricted = result.rows.some(server => server.selected);
-    return { servers: result.rows, restricted };
+    const servers = await userCapacity.decorateServers(result.rows);
+    return { servers, restricted };
 }
 
 function strategyOptions(selected) {
     const rows = [
         ['balanced', 'Balanced (recommended)', 'Health, customer-user capacity, live streams and priority'],
-        ['lowest_customers', 'Lowest customer count', 'Prefer the eligible server with the fewest managed Jellyfin customers'],
+        ['lowest_customers', 'Lowest user-slot count', 'Prefer the eligible server with the fewest occupied or reserved media-user slots'],
         ['lowest_streams', 'Lowest live streams', 'Prefer the eligible server with the fewest current playback sessions'],
         ['weighted', 'Weighted distribution', 'Split new customers using server weights, excluding servers already at user capacity'],
         ['manual', 'Pinned server', 'Always use one selected server unless its configured customer-user capacity is full']
@@ -89,9 +91,9 @@ function serverRows(data) {
             <td><input type="checkbox" name="serverIds" value="${esc(server.id)}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}></td>
             <td><strong>${esc(server.name)}</strong><div class="muted">${esc(server.slug)}${server.location ? ` · ${esc(server.location)}` : ''}</div></td>
             <td><span class="pill ${healthClass(server.health_status)}">${esc(healthLabel(server.health_status))}</span><div class="subText">${capacity}</div></td>
-            <td><strong>${load.users.toLocaleString('en-GB')}</strong> / ${esc(max)}<div class="subText">One managed customer = one place</div></td>
+            <td><strong>${load.users.toLocaleString('en-GB')}</strong> / ${esc(max)}<div class="subText">One primary/Free media account lane = one place</div></td>
             <td><strong>${load.streams.toLocaleString('en-GB')}</strong><div class="subText">Playback load only — not capacity</div></td>
-            <td><span class="pill good">Managed customers</span><div class="subText">CAPTAiNFiN account count</div></td>
+            <td><span class="pill good">Media user slots</span><div class="subText">Includes durable and reserved capacity</div></td>
             <td><input class="input" style="max-width:7rem" type="number" min="1" max="10000" name="weight_${esc(server.id)}" value="${esc(existingWeight)}" ${disabled ? 'disabled' : ''}></td>
         </tr>`;
     }).join('');

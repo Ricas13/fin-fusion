@@ -69,6 +69,10 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     `, [driftCustomer, premiumServer]);
 
     const linkCustomer = await addBareCustomer('Charlie Existing');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','migration',NOW(),NOW()+INTERVAL '30 days')
+    `, [linkCustomer, premiumPlan.id]);
 
     remoteByServer.set(String(premiumServer), [
         jellyUser('alice-id', 'Alice'),
@@ -102,6 +106,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     assert(alice.subscription, 'plan import must create a migration subscription');
     assert.strictEqual(alice.subscription.source, 'migration');
     assert.strictEqual(alice.subscription.status, 'active');
+    assert.strictEqual(String(alice.subscription.media_server_id), String(premiumServer), 'imported subscription must persist the exact physical media server assignment');
 
     const alicePortal = await query('SELECT user_id FROM customers WHERE id=$1', [alice.customer.id]);
     assert.strictEqual(alicePortal.rows[0].user_id, null, 'import must not invent portal credentials or reset the Jellyfin password');
@@ -122,8 +127,8 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     );
     await assert.rejects(
         () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'charlie-id', planId: trialPlan.id }),
-        /requires custom servers/i,
-        'plan/server class mismatch must fail before import'
+        /eligible server pool/i,
+        'a server outside the plan pool/class fallback must fail before import'
     );
     await assert.rejects(
         () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'sleep-id', planId: null, applyPolicy: false }),
@@ -141,6 +146,8 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     assert.strictEqual(linked.account.customer_id, linkCustomer);
     assert.strictEqual(linked.account.jellyfin_user_id, 'charlie-id');
     assert.strictEqual(linked.account.disabled, false);
+    const linkedAssignment = await query('SELECT media_server_id FROM subscriptions WHERE customer_id=$1 AND status IN (\'active\',\'trialing\',\'past_due\') ORDER BY current_period_end DESC LIMIT 1', [linkCustomer]);
+    assert.strictEqual(String(linkedAssignment.rows[0].media_server_id), String(premiumServer), 'link-existing repair must atomically adopt a missing subscription server assignment');
     const customerCount = await query(`SELECT COUNT(*)::int AS n FROM customers WHERE display_name='Charlie Existing'`);
     assert.strictEqual(customerCount.rows[0].n, 1, 'linking must attach to the existing customer rather than create another customer');
 

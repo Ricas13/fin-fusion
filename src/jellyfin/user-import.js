@@ -128,12 +128,9 @@ async function loadPlan(planId) {
     return result.rows[0];
 }
 
-async function assertServerFitsPlan(server, plan) {
+async function assertServerFitsPlan(server, plan, { forPlacement = true } = {}) {
     if (!plan) return true;
-    if (String(server.server_class) !== String(plan.server_class)) {
-        throw new Error(`Plan ${plan.name} requires ${plan.server_class} servers; ${server.name} is ${server.server_class}.`);
-    }
-    const eligible = await planServers.eligibleServersForPlan(plan, { enabledOnly: true });
+    const eligible = await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement });
     if (!eligible.some(candidate => String(candidate.id) === String(server.id))) {
         throw new Error(`${server.name} is not in the eligible server pool for plan ${plan.name}.`);
     }
@@ -188,10 +185,13 @@ async function createImportedCustomer({ serverId, jellyfinUserId, planId = null,
         if (plan) {
             const status = plan.billing_interval === 'trial' ? 'trialing' : 'active';
             const inserted = await client.query(`
-                INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
-                VALUES($1,$2,$3,'migration',NOW(),$4)
+                INSERT INTO subscriptions(
+                    customer_id,plan_id,status,source,starts_at,current_period_end,
+                    media_location_preference,media_server_id,media_location_snapshot
+                )
+                VALUES($1,$2,$3,'migration',NOW(),$4,$5,$6,$5)
                 RETURNING *
-            `, [customerId, plan.id, status, periodEnd]);
+            `, [customerId, plan.id, status, periodEnd, server.location || null, server.id]);
             subscription = inserted.rows[0];
         }
         await client.query(`
@@ -217,11 +217,13 @@ async function createImportedCustomer({ serverId, jellyfinUserId, planId = null,
 async function customerSummary(customerId) {
     const result = await query(`
         SELECT c.id,c.display_name,c.email,au.username AS portal_username,
-               active.plan_id,active.plan_name,active.plan_code,active.server_class AS plan_server_class
+               active.plan_id,active.plan_name,active.plan_code,active.server_class AS plan_server_class,
+               active.subscription_id,active.media_server_id,active.media_location_preference
         FROM customers c
         LEFT JOIN app_users au ON au.id=c.user_id
         LEFT JOIN LATERAL (
-            SELECT p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,p.server_class
+            SELECT p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,p.server_class,
+                   s.id AS subscription_id,s.media_server_id,s.media_location_preference
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
             WHERE s.customer_id=c.id AND s.status IN ('active','trialing','past_due') AND s.current_period_end>NOW() AND p.active=TRUE
               AND s.superseded_by IS NULL AND COALESCE(p.is_addon,FALSE)=FALSE
@@ -241,7 +243,12 @@ async function linkExistingCustomer({ customerId, serverId, jellyfinUserId, make
     let plan = null;
     if (customer.plan_id) {
         plan = await loadPlan(customer.plan_id);
-        if (makePrimary) await assertServerFitsPlan(server, plan);
+        if (makePrimary) {
+            if (customer.media_server_id && String(customer.media_server_id) !== String(server.id)) {
+                throw new Error('This subscription is already assigned to a different media server. Use the explicit server migration/repair workflow instead.');
+            }
+            if (!customer.media_server_id) await assertServerFitsPlan(server, plan, { forPlacement: false });
+        }
     }
     const linked = await transaction(async client => {
         await assertRemoteUnmanaged(client, server.id, user);
@@ -254,6 +261,21 @@ async function linkExistingCustomer({ customerId, serverId, jellyfinUserId, make
             ) VALUES($1,$2,$3,$4,FALSE,$5,NULL,$6)
             RETURNING *
         `, [customerId, server.id, user.jellyfin_user_id, cleanName(user.jellyfin_username), user.last_activity_at, Boolean(makePrimary)]);
+        if (makePrimary && customer.subscription_id) {
+            const adopted = await client.query(`
+                UPDATE subscriptions
+                SET media_server_id=COALESCE(media_server_id,$2),
+                    media_location_preference=COALESCE(NULLIF(media_location_preference,''),$3),
+                    media_location_snapshot=COALESCE(NULLIF(media_location_snapshot,''),$3),
+                    updated_at=NOW()
+                WHERE id=$1 AND customer_id=$4
+                  AND (media_server_id IS NULL OR media_server_id=$2)
+                RETURNING id
+            `, [customer.subscription_id, server.id, server.location || null, customerId]);
+            if (!adopted.rowCount) {
+                throw new Error('The subscription media-server assignment changed while the remote identity was being linked. Refresh and retry.');
+            }
+        }
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'jellyfin.import.link','customer',$2,$3::jsonb)

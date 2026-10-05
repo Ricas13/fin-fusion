@@ -7,6 +7,9 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const providerOps = require('../src/payments/provider-operations');
+const provisioningHelpers = require('../src/jellyfin/provisioning-helpers');
+const resilientProvisioning = require('../src/jellyfin/resilient-provisioning');
+resilientProvisioning.reconcileCustomer = async customerId => ({ customerId, active: true, testStub: true });
 const incidents = require('../src/payments/incidents');
 const incidentReconciliation = require('../src/payments/incident-reconciliation');
 
@@ -56,8 +59,8 @@ const recovery = require('../src/payments/provider-operation-recovery');
 
 function suffix() { return crypto.randomBytes(6).toString('hex'); }
 async function forceDue(id) { await query(`UPDATE provider_operations SET next_attempt_at=NOW()-INTERVAL '1 second' WHERE id=$1`, [id]); }
-async function plan(code, name, price = 1000) {
-    return (await query(`INSERT INTO plans(code,name,audience,service_type,billing_interval,duration_days,price_minor,currency,streams,active,visible,sort_order) VALUES($1,$2,'direct','jellyfin','month',30,$3,'GBP',1,TRUE,TRUE,999) RETURNING *`, [code, name, price])).rows[0];
+async function plan(code, name, price = 1000, serviceType = 'jellyfin') {
+    return (await query(`INSERT INTO plans(code,name,audience,service_type,billing_interval,duration_days,price_minor,currency,streams,active,visible,sort_order) VALUES($1,$2,'direct',$4,'month',30,$3,'GBP',1,TRUE,TRUE,999) RETURNING *`, [code, name, price, serviceType])).rows[0];
 }
 async function customer(tag) {
     return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`, [`Provider Recovery ${tag}`, `provider-recovery-${tag}@example.invalid`])).rows[0];
@@ -65,11 +68,21 @@ async function customer(tag) {
 async function subscription(customerId, planId, providerSubscriptionId) {
     return (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING *`, [customerId, planId, providerSubscriptionId])).rows[0];
 }
+async function mediaServer(tag, location, maxUsers = 1) {
+    return (await query(`
+        INSERT INTO jellyfin_servers(
+            name,slug,server_class,media_server_type,base_url,public_url,location,
+            api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,
+            priority,max_users,health_status,placement_mode
+        ) VALUES($1,$2,'premium','jellyfin',$3,$3,$4,'test-key',TRUE,TRUE,TRUE,TRUE,100,$5,'healthy','active')
+        RETURNING *
+    `, [`Recovery server ${tag}`, `recovery-server-${tag}`, `https://recovery-${tag}.example.invalid`, location, maxUsers])).rows[0];
+}
 function remote(id, priceId) {
     remoteSubscriptions.set(id, { id, status: 'active', cancel_at_period_end: false, metadata: {}, items: { data: [{ id: `si_${id}`, price: { id: priceId }, current_period_start: Math.floor(Date.now()/1000)-100, current_period_end: Math.floor(Date.now()/1000)+2592000 }] } });
 }
-async function immediateOp({ customerId, subscriptionId, targetPlanId, targetPriceId, key }) {
-    return providerOps.begin({ provider: 'stripe', scope: 'customer', ownerId: customerId, operationType: 'plan_change_immediate', localReference: subscriptionId, idempotencyKey: key, request: { subscriptionId, targetPlanId, targetPlanPriceId: null, targetPriceId, currency: 'GBP', proration: true } });
+async function immediateOp({ customerId, subscriptionId, targetPlanId, targetPriceId, key, targetMediaLocation = null, targetMediaServerId = null, targetAccessQuantity = null, targetVariantKind = null }) {
+    return providerOps.begin({ provider: 'stripe', scope: 'customer', ownerId: customerId, operationType: 'plan_change_immediate', localReference: subscriptionId, idempotencyKey: key, request: { subscriptionId, targetPlanId, targetPlanPriceId: null, targetPriceId, currency: 'GBP', proration: true, targetMediaLocation, targetMediaServerId, targetAccessQuantity, targetVariantKind } });
 }
 async function row(table, id) { return (await query(`SELECT * FROM ${table} WHERE id=$1`, [id])).rows[0]; }
 
@@ -97,11 +110,28 @@ async function testAConcurrentRecurringSerialization() {
 }
 
 async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
-    const tag = suffix(), c = await customer(`bhi-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Plan', 2000);
+    const tag = suffix(), c = await customer(`bhi-${tag}`), competing = await customer(`bhi-competing-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Bundle', 2000, 'bundle');
+    const oldServer = await mediaServer(`old-${tag}`, 'Old Region', 10), targetServer = await mediaServer(`target-${tag}`, 'London', 1);
     const providerId = `sub_recovery_bhi_${tag}`, targetPrice = `price_recovery_target_${tag}`, sub = await subscription(c.id, oldPlan.id, providerId);
-    targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
+    await query(`UPDATE subscriptions SET media_server_id=$2,media_location_preference='Old Region',media_location_snapshot='Old Region' WHERE id=$1`, [sub.id, oldServer.id]);
+    const variantId=crypto.randomUUID();
+    targetMappings.set(targetPrice, { id: target.id, plan_price_id: null, provider_mapping_id: null, access_variant_id: variantId, variant_kind: 'streams', access_quantity: 3, quantity: 3, streams: 3, external_id: targetPrice, checkout_mode: 'subscription', price_minor: 2000, currency: 'GBP' });
     remote(providerId, `price_old_${tag}`);
-    const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}` });
+    const op = await immediateOp({ customerId: c.id, subscriptionId: sub.id, targetPlanId: target.id, targetPriceId: targetPrice, key: `recovery-bhi-${tag}`, targetMediaLocation: 'London', targetMediaServerId: targetServer.id, targetAccessQuantity: 3, targetVariantKind: 'streams' });
+    const preAdmission = await provisioningHelpers.reservePlacement(competing.id, targetServer);
+    assert(preAdmission.placement_lease_id, 'H: merely creating a provider operation must not reserve physical capacity before admission succeeds');
+    await provisioningHelpers.releaseDefinitivePlacementFailure(competing.id, targetServer.id, preAdmission.placement_lease_id);
+    await query(`UPDATE provider_operations
+      SET provider_result=provider_result||'{"capacityReserved":true}'::jsonb
+      WHERE id=$1`, [op.id]);
+    const ownPreMutation = await provisioningHelpers.reservePlacement(c.id, targetServer);
+    assert(ownPreMutation.placement_lease_id, 'H: an immediate plan change must be able to materialize its own durable reservation when taking the final server slot');
+    await provisioningHelpers.releaseDefinitivePlacementFailure(c.id, targetServer.id, ownPreMutation.placement_lease_id);
+    await assert.rejects(
+        provisioningHelpers.reservePlacement(competing.id,targetServer),
+        error=>error?.code==='JELLYFIN_SERVER_CAPACITY_CHANGED',
+        'H: another customer must remain blocked by the durable immediate-change reservation after the short lease is released'
+    );
     const fake = new FakeStripe();
     await fake.subscriptions.update(providerId, { items: [{ id: `si_${providerId}`, price: targetPrice }] });
     const mutationsAfterSuccess = providerMutationCount;
@@ -111,10 +141,27 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     assert.strictEqual(unresolved.state, 'provider_applied', 'B/H: provider success plus local failure must remain provider_applied');
     assert.strictEqual(unresolved.failure_kind, 'retryable', 'B/H: local failure after provider success must remain retryable');
     assert.strictEqual((await row('subscriptions', sub.id)).plan_id, oldPlan.id, 'H: failed local write must leave old local plan in place');
+    await assert.rejects(
+        provisioningHelpers.reservePlacement(competing.id,targetServer),
+        error=>error?.code==='JELLYFIN_SERVER_CAPACITY_CHANGED',
+        'H: provider-success/local-failure recovery must keep the paid target server reserved even without a live placement lease'
+    );
     await forceDue(op.id);
     const result = await recovery.run({ limit: 10 });
     assert.strictEqual(result.reconciled, 1, 'B/H: reconciler must complete the missing local side');
-    assert.strictEqual((await row('subscriptions', sub.id)).plan_id, target.id, 'H: recovered plan change must apply target local plan');
+    const recoveredSubscription = await row('subscriptions', sub.id);
+    assert.strictEqual(recoveredSubscription.plan_id, target.id, 'H: recovered plan change must apply target local plan');
+    assert.strictEqual(recoveredSubscription.service_type_snapshot, 'bundle', 'H: recovered plan change must update service authority to the provider-billed target service');
+    assert.strictEqual(String(recoveredSubscription.media_server_id), String(targetServer.id), 'H: recovery must preserve the exact paid target server assignment');
+    assert.strictEqual(recoveredSubscription.media_location_preference, 'London', 'H: recovery must preserve the chosen paid target location');
+    assert.strictEqual(recoveredSubscription.media_location_snapshot, 'London', 'H: recovery must snapshot the chosen paid target location');
+    const recoveredContract=typeof recoveredSubscription.commercial_snapshot==='string'?JSON.parse(recoveredSubscription.commercial_snapshot):recoveredSubscription.commercial_snapshot;
+    assert.strictEqual(recoveredContract.accessVariantId,variantId,'H: recovery must preserve the exact paid access variant identity');
+    assert.strictEqual(recoveredContract.accessVariantKind,'streams','H: recovery must preserve the paid access variant kind');
+    assert.strictEqual(Number(recoveredContract.accessQuantity),3,'H: recovery must preserve the paid access quantity instead of falling back to the base plan');
+    assert.strictEqual(Number(recoveredContract.streams),3,'H: recovered Jellyfin entitlement must expose the stream allowance Stripe actually billed');
+    const ownFinalSlot = await provisioningHelpers.reservePlacement(c.id, targetServer);
+    assert(ownFinalSlot.placement_lease_id, 'H: provisioning must be allowed to materialize a customer whose own subscription already occupies the final physical slot');
     assert.strictEqual((await providerOps.get(op.id)).state, 'reconciled', 'B: operation must converge to reconciled');
     assert.strictEqual(providerMutationCount, mutationsAfterSuccess, 'I: retry must not duplicate a provider mutation when remote already reflects target');
 }
@@ -385,6 +432,66 @@ async function testNOrphanedIncidentMetadataCustomer() {
     assert.strictEqual(malformed.customerId,null,'N: malformed historical metadata customer IDs must never become direct identity');
 }
 
+async function testOScheduledStripeMediaCapacityReservation() {
+    const tag=suffix(), first=await customer(`o-first-${tag}`), second=await customer(`o-second-${tag}`);
+    const currentPlan=await plan(`recovery-o-current-${tag}`,'Scheduled current',1000);
+    const targetPlan=await plan(`recovery-o-target-${tag}`,'Scheduled target',2000);
+    const targetServer=await mediaServer(`scheduled-${tag}`,'London',1);
+    const current=await subscription(first.id,currentPlan.id,`sub_scheduled_o_${tag}`);
+    const change=(await query(`
+        INSERT INTO customer_plan_changes(
+            customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,
+            target_media_location,target_media_server_id
+        ) VALUES($1,$2,$3,'stripe','period_end','pending',NOW()+INTERVAL '30 days','London',$4)
+        RETURNING *
+    `,[first.id,current.id,targetPlan.id,targetServer.id])).rows[0];
+
+    const capacity=require('../src/jellyfin/user-capacity');
+    const occupied=await capacity.serverState(targetServer.id);
+    assert.strictEqual(occupied.capacity_users,1,'O: pending scheduled Stripe change must reserve the exact future server slot');
+    assert.strictEqual(occupied.full,true,'O: max-users=1 target server must be full while the Stripe change is pending');
+
+    await assert.rejects(
+        provisioningHelpers.reservePlacement(second.id,targetServer),
+        error=>error?.code==='JELLYFIN_SERVER_CAPACITY_CHANGED',
+        'O: a competing customer must not consume capacity already promised to a scheduled paid renewal'
+    );
+
+    await query(`UPDATE customer_plan_changes SET state='cancelled',updated_at=NOW() WHERE id=$1`,[change.id]);
+    const afterCancel=await provisioningHelpers.reservePlacement(second.id,targetServer);
+    assert(afterCancel.placement_lease_id,'O: cancelling the scheduled change must release its durable physical-capacity reservation');
+}
+
+async function testPUnadmittedRecoveryCannotChargePastCapacity() {
+    const tag=suffix(), c=await customer(`p-owner-${tag}`), blocker=await customer(`p-blocker-${tag}`);
+    const oldPlan=await plan(`recovery-p-old-${tag}`,'Admission old',1000);
+    const target=await plan(`recovery-p-target-${tag}`,'Admission target',2000);
+    const targetServer=await mediaServer(`admission-${tag}`,'London',1);
+    const providerId=`sub_recovery_p_${tag}`, targetPrice=`price_recovery_p_target_${tag}`;
+    const sub=await subscription(c.id,oldPlan.id,providerId);
+    targetMappings.set(targetPrice,{id:target.id,plan_price_id:null,provider_mapping_id:null,external_id:targetPrice,checkout_mode:'subscription',price_minor:2000,currency:'GBP'});
+    remote(providerId,`price_recovery_p_old_${tag}`);
+    const blockerLease=await provisioningHelpers.reservePlacement(blocker.id,targetServer);
+    assert(blockerLease.placement_lease_id,'P: fixture must occupy the final target-server place');
+
+    const op=await immediateOp({
+        customerId:c.id,
+        subscriptionId:sub.id,
+        targetPlanId:target.id,
+        targetPriceId:targetPrice,
+        key:`recovery-p-${tag}`,
+        targetMediaLocation:'London',
+        targetMediaServerId:targetServer.id
+    });
+    const before=providerMutationCount;
+    await forceDue(op.id);
+    const result=await recovery.run({limit:10});
+    const stored=await providerOps.get(op.id);
+    assert.strictEqual(providerMutationCount,before,'P: recovery must never mutate Stripe when the crashed operation never won capacity admission');
+    assert.notStrictEqual(stored.state,'provider_applied','P: unadmitted recovery must remain pre-provider when physical capacity is no longer available');
+    assert(result.failed>0||result.retryable>0||result.manual>0,'P: lost capacity must remain visible/retryable instead of being silently treated as success');
+}
+
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -399,7 +506,9 @@ async function main() {
     await testLRecurringIdentityStatusBoundary();
     await testMHistoricalDuplicateIdentityRemainsReconcileable();
     await testNOrphanedIncidentMetadataCustomer();
-    console.log('provider operation recovery DB smoke: A-N ok');
+    await testOScheduledStripeMediaCapacityReservation();
+    await testPUnadmittedRecoveryCannotChargePastCapacity();
+    console.log('provider operation recovery DB smoke: A-O ok');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { try { await getPool().end(); } catch (_) {} });

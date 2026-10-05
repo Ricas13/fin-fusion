@@ -62,7 +62,8 @@ assert(!expirySource.includes('SUBSCRIPTION_EXPIRY_WARNING_DAYS'), 'expiry caden
 assert(!/async function expiringSubscriptions[\s\S]*?LIMIT\s+\$\d/i.test(expirySource), 'expiry warning discovery must not use a fixed SQL LIMIT');
 assert(expirySource.includes("COALESCE(p.is_free_tier,FALSE)=FALSE"), 'non-expiring Free Access must not receive expiry warnings');
 assert(expirySource.includes("LOWER(COALESCE(s.billing_interval_snapshot,p.billing_interval,''))<>'trial'"), 'trials must not receive normal subscription expiry reminders');
-assert(expirySource.includes("s.billing_mode='payment'"), 'prepaid payment-mode access must remain eligible for expiry reminders');
+assert(expirySource.includes("s.billing_mode IN('payment','manual')"), 'prepaid provider payments and intentional manual/off-platform paid terms must remain eligible for expiry reminders');
+assert(expirySource.includes("IN('manual','admin_grant')"), 'historical provider-less manual grants with a null billing mode must still receive expiry reminders');
 assert(expirySource.includes("s.billing_mode='subscription'\n              AND s.source IN ('stripe','paypal')"), 'only provider-backed recurring subscriptions may use cancellation expiry reminders');
 assert(expirySource.includes("s.status='cancelled' OR COALESCE(s.cancel_at_period_end,FALSE)=TRUE"), 'cancelled or cancel-at-period-end recurring subscriptions must remain eligible');
 assert(!/s\.billing_mode='payment'\s+OR\s+s\.status='cancelled'/.test(expirySource), 'cancelled manual/non-recurring rows must not bypass the billing-mode eligibility boundary');

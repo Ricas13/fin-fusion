@@ -7,12 +7,30 @@ const {query,getPool}=require('../src/db');
 const intents=require('../src/payments/checkout-intents');
 const discounts=require('../src/payments/discounts');
 const zeroValue=require('../src/payments/zero-value-checkout');
+const {encryptWithEnv}=require('../src/security/purpose-crypto');
 
 const suffix=crypto.randomBytes(6).toString('hex');
+let mediaServer=null;
 function unique(label){return `${label}-${suffix}-${crypto.randomBytes(3).toString('hex')}`;}
+async function ensureMediaServer(){
+  const apiKey=encryptWithEnv(`discount-${suffix}`,'JELLYFIN_ENCRYPTION_KEY','jf1');
+  mediaServer=(await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,public_url,location,api_key_encrypted,
+      enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+    ) VALUES($1,$2,'premium','jellyfin','https://discount.example.invalid','https://discount.example.invalid',
+      'Discount Test',$3,TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+    RETURNING id,location
+  `,[`Discount checkout ${suffix}`,unique('discount-server'),apiKey])).rows[0];
+}
 async function customer(label){return(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[label,`${unique(label)}@example.invalid`])).rows[0];}
-async function plan(label,priceMinor=1000){return(await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class) VALUES($1,$2,'jellyfin','direct','month',30,$3,'GBP',100,TRUE,TRUE,1,'premium') RETURNING *`,[unique(label),label,priceMinor])).rows[0];}
-function snapshotFor(p){return{kind:'direct_plan',planId:p.id,planPriceId:null,planCode:p.code,planName:p.name,priceMinor:Number(p.price_minor),currency:'GBP',billingInterval:'month',durationDays:30,streams:1,stremioHouseholdNetworkLimit:1,provider:'stripe',checkoutMode:'payment',providerMappingId:null,providerMappingRecordId:null,discountedMinor:Number(p.price_minor)};}
+async function plan(label,priceMinor=1000){
+  const row=(await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class) VALUES($1,$2,'jellyfin','direct','month',30,$3,'GBP',100,TRUE,TRUE,1,'premium') RETURNING *`,[unique(label),label,priceMinor])).rows[0];
+  if(!mediaServer)throw new Error('Discount media server was not initialized');
+  await query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)`,[row.id,mediaServer.id]);
+  return row;
+}
+function snapshotFor(p){return{kind:'direct_plan',planId:p.id,planPriceId:null,planCode:p.code,planName:p.name,priceMinor:Number(p.price_minor),currency:'GBP',billingInterval:'month',durationDays:30,streams:1,stremioHouseholdNetworkLimit:1,provider:'stripe',checkoutMode:'payment',providerMappingId:null,providerMappingRecordId:null,discountedMinor:Number(p.price_minor),mediaLocation:'Discount Test'};}
 async function expectCode(fn,code){let error=null;try{await fn();}catch(caught){error=caught;}assert(error,`Expected ${code} failure`);assert.strictEqual(error.code,code,`Expected ${code}, got ${error.code||error.message}`);return error;}
 
 async function fixedCurrencyMismatchInvariant(){
@@ -40,7 +58,7 @@ async function fullyDiscountedPaymentInvariant(){
   assert.strictEqual(Number(reserved.discountedMinor),0,'100% promo must freeze a zero provider amount');
   assert.strictEqual(Number(reserved.reservation.amount_applied_minor),1000,'100% promo must freeze the whole catalogue price');
 
-  const frozen={...snapshotFor(p),discountCodeId:discount.id,discountCode:discount.code,discountReservationId:reserved.reservation.id,grossDiscountedMinor:0,serviceCreditMinor:0,serviceCreditCurrency:null,discountedMinor:0};
+  const frozen={...(intent.commercial_snapshot||snapshotFor(p)),discountCodeId:discount.id,discountCode:discount.code,discountReservationId:reserved.reservation.id,grossDiscountedMinor:0,serviceCreditMinor:0,serviceCreditCurrency:null,discountedMinor:0};
   await query(`UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb,updated_at=NOW() WHERE id=$1`,[intent.id,JSON.stringify(frozen)]);
 
   const sub=await zeroValue.activateFullyDiscountedPayment({customerId:owner.id,intentId:intent.id,nonce:intent.nonce,provider:'stripe'});
@@ -49,6 +67,8 @@ async function fullyDiscountedPaymentInvariant(){
   assert.strictEqual(sub.status,'active');
   assert.strictEqual(Number(sub.price_minor_snapshot),1000,'subscription must retain the undiscounted catalogue price snapshot');
   assert.strictEqual(sub.provider_subscription_id,null,'zero-cash local settlement must not invent a provider payment identity');
+  assert.strictEqual(String(sub.media_server_id),String(intent.media_server_id),'zero-cash subscription must retain the exact physical server reserved by checkout');
+  assert.strictEqual(sub.media_location_snapshot,'Discount Test','zero-cash subscription must retain the selected media location');
 
   const settledIntent=(await query(`SELECT state,provider_checkout_id FROM billing_checkout_intents WHERE id=$1`,[intent.id])).rows[0];
   assert.strictEqual(settledIntent.state,'completed','zero-cash checkout intent was not completed');
@@ -65,6 +85,7 @@ async function fullyDiscountedPaymentInvariant(){
 }
 
 async function main(){
+  await ensureMediaServer();
   await fixedCurrencyMismatchInvariant();
   await fullyDiscountedPaymentInvariant();
   console.log('discount checkout DB smoke: currency integrity and zero-cash settlement ok');

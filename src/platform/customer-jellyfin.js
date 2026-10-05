@@ -195,6 +195,7 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
     serviceLabel:mediaLabel(account),
     accessLabel:accessLabel(account),
     serverName:account.server_name||`${mediaLabel(account)} server`,
+    serverLocation:account.server_location||entitlement?.media_location_snapshot||entitlement?.media_location_preference||'',
     publicUrl:account.public_url||'',
     username:account.jellyfin_username||'',
     accessLane:account.access_lane||'primary',
@@ -219,6 +220,7 @@ async function accessAccountsForCustomer(customerId,portal){
   const result=[];
   for(const account of rows){
     const entitlement=customerMediaAccess.entitlementForAccountFromContext(account,context);
+    if(!entitlement)continue;
     if(mediaType(account)!=='jellyfin'){
       result.push(mergeAccount(account,portalAccounts.get(String(account.id)),null,entitlement));
       continue;
@@ -293,11 +295,11 @@ function createCustomerJellyfinRouter(){
           SELECT 1
           FROM audit_log a
           WHERE a.entity_type='customer'
-            AND a.entity_id=$1
+            AND a.entity_id=$1::text
             AND a.action IN ('customer.inactivity.remove_jellyfin','customer.inactivity.finalize_free_plan')
             AND NOT EXISTS (
               SELECT 1 FROM subscriptions s
-              WHERE s.customer_id=$1
+              WHERE s.customer_id=$1::uuid
                 AND s.created_at>a.created_at
             )
           ORDER BY a.created_at DESC

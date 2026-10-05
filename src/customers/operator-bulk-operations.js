@@ -25,7 +25,7 @@ bulkWorker.registerHandler('add_plan',async item=>{
   const actor=await actorFor(item),planId=String(item.params?.planId||''),reason=String(item.params?.reason||'Manual bulk plan grant').trim().slice(0,500);
   if(!planId)throw new Error('Plan is required');
   if(reason.length<3)throw new Error('Reason must be at least 3 characters');
-  const planResult=await query(`SELECT id,name,duration_days,currency,COALESCE(service_type,'jellyfin') AS service_type FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planId]);
+  const planResult=await query(`SELECT id,name,duration_days,currency,COALESCE(service_type,'jellyfin') AS service_type FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','emby','bundle') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planId]);
   if(!planResult.rowCount)throw new Error('Target plan is not available for a manual bulk grant');
   const plan=planResult.rows[0],operationRef=`bulk:${item.job_id}:${item.id}`;
   // createManualGrant commits the subscription before service reconciliation.
@@ -48,7 +48,13 @@ bulkWorker.registerHandler('cancel_plan',async item=>{
   const actor=await actorFor(item),reason=String(item.params?.reason||'Plan cancelled by administrator').trim().slice(0,500);
   if(reason.length<3)throw new Error('Reason must be at least 3 characters');
   const rows=await subscriptionRevoke.subscriptions(item.customer_id);
-  const primary=rows.find(row=>!row.is_addon);
+  const primaries=rows.filter(row=>!row.is_addon);
+  if(primaries.length>1){
+    const error=new Error('This customer has multiple independent primary services. Bulk cancel refuses to guess which paid plan to terminate; use the customer-specific subscription action instead.');
+    error.code='AMBIGUOUS_PRIMARY_SUBSCRIPTION';
+    throw error;
+  }
+  const primary=primaries[0]||null;
   if(!primary){
     // A prior attempt may have committed the cancellation before failing in
     // downstream cleanup/reconciliation. Converge those effects before marking
@@ -83,8 +89,12 @@ bulkWorker.registerHandler('ban',async item=>{
   if(!existing.rowCount){
     await query(`INSERT INTO customer_bans(customer_id,normalized_email,reason,blocks_registration,blocks_service_access,created_by) VALUES($1,$2,$3,TRUE,TRUE,$4)`,[item.customer_id,email,reason,actor]);
   }
+  // A hard ban must supersede any earlier admin-present Jellyfin override.
+  await jellyfinAdminControl.remove(item.customer_id,null,{actorUserId:actor,reason:`Customer banned: ${reason}`});
   await provisioning.holdAccess(item.customer_id,'banned',actor);
-  await audit('admin.bulk.ban',item.customer_id,actor,{email,reason});
+  const banIntentCleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(item.customer_id);
+  if(Number(banIntentCleanup?.failed||0)>0)throw new Error(banIntentCleanup.warning||'Customer was banned, but in-flight media access cleanup is incomplete.');
+  await audit('admin.bulk.ban',item.customer_id,actor,{email,reason,creationIntentCleanup:banIntentCleanup});
   return {banned:true,emailBlocked:Boolean(email),portalAccountPreserved:true};
 });
 
@@ -95,7 +105,9 @@ bulkWorker.registerHandler('jellyfin_delete',async item=>{
   // while independently valid Stremio/Emby access remains untouched.
   await jellyfinAdminControl.remove(item.customer_id,null,{actorUserId:actor,reason});
   const result=await deletion.deleteJellyfinAccounts(item.customer_id,{actorUserId:actor,reason,holdAccess:false,removeLocal:true,continueOnMissing:true});
-  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true,service:'jellyfin',serviceControl:'admin_removed'});
+  const intentCleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(item.customer_id);
+  if(Number(intentCleanup?.failed||0)>0)throw new Error(intentCleanup.warning||'Jellyfin access was removed locally, but in-flight remote media cleanup is incomplete.');
+  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true,service:'jellyfin',serviceControl:'admin_removed',creationIntentCleanup:intentCleanup});
   return {...result,portalAccountPreserved:true,serviceHold:false,serviceControl:'admin_removed'};
 });
 

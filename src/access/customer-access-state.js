@@ -2,6 +2,7 @@
 
 const subscriptionState = require('../entitlements/subscription-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const planServers = require('../jellyfin/plan-servers');
 
 const ACCESS_STATES = Object.freeze({
     NONE: 'NONE',
@@ -49,10 +50,21 @@ async function accountsForCustomer(customerId, supplied = null) {
     return Array.isArray(supplied) ? supplied : provisioning.normalAccounts(customerId);
 }
 
+async function withPlacementScope(entitlement) {
+    if (!entitlement || entitlement.admin_forced_server_id || entitlement.media_server_id || Array.isArray(entitlement.eligible_server_ids)) {
+        return entitlement;
+    }
+    const servers = await planServers.eligibleServersForPlan(entitlement, { enabledOnly: false, forPlacement: false });
+    return { ...entitlement, eligible_server_ids: servers.map(server => server.id) };
+}
+
 async function readyAccountForEntitlement(customerId, entitlement, lane, { accounts = null } = {}) {
     if (!entitlement || entitlement.blocked) return null;
-    const rows = await accountsForCustomer(customerId, accounts);
-    return rows.find(account => accountMatchesEntitlement(account, entitlement, lane)) || null;
+    const [rows, scopedEntitlement] = await Promise.all([
+        accountsForCustomer(customerId, accounts),
+        withPlacementScope(entitlement)
+    ]);
+    return rows.find(account => accountMatchesEntitlement(account, scopedEntitlement, lane)) || null;
 }
 
 function classifyLane({ entitlement = null, accounts = [], lane, paidMissing = false } = {}) {
@@ -88,10 +100,11 @@ function classifyLane({ entitlement = null, accounts = [], lane, paidMissing = f
 }
 
 async function freeJellyfin(customerId, { includeBlocked = true, accounts = null } = {}) {
-    const [entitlement, rows] = await Promise.all([
+    const [rawEntitlement, rows] = await Promise.all([
         subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked }),
         accountsForCustomer(customerId, accounts)
     ]);
+    const entitlement = await withPlacementScope(rawEntitlement);
     return classifyLane({ entitlement, accounts: rows, lane: 'free', paidMissing: false });
 }
 
@@ -100,7 +113,7 @@ async function primaryJellyfin(customerId, { includeBlocked = true, accounts = n
         subscriptionState.effectiveSubscription(customerId, { includeBlocked }),
         accountsForCustomer(customerId, accounts)
     ]);
-    const entitlement = rawEntitlement?.is_free_tier ? null : rawEntitlement;
+    const entitlement = await withPlacementScope(rawEntitlement?.is_free_tier ? null : rawEntitlement);
     return classifyLane({ entitlement, accounts: rows, lane: 'primary', paidMissing: true });
 }
 
@@ -161,6 +174,7 @@ module.exports = {
     sameId,
     laneOf,
     accountMatchesEntitlement,
+    withPlacementScope,
     isTrial,
     isPaid,
     operatorProtected,

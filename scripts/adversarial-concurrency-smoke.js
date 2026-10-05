@@ -16,6 +16,7 @@ const { encryptWithEnv } = require('../src/security/purpose-crypto');
 const suffix = crypto.randomBytes(6).toString('hex');
 const code = name => `race-${name}-${suffix}`;
 const email = name => `race-${name}-${suffix}@example.invalid`;
+const fleetServers = new Map();
 
 // Fleet capacity fails closed for any jellyfin premium/free plan with no
 // matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
@@ -25,21 +26,27 @@ const email = name => `race-${name}-${suffix}@example.invalid`;
 async function ensureFleetServers() {
     const apiKey = encryptWithEnv(`test-${suffix}`, 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
     for (const serverClass of ['premium', 'free']) {
-        await query(`
+        const created = await query(`
             INSERT INTO jellyfin_servers(
-                name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+                name,slug,server_class,media_server_type,base_url,public_url,location,api_key_encrypted,
                 enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
             )
-            VALUES($1,$2,$3,'jellyfin','https://example.invalid','https://example.invalid',$4,
+            VALUES($1,$2,$3,'jellyfin','https://example.invalid','https://example.invalid','Race Test',$4,
                    TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+            RETURNING id,location
         `, [`race-server-${serverClass}-${suffix}`, `race-server-${serverClass}-${suffix}`, serverClass, apiKey]);
+        fleetServers.set(serverClass, created.rows[0]);
     }
 }
 
 async function plan(name,{price=500,audience='direct',interval='month',streams=2}={}) {
-    return (await query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
+    const row=(await query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
         VALUES($1,$2,$3,$4,30,$5,'GBP',$6,'premium',TRUE,TRUE) RETURNING *`,
         [code(name),`Race ${name} ${suffix}`,audience,interval,price,streams])).rows[0];
+    const server=fleetServers.get('premium');
+    if(!server)throw new Error('Premium race server was not initialized');
+    await query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100) ON CONFLICT(plan_id,server_id) DO NOTHING`,[row.id,server.id]);
+    return row;
 }
 async function customer(name) {
     return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,
@@ -49,7 +56,7 @@ function snapshot(p,provider='stripe',checkoutMode='payment') {
     return {kind:'direct_plan',planId:p.id,planCode:p.code,planName:p.name,provider,checkoutMode,
         providerMappingId:`price_${suffix}`,priceMinor:Number(p.price_minor),discountedMinor:Number(p.price_minor),
         currency:String(p.currency).trim(),billingInterval:p.billing_interval,durationDays:Number(p.duration_days),streams:Number(p.streams),
-        allowDownloads:false,allowVideoTranscoding:false,allowAudioTranscoding:false,allowLiveTv:false,allowLiveTvManagement:false,serverClass:p.server_class};
+        allowDownloads:false,allowVideoTranscoding:false,allowAudioTranscoding:false,allowLiveTv:false,allowLiveTvManagement:false,serverClass:p.server_class,mediaLocation:'Race Test'};
 }
 
 async function lastDiscountUse() {
@@ -74,7 +81,9 @@ async function lastDiscountUse() {
 async function freeClaimRace() {
     const free=await query(`UPDATE plans SET capacity_limit=1,updated_at=NOW() WHERE is_free_tier=TRUE RETURNING *`);
     assert.strictEqual(free.rowCount,1,'Fresh database must contain exactly one canonical Free Access plan');
-    const p=free.rows[0],c=await customer('free');
+    const p=free.rows[0],c=await customer('free'),freeServer=fleetServers.get('free');
+    if(!freeServer)throw new Error('Free race server was not initialized');
+    await query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100) ON CONFLICT(plan_id,server_id) DO NOTHING`,[p.id,freeServer.id]);
 
     // Free claims are now binary: success requires an actual enabled Jellyfin
     // account. Stub the Jellyfin API for this concurrency-only test so a real
@@ -100,7 +109,10 @@ async function freeClaimRace() {
     };
 
     try{
-        const results=await Promise.allSettled([lifecycle.claimFreePlan(c.id,p.code),lifecycle.claimFreePlan(c.id,p.code)]);
+        const results=await Promise.allSettled([
+            lifecycle.claimFreePlan(c.id,p.code,{mediaLocation:'Race Test'}),
+            lifecycle.claimFreePlan(c.id,p.code,{mediaLocation:'Race Test'})
+        ]);
         assert.strictEqual(results.filter(x=>x.status==='fulfilled').length,1,'Concurrent free claim must produce exactly one successful claim');
         assert.strictEqual(results.filter(x=>x.status==='rejected').length,1,'Concurrent free claim must reject the duplicate claim');
         const count=await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' AND status IN('active','trialing','past_due','paused') AND current_period_end>NOW()`,[c.id,p.id]);

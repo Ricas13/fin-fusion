@@ -407,6 +407,44 @@ async function testTrialRollbackConvergesToNoPlanNoServer() {
     'failed unpaid trial must converge to no plan and no primary account');
 }
 
+async function testEmbyTrialRollbackConvergesToNoPlanNoServer() {
+  const customerId = await customer('emby-trial-rollback');
+  const planId = await plan('emby-trial-rollback', {
+    billingInterval: 'trial',
+    priceMinor: 0,
+    serviceType: 'emby'
+  });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+
+  const ended = await lifecycle.rollbackUnprovisionedEmbyTrial(
+    customerId,
+    subscription.id,
+    { reason: 'state-machine Emby trial rollback fixture' }
+  );
+  assert.strictEqual(String(ended.id), String(subscription.id),
+    'Emby trial rollback must close the exact subscription');
+
+  const row = (await query(
+    'SELECT status,current_period_end,replacement_reason,service_extension_days FROM subscriptions WHERE id=$1',
+    [subscription.id]
+  )).rows[0];
+  assert.strictEqual(row.status, 'cancelled', 'failed unpaid Emby trial must be terminal');
+  assert.strictEqual(row.replacement_reason, 'trial_activation_failed',
+    'failed unpaid Emby trial must remain identifiable as an activation failure');
+  assert.strictEqual(Number(row.service_extension_days || 0), 0,
+    'failed unpaid Emby trial must retain no extension');
+  assert(new Date(row.current_period_end).getTime() <= Date.now() + 1000,
+    'failed unpaid Emby trial must retain no future access window');
+
+  const access = await subscriptionState.effectiveEmbySubscription(customerId, { includeBlocked: true });
+  assert.strictEqual(access, null,
+    'failed unpaid Emby trial must converge to no live Emby entitlement');
+}
+
 async function testAdminPresentBlocksFreeRollback() {
   const customerId = await customer('free-admin-present-rollback');
   const freePlan = await canonicalFreePlan();
@@ -599,6 +637,7 @@ async function cleanup() {
   await testFreeInactivityIsNotCustomerRestorable();
   await testFreeRollbackConvergesToNoPlanNoServer();
   await testTrialRollbackConvergesToNoPlanNoServer();
+  await testEmbyTrialRollbackConvergesToNoPlanNoServer();
   await testAdminPresentBlocksFreeRollback();
   await testPermanentAccessBlocksTrialRollback();
   await testPaidProvisioningFailureRetainsEntitlement();

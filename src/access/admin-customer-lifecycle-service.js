@@ -6,9 +6,12 @@ const serviceScope=require('../entitlements/service-scope');
 const planExpiry=require('../entitlements/plan-expiry');
 const planChange=require('../payments/customer-plan-change');
 const planPricing=require('../payments/plan-pricing');
+const planCapacity=require('../entitlements/plan-capacity');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const forceMove=require('../jellyfin/admin-force-move');
 const serverMigration=require('../jellyfin/server-migration');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
+const jellyfinAdminControl=require('../jellyfin/admin-control');
 
 function clean(value,max=500){return String(value==null?'':value).trim().slice(0,max);}
 function jellyfinCapable(row){return serviceScope.capabilities(row).has('jellyfin');}
@@ -76,24 +79,63 @@ async function applyLocalPlanContract(sub,target){
   const snapshot=planChange.contractSnapshot(pricedTarget,mapping,sub.source||'admin');
   const periodEnd=planExpiry.endForPlan(target),freeTier=planExpiry.isFreeTier(target);
   let alreadyApplied=false;
+  let targetMediaServer=null;
   await transaction(async client=>{
     const locked=await lockSubscriptionForPlanChange(client,sub,target);
     alreadyApplied=locked.alreadyApplied;
     if(alreadyApplied)return;
+
+    await planCapacity.lockAndAssert(client,target.id,target.name||'This plan');
+
+    if(customerServerChoice.mediaServerType(target)){
+      const admin=await jellyfinAdminControl.state(sub.customer_id,locked.subscriptionId,{client});
+      if(admin?.mode==='admin_server_pin'&&admin.server_id){
+        const pinned=(await client.query(`
+          SELECT * FROM jellyfin_servers
+          WHERE id=$1 AND enabled=TRUE
+            AND COALESCE(media_server_type,'jellyfin')='jellyfin'
+          LIMIT 1
+        `,[admin.server_id])).rows[0]||null;
+        if(!pinned)throw new Error('The administrator-pinned Jellyfin server is unavailable. Repair the server pin before changing this plan.');
+        targetMediaServer={...pinned,selected_location:customerServerChoice.locationLabel(pinned.location)};
+      }else{
+        targetMediaServer=await customerServerChoice.existingAssignedServerForPlan(
+          target,
+          sub.media_server_id,
+          null,
+          {db:(sql,params)=>client.query(sql,params)}
+        );
+        if(!targetMediaServer){
+          targetMediaServer=await customerServerChoice.selectServerForLocationLocked(
+            target,
+            null,
+            {db:(sql,params)=>client.query(sql,params),requireSelection:false}
+          );
+        }
+      }
+    }
+
+    const mediaLocation=targetMediaServer?.selected_location||customerServerChoice.locationLabel(targetMediaServer?.location)||null;
+    const commercialSnapshot={...snapshot,...(targetMediaServer?{mediaLocation,mediaServerId:targetMediaServer.id}:{})};
     const updated=await client.query(`UPDATE subscriptions
       SET plan_id=$2,plan_name_snapshot=$3,plan_code_snapshot=$4,price_minor_snapshot=$5,
           currency_snapshot=$6,billing_interval_snapshot=$7,duration_days_snapshot=$8,
           service_type_snapshot=$9,provider_price_id_snapshot=NULL,commercial_snapshot=$10::jsonb,
           plan_price_id_snapshot=$11,provider_mapping_id_snapshot=NULL,
           provider_mapping_external_id_snapshot=NULL,current_period_end=$12,
-          service_extension_days=CASE WHEN $13::boolean THEN 0 ELSE service_extension_days END,updated_at=NOW()
+          service_extension_days=CASE WHEN $13::boolean THEN 0 ELSE service_extension_days END,
+          media_location_preference=CASE WHEN $15::uuid IS NULL THEN media_location_preference ELSE $16 END,
+          media_server_id=CASE WHEN $15::uuid IS NULL THEN media_server_id ELSE $15 END,
+          media_location_snapshot=CASE WHEN $15::uuid IS NULL THEN media_location_snapshot ELSE $16 END,
+          updated_at=NOW()
       WHERE id=$1 AND customer_id=$14 RETURNING id`,
       [locked.subscriptionId,target.id,target.name,target.code,Number(price.price_minor),
        String(price.currency).toUpperCase(),target.billing_interval,Number(target.duration_days||30),
-       target.service_type,JSON.stringify(snapshot),price.id,periodEnd,freeTier,sub.customer_id]);
+       target.service_type,JSON.stringify(commercialSnapshot),price.id,periodEnd,freeTier,sub.customer_id,
+       targetMediaServer?.id||null,mediaLocation]);
     if(!updated.rowCount)throw new Error('Subscription changed before the plan update could be applied.');
   });
-  return{price,snapshot,periodEnd,freeTier,alreadyApplied};
+  return{price,snapshot,periodEnd,freeTier,alreadyApplied,targetMediaServer};
 }
 
 async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=null}){

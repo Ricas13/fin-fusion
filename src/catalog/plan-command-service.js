@@ -3,6 +3,7 @@
 const { transaction } = require('../db');
 const planPricing = require('../payments/plan-pricing');
 const planContract = require('./plan-contract');
+const mediaCapacityConfig = require('../jellyfin/plan-capacity-configuration');
 
 async function createPlan(plan, actorUserId = null) {
   planContract.validateCreatePlan(plan);
@@ -139,6 +140,7 @@ async function updateMediaUserLimit({ planId, mediaUserLimit, freeInactivityPoli
     }
   }
   return transaction(async client => {
+    await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId,limit:value});
     const updated = await client.query(
       `UPDATE plans SET capacity_limit=$2,
          inactivity_policy=jsonb_set(COALESCE(inactivity_policy,'{}'::jsonb),'{mediaCapacityManaged}','true'::jsonb,TRUE) || $3::jsonb,
@@ -224,6 +226,7 @@ async function updateDelivery({
         );
       }
     }
+    await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId,poolMode,serverIds:servers.map(server=>server.id),serverClass});
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
        VALUES($1,'admin.plan.server_placement','plan',$2,$3::jsonb)`,
@@ -800,6 +803,7 @@ async function upsertEmbyPlan({
         );
       }
     }
+    await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId:row.id,limit:input.capacityLimit,poolMode:input.poolMode,serverIds:selectedServers.map(server=>server.id),serverClass:input.serverClass});
 
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
@@ -1049,6 +1053,7 @@ async function updatePlanPlacement({
         );
       }
     }
+    await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId,poolMode,serverIds:servers.map(server=>server.id)});
 
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
@@ -1067,6 +1072,7 @@ async function updatePlanInventory({
 }) {
   planContract.validateAvailability({ capacityLimit });
   return transaction(async client => {
+    await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId,limit:capacityLimit});
     const updated = await client.query(
       `UPDATE plans
        SET capacity_limit=$2,updated_at=NOW()
@@ -1116,6 +1122,7 @@ async function updatePlanOverview({
 
     if (classChanged) {
       await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [planId]);
+      await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId,poolMode:'all',serverClass:input.serverClass});
     }
 
     await client.query(

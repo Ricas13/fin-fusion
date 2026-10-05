@@ -7,6 +7,7 @@ const discounts=require('./discounts');
 const checkoutIntents=require('./checkout-intents');
 const lifecyclePrimitives=require('./lifecycle-primitives');
 const inactivityHolds=require('../entitlements/inactivity-hold-reconciliation');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 function money(value){const n=Number(value);return Number.isInteger(n)&&n>=0?n:null;}
 function snapshotObject(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
@@ -36,17 +37,41 @@ async function activateFullyDiscountedPayment({customerId,intentId,nonce,provide
             households:snapshot.stremioHouseholdNetworkLimit
         });
 
-        const startsAt=new Date(),endsAt=billingPeriods.addPlanDuration(snapshot,startsAt),storedSnapshot={...snapshot,checkoutIntentId:intent.id,settlementKind:'fully_discounted_local'};
+        let mediaLocation=snapshot.mediaLocation==null?null:String(snapshot.mediaLocation).trim().slice(0,100)||null;
+        let mediaServerId=intent.media_server_id||snapshot.mediaServerId||null;
+        if(customerServerChoice.mediaServerType(plan)){
+            let selected=await customerServerChoice.committedReservedServer(
+                plan,mediaServerId,mediaLocation,{db:(sql,params)=>client.query(sql,params)}
+            );
+            if(!selected){
+                selected=await customerServerChoice.selectServerForLocationLocked(
+                    plan,mediaLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true}
+                );
+            }
+            mediaServerId=selected?.id||null;
+            mediaLocation=selected?.selected_location||mediaLocation;
+            if(!mediaServerId){
+                const error=new Error('The reserved media server is no longer available for this fully discounted checkout.');
+                error.code='MEDIA_LOCATION_UNAVAILABLE';
+                throw error;
+            }
+            if(String(intent.media_server_id||'')!==String(mediaServerId)){
+                await client.query('UPDATE billing_checkout_intents SET media_server_id=$2,updated_at=NOW() WHERE id=$1',[intent.id,mediaServerId]);
+            }
+        }
+        const startsAt=new Date(),endsAt=billingPeriods.addPlanDuration(snapshot,startsAt),storedSnapshot={...snapshot,mediaLocation,mediaServerId,checkoutIntentId:intent.id,settlementKind:'fully_discounted_local'};
         const inserted=await client.query(`INSERT INTO subscriptions(
             customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,
             plan_price_id_snapshot,provider_mapping_id_snapshot,provider_mapping_external_id_snapshot,
             plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,
-            billing_interval_snapshot,duration_days_snapshot,commercial_snapshot
-        ) VALUES($1,$2,'active','manual',$3,$4,FALSE,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING *`,[
+            billing_interval_snapshot,duration_days_snapshot,commercial_snapshot,
+            media_location_preference,media_server_id,media_location_snapshot
+        ) VALUES($1,$2,'active','manual',$3,$4,FALSE,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$15) RETURNING *`,[
             customerId,plan.id,startsAt,endsAt,snapshot.planPriceId||null,snapshot.providerMappingRecordId||null,
             snapshot.providerMappingId||null,snapshot.planName||plan.name,snapshot.planCode||plan.code,
             Number(snapshot.priceMinor||0),String(snapshot.currency||plan.currency||'').toUpperCase(),
-            snapshot.billingInterval||plan.billing_interval,Number(snapshot.durationDays||plan.duration_days||30),JSON.stringify(storedSnapshot)
+            snapshot.billingInterval||plan.billing_interval,Number(snapshot.durationDays||plan.duration_days||30),JSON.stringify(storedSnapshot),
+            mediaLocation,mediaServerId
         ]);
         const row=inserted.rows[0];
         await discounts.redeemForSubscriptionTx(client,{

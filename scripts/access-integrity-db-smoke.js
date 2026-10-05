@@ -105,7 +105,9 @@ function kindsFor(findings, customerId) {
 (async () => {
   const freePlanId = await canonicalFreePlanId();
   const freeServerId = await makeServer('free', 'free');
+  const assignedFreeServerId = await makeServer('free-assigned', 'free');
   const premiumServerId = await makeServer('premium', 'premium');
+  const assignedPremiumServerId = await makeServer('premium-assigned', 'premium');
   const trialPlanId = await makePlan('trial', { billingInterval: 'trial', priceMinor: 0 });
   const paidPlanId = await makePlan('paid', { billingInterval: 'month', priceMinor: 999 });
 
@@ -116,6 +118,19 @@ function kindsFor(findings, customerId) {
     const freeReady = await makeCustomer('free-ready');
     await makeSubscription(freeReady, freePlanId, { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" });
     await makeAccount(freeReady, freeServerId, 'free', 'free-ready');
+
+    const freeWrongServer = await makeCustomer('free-wrong-server');
+    const freeWrongSubscription = await makeSubscription(freeWrongServer, freePlanId, { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [freeWrongSubscription, assignedFreeServerId]);
+    await makeAccount(freeWrongServer, freeServerId, 'free', 'free-wrong-server');
+
+    const freeAdminPinned = await makeCustomer('free-admin-pinned');
+    const freeAdminPinnedSubscription = await makeSubscription(freeAdminPinned, freePlanId, { source: 'free_claim', endSql: "NOW()+INTERVAL '3000 days'" });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [freeAdminPinnedSubscription, assignedFreeServerId]);
+    await makeAccount(freeAdminPinned, freeServerId, 'free', 'free-admin-pinned');
+    await serviceAdminControl.pinServer(freeAdminPinned, freeServerId, {
+      reason: 'access integrity admin pin smoke'
+    });
 
     const migratedBlockedFreeMissing = await makeCustomer('free-migrated-blocked-missing');
     const migratedBlockedSubscription = await makeSubscription(
@@ -198,6 +213,11 @@ function kindsFor(findings, customerId) {
     const trialMissing = await makeCustomer('trial-missing');
     await makeSubscription(trialMissing, trialPlanId, { status: 'trialing', source: 'manual' });
 
+    const trialWrongServer = await makeCustomer('trial-wrong-server');
+    const trialWrongSubscription = await makeSubscription(trialWrongServer, trialPlanId, { status: 'trialing', source: 'manual' });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [trialWrongSubscription, assignedPremiumServerId]);
+    await makeAccount(trialWrongServer, premiumServerId, 'primary', 'trial-wrong-server');
+
     const primaryOrphan = await makeCustomer('primary-orphan');
     await makeAccount(primaryOrphan, premiumServerId, 'primary', 'primary-orphan');
 
@@ -209,12 +229,31 @@ function kindsFor(findings, customerId) {
     // provisioning recovery state.
     await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [paidMissing]);
 
+    const paidWrongServer = await makeCustomer('paid-wrong-server');
+    const paidWrongSubscription = await makeSubscription(paidWrongServer, paidPlanId, { source: 'stripe' });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [paidWrongSubscription, assignedPremiumServerId]);
+    await makeAccount(paidWrongServer, premiumServerId, 'primary', 'paid-wrong-server');
+    await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [paidWrongServer]);
+
+    const paidAdminPinned = await makeCustomer('paid-admin-pinned');
+    const paidAdminPinnedSubscription = await makeSubscription(paidAdminPinned, paidPlanId, { source: 'stripe' });
+    await query('UPDATE subscriptions SET media_server_id=$2 WHERE id=$1', [paidAdminPinnedSubscription, assignedPremiumServerId]);
+    await makeAccount(paidAdminPinned, premiumServerId, 'primary', 'paid-admin-pinned');
+    await serviceAdminControl.pinServer(paidAdminPinned, premiumServerId, {
+      reason: 'access integrity paid admin pin smoke'
+    });
+    await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [paidAdminPinned]);
+
     const findings = await accessIntegrity.scan({ limit: 500 });
 
     assert(kindsFor(findings, freeMissing).has('free_plan_without_ready_server'),
       'live Free plan without a ready Free account must be detected');
     assert(!kindsFor(findings, freeReady).has('free_plan_without_ready_server'),
       'ready Free plan+server must not be reported as inconsistent');
+    assert(kindsFor(findings, freeWrongServer).has('free_plan_without_ready_server'),
+      'a Free account on the wrong server must not satisfy the persisted assignment');
+    assert(!kindsFor(findings, freeAdminPinned).has('free_plan_without_ready_server'),
+      'an administrator-pinned Free account must override the stale persisted subscription assignment');
     assert(!kindsFor(findings, migratedBlockedFreeMissing).has('free_plan_without_ready_server'),
       'failed migrated Free restore must not be misclassified as a generic stranded entitlement');
     assert(kindsFor(findings, migratedBlockedFreeMissing).has('free_restore_reprovision_failed'),
@@ -231,10 +270,16 @@ function kindsFor(findings, customerId) {
       'Free account without a Free plan must be detected');
     assert(kindsFor(findings, trialMissing).has('unpaid_trial_without_ready_server'),
       'unpaid Jellyfin trial without a server must be detected');
+    assert(kindsFor(findings, trialWrongServer).has('unpaid_trial_without_ready_server'),
+      'an unpaid trial account on the wrong server must not satisfy the persisted assignment');
     assert(kindsFor(findings, primaryOrphan).has('primary_server_without_plan'),
       'primary account without a live primary entitlement must be detected');
     assert(kindsFor(findings, paidMissing).has('paid_plan_without_recovery_state'),
       'paid plan without a server must retain a durable provisioning recovery state');
+    assert(kindsFor(findings, paidWrongServer).has('paid_plan_without_recovery_state'),
+      'a paid account on the wrong server must not hide missing provisioning recovery for the assigned server');
+    assert(!kindsFor(findings, paidAdminPinned).has('paid_plan_without_recovery_state'),
+      'an administrator-pinned paid account must override the stale persisted subscription assignment');
 
     console.log('access integrity DB smoke: ok');
   } finally {

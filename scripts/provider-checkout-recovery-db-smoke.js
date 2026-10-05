@@ -18,13 +18,14 @@ function unique(label) { return `${label}-${suffix}-${fixtureUnique('case')}`; }
 async function ensurePremiumCapacity() {
     const row = (await query(`
         INSERT INTO jellyfin_servers(
-            name,slug,server_class,base_url,api_key_encrypted,
+            name,slug,server_class,base_url,public_url,location,api_key_encrypted,
             enabled,allow_new_users,paid_enabled,priority,max_users,
             health_status,last_health_check
         )
-        VALUES($1,$2,'premium','https://checkout-recovery.example.invalid','key',
+        VALUES($1,$2,'premium','https://checkout-recovery.example.invalid',
+               'https://checkout-recovery.example.invalid','Checkout Recovery','key',
                TRUE,TRUE,TRUE,10,1000,'healthy',NOW())
-        RETURNING id
+        RETURNING id,location
     `, [`Checkout recovery ${suffix}`, unique('checkout-recovery-server')])).rows[0];
     createdServers.push(row.id);
     return row;
@@ -39,7 +40,7 @@ async function customer(label) {
     return row;
 }
 
-async function plan(label) {
+async function plan(label, server) {
     const row = await fixturePlan({ query }, {
         code: unique(label),
         name: label,
@@ -54,7 +55,11 @@ async function plan(label) {
         serverClass: 'premium'
     });
     createdPlans.push(row.id);
-    return row;
+    await query(
+        'INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)',
+        [row.id, server.id]
+    );
+    return { ...row, test_media_location: server.location };
 }
 
 function snapshotFor(p, provider, providerMappingId, checkoutMode = 'subscription') {
@@ -74,13 +79,14 @@ function snapshotFor(p, provider, providerMappingId, checkoutMode = 'subscriptio
         provider,
         checkoutMode,
         providerMappingId,
-        providerMappingRecordId: null
+        providerMappingRecordId: null,
+        mediaLocation: p.test_media_location
     };
 }
 
-async function attachedIntent(label, provider, providerCheckoutId, providerMappingId, checkoutMode = 'subscription') {
+async function attachedIntent(label, provider, providerCheckoutId, providerMappingId, checkoutMode = 'subscription', server) {
     const owner = await customer(`${label} customer`);
-    const p = await plan(`${label} plan`);
+    const p = await plan(`${label} plan`, server);
     const created = await intents.createIntent({
         scope: 'customer',
         customerId: owner.id,
@@ -115,12 +121,12 @@ function missingPayPalError(status = 404, message = 'The specified resource does
 }
 
 async function main() {
-    await ensurePremiumCapacity();
-    const stripeOk = await attachedIntent('recovery stripe ok', 'stripe', `cs_test_${unique('ok')}`, `price_${unique('ok')}`);
-    const stripeFail = await attachedIntent('recovery stripe fail', 'stripe', `cs_test_${unique('fail')}`, `price_${unique('fail')}`);
-    const stripePayment = await attachedIntent('recovery stripe payment', 'stripe', `cs_test_${unique('payment')}`, null, 'payment');
-    const paypalActive = await attachedIntent('recovery paypal active', 'paypal', `I-${unique('active')}`, `P-${unique('active')}`);
-    const paypalPending = await attachedIntent('recovery paypal pending', 'paypal', `I-${unique('pending')}`, `P-${unique('pending')}`);
+    const server = await ensurePremiumCapacity();
+    const stripeOk = await attachedIntent('recovery stripe ok', 'stripe', `cs_test_${unique('ok')}`, `price_${unique('ok')}`, 'subscription', server);
+    const stripeFail = await attachedIntent('recovery stripe fail', 'stripe', `cs_test_${unique('fail')}`, `price_${unique('fail')}`, 'subscription', server);
+    const stripePayment = await attachedIntent('recovery stripe payment', 'stripe', `cs_test_${unique('payment')}`, null, 'payment', server);
+    const paypalActive = await attachedIntent('recovery paypal active', 'paypal', `I-${unique('active')}`, `P-${unique('active')}`, 'subscription', server);
+    const paypalPending = await attachedIntent('recovery paypal pending', 'paypal', `I-${unique('pending')}`, `P-${unique('pending')}`, 'subscription', server);
 
     const first = await recovery.run({
         limit: 20,
@@ -198,7 +204,9 @@ async function main() {
         'recovery paypal missing',
         'paypal',
         `I-${unique('missing')}`,
-        `P-${unique('missing')}`
+        `P-${unique('missing')}`,
+        'subscription',
+        server
     );
     await query(`
         UPDATE billing_checkout_intents
@@ -231,7 +239,9 @@ async function main() {
         'recovery paypal open missing',
         'paypal',
         `I-${unique('open-missing')}`,
-        `P-${unique('open-missing')}`
+        `P-${unique('open-missing')}`,
+        'subscription',
+        server
     );
     const openMissingResult = await recovery.run({
         limit: 20,
