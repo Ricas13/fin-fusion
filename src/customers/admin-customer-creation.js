@@ -27,7 +27,7 @@ async function create({
            AND (effective_until IS NULL OR effective_until>NOW())
            AND audience IN('direct','both')
            AND COALESCE(is_addon,FALSE)=FALSE
-           AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio')`,
+           AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','bundle')`,
         [planCode]
       );
       if(!found.rowCount)throw new Error('Choose an active standalone direct-customer plan.');
