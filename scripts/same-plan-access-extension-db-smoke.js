@@ -21,7 +21,7 @@ async function main(){
   const subscription=(await query(`
     INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,
       billing_interval_snapshot,duration_days_snapshot,service_type_snapshot)
-    VALUES($1,$2,'active','stripe','subscription',$3,NOW()-INTERVAL '5 days',NOW()+INTERVAL '25 days','month',30,'jellyfin')
+    VALUES($1,$2,'active','stripe','subscription',$3,'2029-12-31T00:00:00Z','2030-01-31T00:00:00Z','month',30,'jellyfin')
     RETURNING *
   `,[customer.id,plan.id,`sub_extension_${suffix}`])).rows[0];
 
@@ -34,7 +34,7 @@ async function main(){
     providerPaymentId:`pi_extension_1_${suffix}`,commercialSnapshot:snapshot
   }));
   assert.equal(first.replay,false,'first extension must be new');
-  assert.equal(Number(first.subscription.service_extension_days),30,'first extension must add exactly one plan duration');
+  assert.equal(Number(first.subscription.service_extension_days),28,'Jan 31 monthly extension must end on Feb 28, not assume a fixed 30-day month');
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM subscriptions WHERE customer_id=$1',[customer.id])).rows[0].n,1,'extension must not create a second subscription');
 
   const replay=await transaction(client=>extensions.applyPurchase(client,{
@@ -42,29 +42,33 @@ async function main(){
     providerPaymentId:`pi_extension_1_${suffix}`,commercialSnapshot:snapshot
   }));
   assert.equal(replay.replay,true,'provider replay must be idempotent');
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),30,'replay must not double-add time');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),28,'replay must not double-add time');
 
   await transaction(client=>extensions.applyPurchase(client,{
     customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'paypal',
     providerPaymentId:`PAYPAL-EXT-2-${suffix}`,commercialSnapshot:snapshot
   }));
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),60,'independent extension purchases must stack');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),56,'independent monthly extensions must stack from Jan 31 -> Feb 28 -> Mar 28');
+
+  await query("UPDATE subscriptions SET current_period_end='2030-02-28T00:00:00Z' WHERE id=$1",[subscription.id]);
+  const rebased=await transaction(client=>extensions.recomputeActivePurchasedDaysTx(client,subscription.id,customer.id));
+  assert.equal(Number(rebased.subscription.service_extension_days),59,'provider renewal must rebase extensions from Feb 28 -> Mar 28 -> Apr 28 using calendar periods');
 
   const revoked=await extensions.revokeByProviderPayment({
     provider:'stripe',providerPaymentId:`pi_extension_1_${suffix}`,customerId:customer.id,reason:'test full refund',reference:'smoke'
   });
   assert.equal(revoked.changed,true,'confirmed reversal must remove the purchased extension');
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),30,'reversal must remove only its own purchased days');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),31,'reversal must remove only its own rebased purchased period');
   const revokedAgain=await extensions.revokeByProviderPayment({
     provider:'stripe',providerPaymentId:`pi_extension_1_${suffix}`,customerId:customer.id,reason:'duplicate refund',reference:'smoke-replay'
   });
   assert.equal(revokedAgain.changed,false,'reversal replay must be idempotent');
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),30,'duplicate reversal must not remove time twice');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),31,'duplicate reversal must not remove time twice');
 
   await query('UPDATE subscriptions SET status=\'cancelled\',current_period_end=NOW(),service_extension_days=0 WHERE id=$1',[subscription.id]);
   const restored=await extensions.restoreActivePurchasedDays(subscription.id,customer.id);
-  assert.equal(restored.purchasedDays,30,'a separate base-term reversal must discover the still-paid extension');
-  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),30,'a base-term reversal must not erase independently paid extension time');
+  assert(restored.purchasedDays>=28&&restored.purchasedDays<=31,'a separate base-term reversal must recompute the still-paid monthly extension from the new cursor');
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),restored.purchasedDays,'a base-term reversal must not erase independently paid extension time');
 
   await assert.rejects(
     transaction(client=>extensions.applyPurchase(client,{
