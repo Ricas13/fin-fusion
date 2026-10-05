@@ -158,6 +158,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   const confirmedFullRefund=kind==='refund'&&(metadata?.fullRefund===true||incident.metadata?.fullRefund===true);
   const confirmedLostChargeback=kind==='chargeback'&&(status==='lost'||incident.incident_status==='lost');
   const moneyConfirmedLost=confirmedFullRefund||confirmedLostChargeback;
+  let extensionPaymentLoss=false;
   if(moneyConfirmedLost&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
@@ -170,6 +171,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
         reason:`${lossLabel} (${provider} ${kind} ${incident.id})`,
         incidentId:incident.id
       });
+      extensionPaymentLoss=Boolean(revokedExtension.subscriptionId);
       if(revokedExtension.changed)await reconcileMany([effectIdentity.customerId]);
       const matched=await query(`
         SELECT id,billing_mode,current_period_end,duration_days_snapshot
@@ -209,7 +211,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     }
     if(effectIdentity.scope!=='unresolved')affected=await releaseHold(effectIdentity,provider,incident.provider_case_id);
   }
-  return{duplicate:Boolean(incident.duplicate),incident,affected};
+  return{duplicate:Boolean(incident.duplicate),incident,affected,extensionPaymentLoss};
 }
 async function get(id){const r=await query(`SELECT * FROM payment_incidents WHERE id=$1`,[id]);return r.rows[0]||null}
 async function acknowledge(id,actorUserId){const r=await query(`UPDATE payment_incidents SET acknowledged_at=COALESCE(acknowledged_at,NOW()),acknowledged_by=COALESCE(acknowledged_by,$2),updated_at=NOW() WHERE id=$1 RETURNING *`,[id,actorUserId]);if(!r.rowCount)throw new Error('Payment incident not found.');await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_incident.acknowledge','payment_incident',$2,'{}'::jsonb)`,[actorUserId,id]);return r.rows[0]}
