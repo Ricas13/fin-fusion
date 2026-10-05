@@ -146,6 +146,11 @@ async function assertCanonicalCurrentTx(client, row) {
     error.code = 'SUBSCRIPTION_EXTENSION_TARGET_STALE';
     throw error;
   }
+  if (current.blocked) {
+    const error = new Error('This subscription currently has an access hold. Resolve the account or payment issue before buying extra time.');
+    error.code = 'SUBSCRIPTION_EXTENSION_ACCESS_BLOCKED';
+    throw error;
+  }
   const openChange = await client.query(`
     SELECT id
     FROM customer_plan_changes
