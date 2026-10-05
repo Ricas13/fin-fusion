@@ -188,11 +188,11 @@ WITH matching_assignments AS (
     AND s.superseded_by IS NULL
     AND (
       (
-        p.service_type='emby'
+        COALESCE(p.service_type,'jellyfin')='emby'
         AND COALESCE(js.media_server_type,'jellyfin')='emby'
       )
       OR (
-        p.service_type IN('jellyfin','bundle')
+        COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
         AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
         AND (
           (COALESCE(p.is_free_tier,FALSE)=TRUE AND COALESCE(ja.access_lane,'primary')='free')
