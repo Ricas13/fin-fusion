@@ -140,4 +140,27 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
   });
 }
 
-module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,purchasedDays,lockedTarget,applyPurchase,extensionIdentity,revokeByProviderPayment};
+async function restoreActivePurchasedDays(subscriptionId,customerId){
+  subscriptionId=cleanReference(subscriptionId,'Subscription');
+  return transaction(async client=>{
+    const locked=(await client.query('SELECT id,customer_id,service_extension_days FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subscriptionId,customerId])).rows[0]||null;
+    if(!locked)return{changed:false,purchasedDays:0,subscription:null};
+    const total=(await client.query(`
+      SELECT COALESCE(SUM(purchased_days),0)::int AS days
+        FROM subscription_access_extensions
+       WHERE subscription_id=$1 AND customer_id=$2 AND status='active'
+    `,[subscriptionId,customerId])).rows[0];
+    const days=Math.max(0,Number(total?.days||0));
+    if(!days)return{changed:false,purchasedDays:0,subscription:locked};
+    const updated=(await client.query(`
+      UPDATE subscriptions
+         SET service_extension_days=GREATEST(COALESCE(service_extension_days,0),$2),
+             updated_at=NOW()
+       WHERE id=$1
+       RETURNING *
+    `,[subscriptionId,days])).rows[0];
+    return{changed:Number(updated.service_extension_days||0)!==Number(locked.service_extension_days||0),purchasedDays:days,subscription:updated};
+  });
+}
+
+module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,purchasedDays,lockedTarget,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
