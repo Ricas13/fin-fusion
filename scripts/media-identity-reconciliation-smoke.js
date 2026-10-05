@@ -111,6 +111,10 @@ function source(file) {
   assert(reconcile.includes('This media identity has an active playback session'));
   assert(reconcile.includes('Media server session state could not be verified.'), 'Manual destructive reconciliation must fail closed when session state is malformed.');
   assert(reconcile.includes('orphanCleanup.raceCheck({'), 'Manual managed-Stremio deletion must use the same fail-closed orphan race check as background cleanup.');
+  assert(
+    reconcile.indexOf('orphanCleanup.raceCheck({') < reconcile.indexOf("method: 'DELETE'"),
+    'Manual managed-Stremio safety checks must complete before any remote DELETE is attempted.'
+  );
   assert(reconcile.includes('orphanCleanup.withPotentialOwnerLocks({'), 'Manual managed-Stremio deletion must serialize against managed-account recovery before its final safety check and DELETE.');
   assert(reconcile.includes('This managed Stremio identity is not safe to delete'), 'Manual managed-Stremio deletion must reject unknown-age, recent, active, provisioning, managed or otherwise unsafe identities.');
   assert(reconcile.includes('const { user: currentRemote } = await userImport.getRemoteUser(serverId, jellyfinUserId)') && reconcile.includes('The remote identity became an administrator before deletion.'), 'Manual deletion must re-read remote identity/admin state immediately before DELETE.');
