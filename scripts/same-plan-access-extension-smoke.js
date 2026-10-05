@@ -31,6 +31,8 @@ assert(intents.includes("['direct_plan','subscription_extension'].includes(snaps
 assert(lifecycle.includes("['direct_plan','subscription_extension'].includes(snapshot.kind)"),'lifecycle snapshot validation must accept paid extension contracts before extension routing');
 assert(lifecycle.includes("contract?.kind === 'subscription_extension'"),'payment activation must route extension purchases away from new subscription creation');
 assert(lifecycle.includes('accessExtensions.applyPurchase'),'extension activation must use the dedicated idempotent lifecycle');
+assert(lifecycle.includes("contract?.kind === 'subscription_extension'")&&lifecycle.includes('extensionFulfillmentFailure'),'every provider-paid extension fulfillment failure must be durably classified for recovery');
+assert(lifecycle.includes('extension_allowance_changed_after_provider_settlement')&&lifecycle.includes('extension_plan_change_open_after_provider_settlement'),'paid extension incidents must preserve actionable failure reasons instead of collapsing to capacity');
 assert(extension.includes('ACCESS_EXTENSION_PAYMENT_ALREADY_USED'),'extension lifecycle must reject provider payments already used by normal subscriptions');
 assert(lifecycle.includes('PROVIDER_PAYMENT_ALREADY_USED_FOR_EXTENSION'),'normal subscription activation must reject provider payments already consumed by extensions');
 assert(extension.includes('billingPeriods.addPlanDuration'),'extension duration must use canonical calendar billing periods');
