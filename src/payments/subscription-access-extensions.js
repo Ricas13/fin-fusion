@@ -124,9 +124,20 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
     FOR UPDATE
   `,[subscriptionId])).rows;
   const active=rows.filter(row=>row.status==='active');
-  const oldActiveDays=active.reduce((sum,row)=>sum+Math.max(0,Number(row.purchased_days||0)),0);
+  // service_extension_days is the aggregate of unrelated/manual extension time
+  // plus every purchased extension that was applied previously. When one
+  // purchased row is revoked, derive the non-purchase baseline from ALL ledger
+  // rows, not only the rows that remain active; otherwise the revoked days are
+  // mistaken for unrelated baseline time and survive a refund.
+  const recordedPurchasedDays=rows.reduce((sum,row)=>sum+Math.max(0,Number(row.purchased_days||0)),0);
   const currentTotal=Math.max(0,Number(subscription.service_extension_days||0));
-  const baseDays=Math.max(0,currentTotal-oldActiveDays);
+  let baseDays=currentTotal-recordedPurchasedDays;
+  if(baseDays<0){
+    // Another canonical lifecycle action has already shortened/reset service
+    // extension time. Never resurrect time merely because historical ledger
+    // rows still record what they once contributed.
+    baseDays=0;
+  }
   let cursor=new Date(new Date(subscription.current_period_end).getTime()+baseDays*86400000);
   let activeDays=0;
   for(const row of active){
