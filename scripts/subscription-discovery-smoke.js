@@ -179,6 +179,7 @@ const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payme
 const manualSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'manual-subscription-link.js'), 'utf8');
 assert.ok(!discoverySource.includes("e.server_class='premium'"), 'paid provider-link discovery must not depend on the legacy media server class when explicit plan pools are authoritative');
 assert.ok(!unlinkedPaidTermSource.includes("row.effective_server_class !== 'premium'"), 'operator classification of paid fixed terms must not depend on the legacy media server class');
+assert.ok(unlinkedPaidTermSource.includes("['jellyfin','emby','bundle']"), 'operator fixed-term billing disposition must cover every paid media service included by provider discovery');
 assert.ok(discoverySource.includes("IN ('jellyfin','emby','bundle')"), 'provider-link discovery must cover every paid media service that can use recurring Stripe/PayPal billing');
 assert.ok(discoverySource.includes("COALESCE(e.price_minor_snapshot,e.price_minor,0)>0") && discoverySource.includes("COALESCE(e.is_free_tier,FALSE)=FALSE"), 'paid/non-Free commercial state must define provider-link discovery eligibility');
 assert.ok(discoverySource.includes("IN('manual','admin_grant')") && discoverySource.includes("provider_subscription_id"), 'billing coverage SQL must classify historical provider-less manual grants consistently with the JavaScript fixed-term logic');
