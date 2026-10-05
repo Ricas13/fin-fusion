@@ -187,11 +187,23 @@ async function syncReportedPayPalSubscriptionPayments(rows, { limit = 500 } = {}
         WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
         ORDER BY updated_at DESC,created_at DESC
     `, [subscriptionIds]) : { rows: [] };
-    const bySubscription = new Map();
+    const ownership = new Map();
     for (const row of mapped.rows) {
         const key = String(row.provider_subscription_id || '');
-        if (!key || !row.customer_id || bySubscription.has(key)) continue;
-        bySubscription.set(key, row);
+        if (!key || !row.customer_id) continue;
+        if (!ownership.has(key)) ownership.set(key, { rows: [], customerIds: new Set() });
+        const group = ownership.get(key);
+        group.rows.push(row);
+        group.customerIds.add(String(row.customer_id));
+    }
+    const bySubscription = new Map();
+    const ambiguousSubscriptionIds = new Set();
+    for (const [key, group] of ownership) {
+        if (group.customerIds.size !== 1) {
+            ambiguousSubscriptionIds.add(key);
+            continue;
+        }
+        bySubscription.set(key, group.rows[0]);
     }
 
     const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
@@ -203,7 +215,7 @@ async function syncReportedPayPalSubscriptionPayments(rows, { limit = 500 } = {}
     for (const row of candidates) {
         const subscriptionId = paypalSubscriptionReference(row);
         const local = subscriptionId ? bySubscription.get(subscriptionId) || null : null;
-        if (!local?.customer_id || !Number.isInteger(row.amountMinor) || row.amountMinor <= 0 || !row.currency) {
+        if ((subscriptionId && ambiguousSubscriptionIds.has(subscriptionId)) || !local?.customer_id || !Number.isInteger(row.amountMinor) || row.amountMinor <= 0 || !row.currency) {
             skipped += 1;
             skippedIds.push(String(row.id));
             continue;
@@ -232,7 +244,7 @@ async function syncReportedPayPalSubscriptionPayments(rows, { limit = 500 } = {}
     }
 
     const warningParts = [];
-    if (skipped) warningParts.push(`${skipped} successful recurring PayPal payment${skipped === 1 ? '' : 's'} could not be matched to a local PayPal subscription and were not booked.`);
+    if (skipped) warningParts.push(`${skipped} successful recurring PayPal payment${skipped === 1 ? '' : 's'} could not be matched unambiguously to one local PayPal customer and were not booked.`);
     if (truncated) warningParts.push('PayPal recurring-payment reconciliation was truncated; not every recent recurring payment was inspected.');
     return {
         processed: candidates.length,
