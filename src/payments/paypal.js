@@ -151,6 +151,76 @@ async function recordPaypalLivePayment(event,resource,{subscriptionId=null,custo
   });
   return{recorded:true,transactionId,customerId:owner};
 }
+function paypalSubscriptionTransactionAmounts(transaction){
+  const breakdown=transaction?.amount_with_breakdown||{};
+  const gross=paypalLedgerMoney(breakdown.gross_amount||transaction?.amount||null);
+  if(!Number.isInteger(gross.minor)||gross.minor<=0||!gross.currency)return null;
+  const feeMoney=paypalLedgerMoney(breakdown.fee_amount||null);
+  const netMoney=paypalLedgerMoney(breakdown.net_amount||null);
+  const sameFeeCurrency=!breakdown.fee_amount||String(feeMoney.currency||'').toUpperCase()===String(gross.currency).toUpperCase();
+  const sameNetCurrency=!breakdown.net_amount||String(netMoney.currency||'').toUpperCase()===String(gross.currency).toUpperCase();
+  const feeMinor=Number.isInteger(feeMoney.minor)&&sameFeeCurrency?Math.abs(feeMoney.minor):0;
+  const derivedNet=gross.minor-feeMinor;
+  const netMinor=Number.isInteger(netMoney.minor)&&sameNetCurrency?Math.abs(netMoney.minor):derivedNet;
+  const feeDataAvailable=Boolean(
+    breakdown.fee_amount&&breakdown.net_amount&&
+    Number.isInteger(feeMoney.minor)&&Number.isInteger(netMoney.minor)&&
+    sameFeeCurrency&&sameNetCurrency&&derivedNet===netMinor
+  );
+  if(feeMinor>gross.minor||netMinor<0)return null;
+  return{
+    grossMinor:gross.minor,
+    feeMinor,
+    netMinor,
+    currency:String(gross.currency).toUpperCase(),
+    feeDataAvailable
+  };
+}
+function paypalSubscriptionTransactionWindow(eventAt,now=new Date()){
+  const current=now instanceof Date?now:new Date(now);
+  const parsed=new Date(eventAt||current);
+  const center=Number.isNaN(parsed.getTime())?current:parsed;
+  const spanMs=36*60*60*1000;
+  const start=new Date(center.getTime()-spanMs);
+  const endCandidate=new Date(center.getTime()+spanMs);
+  const end=endCandidate<current?endCandidate:current;
+  return{start:start.toISOString(),end:end.toISOString()};
+}
+async function recordPayPalSubscriptionTransactions(subscriptionId,customerId,{eventAt=null}={}){
+  const id=String(subscriptionId||'').trim(),owner=String(customerId||'').trim();
+  if(!/^I-/i.test(id)||!owner)return{recorded:0,seen:0};
+  const window=paypalSubscriptionTransactionWindow(eventAt);
+  const payload=await api(`/v1/billing/subscriptions/${encodeURIComponent(id)}/transactions?start_time=${encodeURIComponent(window.start)}&end_time=${encodeURIComponent(window.end)}`);
+  let recorded=0,seen=0;
+  for(const transaction of payload?.transactions||[]){
+    if(String(transaction?.status||'').toUpperCase()!=='COMPLETED'||!transaction?.id)continue;
+    seen+=1;
+    const values=paypalSubscriptionTransactionAmounts(transaction);
+    if(!values)continue;
+    await financialState.recordTransaction({
+      provider:'paypal',
+      providerTransactionId:String(transaction.id),
+      transactionType:'paypal_subscription_payment',
+      transactionStatus:'COMPLETED',
+      occurredAt:transaction.time||eventAt||new Date(),
+      currency:values.currency,
+      grossMinor:values.grossMinor,
+      feeMinor:values.feeMinor,
+      netMinor:values.netMinor,
+      providerReferenceId:id,
+      customerId:owner,
+      metadata:{
+        providerAuthoritative:true,
+        feeDataAvailable:Boolean(values.feeDataAvailable),
+        livePaypalSubscriptionLookup:true,
+        referenceType:'SUB',
+        source:'paypal_subscription_transactions'
+      }
+    });
+    recorded+=1;
+  }
+  return{recorded,seen};
+}
 async function recordPaypalLiveRefund(event,resource,{customerId=null,referenceId=null,sourceId=null,reversed=false}={}){
   const transactionId=String(resource?.id||'').trim();
   if(!transactionId||transactionId===String(referenceId||''))return{recorded:false};
@@ -307,7 +377,10 @@ async function recordSubscriptionPaymentSuccess(event,resource){
   const subscriptionId=billingFailureSubscriptionId(resource);
   if(!subscriptionId)throw new Error('PayPal subscription payment success is missing the billing subscription ID.');
   const synced=await syncCurrentSubscription(subscriptionId,{activateMissing:false});
-  await recordPaypalLivePayment(event,resource,{subscriptionId,customerId:synced.row?.customer_id||null,type:'paypal_subscription_payment'});
+  const liveRecord=await recordPaypalLivePayment(event,resource,{subscriptionId,customerId:synced.row?.customer_id||null,type:'paypal_subscription_payment'});
+  if(!liveRecord.recorded&&synced.row?.customer_id){
+    await recordPayPalSubscriptionTransactions(subscriptionId,synced.row.customer_id,{eventAt:event?.create_time||null});
+  }
   if(synced.row&&paypalHealthy(synced.providerStatus)&&paypalBillingCleared(synced.subscription)){
     await failedRenewals.resolveOpen({
       provider:'paypal',
@@ -384,4 +457,4 @@ async function handleWebhookEvent(event){const eventId=event.id,eventType=event.
 async function processClaimedEvent(eventRow,event){try{await handleWebhookEvent(event);await lifecycle.finishPaymentEvent(eventRow);return{processed:true};}catch(error){await lifecycle.finishPaymentEvent(eventRow,error);console.error('PayPal webhook processing deferred to internal retry:',error.message);return{processed:false,error};}}
 async function processWebhook(rawBody,headers){let event;try{event=JSON.parse(Buffer.isBuffer(rawBody)?rawBody.toString('utf8'):String(rawBody));}catch{throw new Error('Invalid PayPal webhook JSON.');}if(!(await verifyWebhook(headers,event)))throw new Error('Invalid PayPal webhook signature');const eventId=event.id,eventType=event.event_type,eventRow=await lifecycle.beginPaymentEvent({provider:'paypal',eventId,eventType,payload:event});if(!eventRow)return{duplicate:true};const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:eventType,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};}
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='paypal')throw new Error('PayPal retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored PayPal payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,resumeCheckout,captureOrder,activateCompletedOrder,captureOrderId,activateSubscription,syncSubscription,syncCurrentSubscription,paypalStatus,paypalHealthy,paypalTerminal,paidThroughCancellationUpdate,immutableSubscriptionContract,storedSubscriptionSnapshot,processWebhook,retryPaymentEvent,handleWebhookEvent,parseCustomId,paypalAmount,paypalRefundContext,paypalMinor,disputeIdentity,reverseReferralForDirectIdentity,captureRefundAmounts,paypalCaptureRefundContext,recordCaptureLoss,recordSaleReversal,billingFailureSubscriptionId,paypalOutstandingRenewal,paypalBillingCleared,paypalActivationProviderStatus,paypalPaymentFailureCurrent,recordSubscriptionPaymentFailure,recordSubscriptionPaymentSuccess,settleTerminalCapture,settleReversedApproval,getCapture,recordCompletedCapture,paypalLedgerMoney,paypalLiveTransactionId,recordPaypalLivePayment,recordPaypalLiveRefund};
+module.exports={enabled,createCheckout,resumeCheckout,captureOrder,activateCompletedOrder,captureOrderId,activateSubscription,syncSubscription,syncCurrentSubscription,paypalStatus,paypalHealthy,paypalTerminal,paidThroughCancellationUpdate,immutableSubscriptionContract,storedSubscriptionSnapshot,processWebhook,retryPaymentEvent,handleWebhookEvent,parseCustomId,paypalAmount,paypalRefundContext,paypalMinor,disputeIdentity,reverseReferralForDirectIdentity,captureRefundAmounts,paypalCaptureRefundContext,recordCaptureLoss,recordSaleReversal,billingFailureSubscriptionId,paypalOutstandingRenewal,paypalBillingCleared,paypalActivationProviderStatus,paypalPaymentFailureCurrent,recordSubscriptionPaymentFailure,recordSubscriptionPaymentSuccess,settleTerminalCapture,settleReversedApproval,getCapture,recordCompletedCapture,paypalLedgerMoney,paypalLiveTransactionId,recordPaypalLivePayment,paypalSubscriptionTransactionAmounts,paypalSubscriptionTransactionWindow,recordPayPalSubscriptionTransactions,recordPaypalLiveRefund};
