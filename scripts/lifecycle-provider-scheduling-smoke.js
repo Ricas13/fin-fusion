@@ -6,6 +6,7 @@ const root=path.resolve(__dirname,'..'),read=p=>fs.readFileSync(path.join(root,p
 for(const file of ['db/migrations/000_database_baseline.sql'])assert(fs.existsSync(path.join(root,file)),`${file} must exist`);
 const customer=read('src/payments/customer-plan-change.js'),resilient=read('src/jellyfin/resilient-provisioning.js'),provisioningHelpers=read('src/jellyfin/provisioning-helpers.js'),entitlement=read('src/entitlements/subscription-state.js'),canonical=read('db/migrations/000_database_baseline.sql'),app=read('src/application.js'),health=read('src/platform/health.js'),compose=read('docker-compose.yml');
 const providerRecovery=read('src/payments/provider-operation-recovery.js');
+const termination=read('src/payments/subscription-termination.js');
 assert(/operationType:'plan_change_schedule'/.test(customer)&&/providerOps\.begin/.test(customer),'customer Stripe period-end change must be represented by an idempotent provider operation');
 assert(/subscriptionSchedules\.create/.test(customer)&&/from_subscription:current\.provider_subscription_id/.test(customer),'customer Stripe period-end change must create a provider subscription schedule from the current subscription');
 assert(/subscriptionSchedules\.update/.test(customer)&&/phases:\[/.test(customer),'customer Stripe schedule must define provider phases before renewal');
@@ -16,7 +17,8 @@ assert(/reconciliationLock\.withDatabaseLock\(planChangeLockKey\(customerId\)/.t
 assert(/cancelPendingChange\(customerId,actorUserId=null\)\{return withPlanChangeLock/.test(customer),'customer plan-change cancellation must share the same commercial lock as creation/recovery');
 assert(/for\(const change of due\.rows\)\{\s*await withPlanChangeLock\(change\.customer_id/.test(customer),'scheduled Stripe application must serialize with customer cancellation and recovery');
 assert(/customerPlanChange\.withPlanChangeLock\(op\.owner_id/.test(providerRecovery),'provider-operation recovery must share the same customer plan-change lock before mutating Stripe');
-const targetPriceApplied=customer.match(/if\(remotePrice===targetPrice\)[\s\S]*?summary\.succeeded\+\+;continue;/)?.[0]||'';
+assert(/RETURNING target_media_server_id/.test(termination)&&/releaseCancelledPlanChangeLeases/.test(termination)&&/releaseScheduledMediaPlacement/.test(termination),'subscription termination/refund must release cancelled scheduled-plan placement leases so ghost capacity cannot block sales');
+const targetPriceApplied=customer.match(/if\(remotePrice===targetPrice\)[\s\S]*?summary\.succeeded\+\+;return;/)?.[0]||'';
 assert(/if\(change\.target_media_server_id\)/.test(targetPriceApplied)&&/await applySnapshot/.test(targetPriceApplied),'once Stripe applies a scheduled target price, the persisted target media assignment must converge locally without being blocked by transient placement availability');
 assert(targetPriceApplied.indexOf('await applySnapshot')<targetPriceApplied.indexOf('await provisioning.reconcileCustomer'),'scheduled Stripe commercial state must commit before media provisioning is retried, preventing cheaper-price/richer-old-entitlement divergence');
 assert(/PayPal cannot replace an active billing agreement in place/.test(customer),'PayPal plan selection must not silently cancel an active agreement');
