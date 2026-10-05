@@ -111,6 +111,19 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   const cursor=new Date(new Date(target.current_period_end).getTime()+Math.max(0,Number(target.service_extension_days||0))*86400000);
   const days=purchasedDays(commercialSnapshot,cursor);
   if(Number(target.service_extension_days||0)+days>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  const directCollision=await client.query(`
+    SELECT id,customer_id
+    FROM subscriptions
+    WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+      AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+    LIMIT 1
+    FOR SHARE
+  `,[provider,providerPaymentId]);
+  if(directCollision.rowCount){
+    const error=new Error('This provider payment is already attached to a subscription and cannot also be used as an access extension.');
+    error.code='ACCESS_EXTENSION_PAYMENT_ALREADY_USED';
+    throw error;
+  }
   const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
   if(prior){
     if(String(prior.customer_id)!==String(customerId)||String(prior.subscription_id)!==String(subscriptionId)||String(prior.plan_id)!==String(planId)){
