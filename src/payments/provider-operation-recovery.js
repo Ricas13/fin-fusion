@@ -10,6 +10,7 @@ const providerHttp = require('./provider-http');
 const billingControl = require('./billing-control');
 const planCapacity = require('../entitlements/plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
+const customerPlanChange = require('./customer-plan-change');
 
 const PLAN_OPERATION_TYPES = ['plan_change_immediate','plan_change_schedule'];
 const RENEWAL_OPERATION_TYPES = ['renewal_stop','renewal_resume'];
@@ -289,8 +290,12 @@ async function recoverSchedule(op) {
 }
 async function recoverOne(op) {
   if (op.attempt_count >= MAX_AUTOMATIC_ATTEMPTS) throw manual(`Automatic recovery exhausted after ${op.attempt_count} attempts.`);
-  if (op.operation_type === 'plan_change_immediate') return recoverImmediate(op);
-  if (op.operation_type === 'plan_change_schedule') return recoverSchedule(op);
+  if (op.operation_type === 'plan_change_immediate') {
+    return customerPlanChange.withPlanChangeLock(op.owner_id, () => recoverImmediate(op));
+  }
+  if (op.operation_type === 'plan_change_schedule') {
+    return customerPlanChange.withPlanChangeLock(op.owner_id, () => recoverSchedule(op));
+  }
   if (op.operation_type === 'prorata_refund') return require('./prorata-refunds').recoverProviderOperation(op);
   if (RENEWAL_OPERATION_TYPES.includes(op.operation_type) && typeof billingControl.recoverProviderOperation === 'function') return billingControl.recoverProviderOperation(op);
   if (TERMINATION_OPERATION_TYPES.includes(op.operation_type)) return require('./subscription-termination').recoverProviderOperation(op);
