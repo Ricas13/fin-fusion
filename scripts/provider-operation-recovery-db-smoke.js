@@ -59,8 +59,8 @@ const recovery = require('../src/payments/provider-operation-recovery');
 
 function suffix() { return crypto.randomBytes(6).toString('hex'); }
 async function forceDue(id) { await query(`UPDATE provider_operations SET next_attempt_at=NOW()-INTERVAL '1 second' WHERE id=$1`, [id]); }
-async function plan(code, name, price = 1000) {
-    return (await query(`INSERT INTO plans(code,name,audience,service_type,billing_interval,duration_days,price_minor,currency,streams,active,visible,sort_order) VALUES($1,$2,'direct','jellyfin','month',30,$3,'GBP',1,TRUE,TRUE,999) RETURNING *`, [code, name, price])).rows[0];
+async function plan(code, name, price = 1000, serviceType = 'jellyfin') {
+    return (await query(`INSERT INTO plans(code,name,audience,service_type,billing_interval,duration_days,price_minor,currency,streams,active,visible,sort_order) VALUES($1,$2,'direct',$4,'month',30,$3,'GBP',1,TRUE,TRUE,999) RETURNING *`, [code, name, price, serviceType])).rows[0];
 }
 async function customer(tag) {
     return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`, [`Provider Recovery ${tag}`, `provider-recovery-${tag}@example.invalid`])).rows[0];
@@ -110,7 +110,7 @@ async function testAConcurrentRecurringSerialization() {
 }
 
 async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
-    const tag = suffix(), c = await customer(`bhi-${tag}`), competing = await customer(`bhi-competing-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Plan', 2000);
+    const tag = suffix(), c = await customer(`bhi-${tag}`), competing = await customer(`bhi-competing-${tag}`), oldPlan = await plan(`recovery-old-${tag}`, 'Old Plan', 1000), target = await plan(`recovery-target-${tag}`, 'Target Bundle', 2000, 'bundle');
     const oldServer = await mediaServer(`old-${tag}`, 'Old Region', 10), targetServer = await mediaServer(`target-${tag}`, 'London', 1);
     const providerId = `sub_recovery_bhi_${tag}`, targetPrice = `price_recovery_target_${tag}`, sub = await subscription(c.id, oldPlan.id, providerId);
     await query(`UPDATE subscriptions SET media_server_id=$2,media_location_preference='Old Region',media_location_snapshot='Old Region' WHERE id=$1`, [sub.id, oldServer.id]);
@@ -151,6 +151,7 @@ async function testBHIProviderSuccessLocalFailureAndIdempotentRetry() {
     assert.strictEqual(result.reconciled, 1, 'B/H: reconciler must complete the missing local side');
     const recoveredSubscription = await row('subscriptions', sub.id);
     assert.strictEqual(recoveredSubscription.plan_id, target.id, 'H: recovered plan change must apply target local plan');
+    assert.strictEqual(recoveredSubscription.service_type_snapshot, 'bundle', 'H: recovered plan change must update service authority to the provider-billed target service');
     assert.strictEqual(String(recoveredSubscription.media_server_id), String(targetServer.id), 'H: recovery must preserve the exact paid target server assignment');
     assert.strictEqual(recoveredSubscription.media_location_preference, 'London', 'H: recovery must preserve the chosen paid target location');
     assert.strictEqual(recoveredSubscription.media_location_snapshot, 'London', 'H: recovery must snapshot the chosen paid target location');
