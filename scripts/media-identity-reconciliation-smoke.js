@@ -97,6 +97,7 @@ function source(file) {
   assert(cleanup.includes("reason: 'administrator_now'") && cleanup.includes("reason: 'activity_unknown_now'") && cleanup.includes("reason: 'recent_activity_now'") && cleanup.includes("reason: 'identity_changed_now'"), 'Late admin/activity/identity changes and unknown activity age must fail closed.');
   assert(cleanup.includes("method: 'DELETE'"));
   assert(cleanup.includes('limit = 5') && cleanup.includes('deletionAttempts >= deletionLimit'), 'Automatic orphan deletion must be bounded so the critical 5-minute Stremio job cannot drain an unlimited backlog in one run.');
+  assert(cleanup.includes("operationLock.withLock(") && cleanup.includes('managed-account:'), 'Automatic orphan deletion must share the managed-account recovery lock whenever the hidden username maps to a customer.');
 
   const reconcile = source('src/jellyfin/identity-reconciliation.js');
   assert(reconcile.includes("String(server.media_server_type || 'jellyfin').toLowerCase() === 'jellyfin'"), 'Identity reconciliation must not offer Jellyfin-specific repair actions for Emby servers.');
@@ -109,7 +110,19 @@ function source(file) {
   assert(!reconcile.includes('canonical_replace_rolled_back'), 'Canonical ownership must not be rolled back after the replacement identity may have received access policy.');
   assert(reconcile.includes('This media identity has an active playback session'));
   assert(reconcile.includes('Media server session state could not be verified.'), 'Manual destructive reconciliation must fail closed when session state is malformed.');
-  assert(reconcile.includes('This managed Stremio identity still belongs to an active entitlement and cannot be deleted.'), 'Manual deletion must protect active Stremio entitlement identities.');
+  assert(reconcile.includes('orphanCleanup.raceCheck({'), 'Manual managed-Stremio deletion must use the same fail-closed orphan race check as background cleanup.');
+  const manualDeleteStart = reconcile.indexOf('async function deleteRemoteIdentity');
+  const manualDeleteEnd = reconcile.indexOf('async function linkRemoteIdentity', manualDeleteStart);
+  const manualDeleteBody = reconcile.slice(manualDeleteStart, manualDeleteEnd);
+  assert(
+    manualDeleteBody.includes("method: 'DELETE'")
+      && manualDeleteBody.indexOf('orphanCleanup.raceCheck({') >= 0
+      && manualDeleteBody.indexOf('orphanCleanup.raceCheck({') < manualDeleteBody.indexOf('await destructiveDelete();', manualDeleteBody.indexOf('orphanCleanup.raceCheck({')),
+    'Manual managed-Stremio safety gate must run before invoking the destructive remote-delete closure.'
+  );
+  assert(reconcile.includes('orphanCleanup.withPotentialOwnerLocks({'), 'Manual managed-Stremio deletion must serialize against managed-account recovery before its final safety check and DELETE.');
+  assert(reconcile.includes('This managed Stremio identity is not safe to delete'), 'Manual managed-Stremio deletion must reject unknown-age, recent, active, provisioning, managed or otherwise unsafe identities.');
+  assert(reconcile.includes('const { user: currentRemote } = await userImport.getRemoteUser(serverId, jellyfinUserId)') && reconcile.includes('The remote identity became an administrator before deletion.'), 'Manual deletion must re-read remote identity/admin state immediately before DELETE.');
   assert(reconcile.includes('Managed Stremio service identities cannot be linked as customer Jellyfin accounts.'), 'Internal Stremio identities must never be adopted as customer Jellyfin accounts.');
   assert(reconcile.includes('Managed Stremio service identities cannot become canonical customer Jellyfin accounts.'), 'Internal Stremio identities must never replace a canonical customer identity.');
   assert(reconcile.includes('userImport.getRemoteUser(serverId, old.jellyfinUserId)') && reconcile.includes('await assertStillUnmanaged(serverId, oldRemoteNow)'), 'Canonical replacement must re-read old remote identity and local ownership immediately before deleting it.');
