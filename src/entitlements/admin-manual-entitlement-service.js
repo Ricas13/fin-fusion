@@ -42,7 +42,7 @@ async function grantPlans() {
       AND (effective_until IS NULL OR effective_until>NOW())
       AND audience IN('direct','both')
       AND COALESCE(is_addon,FALSE)=FALSE
-      AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','bundle')
+      AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','emby','bundle')
     ORDER BY sort_order,price_minor,name
   `);
   return result.rows;
@@ -129,7 +129,7 @@ async function createManualGrant(customerId, actorUserId, input) {
         AND (effective_until IS NULL OR effective_until>NOW())
         AND audience IN('direct','both')
         AND COALESCE(is_addon,FALSE)=FALSE
-        AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','bundle')
+        AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','emby','bundle')
       LIMIT 1
     `, [input.planId]);
     if (!planResult.rowCount) throw new Error('Choose an active standalone direct-customer plan.');
