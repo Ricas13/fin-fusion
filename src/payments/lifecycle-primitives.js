@@ -145,7 +145,10 @@ async function claimRetryablePaymentEvents({ limit = 25 } = {}) {
 function purchaseSnapshot(snapshot, { provider, planId }) {
     if (!snapshot) return null;
     if (typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Invalid checkout commercial snapshot');
-    if (snapshot.kind !== 'direct_plan') throw new Error('Unsupported checkout commercial snapshot');
+    if (!['direct_plan','subscription_extension'].includes(snapshot.kind)) throw new Error('Unsupported checkout commercial snapshot');
+    if (snapshot.kind === 'subscription_extension' && !String(snapshot.extensionSubscriptionId || '').trim()) {
+        throw new Error('Access-extension checkout is missing its target subscription.');
+    }
     if (String(snapshot.planId || '') !== String(planId)) throw new Error('Checkout contract plan does not match activation plan');
     if (snapshot.provider !== provider) throw new Error('Checkout contract provider does not match activation provider');
     const durationDays = Number(snapshot.durationDays), priceMinor = Number(snapshot.priceMinor);
