@@ -205,8 +205,14 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   }
   const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
   if(prior){
-    if(String(prior.customer_id)!==String(customerId)||String(prior.subscription_id)!==String(subscriptionId)||String(prior.plan_id)!==String(planId)){
-      const error=new Error('This provider payment is already attached to a different access extension.');
+    const identityMismatch=String(prior.customer_id)!==String(customerId)
+      ||String(prior.subscription_id)!==String(subscriptionId)
+      ||String(prior.plan_id)!==String(planId)
+      ||String(prior.provider||'')!==String(provider)
+      ||String(prior.provider_payment_id||'')!==String(providerPaymentId)
+      ||(checkoutIntentId&&prior.checkout_intent_id&&String(prior.checkout_intent_id)!==String(checkoutIntentId));
+    if(identityMismatch){
+      const error=new Error('This provider payment or checkout is already attached to a different access extension.');
       error.code='ACCESS_EXTENSION_PAYMENT_IDENTITY_CONFLICT';
       throw error;
     }
