@@ -7,6 +7,7 @@ const planPricing = require('./plan-pricing');
 const PURCHASE_KIND = 'subscription_extension';
 const EVENT_SOURCE_PREFIX = 'customer_paid_extension:';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const LEGACY_EVENT_MAX_DAYS = 365;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LIVE_OR_PAID_THROUGH_STATUSES = new Set(['active','trialing','past_due','paused','cancelled','expired']);
 
@@ -73,6 +74,16 @@ function wholeDaysBetween(from, to) {
 
 function addFixedDays(from, days) {
   return new Date(new Date(from).getTime() + Number(days) * DAY_MS);
+}
+
+function eventDaysForAudit(appliedDays) {
+  const days = Math.max(1, Math.min(3650, Number(appliedDays) || 1));
+  // The existing zero-downtime schema intentionally caps this legacy audit
+  // column at 365. Exact calendar/custom duration lives in metadata.appliedDays
+  // and billingInterval/durationDays, so a leap-year or long custom term does
+  // not require a live schema change that would make the N-1 web runtime fail
+  // readiness during deployment overlap.
+  return Math.min(LEGACY_EVENT_MAX_DAYS, Math.ceil(days));
 }
 
 function extensionTerms(snapshot, fallbackDays = 30) {
@@ -398,7 +409,7 @@ async function activatePaidExtension({ customerId, planId, provider, providerPay
         subscription_id,customer_id,source,days,reference_id,metadata
       ) VALUES($1,$2,$3,$4,$5,$6::jsonb)
       RETURNING *
-    `, [targetId, customerId, source, initialDays, reference, JSON.stringify(metadata)]);
+    `, [targetId, customerId, source, eventDaysForAudit(initialDays), reference, JSON.stringify(metadata)]);
 
     const recomputed = await recomputeForSubscriptionTx(client, targetId);
     await client.query(`
@@ -486,6 +497,7 @@ module.exports = {
   baseAccessQuantity,
   subscriptionAccessQuantity,
   wholeDaysBetween,
+  eventDaysForAudit,
   projectedEnd,
   appliedDaysFromMetadata,
   assertExtendableSubscription,
