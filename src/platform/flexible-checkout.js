@@ -13,6 +13,7 @@ const intents=require('../payments/checkout-intents');
 const discounts=require('../payments/discounts');
 const zeroValueCheckout=require('../payments/zero-value-checkout');
 const planChange=require('../payments/customer-plan-change');
+const subscriptionExtensions=require('../payments/subscription-extensions');
 const serviceScope=require('../entitlements/service-scope');
 const commerce=require('../payments/commerce-control');
 const serviceCreditReservations=require('../payments/service-credit-reservations');
@@ -47,7 +48,19 @@ const CHECKOUT_SAFE=[
  'Checkout intent belongs to a different provider.','Checkout intent belongs to a different account.','Invalid checkout completion state.',
  /^A checkout is already in progress\./,
  /^An existing (Stripe|PayPal|Plisio) checkout is still awaiting completion\./,
- /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./
+ /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
+ 'A valid current subscription is required for an extension.',
+ 'Only the current plan can be extended.',
+ 'This subscription no longer has paid-through access to extend.',
+ 'Only a current paid non-trial plan can be extended.',
+ 'This plan is no longer available for extension.',
+ 'The current access allowance is no longer priced for extension.',
+ 'Subscription extensions must use one-time payment checkout.',
+ 'Promo codes are not available for subscription extensions.',
+ 'Service credit cannot be used for subscription extensions.',
+ 'This purchase would exceed the 3,650-day service-extension safety limit.',
+ /^This plan is not configured for an extension in .+\./,
+ /^This plan is not configured for (Stripe|PayPal|Plisio) one-time extension checkout\./
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
@@ -73,6 +86,11 @@ async function chooseOrResolve(req,res,provider){
  await commerce.assertOpen();
  const planCode=String(req.body.planCode||'').trim();if(!planCode)throw new Error('Plan is required');
  const currency=await requestedCurrency(req),quantity=requestedAccessQuantity(req),requested=['payment','subscription'].includes(req.body.checkoutMode)?req.body.checkoutMode:null;
+ const extensionSubscriptionId=String(req.body.extensionSubscriptionId||'').trim();
+ if(extensionSubscriptionId){
+  if(requested&&requested!=='payment')throw new Error('Subscription extensions must use one-time payment checkout.');
+  return subscriptionExtensions.checkoutChoice({customerId:req.session.customerId,subscriptionId:extensionSubscriptionId,planCode,provider,currency});
+ }
  let options=await providerPricing.getProviderOptions(planCode,provider,currency,quantity);
  if(!options.length){const replacement=await existingRecurringReplacementOption(req,provider,planCode,currency,quantity,requested);if(replacement)options=[replacement];}
  if(!options.length)throw new Error(`This plan is not configured for ${providerLabel(provider)} in ${currency}`);
@@ -87,7 +105,7 @@ async function chooseOrResolve(req,res,provider){
 }
 async function stateUrl(req,path,intent){const url=new URL(await operations.absoluteUrl(req,path));url.searchParams.set('checkout_intent',intent.id);url.searchParams.set('checkout_state',intent.nonce);return url.toString();}
 async function stripeSuccessUrl(req,intent){return `${await stateUrl(req,'/account/stripe/return',intent)}&session_id={CHECKOUT_SESSION_ID}`;}
-function commercialSnapshot(choice,provider,discount=null){const p=choice.plan,variantKind=choice.accessVariantKind||p.variant_kind||null,quantity=choice.accessQuantity||choiceQuantity(p);return{kind:'direct_plan',planId:p.id,planPriceId:p.plan_price_id||null,planCode:p.code,planName:p.name,accessVariantId:p.access_variant_id||null,accessVariantKind:variantKind,accessQuantity:quantity,priceMinor:Number(p.price_minor||0),currency:String(p.currency||'').toUpperCase(),billingInterval:p.billing_interval,durationDays:Number(p.duration_days||30),streams:variantKind==='streams'?quantity:Number(p.streams||1),stremioHouseholdNetworkLimit:variantKind==='households'?quantity:Number(p.stremio_household_network_limit||1),allowDownloads:Boolean(p.allow_downloads),allowVideoTranscoding:Boolean(p.allow_video_transcoding),allowAudioTranscoding:Boolean(p.allow_audio_transcoding),allowLiveTv:Boolean(p.allow_live_tv),allowLiveTvManagement:Boolean(p.allow_live_tv_management),serverClass:p.server_class,requestMovieQuotaLimit:p.request_movie_quota_limit==null?null:Number(p.request_movie_quota_limit),requestMovieQuotaDays:p.request_movie_quota_days==null?null:Number(p.request_movie_quota_days),requestTvQuotaLimit:p.request_tv_quota_limit==null?null:Number(p.request_tv_quota_limit),requestTvQuotaDays:p.request_tv_quota_days==null?null:Number(p.request_tv_quota_days),provider,checkoutMode:choice.mode,providerMappingId:p.external_id||null,providerMappingRecordId:p.provider_mapping_id||null,discountCodeId:discount?.discount?.id||null,discountCode:discount?.discount?.code||null,discountedMinor:discount?.discountedMinor??Number(p.price_minor||0),discountReservationId:discount?.reservation?.id||null};}
+function commercialSnapshot(choice,provider,discount=null){const p=choice.plan,variantKind=choice.accessVariantKind||p.variant_kind||null,quantity=choice.accessQuantity||choiceQuantity(p),extensionSubscriptionId=choice.extensionSubscriptionId||null;return{kind:'direct_plan',purchaseKind:extensionSubscriptionId?'subscription_extension':'plan_purchase',extensionSubscriptionId,planId:p.id,planPriceId:p.plan_price_id||null,planCode:p.code,planName:p.name,accessVariantId:p.access_variant_id||null,accessVariantKind:variantKind,accessQuantity:quantity,priceMinor:Number(p.price_minor||0),currency:String(p.currency||'').toUpperCase(),billingInterval:p.billing_interval,durationDays:Number(p.duration_days||30),streams:variantKind==='streams'?quantity:Number(p.streams||1),stremioHouseholdNetworkLimit:variantKind==='households'?quantity:Number(p.stremio_household_network_limit||1),allowDownloads:Boolean(p.allow_downloads),allowVideoTranscoding:Boolean(p.allow_video_transcoding),allowAudioTranscoding:Boolean(p.allow_audio_transcoding),allowLiveTv:Boolean(p.allow_live_tv),allowLiveTvManagement:Boolean(p.allow_live_tv_management),serverClass:p.server_class,requestMovieQuotaLimit:p.request_movie_quota_limit==null?null:Number(p.request_movie_quota_limit),requestMovieQuotaDays:p.request_movie_quota_days==null?null:Number(p.request_movie_quota_days),requestTvQuotaLimit:p.request_tv_quota_limit==null?null:Number(p.request_tv_quota_limit),requestTvQuotaDays:p.request_tv_quota_days==null?null:Number(p.request_tv_quota_days),provider,checkoutMode:choice.mode,providerMappingId:p.external_id||null,providerMappingRecordId:p.provider_mapping_id||null,discountCodeId:discount?.discount?.id||null,discountCode:discount?.discount?.code||null,discountedMinor:discount?.discountedMinor??Number(p.price_minor||0),discountReservationId:discount?.reservation?.id||null};}
 async function livePrimaryRows(customerId){return(await query(`SELECT s.id,s.source,s.provider_subscription_id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND s.superseded_by IS NULL AND s.starts_at<=NOW() AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW()`,[customerId])).rows;}
 async function overlappingRecurring(customerId,target){const rows=await livePrimaryRows(customerId);return rows.filter(row=>serviceScope.overlaps(row,target)&&((row.source==='stripe'&&/^sub_/i.test(String(row.provider_subscription_id||'')))||(row.source==='paypal'&&/^I-/i.test(String(row.provider_subscription_id||'')))));}
 async function resumeExistingCheckout(customerId,provider,choice){
@@ -97,8 +115,10 @@ async function resumeExistingCheckout(customerId,provider,choice){
  const samePlan=String(existing.plan_id||'')===String(choice.plan.id||'');
  const samePrice=!existing.plan_price_id||!choice.plan.plan_price_id||
    String(existing.plan_price_id)===String(choice.plan.plan_price_id);
+ const existingSnapshot=existing.commercial_snapshot&&typeof existing.commercial_snapshot==='object'?existing.commercial_snapshot:{};
+ const sameExtensionTarget=String(existingSnapshot.extensionSubscriptionId||'')===String(choice.extensionSubscriptionId||'');
  const sameTarget=existing.provider===provider&&
-   existing.checkout_mode===choice.mode&&samePlan&&samePrice;
+   existing.checkout_mode===choice.mode&&samePlan&&samePrice&&sameExtensionTarget;
 
  if(sameTarget&&existing.provider_checkout_id){
   let resumed=null;
@@ -121,7 +141,10 @@ async function begin(req,res,provider){
  await assertProviderCheckoutReady(provider);
  const choice=await chooseOrResolve(req,res,provider);if(!choice||res.headersSent)return null;
  const resumed=await resumeExistingCheckout(req.session.customerId,provider,choice);if(resumed)return resumed;
+ const extensionCheckout=Boolean(choice.extensionSubscriptionId);
  const wantsCredit=['on','true','1','yes'].includes(String(req.body.applyServiceCredit||'').toLowerCase());
+ if(extensionCheckout&&String(req.body.discountCode||'').trim())throw new Error('Promo codes are not available for subscription extensions.');
+ if(extensionCheckout&&wantsCredit)throw new Error('Service credit cannot be used for subscription extensions.');
  if(wantsCredit&&provider==='paypal'&&choice.mode==='subscription')throw new Error('Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.');
  if(wantsCredit&&provider==='plisio')throw new Error('Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.');
  if(wantsCredit){const conflict=(await livePrimaryRows(req.session.customerId)).find(row=>serviceScope.overlaps(row,choice.plan)&&!serviceScope.isFreeTier(row));if(conflict)throw new Error(`Mixed service-credit checkout is for activating a new ${serviceScope.label(choice.plan)} service. End the current overlapping service before applying credit to a new provider checkout.`);}
