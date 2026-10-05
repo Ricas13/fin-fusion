@@ -58,6 +58,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   subscriptionId=cleanReference(subscriptionId,'Subscription');
   const target=await lockedTarget(client,{customerId,subscriptionId,planId});
   const days=purchasedDays(commercialSnapshot);
+  if(Number(target.service_extension_days||0)+days>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
   const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
   if(prior){
     if(String(prior.customer_id)!==String(customerId)||String(prior.subscription_id)!==String(subscriptionId)||String(prior.plan_id)!==String(planId)){
