@@ -88,7 +88,7 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
   const params=[subscriptionId];
   let customerSql='';
   if(customerId){params.push(customerId);customerSql=' AND customer_id=$2';}
-  const subscription=(await client.query(`SELECT id,customer_id,current_period_end,service_extension_days FROM subscriptions WHERE id=$1${customerSql} FOR UPDATE`,params)).rows[0]||null;
+  const subscription=(await client.query(`SELECT * FROM subscriptions WHERE id=$1${customerSql} FOR UPDATE`,params)).rows[0]||null;
   if(!subscription)return{changed:false,purchasedDays:0,subscription:null};
   const rows=(await client.query(`
     SELECT * FROM subscription_access_extensions
