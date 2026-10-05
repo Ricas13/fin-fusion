@@ -161,9 +161,33 @@ async function main(){
     'forged plan/subscription combinations must fail closed'
   );
 
-  const ledger=await query('SELECT provider,provider_payment_id,purchased_days,status FROM subscription_access_extensions WHERE customer_id=$1 ORDER BY created_at',[customer.id]);
+  const ledger=await query('SELECT provider,provider_payment_id,purchased_days,applied_days,status FROM subscription_access_extensions WHERE customer_id=$1 ORDER BY created_at',[customer.id]);
   assert.equal(ledger.rowCount,2,'each real extension payment must have one durable ledger row');
   assert.equal(ledger.rows.filter(row=>row.status==='active').length,1,'only the non-refunded extension should remain active');
+  assert.equal(Number(ledger.rows.find(row=>row.status==='revoked')?.applied_days||0),0,'a revoked payment must retain purchase history without remaining in the aggregate applied-day contribution');
+
+  const baselineCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`baseline-${suffix}`,`baseline-${suffix}@example.invalid`])).rows[0];
+  const baselineSubscription=(await query(`
+    INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,service_extension_days,
+      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot)
+    VALUES($1,$2,'active','manual','manual','2029-12-31T00:00:00Z','2030-01-31T00:00:00Z',7,'month',30,'jellyfin')
+    RETURNING *
+  `,[baselineCustomer.id,plan.id])).rows[0];
+  const baselineSnapshot={...snapshot,extensionSubscriptionId:baselineSubscription.id};
+  const baselinePurchase=await transaction(client=>extensions.applyPurchase(client,{
+    customerId:baselineCustomer.id,subscriptionId:baselineSubscription.id,planId:plan.id,provider:'stripe',
+    providerPaymentId:`pi_extension_baseline_${suffix}`,commercialSnapshot:baselineSnapshot
+  }));
+  assert(Number(baselinePurchase.subscription.service_extension_days)>7,'paid extension must stack after unrelated/manual extension days');
+  await extensions.revokeByProviderPayment({
+    provider:'stripe',providerPaymentId:`pi_extension_baseline_${suffix}`,customerId:baselineCustomer.id,reason:'baseline refund',reference:'baseline-smoke'
+  });
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[baselineSubscription.id])).rows[0].service_extension_days),7,'refund must remove only purchased time and preserve unrelated/manual extension days');
+  await lifecyclePrimitives.updateProviderSubscription({
+    provider:'manual',providerSubscriptionId:null,providerStatus:'active',periodEnd:'2030-02-28T00:00:00Z',cancelAtPeriodEnd:false
+  }).catch(()=>null);
+  const baselineRecomputed=await transaction(client=>extensions.recomputeActivePurchasedDaysTx(client,baselineSubscription.id,baselineCustomer.id));
+  assert.equal(Number(baselineRecomputed.subscription.service_extension_days),7,'later rebasing must not subtract a revoked extension from unrelated/manual extension days a second time');
 
   console.log('same-plan access extension smoke: ok — additive, no capacity subscription duplication, replay-safe and refund-safe');
 }
