@@ -1,6 +1,7 @@
 'use strict';
 
 const { transaction } = require('../db');
+const billingPeriods = require('./billing-periods');
 
 const PROVIDERS=new Set(['stripe','paypal','plisio']);
 const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled']);
@@ -15,10 +16,21 @@ function cleanReference(value,label='Payment reference'){
   if(!reference)throw new Error(`${label} is required.`);
   return reference;
 }
-function purchasedDays(snapshot={}){
-  const days=Number(snapshot?.durationDays);
-  if(!Number.isInteger(days)||days<1||days>3650)throw new Error('This plan does not have a valid extension duration.');
-  return days;
+function wholeDaysBetween(from,to){
+  const start=new Date(from),end=new Date(to);
+  const exact=(end.getTime()-start.getTime())/86400000;
+  const rounded=Math.round(exact);
+  if(!Number.isFinite(exact)||rounded<1||Math.abs(exact-rounded)>1e-7)throw new Error('This plan extension could not be represented safely as whole service days.');
+  return rounded;
+}
+function purchasedDays(snapshot={},from=new Date()){
+  const interval=String(snapshot?.billingInterval||snapshot?.billing_interval||'').trim().toLowerCase();
+  const durationDays=Number(snapshot?.durationDays??snapshot?.duration_days);
+  if(!['month','6_months','year'].includes(interval)&&(!Number.isInteger(durationDays)||durationDays<1||durationDays>3650)){
+    throw new Error('This plan does not have a valid extension duration.');
+  }
+  const end=billingPeriods.addPlanDuration({billingInterval:interval,durationDays},new Date(from));
+  return wholeDaysBetween(from,end);
 }
 async function lockedTarget(client,{customerId,subscriptionId,planId}){
   const result=await client.query(`
@@ -39,6 +51,43 @@ async function lockedTarget(client,{customerId,subscriptionId,planId}){
   if(!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('This paid plan has already expired.');
   return row;
 }
+async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=null){
+  const params=[subscriptionId];
+  let customerSql='';
+  if(customerId){params.push(customerId);customerSql=' AND customer_id=$2';}
+  const subscription=(await client.query(`SELECT id,customer_id,current_period_end,service_extension_days FROM subscriptions WHERE id=$1${customerSql} FOR UPDATE`,params)).rows[0]||null;
+  if(!subscription)return{changed:false,purchasedDays:0,subscription:null};
+  const rows=(await client.query(`
+    SELECT * FROM subscription_access_extensions
+    WHERE subscription_id=$1
+    ORDER BY created_at,id
+    FOR UPDATE
+  `,[subscriptionId])).rows;
+  const active=rows.filter(row=>row.status==='active');
+  const oldActiveDays=active.reduce((sum,row)=>sum+Math.max(0,Number(row.purchased_days||0)),0);
+  const currentTotal=Math.max(0,Number(subscription.service_extension_days||0));
+  const baseDays=Math.max(0,currentTotal-oldActiveDays);
+  let cursor=new Date(new Date(subscription.current_period_end).getTime()+baseDays*86400000);
+  let activeDays=0;
+  for(const row of active){
+    const snapshot=row.commercial_snapshot&&typeof row.commercial_snapshot==='object'?row.commercial_snapshot:{};
+    const days=purchasedDays(snapshot,cursor);
+    if(days!==Number(row.purchased_days||0)){
+      await client.query('UPDATE subscription_access_extensions SET purchased_days=$2,updated_at=NOW() WHERE id=$1',[row.id,days]);
+      row.purchased_days=days;
+    }
+    activeDays+=days;
+    cursor=new Date(cursor.getTime()+days*86400000);
+  }
+  const nextTotal=baseDays+activeDays;
+  if(nextTotal>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  let updated=subscription;
+  if(nextTotal!==currentTotal){
+    updated=(await client.query('UPDATE subscriptions SET service_extension_days=$2,updated_at=NOW() WHERE id=$1 RETURNING *',[subscriptionId,nextTotal])).rows[0];
+  }
+  return{changed:nextTotal!==currentTotal,purchasedDays:activeDays,baseDays,subscription:updated,accessExpiresAt:cursor};
+}
+
 async function existingExtension(client,{provider,providerPaymentId,checkoutIntentId}){
   const result=await client.query(`
     SELECT *
@@ -56,8 +105,11 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   provider=cleanProvider(provider);
   providerPaymentId=cleanReference(providerPaymentId);
   subscriptionId=cleanReference(subscriptionId,'Subscription');
-  const target=await lockedTarget(client,{customerId,subscriptionId,planId});
-  const days=purchasedDays(commercialSnapshot);
+  let target=await lockedTarget(client,{customerId,subscriptionId,planId});
+  const rebased=await recomputeActivePurchasedDaysTx(client,subscriptionId,customerId);
+  target={...target,...(rebased.subscription||{})};
+  const cursor=new Date(new Date(target.current_period_end).getTime()+Math.max(0,Number(target.service_extension_days||0))*86400000);
+  const days=purchasedDays(commercialSnapshot,cursor);
   if(Number(target.service_extension_days||0)+days>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
   const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
   if(prior){
@@ -66,7 +118,8 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
       error.code='ACCESS_EXTENSION_PAYMENT_IDENTITY_CONFLICT';
       throw error;
     }
-    return{subscription:target,extension:prior,replay:true};
+    const recomputed=await recomputeActivePurchasedDaysTx(client,subscriptionId,customerId);
+    return{subscription:recomputed.subscription||target,extension:prior,replay:true};
   }
   const inserted=(await client.query(`
     INSERT INTO subscription_access_extensions(
@@ -142,25 +195,7 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
 
 async function restoreActivePurchasedDays(subscriptionId,customerId){
   subscriptionId=cleanReference(subscriptionId,'Subscription');
-  return transaction(async client=>{
-    const locked=(await client.query('SELECT id,customer_id,service_extension_days FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subscriptionId,customerId])).rows[0]||null;
-    if(!locked)return{changed:false,purchasedDays:0,subscription:null};
-    const total=(await client.query(`
-      SELECT COALESCE(SUM(purchased_days),0)::int AS days
-        FROM subscription_access_extensions
-       WHERE subscription_id=$1 AND customer_id=$2 AND status='active'
-    `,[subscriptionId,customerId])).rows[0];
-    const days=Math.max(0,Number(total?.days||0));
-    if(!days)return{changed:false,purchasedDays:0,subscription:locked};
-    const updated=(await client.query(`
-      UPDATE subscriptions
-         SET service_extension_days=GREATEST(COALESCE(service_extension_days,0),$2),
-             updated_at=NOW()
-       WHERE id=$1
-       RETURNING *
-    `,[subscriptionId,days])).rows[0];
-    return{changed:Number(updated.service_extension_days||0)!==Number(locked.service_extension_days||0),purchasedDays:days,subscription:updated};
-  });
+  return transaction(client=>recomputeActivePurchasedDaysTx(client,subscriptionId,customerId));
 }
 
-module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,purchasedDays,lockedTarget,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
+module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,wholeDaysBetween,purchasedDays,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
