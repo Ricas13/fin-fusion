@@ -4,6 +4,7 @@ require('dotenv').config();
 const assert=require('assert');
 const {query,transaction,getPool}=require('../src/db');
 const extensions=require('../src/payments/subscription-access-extensions');
+const lifecyclePrimitives=require('../src/payments/lifecycle-primitives');
 
 async function main(){
   const suffix=Date.now().toString(36);
@@ -50,9 +51,14 @@ async function main(){
   }));
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),56,'independent monthly extensions must stack from Jan 31 -> Feb 28 -> Mar 28');
 
-  await query("UPDATE subscriptions SET current_period_end='2030-02-28T00:00:00Z' WHERE id=$1",[subscription.id]);
-  const rebased=await transaction(client=>extensions.recomputeActivePurchasedDaysTx(client,subscription.id,customer.id));
-  assert.equal(Number(rebased.subscription.service_extension_days),59,'provider renewal must rebase extensions from Feb 28 -> Mar 28 -> Apr 28 using calendar periods');
+  const rebased=await lifecyclePrimitives.updateProviderSubscription({
+    provider:'stripe',
+    providerSubscriptionId:`sub_extension_${suffix}`,
+    providerStatus:'active',
+    periodEnd:'2030-02-28T00:00:00Z',
+    cancelAtPeriodEnd:false
+  });
+  assert.equal(Number(rebased.service_extension_days),59,'provider renewal must rebase extensions from Feb 28 -> Mar 28 -> Apr 28 using calendar periods');
 
   const revoked=await extensions.revokeByProviderPayment({
     provider:'stripe',providerPaymentId:`pi_extension_1_${suffix}`,customerId:customer.id,reason:'test full refund',reference:'smoke'
@@ -69,6 +75,37 @@ async function main(){
   const restored=await extensions.restoreActivePurchasedDays(subscription.id,customer.id);
   assert(restored.purchasedDays>=28&&restored.purchasedDays<=31,'a separate base-term reversal must recompute the still-paid monthly extension from the new cursor');
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),restored.purchasedDays,'a base-term reversal must not erase independently paid extension time');
+
+  await query("UPDATE subscriptions SET status='active',current_period_end='2030-02-28T00:00:00Z' WHERE id=$1",[subscription.id]);
+  const pendingChange=(await query(`
+    INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at)
+    VALUES($1,$2,$3,'stripe','period_end','pending','2030-02-28T00:00:00Z')
+    RETURNING id
+  `,[customer.id,subscription.id,other.id])).rows[0];
+  await assert.rejects(
+    transaction(client=>extensions.applyPurchase(client,{
+      customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
+      providerPaymentId:`pi_extension_pending_change_${suffix}`,commercialSnapshot:snapshot
+    })),
+    /plan change is already scheduled/i,
+    'extension must fail closed while the current subscription has a pending plan change'
+  );
+  await query('DELETE FROM customer_plan_changes WHERE id=$1',[pendingChange.id]);
+
+  const collisionCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`collision-${suffix}`,`collision-${suffix}@example.invalid`])).rows[0];
+  await query(`
+    INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,
+      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot)
+    VALUES($1,$2,'active','stripe','payment',$3,NOW(),NOW()+INTERVAL '30 days','month',30,'jellyfin')
+  `,[collisionCustomer.id,other.id,`pi_extension_collision_${suffix}`]);
+  await assert.rejects(
+    transaction(client=>extensions.applyPurchase(client,{
+      customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
+      providerPaymentId:`pi_extension_collision_${suffix}`,commercialSnapshot:snapshot
+    })),
+    /already attached to a subscription/i,
+    'a provider payment already used by a normal subscription must not also buy extension time'
+  );
 
   await assert.rejects(
     transaction(client=>extensions.applyPurchase(client,{
