@@ -23,6 +23,8 @@ assert(dashboard.includes('name="checkoutMode" value="payment"'),'extensions mus
 assert(dashboard.includes('Buy more time without losing what remains'),'customer UI must explain additive extension semantics');
 assert(checkout.includes("kind:choice.extensionSubscriptionId?'subscription_extension':'direct_plan'"),'checkout contract must identify extension purchases durably');
 assert(checkout.includes('validateExtensionChoice'),'checkout must revalidate current-plan ownership server-side');
+assert(checkout.includes("choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim()"),'extensions must reject promo codes before discount reservation because redemption identity belongs to the base subscription');
+assert(checkout.indexOf("choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim()") < checkout.indexOf('discounts.reserveForIntent'),'promo-code rejection must run before creating any extension discount reservation');
 assert(checkout.includes("checkout_mode:'payment'"),'recurring provider pricing must be convertible to a one-off extension charge');
 assert(intents.includes("snapshot.kind !== 'subscription_extension'"),'extensions must not reserve another plan/server capacity slot');
 assert(intents.includes("['direct_plan','subscription_extension'].includes(snapshot.kind)"),'provider return verification must accept the extension contract explicitly');
