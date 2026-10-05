@@ -143,8 +143,8 @@ async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutInt
     error.code='ACCESS_EXTENSION_TARGET_REPLACED';
     throw error;
   }
-  if(current?.blocked){
-    const error=new Error('This subscription currently has an access hold. The extension payment is recorded but access remains blocked until the hold is resolved.');
+  if(current?.blocked&&!committedCheckout){
+    const error=new Error('This subscription currently has an access hold. Resolve the account or payment issue before buying extra time.');
     error.code='ACCESS_EXTENSION_ACCESS_BLOCKED';
     throw error;
   }
