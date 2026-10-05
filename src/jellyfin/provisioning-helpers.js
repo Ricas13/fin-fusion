@@ -302,7 +302,8 @@ async function reservePlacement(customerId, server, { allowOverCapacity = false,
         updated_at=NOW()
       RETURNING id`, [customerId, server.id, String(PLACEMENT_LEASE_MINUTES), accessLane]);
     return { ...server, placement_lease_id: lease.rows[0].id };
-  });
+  };
+  return suppliedDb ? work(suppliedDb) : transaction(work);
 }
 
 async function releaseDefinitivePlacementFailure(customerId, serverId, leaseId) {
