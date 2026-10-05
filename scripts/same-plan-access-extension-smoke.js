@@ -22,6 +22,7 @@ assert(checkout.includes('validateExtensionChoice'),'checkout must revalidate cu
 assert(checkout.includes("checkout_mode:'payment'"),'recurring provider pricing must be convertible to a one-off extension charge');
 assert(intents.includes("snapshot.kind !== 'subscription_extension'"),'extensions must not reserve another plan/server capacity slot');
 assert(intents.includes("['direct_plan','subscription_extension'].includes(snapshot.kind)"),'provider return verification must accept the extension contract explicitly');
+assert(lifecycle.includes("['direct_plan','subscription_extension'].includes(snapshot.kind)"),'lifecycle snapshot validation must accept paid extension contracts before extension routing');
 assert(lifecycle.includes("contract?.kind === 'subscription_extension'"),'payment activation must route extension purchases away from new subscription creation');
 assert(lifecycle.includes('accessExtensions.applyPurchase'),'extension activation must use the dedicated idempotent lifecycle');
 assert(incidents.includes('accessExtensions.revokeByProviderPayment'),'confirmed money loss must remove only the purchased extension');
