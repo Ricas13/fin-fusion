@@ -13,6 +13,7 @@ const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
+const accessExtensions = require('./subscription-access-extensions');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -493,7 +494,9 @@ async function attachDiscoveredProviderSubscription({
              WHERE id=$1
              RETURNING *
         `, [local.id, provider, providerCustomerId || null, providerSubscriptionId, providerMap.external_id || null, providerMap.plan_price_id || null, providerMap.id || null, status, periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd)]);
-        const row = updated.rows[0];
+        let row = updated.rows[0];
+        const rebasedExtensions = await accessExtensions.recomputeActivePurchasedDaysTx(client, row.id, row.customer_id);
+        row = rebasedExtensions.subscription || row;
         const oldDelinquencyKey = primitives.paymentDelinquencySourceKey(local.source, local.provider_subscription_id, local.billing_mode);
         const newDelinquencyKey = primitives.paymentDelinquencySourceKey(provider, providerSubscriptionId, row.billing_mode);
         if (oldDelinquencyKey && oldDelinquencyKey !== newDelinquencyKey) {
