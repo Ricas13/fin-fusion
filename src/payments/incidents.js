@@ -5,6 +5,7 @@ const accessHolds = require('../entitlements/access-holds');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 const subscriptionTermination = require('./subscription-termination');
+const subscriptionExtensions = require('./subscription-extensions');
 
 // A refund/dispute/chargeback under review is a commercial incident, not an
 // access state ("a customer asking for a refund is not an access state").
@@ -28,6 +29,13 @@ async function identityFromProviderSubscription(provider,providerSubscriptionId)
     LIMIT 2
   `,[source,reference]);
   if(direct.rowCount===1)return{scope:'direct',customerId:direct.rows[0].customer_id};
+  // Same-plan extension payments deliberately do not create a second
+  // subscription row. Resolve those one-time provider references through the
+  // extension ledger so refunds/chargebacks can remove only the time they bought.
+  if(direct.rowCount===0){
+    const extensionIdentity=await subscriptionExtensions.identityForProviderPayment(source,reference);
+    if(extensionIdentity)return extensionIdentity;
+  }
   // Historical normalized duplicates across customers are deliberately
   // unresolved: choosing the newest row would let one provider refund or
   // chargeback terminate an arbitrary customer's access.
@@ -154,6 +162,15 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
       const normalizedProvider=String(provider||'').trim().toLowerCase(),normalizedReference=String(subscriptionRef||'').trim();
+      const lossLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
+      const revokedExtension=await subscriptionExtensions.revokeProviderPayment({
+        customerId:effectIdentity.customerId,
+        provider:normalizedProvider,
+        providerPaymentId:normalizedReference,
+        reason:`${lossLabel} (${provider} ${kind} ${incident.id})`,
+        incidentId:incident.id
+      });
+      if(revokedExtension.changed)await reconcileMany([effectIdentity.customerId]);
       const matched=await query(`
         SELECT id,billing_mode,current_period_end,duration_days_snapshot
         FROM subscriptions
