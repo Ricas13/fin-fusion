@@ -5,10 +5,11 @@ const path=require('path');
 const {query,poolStats}=require('../db');
 const runtimeSettings=require('./runtime-settings');
 const operationsSettings=require('./operations-settings');
+const compatibilityMigrations=require('../db-compatibility-migrations');
 const IS_PRODUCTION=String(process.env.NODE_ENV||'').toLowerCase()==='production';
 function boundedReadinessTimeout(value=process.env.READINESS_TIMEOUT_MS){const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0)return 6000;return Math.max(1000,Math.min(15000,Math.floor(parsed)))}
 const READINESS_TIMEOUT_MS=boundedReadinessTimeout();
-function latestMigration(){try{const dir=path.join(__dirname,'..','..','db','migrations');return fs.readdirSync(dir).filter(f=>f.endsWith('.sql')).sort().at(-1)||null}catch{return null}}
+function latestMigration(){try{const dir=path.join(__dirname,'..','..','db','migrations');return compatibilityMigrations.latestVersionedMigration(fs.readdirSync(dir))}catch{return null}}
 function validPublicOrigin(value){try{const url=new URL(String(value||''));return url.protocol==='https:'&&Boolean(url.hostname)&&url.pathname.replace(/\/+$/,'')===''}catch{return false}}
 async function readinessChecks(){
  const checks={database:false,databasePool:false,migrations:false,runtimeSettings:false,publicOrigin:!IS_PRODUCTION};let detail={};
