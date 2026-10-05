@@ -16,6 +16,7 @@ const clientScript = fs.readFileSync(path.join(root, 'public/js/admin-manual-ent
 
 assert(customerActions.includes('adminCustomerCreation.create({') && customerCreation.includes('manualSubscriptions.createManualSubscriptionTx') && !customerActions.includes('INSERT INTO subscriptions'), 'Add customer flow must delegate subscription creation to the canonical entitlement owner');
 assert(customerCreation.includes('planCapacity.lockAndAssert(client,plan.id') && customerCreation.includes('selectServerForLocationLocked(plan,null'), 'Add customer with a plan must reserve plan capacity and a concrete media server inside the creation transaction');
+assert(customerCreation.includes("IN ('jellyfin','stremio','bundle')"), 'Add customer must allow bundle plans alongside standalone Jellyfin/Stremio plans');
 assert(customerCreation.includes('media_server_id=$2') && customerCreation.includes('media_location_preference=$3'), 'Add customer must persist the sticky media assignment before the creation transaction commits');
 assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)'), 'canonical manual subscription owner must retain the subscription INSERT');
 assert(manual.includes("require('../entitlements/admin-manual-entitlement-service')"), 'manual grant route must delegate to the entitlement-domain service');
