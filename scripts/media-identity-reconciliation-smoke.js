@@ -113,6 +113,7 @@ function source(file) {
   assert(reconcile.includes('orphanCleanup.raceCheck({'), 'Manual managed-Stremio deletion must use the same fail-closed orphan race check as background cleanup.');
   assert(reconcile.includes('orphanCleanup.withPotentialOwnerLocks({'), 'Manual managed-Stremio deletion must serialize against managed-account recovery before its final safety check and DELETE.');
   assert(reconcile.includes('This managed Stremio identity is not safe to delete'), 'Manual managed-Stremio deletion must reject unknown-age, recent, active, provisioning, managed or otherwise unsafe identities.');
+  assert(reconcile.includes('const { user: currentRemote } = await userImport.getRemoteUser(serverId, jellyfinUserId)') && reconcile.includes('The remote identity became an administrator before deletion.'), 'Manual deletion must re-read remote identity/admin state immediately before DELETE.');
   assert(reconcile.includes('Managed Stremio service identities cannot be linked as customer Jellyfin accounts.'), 'Internal Stremio identities must never be adopted as customer Jellyfin accounts.');
   assert(reconcile.includes('Managed Stremio service identities cannot become canonical customer Jellyfin accounts.'), 'Internal Stremio identities must never replace a canonical customer identity.');
   assert(reconcile.includes('userImport.getRemoteUser(serverId, old.jellyfinUserId)') && reconcile.includes('await assertStillUnmanaged(serverId, oldRemoteNow)'), 'Canonical replacement must re-read old remote identity and local ownership immediately before deleting it.');
