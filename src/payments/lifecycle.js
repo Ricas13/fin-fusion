@@ -411,9 +411,10 @@ async function activatePurchase(input) {
     if (!planResult.rowCount) throw new Error('Plan not found.');
     const plan=state.assertAudience(planResult.rows[0], 'customer');
     const same = input.providerSubscriptionId ? await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider,input.providerSubscriptionId]) : {rowCount:0};
-    if(!same.rowCount)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
+    const isAccessExtension=input.commercialSnapshot?.kind==='subscription_extension';
+    if(!same.rowCount&&!isAccessExtension)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
     const mode=checkoutBillingMode(input);
-    if (billingMode.isRecurring({ source: input.provider, billing_mode: mode })) {
+    if (!isAccessExtension&&billingMode.isRecurring({ source: input.provider, billing_mode: mode })) {
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
     const activated=await primitives.activatePurchase(input);
