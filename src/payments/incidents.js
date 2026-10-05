@@ -102,6 +102,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   if(!['stripe','paypal','plisio'].includes(provider))throw new Error('Unsupported incident provider.');
   if(!['refund','dispute','chargeback','failed_renewal','checkout_completion'].includes(kind))throw new Error('Unsupported payment incident type.');
   const resolvedIdentity=await existingCustomerIdentity(identity||await identityFromProviderSubscription(provider,providerSubscriptionId)),cfg=await policy();
+  const extensionPaymentLoss=providerSubscriptionId?Boolean(await accessExtensions.extensionIdentity(provider,providerSubscriptionId)):false;
   let action=policyAction(kind,cfg,metadata);if(status==='won')action='restore';else if(status==='resolved')action='preserve';
   const selected=await query(`
     WITH inserted AS (
@@ -209,7 +210,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     }
     if(effectIdentity.scope!=='unresolved')affected=await releaseHold(effectIdentity,provider,incident.provider_case_id);
   }
-  return{duplicate:Boolean(incident.duplicate),incident,affected};
+  return{duplicate:Boolean(incident.duplicate),incident,affected,extensionPaymentLoss};
 }
 async function get(id){const r=await query(`SELECT * FROM payment_incidents WHERE id=$1`,[id]);return r.rows[0]||null}
 async function acknowledge(id,actorUserId){const r=await query(`UPDATE payment_incidents SET acknowledged_at=COALESCE(acknowledged_at,NOW()),acknowledged_by=COALESCE(acknowledged_by,$2),updated_at=NOW() WHERE id=$1 RETURNING *`,[id,actorUserId]);if(!r.rowCount)throw new Error('Payment incident not found.');await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_incident.acknowledge','payment_incident',$2,'{}'::jsonb)`,[actorUserId,id]);return r.rows[0]}
