@@ -22,7 +22,7 @@ assert(discovery.endingWithoutRenewal(legacyEnding), 'an explicitly marked legac
 assert(!discovery.needsProviderLink(legacyEnding), 'an explicitly ending legacy paid term must not be queued for provider repair');
 assert(discovery.needsProviderLink(legacyUnmarked), 'legacy imports must not be hidden merely because their fixed local term has cancel_at_period_end=true');
 assert(discovery.endingWithoutRenewal({ source:'stripe', billing_mode:'payment', provider_subscription_id:null, commercial_snapshot:{ checkoutMode:'payment' } }), 'a genuine one-time provider payment never needs a recurring provider link');
-assert(unlinkedPaidTerm.fixedTermWithoutProvider({ source:'admin_grant', billing_mode:'manual', commercial_snapshot:{}, cancel_at_period_end:false }), 'manual paid terms remain fixed-term without a provider even when they use an explicit custom media pool');
+assert(unlinkedPaidTerm.fixedTermWithoutProvider({ source:'admin_grant', billing_mode:null, provider_subscription_id:null, commercial_snapshot:{}, cancel_at_period_end:false }), 'historical admin grants without billing_mode must remain fixed-term without a provider instead of entering provider-link repair');
 
 const stripe = discovery.normalizeStripeSubscription({
     id: 'sub_live', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
@@ -181,6 +181,7 @@ assert.ok(!discoverySource.includes("e.server_class='premium'"), 'paid provider-
 assert.ok(!unlinkedPaidTermSource.includes("row.effective_server_class !== 'premium'"), 'operator classification of paid fixed terms must not depend on the legacy media server class');
 assert.ok(discoverySource.includes("IN ('jellyfin','emby','bundle')"), 'provider-link discovery must cover every paid media service that can use recurring Stripe/PayPal billing');
 assert.ok(discoverySource.includes("COALESCE(e.price_minor_snapshot,e.price_minor,0)>0") && discoverySource.includes("COALESCE(e.is_free_tier,FALSE)=FALSE"), 'paid/non-Free commercial state must define provider-link discovery eligibility');
+assert.ok(discoverySource.includes("IN('manual','admin_grant')") && discoverySource.includes("provider_subscription_id"), 'billing coverage SQL must classify historical provider-less manual grants consistently with the JavaScript fixed-term logic');
 assert.ok(discoverySource.includes('s.commercial_snapshot'), 'provider-link classification must load the persisted paid-term disposition');
 assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must inspect all subscriptions before selecting current states');
 assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T0002', 'T0003'])"), 'PayPal discovery must cover subscription and preapproved recurring payments');
