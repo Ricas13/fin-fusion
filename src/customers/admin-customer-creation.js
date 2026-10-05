@@ -50,18 +50,13 @@ async function create({
     if(plan){
       const mediaPlan=Boolean(customerServerChoice.mediaServerType(plan));
       const deferredMediaProvisioning=mediaPlan&&provisioningMode==='after_activation';
-      const capacityState=deferredMediaProvisioning
-        ?await planCapacity.usage(plan.id,(sql,params)=>client.query(sql,params),{
-            households:plan.stremio_household_network_limit||null
-          })
-        :null;
       // Deferred admin creation intentionally allows a paid media entitlement
-      // to exist before infrastructure is configured/healthy. That state is
-      // reconciled after activation and remains operator-visible on failure.
-      // Only the physical-server requirement is deferred: the product's own
-      // customer limit remains authoritative so an admin cannot oversubscribe
-      // a plan merely because its fleet has not been configured yet.
-      if(deferredMediaProvisioning&&capacityState?.model==='fleet_users'&&Number(capacityState?.configuredServers||0)===0){
+      // to exist before physical infrastructure is available. This is an
+      // operator recovery/workflow feature: the portal account may activate,
+      // while media provisioning remains visibly failed until capacity/server
+      // health is repaired. Enforce the product's logical customer limit here,
+      // but deliberately defer physical-server admission until reconciliation.
+      if(deferredMediaProvisioning){
         await planCapacity.lockAndAssertLogicalMedia(client,plan.id,plan.name||'This plan');
       }else{
         await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
