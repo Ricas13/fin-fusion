@@ -189,10 +189,10 @@ async function selectServerForPlan(plan) {
   return selected ? { ...selected, requested_access_lane: lane } : null;
 }
 
-async function reservePlacement(customerId, server, { allowOverCapacity = false } = {}) {
+async function reservePlacement(customerId, server, { allowOverCapacity = false, db: suppliedDb = null } = {}) {
   if (!customerId || !server?.id) throw new Error('Customer and Jellyfin server are required for placement reservation.');
   const accessLane = server.requested_access_lane === 'free' ? 'free' : 'primary';
-  return transaction(async db => {
+  const work = async db => {
     const locked = await db.query(`SELECT id,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`, [server.id]);
     if (!locked.rowCount) throw new Error('Selected Jellyfin server no longer exists.');
     await db.query(`DELETE FROM jellyfin_server_placement_leases WHERE server_id=$1 AND expires_at<=NOW()`, [server.id]);
