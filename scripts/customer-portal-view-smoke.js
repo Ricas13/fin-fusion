@@ -39,6 +39,18 @@ const ejs=require('ejs');
   assert.match(extensionHtml,/Access until/,'extension-backed entitlement must display its canonical access expiry');
   assert(!extensionHtml.includes('No active access.'),'extension-backed entitlement must not be dropped by template-local live checks');
 
+  const extensionCheckoutHtml=await ejs.renderFile(path.join(root,'views','customer','dashboard.ejs'),{
+    ...locals,
+    plans:[
+      {...locals.plans[0],extension_payment_options:[{provider:'stripe',checkoutMode:'subscription'}]},
+      locals.plans[1]
+    ],
+    stripeEnabled:true
+  });
+  assert.match(extensionCheckoutHtml,/Extend by 1 month with Stripe/,'current paid plan must offer a one-time same-plan extension when Stripe is configured');
+  assert.match(extensionCheckoutHtml,/name="extensionSubscriptionId" value="sub-local-premium"/,'extension action must bind the exact current subscription');
+  assert.match(extensionCheckoutHtml,/name="checkoutMode" value="payment"/,'same-plan extension UI must never start a second recurring agreement');
+
   const withHousehold=await ejs.renderFile(path.join(root,'views','customer','dashboard.ejs'),{...locals,stremioHousehold:{accessModel:'Unlimited streams · Unlimited devices · 2 household connections',replacementState:{allowed:true,message:'You can change the registered household connection now.'}}});
   assert(!withHousehold.includes('Unlimited streams · Unlimited devices · 2 household connections'),'Home must not render Stremio household setup details');assert(!withHousehold.includes('Use a different household connection'),'Home must not render the Stremio household replacement control');assert(!withHousehold.includes('/account/stremio/reset-household'),'Home must not own Stremio household mutations');
 
