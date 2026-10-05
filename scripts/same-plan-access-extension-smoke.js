@@ -23,6 +23,7 @@ assert(intents.includes("snapshot.kind !== 'subscription_extension'"),'extension
 assert(lifecycle.includes("contract?.kind === 'subscription_extension'"),'payment activation must route extension purchases away from new subscription creation');
 assert(lifecycle.includes('accessExtensions.applyPurchase'),'extension activation must use the dedicated idempotent lifecycle');
 assert(incidents.includes('accessExtensions.revokeByProviderPayment'),'confirmed money loss must remove only the purchased extension');
+assert(incidents.includes('accessExtensions.restoreActivePurchasedDays'),'an unrelated base-term reversal must preserve independently paid extension time');
 assert(extension.includes('service_extension_days=COALESCE(service_extension_days,0)+$2'),'extension must add paid time to the existing entitlement');
 assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)-$2)'),'reversal must remove only its own extension time');
 assert(migration.includes('UNIQUE(provider,provider_payment_id)'),'provider payment replay must be database-idempotent');
