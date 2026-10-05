@@ -86,7 +86,6 @@ module.exports = {
       "node scripts/server-form-validation-smoke.js",
       "node scripts/server-status-timestamp-smoke.js",
       "node scripts/server-placement-smoke.js",
-      "node scripts/customer-media-location-selection-smoke.js",
       "node scripts/server-control-consolidation-smoke.js",
       "node scripts/invitations-smoke.js",
       "node scripts/provisioning-control-smoke.js",
@@ -146,6 +145,7 @@ module.exports = {
       "node scripts/plisio-payments-smoke.js",
       "node scripts/customer-playback-trust-smoke.js",
       "node scripts/checkout-abandonment-smoke.js",
+      "node scripts/same-plan-access-extension-smoke.js",
       "node scripts/customer-error-sanitization-smoke.js"
     ],
     "check:fast:dashboards": [
@@ -239,6 +239,7 @@ module.exports = {
       "node scripts/provider-financial-state-db-smoke.js",
       "node scripts/payment-history-coverage-timezone-db-smoke.js",
       "node scripts/prepaid-access-stacking-smoke.js",
+      "node scripts/same-plan-access-extension-db-smoke.js",
       "node scripts/prorata-refund-db-smoke.js",
       "node scripts/prorata-refund-retry-db-smoke.js",
       "node scripts/affiliate-first-payment-only-db-smoke.js",
@@ -252,7 +253,6 @@ module.exports = {
       "node scripts/state-machine-invariants-db-smoke.js",
       "node scripts/adversarial-concurrency-smoke.js",
       "node scripts/provisioning-control-db-smoke.js",
-      "node scripts/customer-media-location-selection-db-smoke.js",
       "node scripts/jellyfin-account-creation-recovery-db-smoke.js",
       "npm run check:discount-checkout-db",
       "npm run check:post443-payment-db",

@@ -4,11 +4,11 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { query, getPool } = require('../src/db');
+const compatibilityMigrations = require('../src/db-compatibility-migrations');
 const buildInfo = require('../src/build-info');
 const runtimeSettings = require('../src/platform/runtime-settings');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
-const compatibilityMigrations = require('../src/db-compatibility-migrations');
 
 const DEPLOYMENT_PROBE_JOBS = Object.freeze([
     'creation_intent_recovery',

@@ -5,8 +5,8 @@ const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { query, getPool } = require('../src/db');
 const compatibilityMigrations = require('../src/db-compatibility-migrations');
+const { query, getPool } = require('../src/db');
 
 const migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
 

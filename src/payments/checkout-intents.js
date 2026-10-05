@@ -144,6 +144,33 @@ async function createIntent({
     const row = await transaction(async client => {
         if (!customerId) throw new Error('Checkout owner is required.');
         await lockCheckoutOwner(client, customerId);
+        if (snapshot.kind === 'subscription_extension') {
+            if (checkoutMode !== 'payment') throw new Error('Subscription extensions must use one-time payment checkout.');
+            const extensionSubscriptionId = String(snapshot.extensionSubscriptionId || '').trim();
+            if (!extensionSubscriptionId) throw new Error('Access-extension checkout is missing its target subscription.');
+            const commercialConflict = await client.query(`
+                SELECT 1
+                FROM customer_plan_changes pc
+                WHERE pc.customer_id=$1
+                  AND pc.current_subscription_id::text=$2
+                  AND pc.state IN('pending','awaiting_checkout')
+                UNION ALL
+                SELECT 1
+                FROM provider_operations po
+                WHERE po.scope='customer'
+                  AND po.owner_id=$1
+                  AND po.operation_type='plan_change_immediate'
+                  AND COALESCE(po.local_reference,'')=$2
+                  AND (
+                    po.state IN('planned','provider_applied','local_applied')
+                    OR (po.state='failed' AND po.manual_review_required=TRUE)
+                  )
+                LIMIT 1
+            `, [customerId, extensionSubscriptionId]);
+            if (commercialConflict.rowCount) {
+                throw new Error('A plan change is already open for this subscription. Complete or resolve it before buying extra time.');
+            }
+        }
         const expired = await client.query(`
             UPDATE billing_checkout_intents
             SET state='expired',updated_at=NOW()
@@ -192,7 +219,7 @@ async function createIntent({
         if (existing.rowCount) throw new Error(`A checkout is already in progress. Finish or cancel it, or wait up to ${CUSTOMER_CHECKOUT_LOCK_MINUTES} minutes before starting another one.`);
 
         let mediaServerId=null;
-        if (planId) {
+        if (planId && snapshot.kind !== 'subscription_extension') {
             await capacity.lockAndAssert(client,planId,snapshot.planName || 'This plan', {
                 streams:snapshot.streams,
                 households:snapshot.stremioHouseholdNetworkLimit
@@ -203,23 +230,17 @@ async function createIntent({
                 mediaServerId=selected?.id||null;
                 snapshot={...snapshot,mediaLocation:selected?.selected_location||snapshot.mediaLocation||null,mediaServerId};
                 if(mediaServerId&&customerId){
-                    const laneLease = await client.query(`
+                    const laneLease=await client.query(`
                         SELECT id,access_lane
                         FROM jellyfin_server_placement_leases
                         WHERE customer_id=$1 AND server_id=$2 AND expires_at>NOW()
                         LIMIT 1
-                    `, [customerId,mediaServerId]);
-                    if(laneLease.rowCount && String(laneLease.rows[0].access_lane||'') !== 'primary'){
+                    `,[customerId,mediaServerId]);
+                    if(laneLease.rowCount&&String(laneLease.rows[0].access_lane||'')!=='primary'){
                         const error=new Error('Another media account placement is still being completed on this server. Try this checkout again shortly.');
                         error.code='MEDIA_PLACEMENT_LANE_BUSY';
                         throw error;
                     }
-                    // Rolling-deploy compatibility: N-1 web code cannot read the
-                    // new checkout.media_server_id reservation, but it already
-                    // understands placement leases. Keep a short bridge lease so
-                    // the old generation also sees this slot as occupied during
-                    // cutover. The exact checkout row remains the long-lived
-                    // authority in the new generation.
                     await client.query(`
                         INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,expires_at,access_lane)
                         VALUES($1,$2,LEAST($3::timestamptz,NOW()+INTERVAL '15 minutes'),'primary')
@@ -480,8 +501,11 @@ async function verifiedProviderContract({
     if (planId && String(row.plan_id || '') !== String(planId)) throw new Error('Provider checkout plan does not match the local checkout contract.');
     if (checkoutMode && row.checkout_mode !== checkoutMode) throw new Error('Provider checkout mode does not match the local checkout contract.');
     const snapshot = safeSnapshot(row.commercial_snapshot || {});
-    if (snapshot.kind !== 'direct_plan' || String(snapshot.planId || '') !== String(row.plan_id || '')) {
+    if (!['direct_plan','subscription_extension'].includes(snapshot.kind) || String(snapshot.planId || '') !== String(row.plan_id || '')) {
         throw new Error('Checkout commercial snapshot is incomplete or does not match its plan.');
+    }
+    if (snapshot.kind === 'subscription_extension' && !String(snapshot.extensionSubscriptionId || '').trim()) {
+        throw new Error('Access-extension checkout is missing its target subscription.');
     }
     if (row.plan_price_id && String(snapshot.planPriceId || '') !== String(row.plan_price_id)) {
         throw new Error('Checkout commercial snapshot does not match its selected plan price.');

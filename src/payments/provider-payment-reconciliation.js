@@ -362,9 +362,16 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     // that already has local subscription or checkout ownership evidence.
     const pendingIds = allPending.map(row => String(row.id));
     const mapped = await query(`
-        SELECT provider_subscription_id,customer_id,provider_customer_id
-        FROM subscriptions
-        WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+        SELECT provider_subscription_id,customer_id,provider_customer_id,is_extension,created_at
+        FROM (
+          SELECT provider_subscription_id,customer_id,provider_customer_id,FALSE AS is_extension,created_at
+          FROM subscriptions
+          WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+          UNION ALL
+          SELECT provider_payment_id AS provider_subscription_id,customer_id,NULL::text AS provider_customer_id,TRUE AS is_extension,created_at
+          FROM subscription_access_extensions
+          WHERE provider='paypal' AND provider_payment_id = ANY($1::text[])
+        ) purchase_owners
         ORDER BY created_at DESC
     `, [pendingIds]);
     const byCapture = new Map();
@@ -434,8 +441,10 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         const canonicalOrderId = paypalCaptureOrderId(capture);
         const checkoutReference = canonicalOrderId || paypalOrderReference(row);
         const checkout = checkoutReference ? byCheckout.get(checkoutReference) || null : null;
-        const subscription = byCapture.get(String(row.id)) || null;
-        const local = subscription || checkout;
+        const captureOwner = byCapture.get(String(row.id)) || null;
+        const extension = captureOwner?.is_extension ? captureOwner : null;
+        const subscription = captureOwner && !captureOwner.is_extension ? captureOwner : null;
+        const local = subscription || extension || checkout;
         if (!local?.customer_id) {
             skipped += 1;
             skippedIds.push(String(row.id));
@@ -463,7 +472,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
             });
             clearUnmatchedPayPalCapture(row.id);
             recorded += 1;
-            if (!subscription && checkout) {
+            if (!subscription && !extension && checkout) {
                 fulfillmentPending += 1;
                 fulfillmentPendingIds.push(String(row.id));
             }
@@ -534,27 +543,34 @@ function localMatch(row, local) {
     const ids = collectIds(row);
     const intent = local.intents.find(item => (row.checkoutIntentId && String(item.id) === String(row.checkoutIntentId)) || (item.provider_checkout_id && ids.has(String(item.provider_checkout_id)))) || null;
     const subscription = local.subscriptions.find(item => item.provider_subscription_id && ids.has(String(item.provider_subscription_id))) || null;
-    const sameCustomerPlan = !subscription && row.customerId && row.planId
+    const extension = (local.extensions || []).find(item =>
+        (item.provider_payment_id && ids.has(String(item.provider_payment_id)))
+        || (row.checkoutIntentId && String(item.checkout_intent_id || '') === String(row.checkoutIntentId))
+        || (intent && item.checkout_intent_id && String(item.checkout_intent_id) === String(intent.id))
+    ) || null;
+    const purchase = subscription || extension;
+    const sameCustomerPlan = !purchase && row.customerId && row.planId
         ? local.subscriptions.find(item => String(item.customer_id) === String(row.customerId) && String(item.plan_id) === String(row.planId)) || null
         : null;
     const event = local.events.find(item => payloadContains(item, ids)) || null;
     let reason = null, severity = 'warn';
     if (event?.processing_error) { reason = `Webhook recorded but processing failed: ${event.processing_error}`; severity = 'bad'; }
     else if (intent && intent.state !== 'completed') { reason = `Checkout exists locally but is ${intent.state}; provider reports the payment succeeded.`; severity = 'bad'; }
-    else if (intent && !subscription) { reason = 'Checkout completed locally but no provider-reference-matching subscription/purchase record was found.'; severity = 'bad'; }
-    else if (!intent && !subscription && !event && sameCustomerPlan) { reason = 'A local subscription exists for the same customer and plan, but its provider reference does not match this payment.'; severity = 'bad'; }
-    else if (!intent && !subscription && !event) reason = 'No matching checkout, subscription, or webhook event exists locally.';
-    else if (!subscription && event) { reason = 'Provider event exists locally but no provider-reference-matching customer purchase was found.'; severity = 'bad'; }
-    return { intent, subscription, event, reason, severity };
+    else if (intent && !purchase) { reason = 'Checkout completed locally but no provider-reference-matching subscription/purchase record was found.'; severity = 'bad'; }
+    else if (!intent && !purchase && !event && sameCustomerPlan) { reason = 'A local subscription exists for the same customer and plan, but its provider reference does not match this payment.'; severity = 'bad'; }
+    else if (!intent && !purchase && !event) reason = 'No matching checkout, subscription, or webhook event exists locally.';
+    else if (!purchase && event) { reason = 'Provider event exists locally but no provider-reference-matching customer purchase was found.'; severity = 'bad'; }
+    return { intent, subscription, extension, event, reason, severity };
 }
 
 async function localRows(provider, since) {
-    const [intents, subscriptions, events] = await Promise.all([
+    const [intents, subscriptions, extensions, events] = await Promise.all([
         query(`SELECT id,customer_id,plan_id,provider_checkout_id,state,created_at,completed_at,commercial_snapshot FROM billing_checkout_intents WHERE provider=$1 AND created_at>=$2 ORDER BY created_at DESC`, [provider, since]),
         query(`SELECT id,customer_id,plan_id,provider_subscription_id,status,created_at,current_period_end FROM subscriptions WHERE source=$1 ORDER BY created_at DESC`, [provider]),
+        query(`SELECT id,customer_id,subscription_id,plan_id,provider_payment_id,checkout_intent_id,status,created_at FROM subscription_access_extensions WHERE provider=$1 ORDER BY created_at DESC`, [provider]),
         query(`SELECT provider_event_id AS event_id,event_type,payload,processed_at,processing_error,created_at FROM payment_events WHERE provider=$1 AND created_at>=$2 ORDER BY created_at DESC`, [provider, since])
     ]);
-    return { intents: intents.rows, subscriptions: subscriptions.rows, events: events.rows };
+    return { intents: intents.rows, subscriptions: subscriptions.rows, extensions: extensions.rows, events: events.rows };
 }
 
 async function providerResult(provider, since) {

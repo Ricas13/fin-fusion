@@ -5,6 +5,7 @@ const accessHolds = require('../entitlements/access-holds');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 const subscriptionTermination = require('./subscription-termination');
+const accessExtensions = require('./subscription-access-extensions');
 
 // A refund/dispute/chargeback under review is a commercial incident, not an
 // access state ("a customer asking for a refund is not an access state").
@@ -21,9 +22,16 @@ async function identityFromProviderSubscription(provider,providerSubscriptionId)
   if(!reference)return{scope:'unresolved',customerId:null};
   const direct=await query(`
     SELECT DISTINCT customer_id
-    FROM subscriptions
-    WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
-      AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+    FROM (
+      SELECT customer_id
+        FROM subscriptions
+       WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+         AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+      UNION ALL
+      SELECT customer_id
+        FROM subscription_access_extensions
+       WHERE provider=$1 AND provider_payment_id=$2
+    ) ownership
     ORDER BY customer_id
     LIMIT 2
   `,[source,reference]);
@@ -53,40 +61,8 @@ async function identityFromMetadata(metadata={}){
   return existingCustomerIdentity({scope:'direct',customerId});
 }
 async function reconcileMany(ids){for(const id of ids){try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Payment incident reconcile failed for customer ${id}:`,error.message)}}}
-async function reconcileSuspendedAccessStrict(ids){
-  const intentRecovery=require('../automation/jellyfin-creation-intent-recovery');
-  const failures=[];
-  for(const customerId of ids){
-    const customerFailures=[];
-    try{
-      await provisioning.reconcileCustomer(customerId);
-    }catch(error){
-      customerFailures.push(`access reconciliation: ${String(error?.message||error).slice(0,380)}`);
-    }
-    // Always attempt durable creation-intent cleanup even when broader
-    // reconciliation fails. A Discord/Emby/other integration error must not
-    // leave a just-created media identity alive after a payment-risk hold.
-    try{
-      const cleanup=await intentRecovery.recoverCustomer(customerId);
-      if(Number(cleanup?.failed||0)>0){
-        customerFailures.push(`creation-intent cleanup: ${String(cleanup.warning||'incomplete').slice(0,380)}`);
-      }
-    }catch(error){
-      customerFailures.push(`creation-intent cleanup: ${String(error?.message||error).slice(0,380)}`);
-    }
-    if(customerFailures.length){
-      failures.push({customerId,error:customerFailures.join('; ').slice(0,500)});
-    }
-  }
-  if(failures.length){
-    const error=new Error(`Payment-risk access suspension is incomplete for ${failures.length} customer${failures.length===1?'':'s'}.`);
-    error.code='PAYMENT_RISK_ACCESS_SUSPENSION_INCOMPLETE';
-    error.failures=failures;
-    throw error;
-  }
-}
 function holdSource(provider,caseId){return `${provider}:${String(caseId||'').slice(0,170)}`}
-async function applyHold(identity,provider,caseId,reason){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.addHold({customerId,type:'payment_risk',sourceKey,reason,metadata:{provider,caseId,scope:identity.scope}});await reconcileSuspendedAccessStrict(ids);return ids.length}
+async function applyHold(identity,provider,caseId,reason){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.addHold({customerId,type:'payment_risk',sourceKey,reason,metadata:{provider,caseId,scope:identity.scope}});await reconcileMany(ids);return ids.length}
 async function releaseHold(identity,provider,caseId){const sourceKey=holdSource(provider,caseId),ids=identity.scope==='direct'&&identity.customerId?[identity.customerId]:[];for(const customerId of ids)await accessHolds.releaseHold({customerId,type:'payment_risk',sourceKey});await reconcileMany(ids);return ids.length}
 function policyAction(kind,cfg,metadata){if(kind==='checkout_completion')return'preserve';if(kind==='refund')return cfg.refundAction==='suspend_full_refund'&&metadata?.fullRefund===true?'suspend':'preserve';if(kind==='dispute')return cfg.disputeAction;if(kind==='chargeback')return cfg.chargebackAction;return cfg.failedRenewalAction}
 function parseProviderTimestamp(value){
@@ -126,6 +102,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   if(!['stripe','paypal','plisio'].includes(provider))throw new Error('Unsupported incident provider.');
   if(!['refund','dispute','chargeback','failed_renewal','checkout_completion'].includes(kind))throw new Error('Unsupported payment incident type.');
   const resolvedIdentity=await existingCustomerIdentity(identity||await identityFromProviderSubscription(provider,providerSubscriptionId)),cfg=await policy();
+  const extensionPaymentLoss=providerSubscriptionId?Boolean(await accessExtensions.extensionIdentity(provider,providerSubscriptionId)):false;
   let action=policyAction(kind,cfg,metadata);if(status==='won')action='restore';else if(status==='resolved')action='preserve';
   const selected=await query(`
     WITH inserted AS (
@@ -186,6 +163,14 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
       const normalizedProvider=String(provider||'').trim().toLowerCase(),normalizedReference=String(subscriptionRef||'').trim();
+      const extensionReversal=await accessExtensions.revokeByProviderPayment({
+        provider:normalizedProvider,
+        providerPaymentId:normalizedReference,
+        customerId:effectIdentity.customerId,
+        reason:confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute',
+        reference:incident.id
+      });
+      if(extensionReversal.changed)await reconcileMany([effectIdentity.customerId]);
       const matched=await query(`
         SELECT id,billing_mode,current_period_end,duration_days_snapshot
         FROM subscriptions
@@ -203,6 +188,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
           if(terminationDecision.terminate){
             const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
             const terminated=await subscriptionTermination.terminateForRefund(matchedRow.id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
+            if(terminated.changed)await accessExtensions.restoreActivePurchasedDays(matchedRow.id,effectIdentity.customerId);
             terminatedAny=terminatedAny||Boolean(terminated.changed);
           }else skipped.push({subscriptionId:matchedRow.id,reason:terminationDecision.reason,transactionAt:terminationDecision.transactionAt||null,currentTermStartApprox:terminationDecision.currentTermStartApprox||null,currentTermEnd:terminationDecision.currentTermEnd||null});
         }
@@ -224,7 +210,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     }
     if(effectIdentity.scope!=='unresolved')affected=await releaseHold(effectIdentity,provider,incident.provider_case_id);
   }
-  return{duplicate:Boolean(incident.duplicate),incident,affected};
+  return{duplicate:Boolean(incident.duplicate),incident,affected,extensionPaymentLoss};
 }
 async function get(id){const r=await query(`SELECT * FROM payment_incidents WHERE id=$1`,[id]);return r.rows[0]||null}
 async function acknowledge(id,actorUserId){const r=await query(`UPDATE payment_incidents SET acknowledged_at=COALESCE(acknowledged_at,NOW()),acknowledged_by=COALESCE(acknowledged_by,$2),updated_at=NOW() WHERE id=$1 RETURNING *`,[id,actorUserId]);if(!r.rowCount)throw new Error('Payment incident not found.');await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_incident.acknowledge','payment_incident',$2,'{}'::jsonb)`,[actorUserId,id]);return r.rows[0]}
@@ -245,4 +231,4 @@ async function reopen(id,actorUserId){
 }
 async function notes(id){const r=await query(`SELECT n.*,u.username actor_username FROM payment_incident_notes n LEFT JOIN app_users u ON u.id=n.actor_user_id WHERE n.incident_id=$1 ORDER BY n.created_at DESC`,[id]);return r.rows}
 async function recent(limit=100){const result=await query(`SELECT pi.*,c.display_name customer_name,au.username assigned_username FROM payment_incidents pi LEFT JOIN customers c ON c.id=pi.customer_id LEFT JOIN app_users au ON au.id=pi.assigned_to ORDER BY pi.created_at DESC LIMIT $1`,[Math.max(1,Math.min(500,Number(limit)||100))]);return result.rows}
-module.exports={reconcileSuspendedAccessStrict,policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,existingCustomerIdentity,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};
+module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,existingCustomerIdentity,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed,refundTerminatesMatchedSubscription,webhookTransactionTime,parseProviderTimestamp};

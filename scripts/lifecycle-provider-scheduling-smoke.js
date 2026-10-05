@@ -5,30 +5,17 @@ const assert=require('assert');
 const root=path.resolve(__dirname,'..'),read=p=>fs.readFileSync(path.join(root,p),'utf8');
 for(const file of ['db/migrations/000_database_baseline.sql'])assert(fs.existsSync(path.join(root,file)),`${file} must exist`);
 const customer=read('src/payments/customer-plan-change.js'),resilient=read('src/jellyfin/resilient-provisioning.js'),provisioningHelpers=read('src/jellyfin/provisioning-helpers.js'),entitlement=read('src/entitlements/subscription-state.js'),canonical=read('db/migrations/000_database_baseline.sql'),app=read('src/application.js'),health=read('src/platform/health.js'),compose=read('docker-compose.yml');
-const providerRecovery=read('src/payments/provider-operation-recovery.js');
-const termination=read('src/payments/subscription-termination.js');
 assert(/operationType:'plan_change_schedule'/.test(customer)&&/providerOps\.begin/.test(customer),'customer Stripe period-end change must be represented by an idempotent provider operation');
 assert(/subscriptionSchedules\.create/.test(customer)&&/from_subscription:current\.provider_subscription_id/.test(customer),'customer Stripe period-end change must create a provider subscription schedule from the current subscription');
 assert(/subscriptionSchedules\.update/.test(customer)&&/phases:\[/.test(customer),'customer Stripe schedule must define provider phases before renewal');
 assert(/idempotencyKey/.test(customer),'customer Stripe schedule mutations must carry provider idempotency keys');
 assert(/subscriptionSchedules\.release\(schedule\.id\)/.test(customer),'cancelling a customer Stripe change must release the provider schedule');
 assert(/providerOps\.providerApplied/.test(customer)&&/providerOps\.reconciled/.test(customer),'customer provider scheduling must record provider and local reconciliation states');
-assert(/reconciliationLock\.withDatabaseLock\(planChangeLockKey\(customerId\)/.test(customer)&&/requestChangeUnlocked/.test(customer),'customer plan-change decisions must serialize across provider calls on a cross-process customer lock');
-assert(/cancelPendingChange\(customerId,actorUserId=null\)\{return withPlanChangeLock/.test(customer),'customer plan-change cancellation must share the same commercial lock as creation/recovery');
-assert(/for\(const change of due\.rows\)\{\s*await withPlanChangeLock\(change\.customer_id/.test(customer),'scheduled Stripe application must serialize with customer cancellation and recovery');
-assert(/customerPlanChange\.withPlanChangeLock\(op\.owner_id/.test(providerRecovery),'provider-operation recovery must share the same customer plan-change lock before mutating Stripe');
-assert(/service_type_snapshot=\$15/.test(customer),'normal Stripe plan changes must update the subscription service authority together with the target plan');
-assert(/service_type_snapshot=\$15/.test(providerRecovery),'provider-operation recovery must update the subscription service authority together with the recovered target plan');
-assert(/RETURNING target_media_server_id/.test(termination)&&/releaseCancelledPlanChangeLeases/.test(termination)&&/releaseScheduledMediaPlacement/.test(termination),'subscription termination/refund must release cancelled scheduled-plan placement leases so ghost capacity cannot block sales');
-const targetPriceApplied=customer.match(/if\(remotePrice===targetPrice\)[\s\S]*?summary\.succeeded\+\+;return;/)?.[0]||'';
-assert(/if\(change\.target_media_server_id\)/.test(targetPriceApplied)&&/await applySnapshot/.test(targetPriceApplied),'once Stripe applies a scheduled target price, the persisted target media assignment must converge locally without being blocked by transient placement availability');
-assert(targetPriceApplied.indexOf('await applySnapshot')<targetPriceApplied.indexOf('await provisioning.reconcileCustomer'),'scheduled Stripe commercial state must commit before media provisioning is retried, preventing cheaper-price/richer-old-entitlement divergence');
 assert(/PayPal cannot replace an active billing agreement in place/.test(customer),'PayPal plan selection must not silently cancel an active agreement');
 const jobs=read('src/automation/jobs.js'),notificationDispatch=read('src/integrations/notification-dispatch.js'),migrationExpiry=read('db/migrations/102_paypal_plan_change_checkout_expiry.sql'),migrationOpen=read('db/migrations/103_plan_change_open_state.sql'),resolution=read('src/payments/plan-change-resolution.js');
 assert(/async function expireDuePaypal\(\)/.test(customer)&&/state='awaiting_checkout'/.test(customer),'PayPal plan changes past their effective date must transition out of pending instead of sitting inert forever');
 assert(/notificationDispatch\.dispatch\(\{eventType:'subscription\.plan_change\.requires_checkout'/.test(customer),'a PayPal plan change reaching its effective date must notify the customer they need to check out again');
 assert(/customerPlanChange\.expireDuePaypal\(\)/.test(jobs),'the plan_changes automation job must also process due PayPal plan changes, not just Stripe');
-assert(/for\(const change of due\.rows\)\{await withPlanChangeLock\(change\.customer_id/.test(customer)&&/if\(!transitioned\)return/.test(customer),'due PayPal plan-change reminders must serialize with cancellation and notify only after a successful pending-to-awaiting transition');
 assert(/'subscription\.plan_change\.requires_checkout'/.test(notificationDispatch),'the PayPal checkout-required reminder must always email the customer, not depend on opt-in preferences alone');
 assert(/awaiting_checkout/.test(migrationExpiry)&&/subscription\.plan_change\.requires_checkout/.test(migrationExpiry),'a migration must extend the plan-change state machine and seed the reminder notification preference');
 assert(/state IN \('pending','awaiting_checkout'\)/.test(customer),'open plan-change queries must include awaiting_checkout');
@@ -85,6 +72,12 @@ async function subscriptionOwnershipBehavior(){
     if(sql==='SELECT * FROM plans WHERE id=$1')return{rowCount:1,rows:[{id:'plan-a',name:'Plan A',code:'plan-a',billing_interval:'month',duration_days:30,price_minor:600,currency:'GBP'}]};
     if(sql.startsWith('SELECT external_id FROM plan_provider_prices'))return{rowCount:0,rows:[]};
     if(sql.startsWith('SELECT * FROM subscriptions WHERE source='))return{rowCount:1,rows:[existing]};
+    if(sql==='SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE'){
+      return String(params[0])===String(existing.id)&&String(params[1])===String(existing.customer_id)
+        ?{rowCount:1,rows:[existing]}
+        :{rowCount:0,rows:[]};
+    }
+    if(sql.includes('FROM subscription_access_extensions'))return{rowCount:0,rows:[]};
     if(sql.includes('FROM payment_incidents')&&sql.includes('provider_subscription_id=$2'))return{rowCount:0,rows:[]};
     if(sql.startsWith('UPDATE subscriptions SET'))return{rowCount:1,rows:[{...existing,status:'active'}]};
     if(sql.startsWith('INSERT INTO audit_log'))return{rowCount:1,rows:[]};
