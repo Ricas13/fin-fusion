@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 const billingPeriods = require('./billing-periods');
 const planPricing = require('./plan-pricing');
+const subscriptionState = require('../entitlements/subscription-state');
 
 const PURCHASE_KIND = 'subscription_extension';
 const EVENT_SOURCE_PREFIX = 'customer_paid_extension:';
@@ -133,6 +134,34 @@ async function loadSubscriptionTx(client, subscriptionId, customerId = null) {
   return result.rows[0] || null;
 }
 
+async function assertCanonicalCurrentTx(client, row) {
+  const service = String(row?.service_type_snapshot || row?.service_type || 'jellyfin').toLowerCase();
+  let current = null;
+  if (service === 'stremio') current = await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
+  else if (service === 'emby') current = await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
+  else if (service === 'jellyfin' || service === 'bundle') current = await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
+  else throw new Error('This service type cannot be extended through customer checkout.');
+  if (!current || String(current.subscription_id || current.id || '') !== String(row.id || row.subscription_id || '')) {
+    const error = new Error('This is no longer your current subscription for that service. Refresh your account before extending it.');
+    error.code = 'SUBSCRIPTION_EXTENSION_TARGET_STALE';
+    throw error;
+  }
+  const openChange = await client.query(`
+    SELECT id
+    FROM customer_plan_changes
+    WHERE customer_id=$1 AND current_subscription_id=$2
+      AND state IN ('pending','awaiting_checkout')
+    LIMIT 1
+    FOR SHARE
+  `, [row.customer_id,row.id]);
+  if (openChange.rowCount) {
+    const error = new Error('A plan change is already scheduled for this subscription. Cancel or complete that change before buying extra time.');
+    error.code = 'SUBSCRIPTION_EXTENSION_PLAN_CHANGE_OPEN';
+    throw error;
+  }
+  return row;
+}
+
 function assertExtendableSubscription(row, { planId = null, planCode = null, now = new Date() } = {}) {
   if (!row) throw new Error('The subscription to extend was not found.');
   if (planId && String(row.plan_id) !== String(planId)) throw new Error('The extension plan no longer matches the current subscription.');
@@ -246,7 +275,9 @@ async function currentChoiceRow(customerId, subscriptionId, planCode) {
       { planCode }
     );
     await recomputeForSubscriptionTx(client, row.id);
-    return assertExtendableSubscription(await loadSubscriptionTx(client, row.id, customerId), { planCode });
+    const refreshed=assertExtendableSubscription(await loadSubscriptionTx(client, row.id, customerId), { planCode });
+    await assertCanonicalCurrentTx(client,refreshed);
+    return refreshed;
   });
 }
 
@@ -380,6 +411,7 @@ async function activatePaidExtension({ customerId, planId, provider, providerPay
 
     const before = await recomputeForSubscriptionTx(client, targetId);
     target = before.row;
+    await assertCanonicalCurrentTx(client,target);
     const priorEnd = before.accessExpiresAt;
     const nextEnd = projectedEnd(priorEnd, snapshot, target.duration_days_snapshot || target.duration_days || 30);
     const initialDays = wholeDaysBetween(priorEnd, nextEnd);
@@ -501,6 +533,7 @@ module.exports = {
   projectedEnd,
   appliedDaysFromMetadata,
   assertExtendableSubscription,
+  assertCanonicalCurrentTx,
   recomputeForSubscriptionTx,
   recompute,
   checkoutChoice,
