@@ -143,6 +143,33 @@ async function createIntent({
     const row = await transaction(async client => {
         if (!customerId) throw new Error('Checkout owner is required.');
         await lockCheckoutOwner(client, customerId);
+        if (snapshot.kind === 'subscription_extension') {
+            if (checkoutMode !== 'payment') throw new Error('Subscription extensions must use one-time payment checkout.');
+            const extensionSubscriptionId = String(snapshot.extensionSubscriptionId || '').trim();
+            if (!extensionSubscriptionId) throw new Error('Access-extension checkout is missing its target subscription.');
+            const commercialConflict = await client.query(`
+                SELECT 1
+                FROM customer_plan_changes pc
+                WHERE pc.customer_id=$1
+                  AND pc.current_subscription_id::text=$2
+                  AND pc.state IN('pending','awaiting_checkout')
+                UNION ALL
+                SELECT 1
+                FROM provider_operations po
+                WHERE po.scope='customer'
+                  AND po.owner_id=$1
+                  AND po.operation_type='plan_change_immediate'
+                  AND COALESCE(po.local_reference,'')=$2
+                  AND (
+                    po.state IN('planned','provider_applied','local_applied')
+                    OR (po.state='failed' AND po.manual_review_required=TRUE)
+                  )
+                LIMIT 1
+            `, [customerId, extensionSubscriptionId]);
+            if (commercialConflict.rowCount) {
+                throw new Error('A plan change is already open for this subscription. Complete or resolve it before buying extra time.');
+            }
+        }
         const expired = await client.query(`
             UPDATE billing_checkout_intents
             SET state='expired',updated_at=NOW()
