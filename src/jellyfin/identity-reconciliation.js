@@ -219,10 +219,17 @@ async function deleteRemoteIdentity({ serverId, jellyfinUserId, expectedName = n
   if (expectedName && norm(remote.jellyfin_username) !== norm(expectedName)) throw new Error('The remote username changed. Refresh before deleting it.');
   if (remote.administrator) throw new Error('Administrator media identities cannot be deleted from reconciliation.');
   const destructiveDelete = async () => {
-    await assertStillUnmanaged(serverId, remote);
-    const sessions = await activeSessions(serverId, remote.jellyfin_user_id);
+    const { user: currentRemote } = await userImport.getRemoteUser(serverId, jellyfinUserId);
+    if (norm(currentRemote.jellyfin_username) !== norm(remote.jellyfin_username)) {
+      throw new Error('The remote username changed before deletion. Refresh reconciliation and try again.');
+    }
+    if (currentRemote.administrator) {
+      throw new Error('The remote identity became an administrator before deletion.');
+    }
+    await assertStillUnmanaged(serverId, currentRemote);
+    const sessions = await activeSessions(serverId, currentRemote.jellyfin_user_id);
     if (sessions.length) throw new Error('This media identity has an active playback session and cannot be deleted yet.');
-    await registry.request(serverId, `/Users/${encodeURIComponent(remote.jellyfin_user_id)}`, { method: 'DELETE', timeoutMs: 10000 });
+    await registry.request(serverId, `/Users/${encodeURIComponent(currentRemote.jellyfin_user_id)}`, { method: 'DELETE', timeoutMs: 10000 });
   };
   if (stremioManagedUsername(remote.jellyfin_username)) {
     const orphanCleanup = require('../stremio/orphan-account-cleanup');
