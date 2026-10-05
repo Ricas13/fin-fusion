@@ -11,6 +11,7 @@ const billingControl = require('./billing-control');
 const planCapacity = require('../entitlements/plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
 const customerPlanChange = require('./customer-plan-change');
+const provisioningHelpers = require('../jellyfin/provisioning-helpers');
 
 const PLAN_OPERATION_TYPES = ['plan_change_immediate','plan_change_schedule'];
 const RENEWAL_OPERATION_TYPES = ['renewal_stop','renewal_resume'];
@@ -131,23 +132,33 @@ async function ensureImmediateAdmission(op, subscription, target) {
       if (!selectedLocation) {
         throw manual('Immediate plan-change recovery cannot prove the customer-selected media location. Refusing to mutate Stripe.');
       }
-      selectedServer = await customerServerChoice.selectServerForLocationLocked(
-        target,
-        selectedLocation,
-        { db:(sql,params)=>db.query(sql,params), requireSelection:true }
+
+      if (request.targetMediaServerId) {
+        selectedServer = await customerServerChoice.reservedServerIfEligible(
+          target,
+          request.targetMediaServerId,
+          selectedLocation,
+          { db:(sql,params)=>db.query(sql,params) }
+        );
+        if (!selectedServer) {
+          throw manual('Immediate plan-change recovery cannot safely re-admit the originally selected media server. Refusing to mutate Stripe.');
+        }
+      } else {
+        selectedServer = await customerServerChoice.selectServerForLocationLocked(
+          target,
+          selectedLocation,
+          { db:(sql,params)=>db.query(sql,params), requireSelection:true }
+        );
+      }
+
+      // Re-win the exact physical slot inside this same admission transaction.
+      // If the original target is full, recovery stops before touching Stripe.
+      selectedServer = await provisioningHelpers.reservePlacement(
+        op.owner_id,
+        selectedServer,
+        { db, allowOverCapacity:false }
       );
       selectedLocation = selectedServer?.selected_location || customerServerChoice.locationLabel(selectedServer?.location);
-
-      // N-1 web processes do not understand provider-operation capacity. Keep a
-      // short bridge lease while the newly-admitted operation is in flight.
-      await db.query(`
-        INSERT INTO jellyfin_server_placement_leases(customer_id,server_id,access_lane,expires_at)
-        VALUES($1,$2,'primary',NOW()+INTERVAL '10 minutes')
-        ON CONFLICT(customer_id,server_id) DO UPDATE
-        SET access_lane=COALESCE(jellyfin_server_placement_leases.access_lane,'primary'),
-            expires_at=GREATEST(jellyfin_server_placement_leases.expires_at,EXCLUDED.expires_at),
-            updated_at=NOW()
-      `, [op.owner_id, selectedServer.id]);
     }
     // Rolling-deploy compatibility: an N-1 operation has no media commitment
     // fields. It may re-win logical plan capacity, but must retain the existing
