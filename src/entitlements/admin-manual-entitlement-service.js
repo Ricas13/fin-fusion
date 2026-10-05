@@ -6,6 +6,7 @@ const manualSubscriptions = require('./manual-subscriptions');
 const planCapacity = require('./plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
 const subscriptionState = require('./subscription-state');
+const serviceScope = require('./service-scope');
 
 const METHODS = new Set(['paypal', 'stripe', 'bank', 'other']);
 const CURRENCIES = new Set(['GBP', 'USD', 'EUR']);
@@ -41,7 +42,7 @@ async function grantPlans() {
       AND (effective_until IS NULL OR effective_until>NOW())
       AND audience IN('direct','both')
       AND COALESCE(is_addon,FALSE)=FALSE
-      AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio')
+      AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','bundle')
     ORDER BY sort_order,price_minor,name
   `);
   return result.rows;
@@ -54,6 +55,37 @@ async function currentPrimarySubscription(customerId) {
     current_period_end: row.current_period_end,
     plan_name: row.contract_plan_name || row.name || null
   } : null;
+}
+async function conflictingPrimarySubscription(customerId, plan, { client = null } = {}) {
+  const db = client || { query };
+  const result = await db.query(`
+    SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
+           COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
+           COALESCE(s.plan_code_snapshot,p.code) AS contract_plan_code
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    LEFT JOIN customer_entitlement_overrides o
+      ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+    WHERE s.customer_id=$1
+      AND COALESCE(p.is_addon,FALSE)=FALSE
+      AND s.superseded_by IS NULL
+      AND s.starts_at<=NOW()
+      AND (
+        (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+        OR (
+          COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
+          AND public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+        )
+        OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+        OR (
+          COALESCE(s.service_extension_days,0)>0
+          AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+          AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW()
+        )
+      )
+    ORDER BY s.created_at DESC
+  `, [customerId]);
+  return result.rows.find(row => serviceScope.overlaps(row, plan)) || null;
 }
 function normalizedGrantInput(body = {}) {
   const method = text(body.method, 20).toLowerCase();
@@ -89,13 +121,13 @@ async function createManualGrant(customerId, actorUserId, input) {
         AND (effective_until IS NULL OR effective_until>NOW())
         AND audience IN('direct','both')
         AND COALESCE(is_addon,FALSE)=FALSE
-        AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio')
+        AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','bundle')
       LIMIT 1
     `, [input.planId]);
     if (!planResult.rowCount) throw new Error('Choose an active standalone direct-customer plan.');
     const plan = planResult.rows[0];
-    const existing = await subscriptionState.livePrimarySubscription(customerId, { client });
-    if (existing) throw new Error(`This customer already has a current primary subscription (${existing.contract_plan_name || existing.name || 'active plan'}). Use Manual entitlement edit instead.`);
+    const existing = await conflictingPrimarySubscription(customerId, plan, { client });
+    if (existing) throw new Error(`This customer already has overlapping current access (${existing.contract_plan_name || existing.name || 'active plan'}). Use Manual entitlement edit instead.`);
     const recognizedReference = recognizedProviderReference(input.method, input.externalReference);
     const status = plan.billing_interval === 'trial' ? 'trialing' : 'active';
 
@@ -170,6 +202,7 @@ module.exports = {
   recognizedProviderReference,
   grantPlans,
   currentPrimarySubscription,
+  conflictingPrimarySubscription,
   normalizedGrantInput,
   createManualGrant
 };
