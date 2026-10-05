@@ -60,6 +60,10 @@ assert(intents.includes("snapshot.purchaseKind !== 'subscription_extension'"), '
 assert(capacity.includes("subscription_extension"), 'capacity accounting must ignore extension-only checkout intents');
 assert(stripe.includes('incidentResult?.extensionPaymentLoss')&&paypal.includes('incidentResult?.extensionPaymentLoss'),'extension-only refunds must not unwind the customer\'s original affiliate qualifying reward');
 assert(
+  paypal.includes('activateCompletedOrder') && paypal.includes('verifiedProviderContract') && paypal.includes('recordCompletedCapture'),
+  'PayPal extension checkout must retain canonical verified capture settlement/accounting while recurring-payment ledger reconciliation evolves independently'
+);
+assert(
   lifecycle.includes('Paid extension fulfillment incident could not be recorded') &&
   lifecycle.includes('recordCapacitySettlementIncident') &&
   lifecycle.includes('resolveCapacitySettlementIncident'),
