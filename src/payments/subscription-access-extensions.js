@@ -86,7 +86,8 @@ async function assertCanonicalCurrentTx(client,row){
 async function lockedTarget(client,{customerId,subscriptionId,planId}){
   const result=await client.query(`
     SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
-           p.streams,p.stremio_household_network_limit,
+           p.streams,p.stremio_household_network_limit,p.audience,p.active AS plan_active,p.visible AS plan_visible,
+           p.archived_at,p.effective_from,p.effective_until,
            COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
@@ -98,6 +99,12 @@ async function lockedTarget(client,{customerId,subscriptionId,planId}){
   if(String(row.plan_id)!==String(planId))throw new Error('The selected extension no longer matches your current plan.');
   if(row.superseded_by)throw new Error('This subscription has already been replaced.');
   if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw new Error('Only a current paid plan can be extended.');
+  if(row.refund_terminated_at)throw new Error('A refunded or charged-back subscription cannot be extended.');
+  if(!['direct','both'].includes(String(row.audience||'direct')))throw new Error('This plan is not available to direct customers.');
+  if(!row.plan_active||!row.plan_visible||row.archived_at)throw new Error('This plan is no longer available for extension.');
+  const now=Date.now(),effectiveFrom=row.effective_from?new Date(row.effective_from).getTime():null,effectiveUntil=row.effective_until?new Date(row.effective_until).getTime():null;
+  if(effectiveFrom&&effectiveFrom>now)throw new Error('This plan is not yet available for extension.');
+  if(effectiveUntil&&effectiveUntil<=now)throw new Error('This plan is no longer available for extension.');
   if(!LIVE_STATUSES.has(String(row.status||'')))throw new Error('This paid plan is no longer current.');
   const accessEnd=new Date(row.current_period_end||0).getTime()+Math.max(0,Number(row.service_extension_days||0))*86400000;
   if(!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('This paid plan has already expired.');
