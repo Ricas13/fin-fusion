@@ -13,6 +13,9 @@ const incidents=read('src/payments/incidents.js');
 const zeroValue=read('src/payments/zero-value-checkout.js');
 const extension=read('src/payments/subscription-access-extensions.js');
 const migration=read('db/migrations/20261005151000_same_plan_access_extensions.sql');
+const compatibility=read('src/db-compatibility-migrations.js');
+const migrateDb=read('scripts/migrate-db.js');
+const health=read('src/platform/health.js');
 
 assert(dashboard.includes('extensionSubscriptionId'),'current-plan UI must identify the exact subscription being extended');
 assert(dashboard.includes('name="checkoutMode" value="payment"'),'extensions must always use one-time checkout');
@@ -36,5 +39,9 @@ assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_ex
 assert(zeroValue.includes("snapshot.kind==='subscription_extension'"),'fully discounted extensions must use the extension lifecycle rather than creating another subscription');
 assert(migration.includes('UNIQUE(provider,provider_payment_id)'),'provider payment replay must be database-idempotent');
 assert(migration.includes('UNIQUE(checkout_intent_id)'),'checkout replay must be database-idempotent');
+assert(compatibility.includes("'20261005151000_same_plan_access_extensions.sql'"),'extension schema must be classified as rolling-compatible so N-1 readiness is preserved');
+assert(migrateDb.includes('applyRepeatableCompatibilityMigration'),'migration runner must apply extension schema outside the versioned readiness ledger');
+assert(health.includes('latestVersionedMigration'),'candidate readiness must ignore repeatable compatibility migrations');
+assert(extension.includes('ACCESS_EXTENSION_ALLOWANCE_CHANGED'),'settlement must reject stale cheaper access-allowance contracts');
 
 console.log('same-plan access extension smoke: ok');
