@@ -16,6 +16,7 @@ const migration=read('db/migrations/20261005151000_same_plan_access_extensions.s
 const compatibility=read('src/db-compatibility-migrations.js');
 const migrateDb=read('scripts/migrate-db.js');
 const health=read('src/platform/health.js');
+const paypal=read('src/payments/paypal.js');
 
 assert(dashboard.includes('extensionSubscriptionId'),'current-plan UI must identify the exact subscription being extended');
 assert(dashboard.includes('name="checkoutMode" value="payment"'),'extensions must always use one-time checkout');
@@ -43,5 +44,11 @@ assert(compatibility.includes("'20261005151000_same_plan_access_extensions.sql'"
 assert(migrateDb.includes('applyRepeatableCompatibilityMigration'),'migration runner must apply extension schema outside the versioned readiness ledger');
 assert(health.includes('latestVersionedMigration'),'candidate readiness must ignore repeatable compatibility migrations');
 assert(extension.includes('ACCESS_EXTENSION_ALLOWANCE_CHANGED'),'settlement must reject stale cheaper access-allowance contracts');
+const paypalOrderStart=paypal.indexOf('async function activateCompletedOrder');
+const paypalComplete=paypal.indexOf("await checkoutIntents.completeVerifiedProvider('paypal',order.id,'completed')",paypalOrderStart);
+const paypalLedger=paypal.indexOf('await recordCompletedCapture(capture',paypalOrderStart);
+const paypalFulfill=paypal.indexOf('const activated=await lifecycle.activatePurchase',paypalOrderStart);
+assert(paypalOrderStart>=0&&paypalComplete>paypalOrderStart&&paypalLedger>paypalComplete&&paypalFulfill>paypalLedger,
+  'PayPal one-time checkout must complete local provider state, persist verified money, then fulfill access so accounting and paid-but-unfulfilled recovery stay durable');
 
 console.log('same-plan access extension smoke: ok');
