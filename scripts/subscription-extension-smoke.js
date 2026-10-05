@@ -43,7 +43,7 @@ const capacity = fs.readFileSync(path.join(__dirname,'..','src','entitlements','
 assert(dashboard.includes('extensionSubscriptionId'), 'current-plan card must submit the exact subscription being extended');
 assert(dashboard.includes('Extend by'), 'current-plan card must expose extension checkout actions');
 assert(dashboard.includes('checkoutMode" value="payment"'), 'same-plan extension must always be one-time checkout');
-assert(flexible.includes("extensionSubscriptionId?'subscription_extension':'plan_purchase'"), 'checkout contract must freeze extension intent');
+assert(flexible.includes("purchaseKind:'subscription_extension',extensionSubscriptionId"), 'checkout contract must freeze extension intent');
 assert(flexible.includes('subscriptionExtensions.checkoutChoice'), 'extension checkout must use its capacity-neutral resolver');
 assert(intents.includes("snapshot.purchaseKind !== 'subscription_extension'"), 'extension checkout intent must skip acquisition capacity reservation');
 assert(capacity.includes("subscription_extension"), 'capacity accounting must ignore extension-only checkout intents');
