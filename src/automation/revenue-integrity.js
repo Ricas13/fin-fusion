@@ -68,6 +68,7 @@ const JELLYFIN_ADMIN_AUTHORITY_VIOLATIONS_SQL = `
             SELECT 1
             FROM effective_customer_entitlements e
             WHERE e.customer_id=ctl.customer_id
+              AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN('jellyfin','bundle')
               AND COALESCE(e.blocked,FALSE)=FALSE
               AND e.access_expires_at>NOW()
           )
