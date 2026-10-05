@@ -93,9 +93,15 @@ async function countsForServers(serverIds, db = query) {
               subscription.media_server_id
             )=ANY($1::uuid[])
         AND subscription.superseded_by IS NULL
-        AND subscription.status IN('active','trialing','past_due','paused')
         AND subscription.starts_at<=clock_timestamp()
-        AND subscription.current_period_end>NOW()
+        AND (
+          (subscription.status IN('active','trialing','past_due','paused') AND subscription.current_period_end>NOW())
+          OR (
+            COALESCE(subscription.service_extension_days,0)>0
+            AND subscription.status IN('active','trialing','past_due','paused','cancelled','expired')
+            AND subscription.current_period_end+((subscription.service_extension_days||' days')::interval)>NOW()
+          )
+        )
       UNION
       SELECT checkout.media_server_id,
              checkout.customer_id::text||':'||
