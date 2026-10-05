@@ -45,8 +45,8 @@ async function setEnding({ subscriptionId, actorUserId = null, ending = true }) 
         `, [subscriptionId]);
         const row = result.rows[0];
         if (!row) throw new Error('Subscription not found.');
-        if (row.effective_server_class !== 'premium' || !['jellyfin','bundle'].includes(row.effective_service_type) || Number(row.effective_price_minor) <= 0 || row.is_free_tier || row.is_addon) {
-            throw new Error('Only an active paid Premium Server term can use this billing disposition.');
+        if (!['jellyfin','bundle'].includes(row.effective_service_type) || Number(row.effective_price_minor) <= 0 || row.is_free_tier || row.is_addon) {
+            throw new Error('Only an active paid Jellyfin/bundle term can use this billing disposition.');
         }
         if (!['active','trialing','past_due','paused'].includes(String(row.status || '')) || new Date(row.current_period_end).getTime() <= Date.now()) {
             throw new Error('This paid term is no longer active.');
