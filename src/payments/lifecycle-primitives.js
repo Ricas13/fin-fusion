@@ -300,6 +300,21 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
             const isAccessExtension = contract?.kind === 'subscription_extension';
 
+            if (!isAccessExtension) {
+                const extensionOwner = await client.query(`
+                    SELECT customer_id,subscription_id
+                    FROM subscription_access_extensions
+                    WHERE provider=$1 AND provider_payment_id=$2
+                    LIMIT 1
+                    FOR SHARE
+                `, [provider, String(providerSubscriptionId)]);
+                if (extensionOwner.rowCount) {
+                    const error = new Error('This provider payment is already attached to an access extension and cannot also create or update a subscription.');
+                    error.code = 'PROVIDER_PAYMENT_ALREADY_USED_FOR_EXTENSION';
+                    throw error;
+                }
+            }
+
             if (isAccessExtension && checkoutBillingMode !== billingMode.BILLING_MODES.PAYMENT) {
                 throw new Error('Access extensions must use a one-time payment.');
             }
