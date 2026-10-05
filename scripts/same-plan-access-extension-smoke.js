@@ -18,6 +18,7 @@ const migrateDb=read('scripts/migrate-db.js');
 const health=read('src/platform/health.js');
 const paypal=read('src/payments/paypal.js');
 const paymentReconciliation=read('src/payments/provider-payment-reconciliation.js');
+const checkoutRecovery=read('src/payments/provider-checkout-recovery.js');
 
 assert(dashboard.includes('extensionSubscriptionId'),'current-plan UI must identify the exact subscription being extended');
 assert(dashboard.includes('name="checkoutMode" value="payment"'),'extensions must always use one-time checkout');
@@ -49,6 +50,7 @@ assert(paymentReconciliation.includes('FROM subscription_access_extensions WHERE
 assert(paymentReconciliation.includes('const purchase = subscription || extension'),'healthy extension payments must not be reported as provider money with no local purchase');
 assert(paymentReconciliation.includes("FROM subscription_access_extensions")&&paymentReconciliation.includes("TRUE AS is_extension"),'PayPal capture reconciliation must include extension-ledger ownership');
 assert(paymentReconciliation.includes('!subscription && !extension && checkout'),'PayPal reconciliation must not mark a captured extension as fulfillment-pending once its extension ledger exists');
+assert(checkoutRecovery.includes('FROM subscription_access_extensions sae')&&checkoutRecovery.includes('sae.checkout_intent_id=i.id'),'completed PayPal extension checkouts must leave automated recovery once the extension ledger owns the capture');
 assert(paypal.includes('incidentResult?.extensionPaymentLoss')&&read('src/payments/stripe.js').includes('incidentResult?.extensionPaymentLoss'),'extension refunds/chargebacks must not reverse affiliate rewards earned by the base subscription');
 assert(extension.includes('service_extension_days=COALESCE(service_extension_days,0)+$2'),'extension must add paid time to the existing entitlement');
 assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)-$2)'),'reversal must remove only its own extension time');
