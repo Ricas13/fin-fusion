@@ -445,8 +445,11 @@ async function verifiedProviderContract({
     if (planId && String(row.plan_id || '') !== String(planId)) throw new Error('Provider checkout plan does not match the local checkout contract.');
     if (checkoutMode && row.checkout_mode !== checkoutMode) throw new Error('Provider checkout mode does not match the local checkout contract.');
     const snapshot = safeSnapshot(row.commercial_snapshot || {});
-    if (snapshot.kind !== 'direct_plan' || String(snapshot.planId || '') !== String(row.plan_id || '')) {
+    if (!['direct_plan','subscription_extension'].includes(snapshot.kind) || String(snapshot.planId || '') !== String(row.plan_id || '')) {
         throw new Error('Checkout commercial snapshot is incomplete or does not match its plan.');
+    }
+    if (snapshot.kind === 'subscription_extension' && !String(snapshot.extensionSubscriptionId || '').trim()) {
+        throw new Error('Access-extension checkout is missing its target subscription.');
     }
     if (row.plan_price_id && String(snapshot.planPriceId || '') !== String(row.plan_price_id)) {
         throw new Error('Checkout commercial snapshot does not match its selected plan price.');
