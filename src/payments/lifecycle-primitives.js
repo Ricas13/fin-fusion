@@ -11,6 +11,7 @@ const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
 const serviceCreditReservations = require('./service-credit-reservations');
 const financialState = require('./provider-financial-state');
+const accessExtensions = require('./subscription-access-extensions');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -294,8 +295,13 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
+            const isAccessExtension = contract?.kind === 'subscription_extension';
 
-            if (!existing.rowCount && !activationSuppressedByMoneyLoss) {
+            if (isAccessExtension && checkoutBillingMode !== billingMode.BILLING_MODES.PAYMENT) {
+                throw new Error('Access extensions must use a one-time payment.');
+            }
+
+            if (!isAccessExtension && !existing.rowCount && !activationSuppressedByMoneyLoss) {
                 if (billingMode.isRecurring({ source: provider, billing_mode: checkoutBillingMode })) {
                     await subscriptionState.assertNoOtherLiveRecurring(client, customerId, null, planId);
                 }
@@ -307,7 +313,24 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             }
 
             let row;
-            if (existing.rowCount) {
+            if (isAccessExtension) {
+                if (activationSuppressedByMoneyLoss) {
+                    const error = new Error('A reversed access-extension payment cannot activate paid time.');
+                    error.code = 'ACCESS_EXTENSION_MONEY_LOSS';
+                    throw error;
+                }
+                const applied = await accessExtensions.applyPurchase(client, {
+                    customerId,
+                    subscriptionId: contract?.extensionSubscriptionId,
+                    planId,
+                    provider,
+                    providerPaymentId: providerSubscriptionId,
+                    checkoutIntentId: settlementCheckoutIntentId,
+                    commercialSnapshot: contract
+                });
+                row = applied.subscription;
+                historicalCheckoutReplay = Boolean(applied.replay);
+            } else if (existing.rowCount) {
                 const existingSubscription = existing.rows[0];
                 if (String(existingSubscription.customer_id) !== String(customerId)) {
                     const mismatch = new Error('Provider subscription is already attached to a different customer.');
@@ -352,7 +375,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             }
 
             const effectiveStatus = row.status;
-            await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
+            if (!isAccessExtension) await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
             if (effectiveDiscountCodeId && !historicalCheckoutReplay) {
@@ -367,7 +390,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 await settleCheckoutServiceCredit(client, settlementCheckoutIntentId, contract);
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
-            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null })]);
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`, [isAccessExtension?'payment.access_extension.activate':'payment.subscription.activate',row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null, accessExtension:isAccessExtension })]);
             return row;
         });
     } catch (error) {
