@@ -5,6 +5,7 @@ const accessHolds = require('../entitlements/access-holds');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 const subscriptionTermination = require('./subscription-termination');
+const accessExtensions = require('./subscription-access-extensions');
 
 // A refund/dispute/chargeback under review is a commercial incident, not an
 // access state ("a customer asking for a refund is not an access state").
@@ -21,9 +22,16 @@ async function identityFromProviderSubscription(provider,providerSubscriptionId)
   if(!reference)return{scope:'unresolved',customerId:null};
   const direct=await query(`
     SELECT DISTINCT customer_id
-    FROM subscriptions
-    WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
-      AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+    FROM (
+      SELECT customer_id
+        FROM subscriptions
+       WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+         AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+      UNION ALL
+      SELECT customer_id
+        FROM subscription_access_extensions
+       WHERE provider=$1 AND provider_payment_id=$2
+    ) ownership
     ORDER BY customer_id
     LIMIT 2
   `,[source,reference]);
@@ -94,6 +102,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   if(!['stripe','paypal','plisio'].includes(provider))throw new Error('Unsupported incident provider.');
   if(!['refund','dispute','chargeback','failed_renewal','checkout_completion'].includes(kind))throw new Error('Unsupported payment incident type.');
   const resolvedIdentity=await existingCustomerIdentity(identity||await identityFromProviderSubscription(provider,providerSubscriptionId)),cfg=await policy();
+  const extensionPaymentLoss=providerSubscriptionId?Boolean(await accessExtensions.extensionIdentity(provider,providerSubscriptionId)):false;
   let action=policyAction(kind,cfg,metadata);if(status==='won')action='restore';else if(status==='resolved')action='preserve';
   const selected=await query(`
     WITH inserted AS (
@@ -154,6 +163,14 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
       const normalizedProvider=String(provider||'').trim().toLowerCase(),normalizedReference=String(subscriptionRef||'').trim();
+      const extensionReversal=await accessExtensions.revokeByProviderPayment({
+        provider:normalizedProvider,
+        providerPaymentId:normalizedReference,
+        customerId:effectIdentity.customerId,
+        reason:confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute',
+        reference:incident.id
+      });
+      if(extensionReversal.changed)await reconcileMany([effectIdentity.customerId]);
       const matched=await query(`
         SELECT id,billing_mode,current_period_end,duration_days_snapshot
         FROM subscriptions
@@ -171,6 +188,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
           if(terminationDecision.terminate){
             const reasonLabel=confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute';
             const terminated=await subscriptionTermination.terminateForRefund(matchedRow.id,effectIdentity.customerId,{reason:`${reasonLabel} (${provider} ${kind} ${incident.id})`,reference:incident.id});
+            if(terminated.changed)await accessExtensions.restoreActivePurchasedDays(matchedRow.id,effectIdentity.customerId);
             terminatedAny=terminatedAny||Boolean(terminated.changed);
           }else skipped.push({subscriptionId:matchedRow.id,reason:terminationDecision.reason,transactionAt:terminationDecision.transactionAt||null,currentTermStartApprox:terminationDecision.currentTermStartApprox||null,currentTermEnd:terminationDecision.currentTermEnd||null});
         }
@@ -192,7 +210,7 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     }
     if(effectIdentity.scope!=='unresolved')affected=await releaseHold(effectIdentity,provider,incident.provider_case_id);
   }
-  return{duplicate:Boolean(incident.duplicate),incident,affected};
+  return{duplicate:Boolean(incident.duplicate),incident,affected,extensionPaymentLoss};
 }
 async function get(id){const r=await query(`SELECT * FROM payment_incidents WHERE id=$1`,[id]);return r.rows[0]||null}
 async function acknowledge(id,actorUserId){const r=await query(`UPDATE payment_incidents SET acknowledged_at=COALESCE(acknowledged_at,NOW()),acknowledged_by=COALESCE(acknowledged_by,$2),updated_at=NOW() WHERE id=$1 RETURNING *`,[id,actorUserId]);if(!r.rowCount)throw new Error('Payment incident not found.');await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_incident.acknowledge','payment_incident',$2,'{}'::jsonb)`,[actorUserId,id]);return r.rows[0]}
