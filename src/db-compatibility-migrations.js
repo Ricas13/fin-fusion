@@ -6,7 +6,8 @@
 // deliberately NOT written to schema_migrations. Readiness therefore remains
 // anchored to the latest versioned migration shared by N and N-1.
 const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
-  '20261003113000_customer_media_location_assignment.sql'
+  '20261003113000_customer_media_location_assignment.sql',
+  '20261005151000_same_plan_access_extensions.sql'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {
