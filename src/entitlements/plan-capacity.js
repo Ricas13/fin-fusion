@@ -142,7 +142,7 @@ async function logicalMediaPlanUsage(plan,db=query,{excludeReservationId=null,ex
           AND s.starts_at<=clock_timestamp()
           AND (
             (o.permanent_access=TRUE AND o.revoked_at IS NULL)
-            OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+            OR (COALESCE($6::boolean,FALSE)=TRUE AND public.subscription_admin_present(s.customer_id,'jellyfin',s.id))
             OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
             OR (
               COALESCE(s.service_extension_days,0)>0
@@ -150,7 +150,10 @@ async function logicalMediaPlanUsage(plan,db=query,{excludeReservationId=null,ex
               AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
             )
           )
-          AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
+          AND (
+            COALESCE($6::boolean,FALSE)=FALSE
+            OR NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
+          )
           AND (
             COALESCE($5::boolean,FALSE)=FALSE
             OR ${freePendingUnblockedSql('s','plan_free_hold')}
@@ -169,7 +172,8 @@ async function logicalMediaPlanUsage(plan,db=query,{excludeReservationId=null,ex
         + ${pendingPlanChangeUsersSql('$1')}
         + ${immediatePlanChangeUsersSql('$1')}
       ) AS reserved`,[
-        plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,Boolean(plan.is_free_tier)
+        plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,Boolean(plan.is_free_tier),
+        ['jellyfin','bundle'].includes(serviceType(plan))
       ]);
   const planUsed=Number(planUsage.rows[0]?.used||0);
   const planReserved=Number(planUsage.rows[0]?.reserved||0);
