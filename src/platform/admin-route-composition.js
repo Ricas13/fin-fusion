@@ -65,6 +65,7 @@ const { createAdminPlanLibrariesRouter } = require('./admin-plan-libraries');
 const { createAdminServerFleetDashboardRouter } = require('./admin-server-fleet-dashboard');
 const { createAdminServerLibraryDashboardRouter } = require('./admin-server-library-dashboard');
 const { createAdminStremioManagedSourcesRouter } = require('./admin-stremio-managed-sources');
+const { createAdminMediaIdentityReconciliationRouter } = require('./admin-media-identity-reconciliation');
 const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminMyActivityRouter } = require('./admin-my-activity');
@@ -178,6 +179,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminServerFleetDashboardRouter());
   app.use(createAdminServerLibraryDashboardRouter());
   app.use(createAdminStremioManagedSourcesRouter());
+  app.use(createAdminMediaIdentityReconciliationRouter());
   app.use(createAdminServersRouter());
   app.use(createAdminMyActivityRouter());
   app.use(createAdminActivityRouter());
