@@ -67,6 +67,15 @@ async function main(){
   assert.equal(replay.replay,true,'provider replay must be idempotent');
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),28,'replay must not double-add time');
 
+  await query('UPDATE subscriptions SET service_extension_days=3650 WHERE id=$1',[subscription.id]);
+  const cappedReplay=await transaction(client=>extensions.applyPurchase(client,{
+    customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
+    providerPaymentId:`pi_extension_1_${suffix}`,checkoutIntentId:extensionIntent.id,commercialSnapshot:snapshot
+  }));
+  assert.equal(cappedReplay.replay,true,'an already fulfilled payment must acknowledge replay even at the extension cap');
+  assert.equal(Number(cappedReplay.subscription.service_extension_days),3650,'replay must not recalculate or add purchased time');
+  await query('UPDATE subscriptions SET service_extension_days=28 WHERE id=$1',[subscription.id]);
+
   await assert.rejects(
     transaction(client=>extensions.applyPurchase(client,{
       customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
@@ -208,6 +217,38 @@ async function main(){
   await query("UPDATE subscriptions SET current_period_end='2030-02-28T00:00:00Z' WHERE id=$1",[baselineSubscription.id]);
   const baselineRecomputed=await transaction(client=>extensions.recomputeActivePurchasedDaysTx(client,baselineSubscription.id,baselineCustomer.id));
   assert.equal(Number(baselineRecomputed.subscription.service_extension_days),7,'later rebasing must not subtract a revoked extension from unrelated/manual extension days a second time');
+
+  // Block the parent so both refunds queue together. The old extension-first
+  // lock order acquires separate child rows and then deadlocks on recompute.
+  for(const key of ['a','b'])await transaction(client=>extensions.applyPurchase(client,{
+    customerId:baselineCustomer.id,subscriptionId:baselineSubscription.id,planId:plan.id,provider:'stripe',
+    providerPaymentId:`pi_parallel_${key}_${suffix}`,commercialSnapshot:baselineSnapshot
+  }));
+  const blocker=await getPool().connect();
+  let refunds;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT id FROM subscriptions WHERE id=$1 FOR UPDATE',[baselineSubscription.id]);
+    refunds=Promise.allSettled(['a','b'].map(key=>extensions.revokeByProviderPayment({
+      provider:'stripe',providerPaymentId:`pi_parallel_${key}_${suffix}`,customerId:baselineCustomer.id,reason:'parallel refund smoke'
+    })));
+    let waiting=0;
+    const deadline=Date.now()+5000;
+    while(waiting<2&&Date.now()<deadline){
+      waiting=Number((await query(`SELECT COUNT(*)::int n FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid()`)).rows[0].n);
+      if(waiting<2)await new Promise(resolve=>setTimeout(resolve,20));
+    }
+    assert.equal(waiting,2,'both refunds must overlap while waiting for the parent lock');
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+  }
+  const outcomes=await refunds;
+  assert(outcomes.every(result=>result.status==='fulfilled'&&result.value.changed),
+    'concurrent reversals must both finish without deadlock: '+outcomes.map(r=>r.reason?.message||r.status).join(', '));
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[baselineSubscription.id])).rows[0].service_extension_days),7,
+    'concurrent refunds must preserve unrelated manual extension days');
 
   console.log('same-plan access extension smoke: ok — additive, no capacity subscription duplication, replay-safe and refund-safe');
 }

@@ -228,6 +228,26 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   provider=cleanProvider(provider);
   providerPaymentId=cleanReference(providerPaymentId);
   subscriptionId=cleanReference(subscriptionId,'Subscription');
+  // Serialize by subscription before touching any extension rows, matching
+  // renewal/recompute and reversal. Replays acknowledge the original purchase
+  // without applying current sale eligibility or counting the purchase twice.
+  const replayTarget=(await client.query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subscriptionId,customerId])).rows[0]||null;
+  const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
+  if(prior){
+    const identityMismatch=String(prior.customer_id)!==String(customerId)
+      ||String(prior.subscription_id)!==String(subscriptionId)
+      ||String(prior.plan_id)!==String(planId)
+      ||String(prior.provider||'')!==String(provider)
+      ||String(prior.provider_payment_id||'')!==String(providerPaymentId)
+      ||(checkoutIntentId&&prior.checkout_intent_id&&String(prior.checkout_intent_id)!==String(checkoutIntentId));
+    if(identityMismatch){
+      const error=new Error('This provider payment or checkout is already attached to a different access extension.');
+      error.code='ACCESS_EXTENSION_PAYMENT_IDENTITY_CONFLICT';
+      throw error;
+    }
+    if(!replayTarget)throw new Error('The subscription being extended no longer exists.');
+    return{subscription:replayTarget,extension:prior,replay:true};
+  }
   let target=await lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId});
   const accessKind=extensionAccessKind(commercialSnapshot,target);
   const purchasedQuantity=Number(commercialSnapshot?.accessQuantity);
@@ -254,22 +274,6 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
     const error=new Error('This provider payment is already attached to a subscription and cannot also be used as an access extension.');
     error.code='ACCESS_EXTENSION_PAYMENT_ALREADY_USED';
     throw error;
-  }
-  const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
-  if(prior){
-    const identityMismatch=String(prior.customer_id)!==String(customerId)
-      ||String(prior.subscription_id)!==String(subscriptionId)
-      ||String(prior.plan_id)!==String(planId)
-      ||String(prior.provider||'')!==String(provider)
-      ||String(prior.provider_payment_id||'')!==String(providerPaymentId)
-      ||(checkoutIntentId&&prior.checkout_intent_id&&String(prior.checkout_intent_id)!==String(checkoutIntentId));
-    if(identityMismatch){
-      const error=new Error('This provider payment or checkout is already attached to a different access extension.');
-      error.code='ACCESS_EXTENSION_PAYMENT_IDENTITY_CONFLICT';
-      throw error;
-    }
-    const recomputed=await recomputeActivePurchasedDaysTx(client,subscriptionId,customerId);
-    return{subscription:recomputed.subscription||target,extension:prior,replay:true};
   }
   const inserted=(await client.query(`
     INSERT INTO subscription_access_extensions(
@@ -305,6 +309,14 @@ async function extensionIdentity(provider,providerPaymentId){
 async function revokeByProviderPayment({provider,providerPaymentId,customerId=null,reason='Provider payment was reversed',reference=null}){
   provider=cleanProvider(provider);providerPaymentId=cleanReference(providerPaymentId);
   return transaction(async client=>{
+    // All purchase, renewal and reversal paths lock the parent first. Locking
+    // an extension first deadlocks concurrent refunds against recomputation.
+    await client.query(`
+      SELECT s.id FROM subscriptions s
+      JOIN subscription_access_extensions e ON e.subscription_id=s.id
+      WHERE e.provider=$1 AND e.provider_payment_id=$2
+      FOR UPDATE OF s
+    `,[provider,providerPaymentId]);
     const extension=(await client.query(`
       SELECT * FROM subscription_access_extensions
        WHERE provider=$1 AND provider_payment_id=$2
