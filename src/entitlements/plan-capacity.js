@@ -34,7 +34,8 @@ function scarcity(state){
   return{label:'Available',kind:'available'};
 }
 function checkoutReservationSql(alias='i'){
-  return `(${alias}.state<>'completed' AND ((
+  return `(COALESCE(${alias}.commercial_snapshot->>'kind','direct_plan')<>'subscription_extension'
+  AND ${alias}.state<>'completed' AND ((
     ${alias}.state='open' AND ${alias}.expires_at>NOW()
   ) OR (
     ${alias}.provider_checkout_id IS NOT NULL
@@ -91,7 +92,17 @@ async function loadPlan(planId,db=query){
 async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
-      (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS used,
+      (SELECT COUNT(DISTINCT s.customer_id)::int
+       FROM subscriptions s
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW()
+         AND (
+           (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+           OR (
+             COALESCE(s.service_extension_days,0)>0
+             AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+             AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+           )
+         )) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
        (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
@@ -105,7 +116,15 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
         s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit,1))),0)::int
        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS household_used,
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW()
+         AND (
+           (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+           OR (
+             COALESCE(s.service_extension_days,0)>0
+             AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+             AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+           )
+         )) AS household_used,
       ((SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.stremio_household_network_limit,1))),0)::int
         FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
         WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
@@ -374,8 +393,15 @@ function legacyAcquisitionSql(alias='p'){
   return `(${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT cs.customer_id) FROM subscriptions cs
     WHERE cs.plan_id=${alias}.id AND cs.superseded_by IS NULL
-      AND cs.status IN ('active','trialing','past_due','paused')
-      AND cs.starts_at<=NOW() AND cs.current_period_end>NOW()
+      AND cs.starts_at<=NOW()
+      AND (
+        (cs.status IN ('active','trialing','past_due','paused') AND cs.current_period_end>NOW())
+        OR (
+          COALESCE(cs.service_extension_days,0)>0
+          AND cs.status IN('active','trialing','past_due','paused','cancelled','expired')
+          AND cs.current_period_end+((cs.service_extension_days||' days')::interval)>NOW()
+        )
+      )
   ) + (
     SELECT COUNT(*) FROM free_access_registration_reservations cr
     WHERE cr.plan_id=${alias}.id AND cr.consumed_at IS NULL AND cr.released_at IS NULL AND cr.expires_at>NOW()
