@@ -54,7 +54,7 @@ async function main(){
 
   const first=await transaction(client=>extensions.applyPurchase(client,{
     customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
-    providerPaymentId:`pi_extension_1_${suffix}`,commercialSnapshot:snapshot
+    providerPaymentId:`pi_extension_1_${suffix}`,checkoutIntentId:extensionIntent.id,commercialSnapshot:snapshot
   }));
   assert.equal(first.replay,false,'first extension must be new');
   assert.equal(Number(first.subscription.service_extension_days),28,'Jan 31 monthly extension must end on Feb 28, not assume a fixed 30-day month');
@@ -62,10 +62,19 @@ async function main(){
 
   const replay=await transaction(client=>extensions.applyPurchase(client,{
     customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
-    providerPaymentId:`pi_extension_1_${suffix}`,commercialSnapshot:snapshot
+    providerPaymentId:`pi_extension_1_${suffix}`,checkoutIntentId:extensionIntent.id,commercialSnapshot:snapshot
   }));
   assert.equal(replay.replay,true,'provider replay must be idempotent');
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0].service_extension_days),28,'replay must not double-add time');
+
+  await assert.rejects(
+    transaction(client=>extensions.applyPurchase(client,{
+      customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
+      providerPaymentId:`pi_extension_different_${suffix}`,checkoutIntentId:extensionIntent.id,commercialSnapshot:snapshot
+    })),
+    error=>error?.code==='ACCESS_EXTENSION_PAYMENT_IDENTITY_CONFLICT',
+    'the same checkout intent must never silently absorb a different provider payment'
+  );
 
   await transaction(client=>extensions.applyPurchase(client,{
     customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'paypal',
