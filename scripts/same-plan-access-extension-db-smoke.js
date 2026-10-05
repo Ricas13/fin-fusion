@@ -5,6 +5,8 @@ const assert=require('assert');
 const {query,transaction,getPool}=require('../src/db');
 const extensions=require('../src/payments/subscription-access-extensions');
 const lifecyclePrimitives=require('../src/payments/lifecycle-primitives');
+const checkoutIntents=require('../src/payments/checkout-intents');
+const planCapacity=require('../src/entitlements/plan-capacity');
 
 async function main(){
   const suffix=Date.now().toString(36);
@@ -29,6 +31,14 @@ async function main(){
   const snapshot={kind:'subscription_extension',extensionSubscriptionId:subscription.id,planId:plan.id,planCode:plan.code,planName:plan.name,
     priceMinor:600,currency:'GBP',billingInterval:'month',durationDays:30,streams:3,accessVariantKind:'streams',accessQuantity:3,
     provider:'stripe',checkoutMode:'payment'};
+
+  const extensionIntent=await checkoutIntents.createIntent({
+    scope:'customer',customerId:customer.id,planId:plan.id,provider:'stripe',checkoutMode:'payment',ttlMinutes:30,
+    commercialSnapshot:snapshot
+  });
+  const capacityWithExtensionCheckout=await planCapacity.usage(plan.id);
+  assert.equal(Number(capacityWithExtensionCheckout.reserved||0),0,'an open extension checkout must not reserve another logical plan place');
+  assert.equal(Number(capacityWithExtensionCheckout.used||0),1,'the existing subscriber must remain the only occupied plan place');
 
   const first=await transaction(client=>extensions.applyPurchase(client,{
     customerId:customer.id,subscriptionId:subscription.id,planId:plan.id,provider:'stripe',
