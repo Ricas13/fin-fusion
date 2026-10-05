@@ -39,9 +39,10 @@ assert(!manual.includes('<script>(function'), 'manual entitlement UI must not in
 assert(clientScript.includes("plan.addEventListener('change'") && clientScript.includes("start.addEventListener('change'"), 'external script must preserve plan-duration defaults');
 assert(manual.includes("surface === 'access' || surface === 'billing'"), 'manual grant form must appear on both Customer 360 Billing and Access');
 assert(manual.includes("surface !== 'overview'") && manual.includes("'overview' : null"), 'Customer 360 overview must still participate in the empty-account guard without rendering a second grant form');
-assert(manual.includes('currentPrimarySubscription') && manual.includes('if (!existing)'), 'manual grant form must only appear when there is no effective primary subscription');
-assert(manualService.includes('subscriptionState.livePrimarySubscription') && subscriptionState.includes('async function livePrimarySubscription') && subscriptionState.includes('o.permanent_access=TRUE') && subscriptionState.includes('service_extension_days'), 'permanent and extension-backed effective access must block duplicate first-entitlement grants through canonical subscription state');
-assert(manualService.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect existing subscriptions to the normal manual edit flow');
+assert(manual.includes('grantablePlansForCustomer') && manual.includes('plans.length'), 'manual grant form must remain available for non-overlapping service lanes while hiding conflicting plans');
+assert(manualService.includes('conflictingPrimarySubscription') && manualService.includes('serviceScope.overlaps(row, plan)') && manualService.includes("IN ('jellyfin','stremio','bundle')"), 'manual grants must block only overlapping current service access and keep bundle plans grantable');
+assert(manualService.includes('o.permanent_access=TRUE') && manualService.includes('service_extension_days'), 'permanent and extension-backed overlapping access must still block duplicate manual grants');
+assert(manualService.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect overlapping existing subscriptions to the normal manual edit flow');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
 assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
 assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf("mountCritical('customer360', createAdminCustomer360Router())"), 'manual entitlement injection must mount before Customer 360');
