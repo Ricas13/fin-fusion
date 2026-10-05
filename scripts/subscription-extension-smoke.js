@@ -46,6 +46,8 @@ const dashboard = fs.readFileSync(path.join(__dirname,'..','views','customer','d
 const flexible = fs.readFileSync(path.join(__dirname,'..','src','platform','flexible-checkout.js'),'utf8');
 const intents = fs.readFileSync(path.join(__dirname,'..','src','payments','checkout-intents.js'),'utf8');
 const capacity = fs.readFileSync(path.join(__dirname,'..','src','entitlements','plan-capacity.js'),'utf8');
+const stripe = fs.readFileSync(path.join(__dirname,'..','src','payments','stripe.js'),'utf8');
+const paypal = fs.readFileSync(path.join(__dirname,'..','src','payments','paypal.js'),'utf8');
 
 assert(dashboard.includes('extensionSubscriptionId'), 'current-plan card must submit the exact subscription being extended');
 assert(dashboard.includes('Extend by'), 'current-plan card must expose extension checkout actions');
@@ -54,5 +56,6 @@ assert(flexible.includes("purchaseKind:'subscription_extension',extensionSubscri
 assert(flexible.includes('subscriptionExtensions.checkoutChoice'), 'extension checkout must use its capacity-neutral resolver');
 assert(intents.includes("snapshot.purchaseKind !== 'subscription_extension'"), 'extension checkout intent must skip acquisition capacity reservation');
 assert(capacity.includes("subscription_extension"), 'capacity accounting must ignore extension-only checkout intents');
+assert(stripe.includes('incidentResult?.extensionPaymentLoss')&&paypal.includes('incidentResult?.extensionPaymentLoss'),'extension-only refunds must not unwind the customer\'s original affiliate qualifying reward');
 
-console.log('subscription extension smoke: ok — calendar duration, one-time checkout and capacity neutrality');
+console.log('subscription extension smoke: ok — calendar duration, one-time checkout, capacity neutrality and extension-only refund accounting');
