@@ -238,6 +238,7 @@ module.exports = {
       "node scripts/provider-financial-state-db-smoke.js",
       "node scripts/payment-history-coverage-timezone-db-smoke.js",
       "node scripts/prepaid-access-stacking-smoke.js",
+      "node scripts/same-plan-access-extension-db-smoke.js",
       "node scripts/prorata-refund-db-smoke.js",
       "node scripts/prorata-refund-retry-db-smoke.js",
       "node scripts/affiliate-first-payment-only-db-smoke.js",
