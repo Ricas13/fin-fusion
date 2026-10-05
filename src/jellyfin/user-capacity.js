@@ -103,6 +103,7 @@ async function countsForServers(serverIds, db = query) {
       FROM billing_checkout_intents checkout
       JOIN plans checkout_plan ON checkout_plan.id=checkout.plan_id
       WHERE checkout.media_server_id=ANY($1::uuid[])
+        AND COALESCE(checkout.commercial_snapshot->>'kind','direct_plan')<>'subscription_extension'
         AND checkout.state='open'
         AND (
           (
@@ -142,6 +143,7 @@ async function countsForServers(serverIds, db = query) {
       JOIN plans checkout_plan ON checkout_plan.id=checkout.plan_id
       JOIN jellyfin_servers candidate ON candidate.id=ANY($1::uuid[])
       WHERE checkout.media_server_id IS NULL
+        AND COALESCE(checkout.commercial_snapshot->>'kind','direct_plan')<>'subscription_extension'
         AND checkout_plan.service_type IN('jellyfin','bundle','emby')
         AND checkout.state='open'
         AND (
