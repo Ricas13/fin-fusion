@@ -161,6 +161,28 @@ async function main(){
     'forged plan/subscription combinations must fail closed'
   );
 
+  const lateCustomer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`late-${suffix}`,`late-${suffix}@example.invalid`])).rows[0];
+  const lateSubscription=(await query(`
+    INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,
+      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot)
+    VALUES($1,$2,'active','manual','manual',NOW()-INTERVAL '30 days',NOW()+INTERVAL '2 minutes','month',30,'jellyfin')
+    RETURNING *
+  `,[lateCustomer.id,plan.id])).rows[0];
+  const lateSnapshot={...snapshot,extensionSubscriptionId:lateSubscription.id};
+  const lateIntent=await checkoutIntents.createIntent({
+    scope:'customer',customerId:lateCustomer.id,planId:plan.id,provider:'stripe',checkoutMode:'payment',ttlMinutes:30,
+    commercialSnapshot:lateSnapshot
+  });
+  await query(`UPDATE subscriptions SET status='expired',current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1`,[lateSubscription.id]);
+  await query(`UPDATE plans SET visible=FALSE WHERE id=$1`,[plan.id]);
+  const lateSettled=await transaction(client=>extensions.applyPurchase(client,{
+    customerId:lateCustomer.id,subscriptionId:lateSubscription.id,planId:plan.id,provider:'stripe',
+    providerPaymentId:`pi_extension_late_${suffix}`,checkoutIntentId:lateIntent.id,commercialSnapshot:lateSnapshot
+  }));
+  assert.equal(lateSettled.replay,false,'a verified extension paid just after natural expiry must still fulfill instead of becoming paid-but-unfulfilled');
+  assert(Number(lateSettled.subscription.service_extension_days)>0,'late settlement must add the purchased extension time');
+  await query(`UPDATE plans SET visible=TRUE WHERE id=$1`,[plan.id]);
+
   const ledger=await query('SELECT provider,provider_payment_id,purchased_days,applied_days,status FROM subscription_access_extensions WHERE customer_id=$1 ORDER BY created_at',[customer.id]);
   assert.equal(ledger.rowCount,2,'each real extension payment must have one durable ledger row');
   assert.equal(ledger.rows.filter(row=>row.status==='active').length,1,'only the non-refunded extension should remain active');
