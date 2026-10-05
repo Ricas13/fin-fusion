@@ -2,6 +2,7 @@
 
 const { transaction } = require('../db');
 const billingPeriods = require('./billing-periods');
+const subscriptionState = require('../entitlements/subscription-state');
 
 const PROVIDERS=new Set(['stripe','paypal','plisio']);
 const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled']);
@@ -32,6 +33,37 @@ function purchasedDays(snapshot={},from=new Date()){
   const end=billingPeriods.addPlanDuration({billingInterval:interval,durationDays},new Date(from));
   return wholeDaysBetween(from,end);
 }
+async function assertCanonicalCurrentTx(client,row){
+  const service=String(row?.effective_service_type||row?.service_type_snapshot||'jellyfin').toLowerCase();
+  let current=null;
+  if(service==='stremio')current=await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='emby')current=await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
+  else if(service==='jellyfin'||service==='bundle')current=await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
+  else throw new Error('This service type cannot be extended through customer checkout.');
+  if(!current||String(current.subscription_id||current.id||'')!==String(row.id||'')){
+    const error=new Error('This is no longer your current subscription for that service. Refresh your account before extending it.');
+    error.code='ACCESS_EXTENSION_TARGET_STALE';
+    throw error;
+  }
+  if(current.blocked){
+    const error=new Error('This subscription currently has an access hold. Resolve the account or payment issue before buying extra time.');
+    error.code='ACCESS_EXTENSION_ACCESS_BLOCKED';
+    throw error;
+  }
+  const openChange=await client.query(`
+    SELECT id FROM customer_plan_changes
+    WHERE customer_id=$1 AND current_subscription_id=$2
+      AND state IN('pending','awaiting_checkout')
+    LIMIT 1 FOR SHARE
+  `,[row.customer_id,row.id]);
+  if(openChange.rowCount){
+    const error=new Error('A plan change is already scheduled for this subscription. Cancel or complete that change before buying extra time.');
+    error.code='ACCESS_EXTENSION_PLAN_CHANGE_OPEN';
+    throw error;
+  }
+  return row;
+}
+
 async function lockedTarget(client,{customerId,subscriptionId,planId}){
   const result=await client.query(`
     SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
@@ -49,6 +81,7 @@ async function lockedTarget(client,{customerId,subscriptionId,planId}){
   if(!LIVE_STATUSES.has(String(row.status||'')))throw new Error('This paid plan is no longer current.');
   const accessEnd=new Date(row.current_period_end||0).getTime()+Math.max(0,Number(row.service_extension_days||0))*86400000;
   if(!Number.isFinite(accessEnd)||accessEnd<=Date.now())throw new Error('This paid plan has already expired.');
+  await assertCanonicalCurrentTx(client,row);
   return row;
 }
 async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=null){
@@ -211,4 +244,4 @@ async function restoreActivePurchasedDays(subscriptionId,customerId){
   return transaction(client=>recomputeActivePurchasedDaysTx(client,subscriptionId,customerId));
 }
 
-module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,wholeDaysBetween,purchasedDays,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
+module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,wholeDaysBetween,purchasedDays,assertCanonicalCurrentTx,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};
