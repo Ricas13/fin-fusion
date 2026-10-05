@@ -25,7 +25,7 @@ bulkWorker.registerHandler('add_plan',async item=>{
   const actor=await actorFor(item),planId=String(item.params?.planId||''),reason=String(item.params?.reason||'Manual bulk plan grant').trim().slice(0,500);
   if(!planId)throw new Error('Plan is required');
   if(reason.length<3)throw new Error('Reason must be at least 3 characters');
-  const planResult=await query(`SELECT id,name,duration_days,currency,COALESCE(service_type,'jellyfin') AS service_type FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planId]);
+  const planResult=await query(`SELECT id,name,duration_days,currency,COALESCE(service_type,'jellyfin') AS service_type FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','bundle') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planId]);
   if(!planResult.rowCount)throw new Error('Target plan is not available for a manual bulk grant');
   const plan=planResult.rows[0],operationRef=`bulk:${item.job_id}:${item.id}`;
   // createManualGrant commits the subscription before service reconciliation.
