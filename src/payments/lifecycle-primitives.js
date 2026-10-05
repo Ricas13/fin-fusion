@@ -11,6 +11,7 @@ const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
 const serviceCreditReservations = require('./service-credit-reservations');
 const financialState = require('./provider-financial-state');
+const subscriptionExtensions = require('./subscription-extensions');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -398,7 +399,8 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
         if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status: result.rows[0].status, billingMode: result.rows[0].billing_mode }, client);
-        return result.rows[0];
+        const recomputed = await subscriptionExtensions.recomputeForSubscriptionTx(client, result.rows[0].id);
+        return recomputed.row;
     });
     if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
     return row;
