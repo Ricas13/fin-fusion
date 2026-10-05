@@ -124,31 +124,32 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
     FOR UPDATE
   `,[subscriptionId])).rows;
   const active=rows.filter(row=>row.status==='active');
-  // service_extension_days is the aggregate of unrelated/manual extension time
-  // plus every purchased extension that was applied previously. When one
-  // purchased row is revoked, derive the non-purchase baseline from ALL ledger
-  // rows, not only the rows that remain active; otherwise the revoked days are
-  // mistaken for unrelated baseline time and survive a refund.
-  const recordedPurchasedDays=rows.reduce((sum,row)=>sum+Math.max(0,Number(row.purchased_days||0)),0);
+  // service_extension_days contains unrelated/manual extension time plus the
+  // CURRENTLY APPLIED contribution of access-extension purchases. Keep that
+  // contribution separate from purchased_days so a revoked row can retain its
+  // commercial history without being subtracted again on every later renewal.
+  const recordedAppliedDays=rows.reduce((sum,row)=>sum+Math.max(0,Number(row.applied_days||0)),0);
   const currentTotal=Math.max(0,Number(subscription.service_extension_days||0));
-  let baseDays=currentTotal-recordedPurchasedDays;
+  let baseDays=currentTotal-recordedAppliedDays;
   if(baseDays<0){
-    // Another canonical lifecycle action has already shortened/reset service
-    // extension time. Never resurrect time merely because historical ledger
-    // rows still record what they once contributed.
+    // Canonical lifecycle truth has already shortened/reset the aggregate.
+    // Do not manufacture unrelated extension time from stale applied markers.
     baseDays=0;
   }
   let cursor=new Date(new Date(subscription.current_period_end).getTime()+baseDays*86400000);
   let activeDays=0;
-  for(const row of active){
-    const snapshot=row.commercial_snapshot&&typeof row.commercial_snapshot==='object'?row.commercial_snapshot:{};
-    const days=purchasedDays(snapshot,cursor);
-    if(days!==Number(row.purchased_days||0)){
-      await client.query('UPDATE subscription_access_extensions SET purchased_days=$2,updated_at=NOW() WHERE id=$1',[row.id,days]);
-      row.purchased_days=days;
+  for(const row of rows){
+    let appliedDays=0;
+    if(row.status==='active'){
+      const snapshot=row.commercial_snapshot&&typeof row.commercial_snapshot==='object'?row.commercial_snapshot:{};
+      appliedDays=purchasedDays(snapshot,cursor);
+      activeDays+=appliedDays;
+      cursor=new Date(cursor.getTime()+appliedDays*86400000);
     }
-    activeDays+=days;
-    cursor=new Date(cursor.getTime()+days*86400000);
+    if(appliedDays!==Number(row.applied_days||0)){
+      await client.query('UPDATE subscription_access_extensions SET applied_days=$2,updated_at=NOW() WHERE id=$1',[row.id,appliedDays]);
+      row.applied_days=appliedDays;
+    }
   }
   const nextTotal=baseDays+activeDays;
   if(nextTotal>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
@@ -222,8 +223,8 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   const inserted=(await client.query(`
     INSERT INTO subscription_access_extensions(
       customer_id,subscription_id,plan_id,provider,provider_payment_id,checkout_intent_id,
-      purchased_days,commercial_snapshot
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+      purchased_days,applied_days,commercial_snapshot
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8::jsonb)
     RETURNING *
   `,[customerId,subscriptionId,planId,provider,providerPaymentId,checkoutIntentId||null,days,JSON.stringify(commercialSnapshot||{})])).rows[0];
   const updated=(await client.query(`
