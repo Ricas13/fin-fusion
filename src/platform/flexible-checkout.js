@@ -52,7 +52,9 @@ const CHECKOUT_SAFE=[
  'Checkout intent belongs to a different provider.','Checkout intent belongs to a different account.','Invalid checkout completion state.',
  /^A checkout is already in progress\./,
  /^An existing (Stripe|PayPal|Plisio) checkout is still awaiting completion\./,
- /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./
+ /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
+ 'A plan change is already open for this subscription. Complete or resolve it before buying extra time.',
+ 'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.'
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
