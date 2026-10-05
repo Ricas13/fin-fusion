@@ -218,16 +218,39 @@ async function deleteRemoteIdentity({ serverId, jellyfinUserId, expectedName = n
   const { user: remote } = await userImport.getRemoteUser(asId(serverId, 'server ID'), asId(jellyfinUserId, 'media user ID'));
   if (expectedName && norm(remote.jellyfin_username) !== norm(expectedName)) throw new Error('The remote username changed. Refresh before deleting it.');
   if (remote.administrator) throw new Error('Administrator media identities cannot be deleted from reconciliation.');
+  const destructiveDelete = async () => {
+    const { user: currentRemote } = await userImport.getRemoteUser(serverId, jellyfinUserId);
+    if (norm(currentRemote.jellyfin_username) !== norm(remote.jellyfin_username)) {
+      throw new Error('The remote username changed before deletion. Refresh reconciliation and try again.');
+    }
+    if (currentRemote.administrator) {
+      throw new Error('The remote identity became an administrator before deletion.');
+    }
+    await assertStillUnmanaged(serverId, currentRemote);
+    const sessions = await activeSessions(serverId, currentRemote.jellyfin_user_id);
+    if (sessions.length) throw new Error('This media identity has an active playback session and cannot be deleted yet.');
+    await registry.request(serverId, `/Users/${encodeURIComponent(currentRemote.jellyfin_user_id)}`, { method: 'DELETE', timeoutMs: 10000 });
+  };
   if (stremioManagedUsername(remote.jellyfin_username)) {
     const orphanCleanup = require('../stremio/orphan-account-cleanup');
-    if (await orphanCleanup.activeEntitlementOwnsUsername(remote.jellyfin_username)) {
-      throw new Error('This managed Stremio identity still belongs to an active entitlement and cannot be deleted.');
-    }
+    await orphanCleanup.withPotentialOwnerLocks({
+      server_id: serverId,
+      jellyfin_user_id: remote.jellyfin_user_id,
+      jellyfin_username: remote.jellyfin_username
+    }, async () => {
+      const safety = await orphanCleanup.raceCheck({
+        server_id: serverId,
+        jellyfin_user_id: remote.jellyfin_user_id,
+        jellyfin_username: remote.jellyfin_username
+      });
+      if (!safety.safe) {
+        throw new Error(`This managed Stremio identity is not safe to delete (${safety.reason || 'safety check failed'}).`);
+      }
+      await destructiveDelete();
+    });
+  } else {
+    await destructiveDelete();
   }
-  await assertStillUnmanaged(serverId, remote);
-  const sessions = await activeSessions(serverId, remote.jellyfin_user_id);
-  if (sessions.length) throw new Error('This media identity has an active playback session and cannot be deleted yet.');
-  await registry.request(serverId, `/Users/${encodeURIComponent(remote.jellyfin_user_id)}`, { method: 'DELETE', timeoutMs: 10000 });
   await query(`
     INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
     VALUES($1,'media.identity.unmanaged_deleted','jellyfin_server',$2,$3::jsonb)
