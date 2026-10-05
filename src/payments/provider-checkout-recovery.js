@@ -66,12 +66,24 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
               AND ph.metadata->>'feeDataAvailable'='true'
               AND (
                   COALESCE(i.state,'')<>'completed'
-                  OR NOT EXISTS (
-                      SELECT 1
-                      FROM subscriptions s
-                      WHERE s.source='paypal'
-                        AND s.customer_id=i.customer_id
-                        AND s.provider_subscription_id=ph.provider_transaction_id
+                  OR (
+                      NOT EXISTS (
+                          SELECT 1
+                          FROM subscriptions s
+                          WHERE s.source='paypal'
+                            AND s.customer_id=i.customer_id
+                            AND s.provider_subscription_id=ph.provider_transaction_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM subscription_access_extensions sae
+                          WHERE sae.provider='paypal'
+                            AND sae.customer_id=i.customer_id
+                            AND (
+                                sae.provider_payment_id=ph.provider_transaction_id
+                                OR sae.checkout_intent_id=i.id
+                            )
+                      )
                   )
               )
             ORDER BY ph.occurred_at DESC,ph.provider_transaction_id DESC
