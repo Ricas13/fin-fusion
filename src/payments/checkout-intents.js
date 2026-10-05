@@ -190,7 +190,7 @@ async function createIntent({
         `, [customerId]);
         if (existing.rowCount) throw new Error(`A checkout is already in progress. Finish or cancel it, or wait up to ${CUSTOMER_CHECKOUT_LOCK_MINUTES} minutes before starting another one.`);
 
-        if (planId) {
+        if (planId && snapshot.kind !== 'subscription_extension') {
             await capacity.lockAndAssert(client,planId,snapshot.planName || 'This plan', {
                 streams:snapshot.streams,
                 households:snapshot.stremioHouseholdNetworkLimit
