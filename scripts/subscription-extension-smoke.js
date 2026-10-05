@@ -48,6 +48,8 @@ const intents = fs.readFileSync(path.join(__dirname,'..','src','payments','check
 const capacity = fs.readFileSync(path.join(__dirname,'..','src','entitlements','plan-capacity.js'),'utf8');
 const stripe = fs.readFileSync(path.join(__dirname,'..','src','payments','stripe.js'),'utf8');
 const paypal = fs.readFileSync(path.join(__dirname,'..','src','payments','paypal.js'),'utf8');
+const lifecycle = fs.readFileSync(path.join(__dirname,'..','src','payments','lifecycle.js'),'utf8');
+const primitives = fs.readFileSync(path.join(__dirname,'..','src','payments','lifecycle-primitives.js'),'utf8');
 
 assert(dashboard.includes('extensionSubscriptionId'), 'current-plan card must submit the exact subscription being extended');
 assert(dashboard.includes('Extend by'), 'current-plan card must expose extension checkout actions');
@@ -57,5 +59,16 @@ assert(flexible.includes('subscriptionExtensions.checkoutChoice'), 'extension ch
 assert(intents.includes("snapshot.purchaseKind !== 'subscription_extension'"), 'extension checkout intent must skip acquisition capacity reservation');
 assert(capacity.includes("subscription_extension"), 'capacity accounting must ignore extension-only checkout intents');
 assert(stripe.includes('incidentResult?.extensionPaymentLoss')&&paypal.includes('incidentResult?.extensionPaymentLoss'),'extension-only refunds must not unwind the customer\'s original affiliate qualifying reward');
+assert(
+  lifecycle.includes('Paid extension fulfillment incident could not be recorded') &&
+  lifecycle.includes('recordCapacitySettlementIncident') &&
+  lifecycle.includes('resolveCapacitySettlementIncident'),
+  'a provider-paid extension that cannot be fulfilled locally must enter the durable checkout-completion incident path and clear it after a successful retry'
+);
+assert(
+  primitives.includes('extension_target_changed_after_provider_settlement') &&
+  primitives.includes('extension_target_blocked_after_provider_settlement'),
+  'paid-but-unfulfilled extension incidents must explain stale/blocked target failures instead of being mislabeled as capacity exhaustion'
+);
 
 console.log('subscription extension smoke: ok — calendar duration, one-time checkout, capacity neutrality and extension-only refund accounting');
