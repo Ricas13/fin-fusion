@@ -113,7 +113,12 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
           AND COALESCE(p.is_free_tier,FALSE)=FALSE
           AND LOWER(COALESCE(s.billing_interval_snapshot,p.billing_interval,''))<>'trial'
           AND (
-            s.billing_mode='payment'
+            s.billing_mode IN('payment','manual')
+            OR (
+              COALESCE(BTRIM(s.billing_mode),'')=''
+              AND LOWER(BTRIM(COALESCE(s.source,''))) IN('manual','admin_grant')
+              AND NULLIF(BTRIM(COALESCE(s.provider_subscription_id,'')),'') IS NULL
+            )
             OR (
               s.billing_mode='subscription'
               AND s.source IN ('stripe','paypal')
