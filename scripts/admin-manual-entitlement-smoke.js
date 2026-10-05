@@ -16,7 +16,7 @@ const clientScript = fs.readFileSync(path.join(root, 'public/js/admin-manual-ent
 
 assert(customerActions.includes('adminCustomerCreation.create({') && customerCreation.includes('manualSubscriptions.createManualSubscriptionTx') && !customerActions.includes('INSERT INTO subscriptions'), 'Add customer flow must delegate subscription creation to the canonical entitlement owner');
 assert(customerCreation.includes('planCapacity.lockAndAssert(client,plan.id') && customerCreation.includes('selectServerForLocationLocked(plan,null'), 'Add customer with a plan must reserve plan capacity and a concrete media server inside the creation transaction');
-assert(customerCreation.includes("IN ('jellyfin','stremio','bundle')"), 'Add customer must allow bundle plans alongside standalone Jellyfin/Stremio plans');
+assert(customerCreation.includes("IN ('jellyfin','stremio','emby','bundle')"), 'Add customer must allow bundle plans alongside standalone Jellyfin/Stremio plans');
 assert(customerCreation.includes('media_server_id=$2') && customerCreation.includes('media_location_preference=$3'), 'Add customer must persist the sticky media assignment before the creation transaction commits');
 assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end)') && manualOwner.includes("VALUES($1,$2,$3,$4,'manual',$5,$6)"), 'canonical manual subscription owner must persist billing_mode=manual so fixed-term grants never enter provider-link repair');
 assert(manual.includes("require('../entitlements/admin-manual-entitlement-service')"), 'manual grant route must delegate to the entitlement-domain service');
@@ -41,7 +41,7 @@ assert(clientScript.includes("plan.addEventListener('change'") && clientScript.i
 assert(manual.includes("surface === 'access' || surface === 'billing'"), 'manual grant form must appear on both Customer 360 Billing and Access');
 assert(manual.includes("surface !== 'overview'") && manual.includes("'overview' : null"), 'Customer 360 overview must still participate in the empty-account guard without rendering a second grant form');
 assert(manual.includes('grantablePlansForCustomer') && manual.includes('plans.length'), 'manual grant form must remain available for non-overlapping service lanes while hiding conflicting plans');
-assert(manualService.includes('conflictingPrimarySubscription') && manualService.includes('serviceScope.overlaps(row, plan)') && manualService.includes("IN ('jellyfin','stremio','bundle')"), 'manual grants must block only overlapping current service access and keep bundle plans grantable');
+assert(manualService.includes('conflictingPrimarySubscription') && manualService.includes('serviceScope.overlaps(row, plan)') && manualService.includes("IN ('jellyfin','stremio','emby','bundle')"), 'manual grants must block only overlapping current service access and keep bundle plans grantable');
 assert(manualService.includes('o.permanent_access=TRUE') && manualService.includes('service_extension_days'), 'permanent and extension-backed overlapping access must still block duplicate manual grants');
 assert(manualService.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect overlapping existing subscriptions to the normal manual edit flow');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
