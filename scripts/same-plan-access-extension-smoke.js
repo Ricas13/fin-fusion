@@ -62,4 +62,6 @@ const paypalFulfill=paypal.indexOf('const activated=await lifecycle.activatePurc
 assert(paypalOrderStart>=0&&paypalComplete>paypalOrderStart&&paypalLedger>paypalComplete&&paypalFulfill>paypalLedger,
   'PayPal one-time checkout must complete local provider state, persist verified money, then fulfill access so accounting and paid-but-unfulfilled recovery stay durable');
 
+
+assert(require('fs').readFileSync(require('path').join(__dirname,'..','src/payments/customer-plan-change.js'),'utf8').includes('This subscription has prepaid extension time remaining.'),'plan changes must not convert prepaid extension time into a different plan/currency/access allowance');
 console.log('same-plan access extension smoke: ok');
