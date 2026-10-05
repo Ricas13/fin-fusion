@@ -34,7 +34,7 @@ function scarcity(state){
   return{label:'Available',kind:'available'};
 }
 function checkoutReservationSql(alias='i'){
-  return `(${alias}.state<>'completed' AND ((
+  return `(${alias}.state<>'completed' AND COALESCE(${alias}.commercial_snapshot->>'purchaseKind','')<>'subscription_extension' AND ((
     ${alias}.state='open' AND ${alias}.expires_at>NOW()
   ) OR (
     ${alias}.provider_checkout_id IS NOT NULL
