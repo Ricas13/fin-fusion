@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.subscription_access_extensions (
     provider_payment_id text NOT NULL,
     checkout_intent_id uuid REFERENCES public.billing_checkout_intents(id) ON DELETE SET NULL,
     purchased_days integer NOT NULL CHECK (purchased_days > 0 AND purchased_days <= 3650),
+    applied_days integer NOT NULL CHECK (applied_days >= 0 AND applied_days <= 3650),
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
     commercial_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
     revoked_at timestamptz,
