@@ -203,6 +203,7 @@ module.exports = {
     ],
     "check:db:integrity": [
       "node scripts/access-integrity-db-smoke.js",
+      "node scripts/revenue-integrity-admin-pin-db-smoke.js",
       "node scripts/lifecycle-integrity-smoke.js",
       "node scripts/free-access-registration-reservation-db-smoke.js",
       "node scripts/platform-coherence-db-smoke.js",
