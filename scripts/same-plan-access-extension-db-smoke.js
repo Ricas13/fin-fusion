@@ -10,16 +10,28 @@ const planCapacity=require('../src/entitlements/plan-capacity');
 
 async function main(){
   const suffix=Date.now().toString(36);
+  const server=(await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,api_key_encrypted,
+      enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,
+      health_status,last_health_check,placement_mode
+    ) VALUES($1,$2,'premium','jellyfin','https://extension-capacity.invalid','key',
+      TRUE,TRUE,TRUE,TRUE,1,20,'healthy',NOW(),'active')
+    RETURNING id
+  `,[`Extension capacity ${suffix}`,`extension-capacity-${suffix}`])).rows[0];
+
   const plan=(await query(`
     INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class)
     VALUES($1,$1,'jellyfin','direct','month',30,600,'GBP',1,TRUE,TRUE,3,'premium')
     RETURNING *
   `,[`extension-plan-${suffix}`])).rows[0];
+  await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)',[plan.id,server.id]);
   const other=(await query(`
     INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class)
     VALUES($1,$1,'jellyfin','direct','month',30,600,'GBP',1,TRUE,TRUE,3,'premium')
     RETURNING *
   `,[`extension-other-${suffix}`])).rows[0];
+  await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)',[other.id,server.id]);
   const customer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`extension-${suffix}`,`extension-${suffix}@example.invalid`])).rows[0];
   const subscription=(await query(`
     INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,
