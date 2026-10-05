@@ -26,8 +26,9 @@ function isLegacyImport(row) {
 function fixedTermWithoutProvider(row) {
     if (billingMode.isRecurring(row)) return false;
     const mode = billingMode.modeFor(row);
+    const source = String(row?.source || '').trim().toLowerCase();
     if (mode === 'payment') return true;
-    if (mode === 'manual' && !isLegacyImport(row)) return true;
+    if ((mode === 'manual' || (!mode && ['manual','admin_grant'].includes(source) && !row?.provider_subscription_id)) && !isLegacyImport(row)) return true;
     return Boolean(row?.cancel_at_period_end) && disposition(row) === ENDING;
 }
 
