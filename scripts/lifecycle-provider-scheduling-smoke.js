@@ -24,6 +24,7 @@ const jobs=read('src/automation/jobs.js'),notificationDispatch=read('src/integra
 assert(/async function expireDuePaypal\(\)/.test(customer)&&/state='awaiting_checkout'/.test(customer),'PayPal plan changes past their effective date must transition out of pending instead of sitting inert forever');
 assert(/notificationDispatch\.dispatch\(\{eventType:'subscription\.plan_change\.requires_checkout'/.test(customer),'a PayPal plan change reaching its effective date must notify the customer they need to check out again');
 assert(/customerPlanChange\.expireDuePaypal\(\)/.test(jobs),'the plan_changes automation job must also process due PayPal plan changes, not just Stripe');
+assert(/for\(const change of due\.rows\)\{await withPlanChangeLock\(change\.customer_id/.test(customer)&&/if\(!transitioned\)return/.test(customer),'due PayPal plan-change reminders must serialize with cancellation and notify only after a successful pending-to-awaiting transition');
 assert(/'subscription\.plan_change\.requires_checkout'/.test(notificationDispatch),'the PayPal checkout-required reminder must always email the customer, not depend on opt-in preferences alone');
 assert(/awaiting_checkout/.test(migrationExpiry)&&/subscription\.plan_change\.requires_checkout/.test(migrationExpiry),'a migration must extend the plan-change state machine and seed the reminder notification preference');
 assert(/state IN \('pending','awaiting_checkout'\)/.test(customer),'open plan-change queries must include awaiting_checkout');
