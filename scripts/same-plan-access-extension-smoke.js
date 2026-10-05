@@ -19,6 +19,8 @@ const health=read('src/platform/health.js');
 const paypal=read('src/payments/paypal.js');
 const paymentReconciliation=read('src/payments/provider-payment-reconciliation.js');
 const checkoutRecovery=read('src/payments/provider-checkout-recovery.js');
+const planCapacity=read('src/entitlements/plan-capacity.js');
+const productionReadiness=read('scripts/production-readiness.js');
 
 assert(dashboard.includes('extensionSubscriptionId'),'current-plan UI must identify the exact subscription being extended');
 assert(dashboard.includes('name="checkoutMode" value="payment"'),'extensions must always use one-time checkout');
@@ -72,4 +74,14 @@ assert(paypalOrderStart>=0&&paypalComplete>paypalOrderStart&&paypalLedger>paypal
 
 
 assert(require('fs').readFileSync(require('path').join(__dirname,'..','src/payments/customer-plan-change.js'),'utf8').includes('This subscription has prepaid extension time remaining.'),'plan changes must not convert prepaid extension time into a different plan/currency/access allowance');
+assert(
+  (planCapacity.match(/service_extension_days/g)||[]).length>=5
+    && planCapacity.includes("cs.current_period_end+((cs.service_extension_days||' days')::interval)>NOW()"),
+  'all plan-capacity paths, including legacy catalog admission, must retain extension-backed occupancy after the provider base term ends'
+);
+assert(
+  productionReadiness.includes("current_period_end+((service_extension_days||' days')::interval)>NOW()")
+    && productionReadiness.includes("COALESCE(service_extension_days,0)>0"),
+  'production readiness must not classify prepaid extension-backed access as stale or unaffected by server loss'
+);
 console.log('same-plan access extension smoke: ok');
