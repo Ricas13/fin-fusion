@@ -36,7 +36,7 @@ async function main(){
   const subscription=(await query(`
     INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,
       billing_interval_snapshot,duration_days_snapshot,service_type_snapshot)
-    VALUES($1,$2,'active','stripe','subscription',$3,'2029-12-31T00:00:00Z','2030-01-31T00:00:00Z','month',30,'jellyfin')
+    VALUES($1,$2,'active','stripe','subscription',$3,NOW(),'2030-01-31T00:00:00Z','month',30,'jellyfin')
     RETURNING *
   `,[customer.id,plan.id,`sub_extension_${suffix}`])).rows[0];
 
