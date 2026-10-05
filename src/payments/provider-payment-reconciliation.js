@@ -362,9 +362,16 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
     // that already has local subscription or checkout ownership evidence.
     const pendingIds = allPending.map(row => String(row.id));
     const mapped = await query(`
-        SELECT provider_subscription_id,customer_id,provider_customer_id
-        FROM subscriptions
-        WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+        SELECT provider_subscription_id,customer_id,provider_customer_id,is_extension,created_at
+        FROM (
+          SELECT provider_subscription_id,customer_id,provider_customer_id,FALSE AS is_extension,created_at
+          FROM subscriptions
+          WHERE source='paypal' AND provider_subscription_id = ANY($1::text[])
+          UNION ALL
+          SELECT provider_payment_id AS provider_subscription_id,customer_id,NULL::text AS provider_customer_id,TRUE AS is_extension,created_at
+          FROM subscription_access_extensions
+          WHERE provider='paypal' AND provider_payment_id = ANY($1::text[])
+        ) purchase_owners
         ORDER BY created_at DESC
     `, [pendingIds]);
     const byCapture = new Map();
@@ -434,8 +441,10 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
         const canonicalOrderId = paypalCaptureOrderId(capture);
         const checkoutReference = canonicalOrderId || paypalOrderReference(row);
         const checkout = checkoutReference ? byCheckout.get(checkoutReference) || null : null;
-        const subscription = byCapture.get(String(row.id)) || null;
-        const local = subscription || checkout;
+        const captureOwner = byCapture.get(String(row.id)) || null;
+        const extension = captureOwner?.is_extension ? captureOwner : null;
+        const subscription = captureOwner && !captureOwner.is_extension ? captureOwner : null;
+        const local = subscription || extension || checkout;
         if (!local?.customer_id) {
             skipped += 1;
             skippedIds.push(String(row.id));
@@ -463,7 +472,7 @@ async function syncRecentPayPalHistory({ hours = DEFAULT_HOURS, limit = 500 } = 
             });
             clearUnmatchedPayPalCapture(row.id);
             recorded += 1;
-            if (!subscription && checkout) {
+            if (!subscription && !extension && checkout) {
                 fulfillmentPending += 1;
                 fulfillmentPendingIds.push(String(row.id));
             }
