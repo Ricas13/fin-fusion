@@ -45,8 +45,14 @@ WITH live_lane_truth AS (
   JOIN plans p ON p.id=s.plan_id
   WHERE s.superseded_by IS NULL
     AND s.starts_at<=NOW()
-    AND s.status IN('active','trialing','past_due','paused')
-    AND s.current_period_end>NOW()
+    AND (
+      (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+      OR (
+        COALESCE(s.service_extension_days,0)>0
+        AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+        AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+      )
+    )
   GROUP BY s.customer_id
 )
 UPDATE jellyfin_account_creation_intents intent
@@ -74,8 +80,14 @@ WITH live_lane_truth AS (
   JOIN plans p ON p.id=s.plan_id
   WHERE s.superseded_by IS NULL
     AND s.starts_at<=NOW()
-    AND s.status IN('active','trialing','past_due','paused')
-    AND s.current_period_end>NOW()
+    AND (
+      (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+      OR (
+        COALESCE(s.service_extension_days,0)>0
+        AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+        AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+      )
+    )
   GROUP BY s.customer_id
 )
 UPDATE jellyfin_server_placement_leases lease
