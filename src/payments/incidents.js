@@ -5,6 +5,7 @@ const accessHolds = require('../entitlements/access-holds');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 const subscriptionTermination = require('./subscription-termination');
+const accessExtensions = require('./subscription-access-extensions');
 
 // A refund/dispute/chargeback under review is a commercial incident, not an
 // access state ("a customer asking for a refund is not an access state").
@@ -21,9 +22,16 @@ async function identityFromProviderSubscription(provider,providerSubscriptionId)
   if(!reference)return{scope:'unresolved',customerId:null};
   const direct=await query(`
     SELECT DISTINCT customer_id
-    FROM subscriptions
-    WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
-      AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+    FROM (
+      SELECT customer_id
+        FROM subscriptions
+       WHERE LOWER(BTRIM(COALESCE(source,'')))=$1
+         AND BTRIM(COALESCE(provider_subscription_id,''))=$2
+      UNION ALL
+      SELECT customer_id
+        FROM subscription_access_extensions
+       WHERE provider=$1 AND provider_payment_id=$2
+    ) ownership
     ORDER BY customer_id
     LIMIT 2
   `,[source,reference]);
@@ -154,6 +162,14 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
       const normalizedProvider=String(provider||'').trim().toLowerCase(),normalizedReference=String(subscriptionRef||'').trim();
+      const extensionReversal=await accessExtensions.revokeByProviderPayment({
+        provider:normalizedProvider,
+        providerPaymentId:normalizedReference,
+        customerId:effectIdentity.customerId,
+        reason:confirmedFullRefund?'Confirmed full refund':'Confirmed lost chargeback/dispute',
+        reference:incident.id
+      });
+      if(extensionReversal.changed)await reconcileMany([effectIdentity.customerId]);
       const matched=await query(`
         SELECT id,billing_mode,current_period_end,duration_days_snapshot
         FROM subscriptions
