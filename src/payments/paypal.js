@@ -162,13 +162,18 @@ function paypalSubscriptionTransactionAmounts(transaction){
   const feeMinor=Number.isInteger(feeMoney.minor)&&sameFeeCurrency?Math.abs(feeMoney.minor):0;
   const derivedNet=gross.minor-feeMinor;
   const netMinor=Number.isInteger(netMoney.minor)&&sameNetCurrency?Math.abs(netMoney.minor):derivedNet;
+  const feeDataAvailable=Boolean(
+    breakdown.fee_amount&&breakdown.net_amount&&
+    Number.isInteger(feeMoney.minor)&&Number.isInteger(netMoney.minor)&&
+    sameFeeCurrency&&sameNetCurrency&&derivedNet===netMinor
+  );
   if(feeMinor>gross.minor||netMinor<0)return null;
   return{
     grossMinor:gross.minor,
     feeMinor,
     netMinor,
     currency:String(gross.currency).toUpperCase(),
-    feeDataAvailable:sameFeeCurrency&&sameNetCurrency
+    feeDataAvailable
   };
 }
 function paypalSubscriptionTransactionWindow(eventAt,now=new Date()){
