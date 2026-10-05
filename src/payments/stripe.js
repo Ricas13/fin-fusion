@@ -107,6 +107,57 @@ async function resumeCheckout(sessionId) {
     return null;
 }
 
+async function abandonCheckout(sessionId) {
+    const id=String(sessionId||'').trim();
+    if(!/^cs_/i.test(id))return{terminal:false,status:'invalid'};
+
+    const stripe=await getStripe();
+    let session=await stripe.checkout.sessions.retrieve(id);
+    if(!session?.id)return{terminal:false,status:'missing'};
+
+    let status=String(session.status||'').toLowerCase();
+    let paymentStatus=String(session.payment_status||'').toLowerCase();
+
+    if(status==='expired'){
+        await checkoutIntents.completeVerifiedProvider('stripe',session.id,'cancelled');
+        return{terminal:true,cancelled:true,status,paymentStatus};
+    }
+
+    if(status==='complete'&&['paid','no_payment_required'].includes(paymentStatus)){
+        await activateCheckoutSession(session);
+        return{terminal:true,completed:true,internal:true,message:'Payment confirmed. Your access has been updated.',status,paymentStatus};
+    }
+
+    if(status!=='open')return{terminal:false,status,paymentStatus};
+
+    try{
+        session=await stripe.checkout.sessions.expire(id);
+    }catch(error){
+        // Stripe can race us between retrieve() and expire(). Re-read once so a
+        // just-completed payment is fulfilled instead of being mistaken for an
+        // abandoned checkout. Only rethrow while the session is still payable.
+        session=await stripe.checkout.sessions.retrieve(id);
+        if(String(session?.status||'').toLowerCase()==='open')throw error;
+    }
+
+    status=String(session?.status||'').toLowerCase();
+    paymentStatus=String(session?.payment_status||'').toLowerCase();
+
+    if(status==='expired'){
+        await checkoutIntents.completeVerifiedProvider('stripe',session.id,'cancelled');
+        return{terminal:true,cancelled:true,status,paymentStatus};
+    }
+
+    if(status==='complete'&&['paid','no_payment_required'].includes(paymentStatus)){
+        await activateCheckoutSession(session);
+        return{terminal:true,completed:true,internal:true,message:'Payment confirmed. Your access has been updated.',status,paymentStatus};
+    }
+
+    // A completed-but-unpaid Checkout Session can still settle asynchronously.
+    // Keep the existing checkout lock in that case so a customer cannot pay twice.
+    return{terminal:false,status,paymentStatus};
+}
+
 async function createCustomerPortal({customerId,returnUrl}) {
     const mapping=await lifecycle.findPaymentCustomer(customerId,'stripe');if(!mapping)throw new Error('No Stripe customer exists for this account');
     const stripe=await getStripe(),session=await stripe.billingPortal.sessions.create({customer:mapping.provider_customer_id,return_url:returnUrl});return{url:session.url};
@@ -363,4 +414,4 @@ async function processWebhook(rawBody,signature) {
     const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:event.type,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};
 }
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='stripe')throw new Error('Stripe retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored Stripe payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,resumeCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};
+module.exports={enabled,createCheckout,resumeCheckout,abandonCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};
