@@ -24,6 +24,33 @@ CREATE TABLE IF NOT EXISTS public.subscription_access_extensions (
     UNIQUE(checkout_intent_id)
 );
 
+-- This migration is intentionally repeatable during rolling deploys. If an
+-- earlier candidate created the table before applied_days existed, bring that
+-- schema forward without losing the historical purchased-day record.
+ALTER TABLE public.subscription_access_extensions
+    ADD COLUMN IF NOT EXISTS applied_days integer;
+
+UPDATE public.subscription_access_extensions
+SET applied_days=CASE WHEN status='active' THEN purchased_days ELSE 0 END
+WHERE applied_days IS NULL;
+
+ALTER TABLE public.subscription_access_extensions
+    ALTER COLUMN applied_days SET NOT NULL;
+
+DO $
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid='public.subscription_access_extensions'::regclass
+          AND conname='subscription_access_extensions_applied_days_check'
+    ) THEN
+        ALTER TABLE public.subscription_access_extensions
+            ADD CONSTRAINT subscription_access_extensions_applied_days_check
+            CHECK (applied_days >= 0 AND applied_days <= 3650);
+    END IF;
+END $;
+
 CREATE INDEX IF NOT EXISTS subscription_access_extensions_subscription_idx
     ON public.subscription_access_extensions(subscription_id,status,created_at);
 
