@@ -33,6 +33,7 @@ const CHECKOUT_SAFE=[
  'Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.',
  'Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.',
  'Service credit cannot be used for a same-plan access extension.',
+ 'Promo codes are not available for subscription extensions.',
  'Only your current paid plan can be extended. Refresh the page and try again.',
  'The selected extension no longer matches your current plan.',
  'The selected access allowance no longer matches your current plan.',
@@ -150,6 +151,7 @@ async function resumeExistingCheckout(customerId,provider,choice){
 async function begin(req,res,provider){
  await assertProviderCheckoutReady(provider);
  const choice=await chooseOrResolve(req,res,provider);if(!choice||res.headersSent)return null;
+ if(choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim())throw new Error('Promo codes are not available for subscription extensions.');
  const resumed=await resumeExistingCheckout(req.session.customerId,provider,choice);if(resumed)return resumed;
  const wantsCredit=['on','true','1','yes'].includes(String(req.body.applyServiceCredit||'').toLowerCase());
  if(choice.extensionSubscriptionId&&wantsCredit)throw new Error('Service credit cannot be used for a same-plan access extension.');
