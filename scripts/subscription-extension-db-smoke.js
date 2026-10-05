@@ -9,6 +9,7 @@ const extensions = require('../src/payments/subscription-extensions');
 const intents = require('../src/payments/checkout-intents');
 const capacity = require('../src/entitlements/plan-capacity');
 const incidents = require('../src/payments/incidents');
+const accessHolds = require('../src/entitlements/access-holds');
 
 function ms(value){ return new Date(value).getTime(); }
 function addDays(value,days){ return new Date(ms(value)+Number(days)*86400000); }
@@ -111,6 +112,30 @@ async function main(){
   assert.equal(String(choice.extensionSubscriptionId),String(subscription.id));
   assert.equal(String(choice.plan.plan_price_id),String(price.id));
   assert.equal(Number(choice.plan.price_minor),600);
+
+  await accessHolds.addHold({
+    customerId:customer.id,
+    type:'payment_delinquency',
+    sourceKey:`stripe:${subscription.provider_subscription_id}`,
+    reason:'extension checkout blocked-access smoke'
+  });
+  await assert.rejects(
+    ()=>extensions.checkoutChoice({
+      customerId:customer.id,
+      subscriptionId:subscription.id,
+      planCode:plan.code,
+      provider:'plisio',
+      currency:'GBP'
+    }),
+    error=>error?.code==='SUBSCRIPTION_EXTENSION_ACCESS_BLOCKED',
+    'a blocked/delinquent customer must not be charged for extra time they cannot currently consume'
+  );
+  await accessHolds.releaseHold({
+    customerId:customer.id,
+    type:'payment_delinquency',
+    sourceKey:`stripe:${subscription.provider_subscription_id}`,
+    resolutionReason:'extension smoke release'
+  });
 
   const firstSnapshot=extensionSnapshot(plan,subscription.id,'stripe');
   const manualBaseEnd=addDays(baseEnd,5);
