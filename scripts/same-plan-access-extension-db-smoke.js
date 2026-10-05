@@ -20,8 +20,8 @@ async function main(){
   const customer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`extension-${suffix}`,`extension-${suffix}@example.invalid`])).rows[0];
   const subscription=(await query(`
     INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,
-      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot,streams_snapshot)
-    VALUES($1,$2,'active','stripe','subscription',$3,NOW()-INTERVAL '5 days',NOW()+INTERVAL '25 days','month',30,'jellyfin',3)
+      billing_interval_snapshot,duration_days_snapshot,service_type_snapshot)
+    VALUES($1,$2,'active','stripe','subscription',$3,NOW()-INTERVAL '5 days',NOW()+INTERVAL '25 days','month',30,'jellyfin')
     RETURNING *
   `,[customer.id,plan.id,`sub_extension_${suffix}`])).rows[0];
 
