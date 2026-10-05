@@ -17,6 +17,7 @@ const compatibility=read('src/db-compatibility-migrations.js');
 const migrateDb=read('scripts/migrate-db.js');
 const health=read('src/platform/health.js');
 const paypal=read('src/payments/paypal.js');
+const paymentReconciliation=read('src/payments/provider-payment-reconciliation.js');
 
 assert(dashboard.includes('extensionSubscriptionId'),'current-plan UI must identify the exact subscription being extended');
 assert(dashboard.includes('name="checkoutMode" value="payment"'),'extensions must always use one-time checkout');
@@ -40,6 +41,8 @@ assert(lifecycle.includes('recomputeActivePurchasedDaysTx'),'provider term updat
 assert(incidents.includes('accessExtensions.revokeByProviderPayment'),'confirmed money loss must remove only the purchased extension');
 assert(incidents.includes('accessExtensions.restoreActivePurchasedDays'),'an unrelated base-term reversal must preserve independently paid extension time');
 assert(incidents.includes('extensionPaymentLoss'),'payment incidents must identify extension-only money loss separately from the base subscription');
+assert(paymentReconciliation.includes('FROM subscription_access_extensions WHERE provider=$1'),'provider payment reconciliation must load extension purchases as first-class local financial matches');
+assert(paymentReconciliation.includes('const purchase = subscription || extension'),'healthy extension payments must not be reported as provider money with no local purchase');
 assert(paypal.includes('incidentResult?.extensionPaymentLoss')&&read('src/payments/stripe.js').includes('incidentResult?.extensionPaymentLoss'),'extension refunds/chargebacks must not reverse affiliate rewards earned by the base subscription');
 assert(extension.includes('service_extension_days=COALESCE(service_extension_days,0)+$2'),'extension must add paid time to the existing entitlement');
 assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)-$2)'),'reversal must remove only its own extension time');
