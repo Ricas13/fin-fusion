@@ -13,6 +13,8 @@ assert(/idempotencyKey/.test(customer),'customer Stripe schedule mutations must 
 assert(/subscriptionSchedules\.release\(schedule\.id\)/.test(customer),'cancelling a customer Stripe change must release the provider schedule');
 assert(/providerOps\.providerApplied/.test(customer)&&/providerOps\.reconciled/.test(customer),'customer provider scheduling must record provider and local reconciliation states');
 assert(/reconciliationLock\.withDatabaseLock\(planChangeLockKey\(customerId\)/.test(customer)&&/requestChangeUnlocked/.test(customer),'customer plan-change decisions must serialize across provider calls on a cross-process customer lock');
+assert(/cancelPendingChange\(customerId,actorUserId=null\)\{return withPlanChangeLock/.test(customer),'customer plan-change cancellation must share the same commercial lock as creation/recovery');
+assert(/for\(const change of due\.rows\)\{\s*await withPlanChangeLock\(change\.customer_id/.test(customer),'scheduled Stripe application must serialize with customer cancellation and recovery');
 assert(/customerPlanChange\.withPlanChangeLock\(op\.owner_id/.test(providerRecovery),'provider-operation recovery must share the same customer plan-change lock before mutating Stripe');
 const targetPriceApplied=customer.match(/if\(remotePrice===targetPrice\)[\s\S]*?summary\.succeeded\+\+;continue;/)?.[0]||'';
 assert(/if\(change\.target_media_server_id\)/.test(targetPriceApplied)&&/await applySnapshot/.test(targetPriceApplied),'once Stripe applies a scheduled target price, the persisted target media assignment must converge locally without being blocked by transient placement availability');
