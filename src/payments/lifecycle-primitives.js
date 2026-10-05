@@ -358,6 +358,10 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 } else {
                     const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,billing_mode=COALESCE($15,billing_mode),updated_at=NOW() WHERE id=$16 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, checkoutBillingMode, existingSubscription.id]);
                     row = updated.rows[0];
+                    if (row) {
+                        const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, row.id, row.customer_id);
+                        row = rebased.subscription || row;
+                    }
                 }
             } else if (activationSuppressedByMoneyLoss) {
                 const inserted = await client.query(`
@@ -423,8 +427,11 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
     const row = await transaction(async client => {
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
-        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status: result.rows[0].status, billingMode: result.rows[0].billing_mode }, client);
-        return result.rows[0];
+        let updated = result.rows[0];
+        const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, updated.id, updated.customer_id);
+        updated = rebased.subscription || updated;
+        if (status) await syncProviderAccessState({ customerId: updated.customer_id, provider, providerSubscriptionId, status: updated.status, billingMode: updated.billing_mode }, client);
+        return updated;
     });
     if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
     return row;
