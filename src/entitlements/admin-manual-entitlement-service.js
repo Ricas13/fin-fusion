@@ -87,6 +87,14 @@ async function conflictingPrimarySubscription(customerId, plan, { client = null 
   `, [customerId]);
   return result.rows.find(row => serviceScope.overlaps(row, plan)) || null;
 }
+async function grantablePlansForCustomer(customerId) {
+  const plans = await grantPlans();
+  const checks = await Promise.all(plans.map(async plan => ({
+    plan,
+    conflict: await conflictingPrimarySubscription(customerId, plan)
+  })));
+  return checks.filter(row => !row.conflict).map(row => row.plan);
+}
 function normalizedGrantInput(body = {}) {
   const method = text(body.method, 20).toLowerCase();
   if (!METHODS.has(method)) throw new Error('Choose a valid payment or grant method.');
@@ -203,6 +211,7 @@ module.exports = {
   grantPlans,
   currentPrimarySubscription,
   conflictingPrimarySubscription,
+  grantablePlansForCustomer,
   normalizedGrantInput,
   createManualGrant
 };
