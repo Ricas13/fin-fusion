@@ -79,4 +79,6 @@ assert(
   'paid-but-unfulfilled extension incidents must explain stale/blocked target failures instead of being mislabeled as capacity exhaustion'
 );
 
+
+assert(require('fs').readFileSync(require('path').join(__dirname,'..','src/payments/customer-plan-change.js'),'utf8').includes('This subscription has prepaid extension time remaining.'),'plan changes must not convert prepaid extension time into a different plan/currency/access allowance');
 console.log('subscription extension smoke: ok — calendar duration, one-time checkout, capacity neutrality and extension-only refund accounting');
