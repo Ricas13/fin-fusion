@@ -59,6 +59,25 @@ async function cleanupCreationIntentsAfterEntitlementChange(customerId){
     }
 }
 
+async function releaseCancelledPlanChangeLeases(customerId, serverIds = []) {
+    const unique = [...new Set((serverIds || []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!unique.length) return { released: 0, failed: 0 };
+    const planChange = require('./customer-plan-change');
+    let released = 0, failed = 0;
+    for (const serverId of unique) {
+        try {
+            await planChange.releaseScheduledMediaPlacement(customerId, serverId);
+            released += 1;
+        } catch (error) {
+            failed += 1;
+            console.warn('Cancelled plan-change placement lease release deferred.', {
+                customerId, serverId, error: String(error?.message || error).slice(0, 500)
+            });
+        }
+    }
+    return { released, failed };
+}
+
 async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason='',providerBillingChanged=false,reference=null}={}){
     const note=reasonText(reason),auditReference=reference?String(reference).slice(0,200):null;
     const result=await transaction(async client=>{
@@ -97,14 +116,16 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         if(!ended.rowCount)throw new Error('Subscription changed before it could be ended.');
-        await client.query(`
+        const cancelledChanges=await client.query(`
             UPDATE customer_plan_changes
             SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated.'),updated_at=NOW()
             WHERE current_subscription_id=$1 AND state IN('pending','awaiting_checkout')
+            RETURNING target_media_server_id
         `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_local','subscription',$2,$3::jsonb)`,[actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:serviceType(subscription),provider:subscription.source||null,providerBillingChanged:Boolean(providerBillingChanged),permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary})]);
-        return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference};
+        return{...ended.rows[0],customerId,serviceType:serviceType(subscription),provider:subscription.source||null,permanentAccessRevoked:Boolean(permanent.changed),permanentAccessPreservedOnOtherSubscription:permanentOnOtherPrimary,providerBillingChanged:Boolean(providerBillingChanged),reference:auditReference,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
     });
+    result.planChangeLeaseCleanup=await releaseCancelledPlanChangeLeases(customerId,result.cancelledPlanChangeServerIds);
     result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);
     return result;
 }
@@ -217,18 +238,20 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             WHERE id=$1 AND customer_id=$2
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
-        await client.query(`
+        const cancelledChanges=await client.query(`
             UPDATE customer_plan_changes
             SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated by refund/reversal.'),updated_at=NOW()
             WHERE current_subscription_id=$1 AND state IN('pending','awaiting_checkout')
+            RETURNING target_media_server_id
         `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_for_refund','subscription',$2,$3::jsonb)`,
             [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
-        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked};
+        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
     });
     const result=await hardRevokeRefundedStremio(customerId,local);
+    result.planChangeLeaseCleanup=await releaseCancelledPlanChangeLeases(customerId,result.cancelledPlanChangeServerIds);
     result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);
     return result;
 }
 
-module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,cleanupCreationIntentsAfterEntitlementChange,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};
+module.exports={OPERATION_TYPE,JELLYFIN_SERVICES,serviceType,assertJellyfinPrimary,subscriptionRow,currentJellyfinSubscription,cleanupCreationIntentsAfterEntitlementChange,releaseCancelledPlanChangeLeases,terminateLocal,terminateForRefund,hardRevokeRefundedStremio,terminateRecurringNow,recoverProviderOperation};
