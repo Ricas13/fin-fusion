@@ -18,7 +18,7 @@ assert(customerActions.includes('adminCustomerCreation.create({') && customerCre
 assert(customerCreation.includes('planCapacity.lockAndAssert(client,plan.id') && customerCreation.includes('selectServerForLocationLocked(plan,null'), 'Add customer with a plan must reserve plan capacity and a concrete media server inside the creation transaction');
 assert(customerCreation.includes("IN ('jellyfin','stremio','bundle')"), 'Add customer must allow bundle plans alongside standalone Jellyfin/Stremio plans');
 assert(customerCreation.includes('media_server_id=$2') && customerCreation.includes('media_location_preference=$3'), 'Add customer must persist the sticky media assignment before the creation transaction commits');
-assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)'), 'canonical manual subscription owner must retain the subscription INSERT');
+assert(manualOwner.includes('INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end)') && manualOwner.includes("VALUES($1,$2,$3,$4,'manual',$5,$6)"), 'canonical manual subscription owner must persist billing_mode=manual so fixed-term grants never enter provider-link repair');
 assert(manual.includes("require('../entitlements/admin-manual-entitlement-service')"), 'manual grant route must delegate to the entitlement-domain service');
 assert(manualService.includes("require('./manual-subscriptions')"), 'manual grant domain service must delegate subscription creation to the canonical entitlement owner');
 assert(manualService.includes('manualSubscriptions.createManualSubscriptionTx'), 'manual grant must use the canonical transactional manual-subscription primitive');
