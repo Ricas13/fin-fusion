@@ -386,6 +386,7 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
   assert(!migration.includes('\n$;\n'), 'PostgreSQL migration DO blocks must never contain a single-dollar terminator; every DO block must close with its matching dollar-quote delimiter.');
   assert(migration.includes('billing_checkout_intents') && migration.includes('free_access_registration_reservations'), 'paid checkout and Free registration must reserve exact physical server capacity');
   assert(migration.includes('matching_account_count=1'), 'legacy subscription assignment backfill must leave ambiguous multi-account customers untouched');
+  assert(migration.includes("COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')"), 'legacy plans with a NULL service_type must still receive unambiguous Jellyfin sticky-assignment backfill');
   assert(checkoutIntents.includes('selectServerForLocationLocked') && checkoutIntents.includes('media_server_id'), 'paid checkout must serialize and reserve a concrete physical server');
   assert(checkoutIntents.includes('jellyfin_server_placement_leases') && checkoutIntents.includes("INTERVAL '15 minutes'"), 'paid checkout must expose a short compatibility reservation to N-1 web capacity accounting during rolling deployment');
   assert(lifecycle.includes('selectServerForLocationLocked'), 'Free and trial activation must serialize concrete server selection');
