@@ -164,7 +164,7 @@ assert.strictEqual(matches[0].match.id, 'sub_live');
 matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: ' sub_existing ' }], [stripe], baseContext());
 assert.notStrictEqual(matches[0].state, 'linked', 'a whitespace-corrupted stored provider ID must not be hidden as a healthy recurring link');
 
-matches = discovery.matchPremiumRows([{ ...local, commercial_snapshot:{ providerLinkDisposition:'ending' }, cancel_at_period_end:true }], [stripe], baseContext());
+matches = discovery.matchPremiumRows([{ ...local, source:'migration', billing_mode:'manual', provider_subscription_id:null, commercial_snapshot:{ kind:'legacy_import', migrated:true, providerLinkDisposition:'ending' }, cancel_at_period_end:true }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'ending', 'an explicitly marked paid term intentionally ending after the current period must be removed from provider-link work');
 assert.strictEqual(matches[0].match, null, 'an intentionally ending paid term must never be auto-linked even when a provider candidate exists');
 
