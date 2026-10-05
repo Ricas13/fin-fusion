@@ -413,13 +413,40 @@ async function activatePurchase(input) {
     const plan=state.assertAudience(planResult.rows[0], 'customer');
     if (subscriptionExtensions.isExtensionSnapshot(input.commercialSnapshot)) {
         if (checkoutBillingMode(input) !== 'payment') throw new Error('Subscription extensions must use one-time payment checkout.');
-        const extended = await subscriptionExtensions.activatePaidExtension({
-            customerId:input.customerId,
-            planId:input.planId,
-            provider:input.provider,
-            providerPaymentId:input.providerSubscriptionId,
-            commercialSnapshot:input.commercialSnapshot
-        });
+        const snapshot = subscriptionExtensions.safeObject(input.commercialSnapshot);
+        const checkoutIntentId = input.checkoutIntentId || snapshot.checkoutIntentId || null;
+        let extended;
+        try {
+            extended = await subscriptionExtensions.activatePaidExtension({
+                customerId:input.customerId,
+                planId:input.planId,
+                provider:input.provider,
+                providerPaymentId:input.providerSubscriptionId,
+                commercialSnapshot:input.commercialSnapshot
+            });
+        } catch (error) {
+            if (checkoutIntentId) {
+                try {
+                    await primitives.recordCapacitySettlementIncident({
+                        customerId:input.customerId,
+                        planId:input.planId,
+                        provider:input.provider,
+                        providerSubscriptionId:input.providerSubscriptionId,
+                        checkoutIntentId,
+                        error
+                    });
+                    error.paidButUnfulfilled = true;
+                } catch (incidentError) {
+                    console.error('Paid extension fulfillment incident could not be recorded:', incidentError.message);
+                }
+            }
+            throw error;
+        }
+        if (checkoutIntentId) {
+            await primitives.resolveCapacitySettlementIncident({ provider:input.provider, checkoutIntentId }).catch(error => {
+                console.error('Paid extension fulfillment incident could not be resolved:', error.message);
+            });
+        }
         if (input.providerCustomerId) await primitives.ensurePaymentCustomer({ customerId:input.customerId, provider:input.provider, providerCustomerId:input.providerCustomerId });
         await inactivityHolds.releaseObsoleteForCustomer(input.customerId);
         await primitives.reconcileCommittedCustomer(input.customerId, 'Paid subscription extension');
