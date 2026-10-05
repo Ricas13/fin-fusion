@@ -64,7 +64,7 @@ function readySalePlans(plans,includePlanIds=[]){const keep=new Set((includePlan
 
 async function catalogPlans(){
   const currency=await planPricing.platformDefaultCurrency(),logical=await customers.listPublicPlans(),priced=await planPricing.decoratePlans(logical,null),decorated=await accessVariants.decoratePlans(priced,currency),ctx=await productReadiness.context(),evaluated=await Promise.all(decorated.map(async plan=>({plan,readiness:await productReadiness.evaluatePlan(plan,ctx)})));
-  const catalogue=evaluated.map(({plan,readiness})=>({...plan,sale_ready:Boolean(readiness.sellable),sale_readiness:readiness,payment_options:readiness.sellable?plan.payment_options:[]}));
+  const catalogue=evaluated.map(({plan,readiness})=>({...plan,sale_ready:Boolean(readiness.sellable),sale_readiness:readiness,extension_payment_options:Array.isArray(plan.payment_options)?plan.payment_options:[],payment_options:readiness.sellable?plan.payment_options:[]}));
   return variantCapacity.decoratePlans(catalogue);
 }
 async function sellablePlans(includePlanIds=[]){return readySalePlans(await catalogPlans(),includePlanIds);}
