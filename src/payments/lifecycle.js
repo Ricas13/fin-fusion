@@ -13,6 +13,7 @@ const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
+const subscriptionExtensions = require('./subscription-extensions');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -410,6 +411,20 @@ async function activatePurchase(input) {
     const planResult = await query('SELECT * FROM plans WHERE id=$1', [input.planId]);
     if (!planResult.rowCount) throw new Error('Plan not found.');
     const plan=state.assertAudience(planResult.rows[0], 'customer');
+    if (subscriptionExtensions.isExtensionSnapshot(input.commercialSnapshot)) {
+        if (checkoutBillingMode(input) !== 'payment') throw new Error('Subscription extensions must use one-time payment checkout.');
+        const extended = await subscriptionExtensions.activatePaidExtension({
+            customerId:input.customerId,
+            planId:input.planId,
+            provider:input.provider,
+            providerPaymentId:input.providerSubscriptionId,
+            commercialSnapshot:input.commercialSnapshot
+        });
+        if (input.providerCustomerId) await primitives.ensurePaymentCustomer({ customerId:input.customerId, provider:input.provider, providerCustomerId:input.providerCustomerId });
+        await inactivityHolds.releaseObsoleteForCustomer(input.customerId);
+        await primitives.reconcileCommittedCustomer(input.customerId, 'Paid subscription extension');
+        return extended.subscription;
+    }
     const same = input.providerSubscriptionId ? await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider,input.providerSubscriptionId]) : {rowCount:0};
     if(!same.rowCount)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
     const mode=checkoutBillingMode(input);
