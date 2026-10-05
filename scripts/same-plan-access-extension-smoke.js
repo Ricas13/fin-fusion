@@ -53,7 +53,7 @@ assert(paymentReconciliation.includes('!subscription && !extension && checkout')
 assert(checkoutRecovery.includes('FROM subscription_access_extensions sae')&&checkoutRecovery.includes('sae.checkout_intent_id=i.id'),'completed PayPal extension checkouts must leave automated recovery once the extension ledger owns the capture');
 assert(paypal.includes('incidentResult?.extensionPaymentLoss')&&read('src/payments/stripe.js').includes('incidentResult?.extensionPaymentLoss'),'extension refunds/chargebacks must not reverse affiliate rewards earned by the base subscription');
 assert(extension.includes('service_extension_days=COALESCE(service_extension_days,0)+$2'),'extension must add paid time to the existing entitlement');
-assert(extension.includes('service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)-$2)'),'reversal must remove only its own extension time');
+assert(extension.includes("SET status='revoked'")&&extension.includes('recomputeActivePurchasedDaysTx(client,extension.subscription_id,extension.customer_id)'),'reversal must revoke the exact purchase and recompute remaining calendar-aware extension time instead of subtracting stale historical days');
 assert(zeroValue.includes("snapshot.kind==='subscription_extension'"),'fully discounted extensions must use the extension lifecycle rather than creating another subscription');
 assert(migration.includes('UNIQUE(provider,provider_payment_id)'),'provider payment replay must be database-idempotent');
 assert(migration.includes('UNIQUE(checkout_intent_id)'),'checkout replay must be database-idempotent');
