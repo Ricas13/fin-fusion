@@ -336,6 +336,24 @@ function fakeDb({ fullGermany = false, disabledAssigned = false, fullServerIds =
     'disabled sticky servers must fail closed instead of silently moving customers'
   );
 
+  const checkoutModule = require('../src/platform/flexible-checkout');
+  const originalResolve = choice.resolveAcquisitionLocation;
+  let resolutions = 0;
+  choice.resolveAcquisitionLocation = async (selectedPlan, location) => {
+    resolutions++;
+    assert.strictEqual(location, 'London');
+    return 'London';
+  };
+  try {
+    const request = { body: { mediaLocation: 'London' }, session: {} };
+    const direct = await checkoutModule.withMediaLocation(request, { plan, mode: 'payment' });
+    assert.strictEqual(direct.mediaLocation, 'London', 'normal checkout must retain the selected location');
+    assert.strictEqual(checkoutModule.commercialSnapshot(direct, 'stripe').mediaLocation, 'London', 'the immutable purchase contract must retain location');
+    const extensionChoice = { plan, mode: 'payment', extensionSubscriptionId: 'existing-subscription' };
+    assert.strictEqual(await checkoutModule.withMediaLocation(request, extensionChoice), extensionChoice);
+    assert.strictEqual(resolutions, 1, 'extensions must not reacquire capacity or require another location');
+  } finally { choice.resolveAcquisitionLocation = originalResolve; }
+
   const checkout = fs.readFileSync('src/platform/flexible-checkout.js', 'utf8');
   const dashboard = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
   const planChangeSource = fs.readFileSync('src/payments/customer-plan-change.js', 'utf8');

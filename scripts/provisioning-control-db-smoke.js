@@ -62,6 +62,9 @@ const jobs = require('../src/jellyfin/jobs');
         assert.strictEqual(run.rows[0].action, 'reconcile');
 
         await provisioning.control.forceCustomerDue(customerId);
+        // Other suite fixtures can fill the bounded recovery page. Put this
+        // fixture first so we test eligibility, not unrelated backlog ordering.
+        await query("UPDATE customer_provisioning_state SET next_attempt_at='1970-01-01' WHERE customer_id=$1", [customerId]);
         const forced = await provisioning.control.getCustomerState(customerId);
         assert.strictEqual(forced.status, 'pending');
         assert(new Date(forced.next_attempt_at).getTime() <= Date.now() + 1000);
@@ -77,6 +80,9 @@ const jobs = require('../src/jellyfin/jobs');
             WHERE customer_id=$1
         `, [customerId]);
         await provisioning.control.forceCustomerDue(customerId);
+        // Other suite fixtures can fill the bounded recovery page. Put this
+        // fixture first so we test eligibility, not unrelated backlog ordering.
+        await query("UPDATE customer_provisioning_state SET next_attempt_at='1970-01-01' WHERE customer_id=$1", [customerId]);
         due = await jobs.dueCustomers(100);
         assert(due.some(row => row.customer_id === customerId), 'due deprovisioning must remain scheduled after the subscription expires');
 
