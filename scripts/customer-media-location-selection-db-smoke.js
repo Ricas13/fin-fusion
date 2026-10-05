@@ -154,6 +154,23 @@ const serviceAdminControl = require('../src/entitlements/service-admin-control')
       'admin pin must reserve physical capacity on the effective pinned server'
     );
 
+    const extendedCustomer = await makeCustomer('prepaid-extension');
+    await query(`
+      INSERT INTO subscriptions(
+        customer_id,plan_id,status,source,starts_at,current_period_end,
+        service_extension_days,media_server_id,service_type_snapshot
+      ) VALUES(
+        $1,$2,'cancelled','manual',NOW()-INTERVAL '31 days',NOW()-INTERVAL '1 day',
+        30,$3,'jellyfin'
+      )
+    `, [extendedCustomer, planA.id, pinnedServerId]);
+    const targetWithExtendedAccess = await userCapacity.serverState(pinnedServerId);
+    assert.strictEqual(
+      Number(targetWithExtendedAccess.capacity_users),
+      Number(targetAfterPin.capacity_users) + 1,
+      'prepaid extension access must keep the assigned physical server slot reserved after the provider base term ends even when its remote account is temporarily missing'
+    );
+
     const laneServer = await query(`
       INSERT INTO jellyfin_servers(
         name,slug,server_class,media_server_type,base_url,public_url,location,
