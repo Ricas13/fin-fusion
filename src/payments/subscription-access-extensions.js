@@ -214,16 +214,6 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
       throw error;
     }
     if(extension.status==='revoked')return{matched:true,changed:false,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension};
-    const locked=(await client.query('SELECT id,customer_id,service_extension_days FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[extension.subscription_id,extension.customer_id])).rows[0]||null;
-    if(!locked)throw new Error('The subscription attached to this access extension no longer exists.');
-    const days=Math.max(0,Number(extension.purchased_days||0));
-    const updated=(await client.query(`
-      UPDATE subscriptions
-         SET service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)-$2),
-             updated_at=NOW()
-       WHERE id=$1
-       RETURNING *
-    `,[extension.subscription_id,days])).rows[0];
     const revoked=(await client.query(`
       UPDATE subscription_access_extensions
          SET status='revoked',revoked_at=COALESCE(revoked_at,NOW()),
@@ -231,11 +221,20 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
        WHERE id=$1
        RETURNING *
     `,[extension.id,String(reason||'').slice(0,1000)])).rows[0];
+    // Calendar terms are cursor-dependent. Removing an earlier purchase can
+    // change the applied day-count of every later month/6-month/year extension,
+    // so never subtract this row's historical purchased_days in isolation.
+    const recomputed=await recomputeActivePurchasedDaysTx(client,extension.subscription_id,extension.customer_id);
     await client.query(`
       INSERT INTO audit_log(action,entity_type,entity_id,metadata)
       VALUES('subscription.access_extension.revoke','subscription',$1,$2::jsonb)
-    `,[extension.subscription_id,JSON.stringify({customerId:extension.customer_id,provider,providerPaymentId,purchasedDays:days,extensionId:extension.id,reference:reference||null,reason:String(reason||'').slice(0,500)})]);
-    return{matched:true,changed:true,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension:revoked,subscription:updated};
+    `,[extension.subscription_id,JSON.stringify({
+      customerId:extension.customer_id,provider,providerPaymentId,
+      purchasedDays:Number(extension.purchased_days||0),extensionId:extension.id,
+      remainingPurchasedDays:Number(recomputed.purchasedDays||0),
+      reference:reference||null,reason:String(reason||'').slice(0,500)
+    })]);
+    return{matched:true,changed:true,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension:revoked,subscription:recomputed.subscription};
   });
 }
 
