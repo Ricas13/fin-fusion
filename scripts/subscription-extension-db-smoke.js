@@ -8,6 +8,7 @@ const billingPeriods = require('../src/payments/billing-periods');
 const extensions = require('../src/payments/subscription-extensions');
 const intents = require('../src/payments/checkout-intents');
 const capacity = require('../src/entitlements/plan-capacity');
+const incidents = require('../src/payments/incidents');
 
 function ms(value){ return new Date(value).getTime(); }
 function addDays(value,days){ return new Date(ms(value)+Number(days)*86400000); }
@@ -166,6 +167,33 @@ async function main(){
   assert.equal(refundedEvent.metadata.refunded,true,'revoked extension event must remain as auditable refunded history');
   assert.equal(Number(refundedEvent.metadata.appliedDays),0,'refunded extension must contribute zero active service days');
 
+  const third=await extensions.activatePaidExtension({
+    customerId:customer.id,
+    planId:plan.id,
+    provider:'stripe',
+    providerPaymentId:`pi_extension_incident_${suffix}`,
+    commercialSnapshot:firstSnapshot
+  });
+  const expectedThird=billingPeriods.addPlanDuration({billing_interval:'month',duration_days:30},expectedRebased);
+  assert.equal(ms(third.accessExpiresAt),ms(expectedThird),'incident fixture must add one exact extension period');
+  const extensionLoss=await incidents.record({
+    provider:'stripe',
+    eventId:`evt_extension_refund_${suffix}`,
+    caseId:`ch_extension_refund_${suffix}`,
+    kind:'refund',
+    status:'recorded',
+    identity:{scope:'direct',customerId:customer.id},
+    providerSubscriptionId:`pi_extension_incident_${suffix}`,
+    amountMinor:600,
+    currency:'GBP',
+    metadata:{fullRefund:true,originalAmountMinor:600}
+  });
+  assert.equal(extensionLoss.extensionPaymentLoss,true,'payment incident must classify an exact paid-extension loss');
+  const afterIncident=(await query('SELECT status,service_extension_days FROM subscriptions WHERE id=$1',[subscription.id])).rows[0];
+  assert.equal(afterIncident.status,'active','extension refund must not terminate the underlying recurring subscription');
+  const afterIncidentAccess=await extensions.recompute(subscription.id);
+  assert.equal(ms(afterIncidentAccess.accessExpiresAt),ms(expectedRebased),'extension refund incident must remove only the time bought by its exact payment');
+
   const extensionIntentSnapshot={...extensionSnapshot(plan,subscription.id,'stripe'),planPriceId:price.id};
   const extensionIntent=await intents.createIntent({
     scope:'customer',
@@ -206,7 +234,7 @@ async function main(){
 
   await intents.consume({intentId:extensionIntent.id,nonce:extensionIntent.nonce,state:'cancelled',scope:'customer',provider:'stripe',ownerId:customer.id});
 
-  console.log('subscription extension DB smoke: ok — no duplicate subscription/capacity, calendar stacking, renewal rebase, idempotency and exact refund reversal');
+  console.log('subscription extension DB smoke: ok — no duplicate subscription/capacity, calendar stacking, renewal rebase, idempotency, exact refund reversal and underlying-subscription preservation');
 }
 
 main().then(()=>getPool().end()).catch(async error=>{
