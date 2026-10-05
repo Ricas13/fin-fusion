@@ -28,6 +28,15 @@ For Stripe, webhook event payloads are not assumed to be current truth when orde
 - Paid-through/service-extension time is part of effective access and must not be replaced by display-price assumptions.
 - Imported/grandfathered customers are governed by their stored contract/provider truth, not by the current storefront price.
 
+### Paid same-plan extensions
+
+- Buying the current paid plan again is a **one-time service-time extension**, not a second subscription contract and not a plan change.
+- Purchased extension time is appended after all currently owned paid-through/service-extension time. Calendar plans add their real calendar duration (one month, six months, or one year) from that boundary.
+- A same-plan extension must not create a second Jellyfin/Emby/Stremio entitlement, reserve another server/capacity place, replace the current provider renewal agreement, or change the current access allowance.
+- Recurring provider renewals remain provider-authoritative. Purchased extension time is re-based after the new provider-paid period so a successful renewal cannot consume or overwrite prepaid extension time.
+- Extension provider callbacks are idempotent by provider payment identity. A confirmed full refund or lost chargeback for an extension removes only the time bought by that exact payment; it must not terminate the underlying recurring subscription.
+- Existing non-purchase service extensions remain independent and must not be erased when customer-paid extension time is recalculated.
+
 ### Hold invariants
 
 `customer_access_holds` is the canonical access-blocker store. `customers.access_paused_at` and `customers.access_hold_reason` are legacy summary fields only and are synchronised from active typed holds.
