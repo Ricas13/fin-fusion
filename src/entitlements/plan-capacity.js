@@ -121,7 +121,17 @@ async function loadPlan(planId,db=query){
 async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
-      (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=clock_timestamp() AND s.current_period_end>NOW()) AS used,
+      (SELECT COUNT(DISTINCT s.customer_id)::int
+       FROM subscriptions s
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=clock_timestamp()
+         AND (
+           (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+           OR (
+             COALESCE(s.service_extension_days,0)>0
+             AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+             AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+           )
+         )) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
        (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
        ${pendingPlanChangeUsersSql('$1')} +
@@ -186,8 +196,16 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
         s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit,1))),0)::int
        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[])
-         AND s.starts_at<=clock_timestamp() AND s.current_period_end>NOW()
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL
+         AND s.starts_at<=clock_timestamp()
+         AND (
+           (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+           OR (
+             COALESCE(s.service_extension_days,0)>0
+             AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+             AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+           )
+         )
          AND ($5::uuid IS NULL OR s.id<>$5::uuid)) AS household_used,
       ((SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.stremio_household_network_limit,1))),0)::int
         FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
@@ -528,8 +546,15 @@ function legacyAcquisitionSql(alias='p'){
   return `(${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT cs.customer_id) FROM subscriptions cs
     WHERE cs.plan_id=${alias}.id AND cs.superseded_by IS NULL
-      AND cs.status IN ('active','trialing','past_due','paused')
-      AND cs.starts_at<=clock_timestamp() AND cs.current_period_end>NOW()
+      AND cs.starts_at<=clock_timestamp()
+      AND (
+        (cs.status IN ('active','trialing','past_due','paused') AND cs.current_period_end>NOW())
+        OR (
+          COALESCE(cs.service_extension_days,0)>0
+          AND cs.status IN('active','trialing','past_due','paused','cancelled','expired')
+          AND cs.current_period_end+((cs.service_extension_days||' days')::interval)>NOW()
+        )
+      )
   ) + (
     SELECT COUNT(*) FROM free_access_registration_reservations cr
     WHERE cr.plan_id=${alias}.id AND cr.consumed_at IS NULL AND cr.released_at IS NULL AND cr.expires_at>NOW()
