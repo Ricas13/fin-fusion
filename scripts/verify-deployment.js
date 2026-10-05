@@ -4,6 +4,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { query, getPool } = require('../src/db');
+const compatibilityMigrations = require('../src/db-compatibility-migrations');
 const buildInfo = require('../src/build-info');
 const runtimeSettings = require('../src/platform/runtime-settings');
 const jobHealth = require('../src/automation/job-health');
@@ -148,7 +149,7 @@ async function main() {
 
         if (checks.at(-1)?.ok) {
             const files = fs.readdirSync(path.join(__dirname, '..', 'db', 'migrations')).filter(file => file.endsWith('.sql')).sort();
-            const expected = files.at(-1);
+            const expected = compatibilityMigrations.latestVersionedMigration(files);
             const applied = (await query('SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1')).rows[0]?.filename;
             add('migrations', applied === expected, `applied=${applied || 'none'} expected=${expected}`);
 
