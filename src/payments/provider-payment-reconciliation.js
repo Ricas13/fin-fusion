@@ -108,7 +108,7 @@ function paypalReportingFinancials(info = {}) {
     const feeCurrencyMatches = !fee || (feeCurrency && currency && feeCurrency === currency);
     const feeAmountValid = !fee || Number.isInteger(rawFeeMinor);
     const feeMinor = feeCurrencyMatches && feeAmountValid ? Math.abs(Number(rawFeeMinor || 0)) : 0;
-    const feeDataAvailable = Boolean(Number.isInteger(amountMinor) && currency && feeCurrencyMatches && feeAmountValid);
+    const feeDataAvailable = Boolean(Number.isInteger(amountMinor) && currency && fee && feeCurrencyMatches && feeAmountValid);
     return {
         amountMinor,
         feeMinor,
