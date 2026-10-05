@@ -9,6 +9,7 @@ const capacity = require('../entitlements/plan-capacity');
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
 const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
 const CUSTOMER_CHECKOUT_LOCK_MINUTES = 2;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hash(raw) { return crypto.createHash('sha256').update(String(raw)).digest('hex'); }
 function rawNonce() { return crypto.randomBytes(32).toString('base64url'); }
@@ -134,6 +135,9 @@ async function createIntent({
     if (!['payment', 'subscription'].includes(checkoutMode)) throw new Error('Invalid checkout mode.');
     const nonce = rawNonce();
     const snapshot = safeSnapshot(commercialSnapshot);
+    const extensionCheckout = snapshot.purchaseKind === 'subscription_extension';
+    if (extensionCheckout && checkoutMode !== 'payment') throw new Error('Subscription extensions must use one-time payment checkout.');
+    if (extensionCheckout && !UUID_RE.test(String(snapshot.extensionSubscriptionId || ''))) throw new Error('Extension checkout is missing a valid target subscription.');
     const maxTtl = providerMaxTtl(provider);
     const expires = new Date(Date.now() + Math.max(5, Math.min(maxTtl, Number(ttlMinutes) || 30)) * 60000);
     if (planPriceId && String(snapshot.planPriceId || '') !== String(planPriceId)) {
@@ -190,7 +194,7 @@ async function createIntent({
         `, [customerId]);
         if (existing.rowCount) throw new Error(`A checkout is already in progress. Finish or cancel it, or wait up to ${CUSTOMER_CHECKOUT_LOCK_MINUTES} minutes before starting another one.`);
 
-        if (planId) {
+        if (planId && snapshot.purchaseKind !== 'subscription_extension') {
             await capacity.lockAndAssert(client,planId,snapshot.planName || 'This plan', {
                 streams:snapshot.streams,
                 households:snapshot.stremioHouseholdNetworkLimit
@@ -447,6 +451,10 @@ async function verifiedProviderContract({
     const snapshot = safeSnapshot(row.commercial_snapshot || {});
     if (snapshot.kind !== 'direct_plan' || String(snapshot.planId || '') !== String(row.plan_id || '')) {
         throw new Error('Checkout commercial snapshot is incomplete or does not match its plan.');
+    }
+    if (snapshot.purchaseKind === 'subscription_extension') {
+        if (row.checkout_mode !== 'payment') throw new Error('Subscription extension checkout must be a one-time payment.');
+        if (!UUID_RE.test(String(snapshot.extensionSubscriptionId || ''))) throw new Error('Extension checkout contract is missing its target subscription.');
     }
     if (row.plan_price_id && String(snapshot.planPriceId || '') !== String(row.plan_price_id)) {
         throw new Error('Checkout commercial snapshot does not match its selected plan price.');
