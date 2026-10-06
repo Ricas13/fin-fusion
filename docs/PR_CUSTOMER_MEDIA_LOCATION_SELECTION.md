@@ -169,3 +169,4 @@ Do not merge until:
 ## Regression audit trigger
 
 A full exact-head regression pass was requested on 2026-10-04 after the final implementation follow-ups. This note intentionally triggers the complete PR workflow set so release evidence is tied to the audited head rather than an earlier commit.
+
