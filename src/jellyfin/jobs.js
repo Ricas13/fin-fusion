@@ -70,7 +70,9 @@ async function dueProvisioningCustomers(limit, queryFn = query) {
         FROM customer_provisioning_state cps
         WHERE cps.status IN ('pending','running','blocked','failed')
           AND (cps.next_attempt_at IS NULL OR cps.next_attempt_at <= NOW())
-        ORDER BY cps.next_attempt_at NULLS FIRST,cps.customer_id
+        ORDER BY CASE WHEN cps.status='pending' THEN 0 ELSE 1 END,
+                 CASE WHEN cps.status='pending' THEN cps.updated_at END DESC NULLS LAST,
+                 cps.next_attempt_at NULLS LAST,cps.customer_id
         LIMIT $1
     `, [bounded]);
     return result.rows;
