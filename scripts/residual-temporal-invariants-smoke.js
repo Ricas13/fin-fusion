@@ -40,7 +40,7 @@ function main() {
         'await assertSettlementCheckout',
         'await capacity.lockAndAssert',
         'excludeCheckoutIntentId',
-        "['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code)",
+        "'PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE'",
         'recordCapacitySettlementIncident',
         "incident_type='checkout_completion'",
         'paidButUnfulfilled',
@@ -50,7 +50,11 @@ function main() {
     ]) {
         assert(activation.includes(required) || lifecycle.includes(required), `Paid activation is missing ${required}`);
     }
-    assert(lifecycle.includes('SELECT id,customer_id,plan_id,provider,state FROM billing_checkout_intents'), 'Settlement verification must load checkout state so terminal historical replays can be distinguished from open crash recovery.');
+    assert(
+        lifecycle.includes('SELECT id,customer_id,plan_id,provider,state') &&
+        lifecycle.includes('media_server_id FROM billing_checkout_intents'),
+        'Settlement verification must load checkout state and the exact reserved media server so historical replay classification and location-aware settlement remain authoritative.'
+    );
     assert(lifecycle.includes('billingMode.BILLING_MODES.PAYMENT'), 'Existing one-time provider payments must be classified as immutable replays even if checkout settlement is still open.');
     assert(activation.indexOf('const settlementIntent = await assertSettlementCheckout') < activation.indexOf('historicalCheckoutReplay = isHistoricalCheckoutReplay'), 'Existing provider-payment replay must lock and classify its settlement intent before deciding whether commercial state may be rewritten.');
     assert.match(activation, /if \(historicalCheckoutReplay\)\s*\{\s*row = existingSubscription;/, 'A historical checkout replay can still rewrite a later subscription contract.');
@@ -123,7 +127,7 @@ function main() {
     assert(immediate.includes('let providerMutationAttempted=false'), 'Immediate Stripe plan changes must track whether a remote mutation may have happened.');
     assert(/providerMutationAttempted=true;\s*const updated=await client\.subscriptions\.update/.test(immediate), 'Immediate Stripe mutation ambiguity is not marked before the provider call.');
     assert(immediate.includes('billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id})'), 'Immediate Stripe plan change can still reconcile after merely proving the subscription is readable rather than proving the target Price.');
-    assert(immediate.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Ambiguous post-provider Stripe plan-change failures are still forced terminal instead of entering recovery.');
+    assert(immediate.includes('!providerMutationAttempted ? {terminal:true,ambiguous:false} : {}'), 'Immediate Stripe failures must be terminal only when no provider mutation was attempted; post-provider ambiguity must remain recoverable.');
     const scheduled = section(planChange, 'async function scheduleStripeProvider', 'async function requestChange');
     assert(scheduled.includes('let providerMutationAttempted=false'), 'Scheduled Stripe plan changes must track possible provider mutation.');
     assert(scheduled.includes('providerMutationAttempted=true;schedule=await client.subscriptionSchedules.create'), 'Stripe schedule creation ambiguity is not routed into provider-operation recovery.');
