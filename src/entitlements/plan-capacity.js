@@ -84,6 +84,35 @@ function managedMediaLimit(plan){
   if(policy.mediaCapacityManaged!==true)return null;
   return plan.capacity_limit==null?null:Math.max(0,Number(plan.capacity_limit)||0);
 }
+function pendingPlanChangeUsersSql(planExpr){
+  return `(
+    SELECT COUNT(*)::int
+    FROM customer_plan_changes capacity_change
+    JOIN subscriptions capacity_current ON capacity_current.id=capacity_change.current_subscription_id
+    WHERE capacity_change.target_plan_id=${planExpr}
+      AND capacity_change.provider='stripe'
+      AND capacity_change.state='pending'
+      AND capacity_current.superseded_by IS NULL
+      AND capacity_current.plan_id<>${planExpr}
+  )`;
+}
+function immediatePlanChangeUsersSql(planExpr){
+  return `(
+    SELECT COUNT(*)::int
+    FROM provider_operations capacity_operation
+    JOIN subscriptions capacity_current
+      ON capacity_current.id::text=capacity_operation.request_snapshot->>'subscriptionId'
+    WHERE capacity_operation.provider='stripe'
+      AND capacity_operation.scope='customer'
+      AND capacity_operation.operation_type='plan_change_immediate'
+      AND capacity_operation.state IN('planned','provider_applied','local_applied')
+      AND COALESCE(capacity_operation.failure_kind,'') NOT IN('terminal','superseded')
+      AND COALESCE(capacity_operation.provider_result->>'capacityReserved','false')='true'
+      AND capacity_operation.request_snapshot->>'targetPlanId'=(${planExpr})::text
+      AND capacity_current.superseded_by IS NULL
+      AND capacity_current.plan_id<>${planExpr}
+  )`;
+}
 async function loadPlan(planId,db=query){
   const result=await db(`SELECT id,capacity_limit,inactivity_policy,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
@@ -94,7 +123,7 @@ async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheck
   const result=await db(`SELECT
       (SELECT COUNT(DISTINCT s.customer_id)::int
        FROM subscriptions s
-       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW()
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=clock_timestamp()
          AND (
            (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
            OR (
@@ -104,19 +133,71 @@ async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheck
            )
          )) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
-       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
+       ${pendingPlanChangeUsersSql('$1')} +
+       ${immediatePlanChangeUsersSql('$1')}) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
 }
-async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+async function logicalMediaPlanUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
+  const checkoutHold=checkoutReservationSql('i');
+  const planUsage=await db(`SELECT
+      (
+        SELECT COUNT(DISTINCT s.customer_id)::int
+        FROM subscriptions s
+        LEFT JOIN customer_entitlement_overrides o
+          ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+        WHERE s.plan_id=$1
+          AND s.superseded_by IS NULL
+          AND s.starts_at<=clock_timestamp()
+          AND (
+            (o.permanent_access=TRUE AND o.revoked_at IS NULL)
+            OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+            OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+            OR (
+              COALESCE(s.service_extension_days,0)>0
+              AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+              AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
+            )
+          )
+          AND NOT public.subscription_admin_removed(s.customer_id,'jellyfin')
+          AND (
+            COALESCE($5::boolean,FALSE)=FALSE
+            OR ${freePendingUnblockedSql('s','plan_free_hold')}
+          )
+      ) AS used,
+      (
+        (SELECT COUNT(*)::int
+         FROM free_access_registration_reservations r
+         WHERE r.plan_id=$1 AND ${RESERVATION_SQL}
+           AND ($3::uuid IS NULL OR r.id<>$3::uuid))
+        +
+        (SELECT COUNT(*)::int
+         FROM billing_checkout_intents i
+         WHERE i.plan_id=$1 AND ${checkoutHold}
+           AND ($4::uuid IS NULL OR i.id<>$4::uuid))
+        + ${pendingPlanChangeUsersSql('$1')}
+        + ${immediatePlanChangeUsersSql('$1')}
+      ) AS reserved`,[
+        plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,Boolean(plan.is_free_tier)
+      ]);
+  const planUsed=Number(planUsage.rows[0]?.used||0);
+  const planReserved=Number(planUsage.rows[0]?.reserved||0);
+  const planLimit=managedMediaLimit(plan);
+  const planRemaining=planLimit==null?null:Math.max(0,planLimit-planUsed-planReserved);
+  return{planLimit,planUsed,planReserved,planRemaining,soldOut:planRemaining!=null&&planRemaining<=0};
+}
+
+async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
   const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
       (SELECT COALESCE(SUM(GREATEST(1,COALESCE(
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
         s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit,1))),0)::int
        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-       WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW()
+       WHERE s.plan_id=$1 AND s.superseded_by IS NULL
+         AND s.starts_at<=clock_timestamp()
          AND (
            (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
            OR (
@@ -124,7 +205,8 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
              AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
              AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW()
            )
-         )) AS household_used,
+         )
+         AND ($5::uuid IS NULL OR s.id<>$5::uuid)) AS household_used,
       ((SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.stremio_household_network_limit,1))),0)::int
         FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
         WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
@@ -132,9 +214,61 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
           CASE WHEN jsonb_typeof(i.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (i.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
           p.stremio_household_network_limit,1))),0)::int
         FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
-        WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+        WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid)) +
+       (SELECT COALESCE(SUM(
+          CASE
+            WHEN current_subscription.plan_id=pc.target_plan_id THEN
+              GREATEST(0,
+                GREATEST(1,COALESCE(pc.target_access_quantity,p.stremio_household_network_limit,1))
+                -
+                GREATEST(1,COALESCE(
+                  CASE WHEN jsonb_typeof(current_subscription.commercial_snapshot->'stremioHouseholdNetworkLimit')='number'
+                    THEN (current_subscription.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
+                  current_subscription.stremio_household_network_limit_snapshot,current_plan.stremio_household_network_limit,1
+                ))
+              )
+            ELSE GREATEST(1,COALESCE(pc.target_access_quantity,p.stremio_household_network_limit,1))
+          END
+        ),0)::int
+        FROM customer_plan_changes pc
+        JOIN plans p ON p.id=pc.target_plan_id
+        JOIN subscriptions current_subscription ON current_subscription.id=pc.current_subscription_id
+        JOIN plans current_plan ON current_plan.id=current_subscription.plan_id
+        WHERE pc.target_plan_id=$1
+          AND pc.provider='stripe'
+          AND pc.state='pending'
+          AND current_subscription.superseded_by IS NULL) +
+       (SELECT COALESCE(SUM(
+          CASE
+            WHEN current_subscription.plan_id=target_plan.id THEN
+              GREATEST(0,
+                GREATEST(1,COALESCE(NULLIF(operation.request_snapshot->>'targetAccessQuantity','')::int,target_plan.stremio_household_network_limit,1))
+                -
+                GREATEST(1,COALESCE(
+                  CASE WHEN jsonb_typeof(current_subscription.commercial_snapshot->'stremioHouseholdNetworkLimit')='number'
+                    THEN (current_subscription.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
+                  current_subscription.stremio_household_network_limit_snapshot,current_plan.stremio_household_network_limit,1
+                ))
+              )
+            ELSE GREATEST(1,COALESCE(NULLIF(operation.request_snapshot->>'targetAccessQuantity','')::int,target_plan.stremio_household_network_limit,1))
+          END
+        ),0)::int
+        FROM provider_operations operation
+        JOIN subscriptions current_subscription
+          ON current_subscription.id::text=operation.request_snapshot->>'subscriptionId'
+        JOIN plans current_plan ON current_plan.id=current_subscription.plan_id
+        JOIN plans target_plan ON target_plan.id::text=operation.request_snapshot->>'targetPlanId'
+        WHERE target_plan.id=$1
+          AND operation.provider='stripe'
+          AND operation.scope='customer'
+          AND operation.operation_type='plan_change_immediate'
+          AND operation.state IN('planned','provider_applied','local_applied')
+          AND COALESCE(operation.failure_kind,'') NOT IN('terminal','superseded')
+          AND COALESCE(operation.provider_result->>'capacityReserved','false')='true'
+          AND current_subscription.superseded_by IS NULL)
+      ) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId]);
   const row=result.rows[0]||{},householdLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit),householdUsed=Number(row.household_used||0),householdReserved=Number(row.household_reserved||0),householdRemaining=householdLimit==null?null:Math.max(0,householdLimit-householdUsed-householdReserved),requiredHouseholds=positiveInt(households,positiveInt(plan.stremio_household_network_limit,1));
-  const limit=householdLimit==null?null:Math.floor(householdLimit/requiredHouseholds),remaining=householdRemaining==null?null:Math.floor(householdRemaining/requiredHouseholds),used=limit==null?householdUsed:Math.max(0,limit-remaining),state={planId:plan.id,plan,model:'manual_households',pool:'stremio',requiredHouseholds,householdLimit,householdUsed,householdReserved,householdRemaining,limit,used,reserved:0,remaining,soldOut:remaining!=null&&remaining<=0,manualLimit:householdLimit,manualUsed:householdUsed,manualReserved:householdReserved};
+  const limit=householdLimit==null?null:Math.floor(householdLimit/requiredHouseholds),remaining=householdRemaining==null?null:Math.floor(householdRemaining/requiredHouseholds),used=limit==null?householdUsed:Math.max(0,limit-remaining),state={planId:plan.id,plan,model:'manual_households',pool:'stremio',requiredHouseholds,householdLimit,householdUsed,householdReserved,householdRemaining,limit,used,reserved:householdReserved,remaining,soldOut:remaining!=null&&remaining<=0,manualLimit:householdLimit,manualUsed:householdUsed,manualReserved:householdReserved};
   return{...state,...scarcity(state)};
 }
 async function placementHealthMode(db=query){
@@ -169,7 +303,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         AND ${health}
         AND ${serviceFlag}
     ), server_occupancy AS (
-      SELECT es.id,es.max_users,COUNT(DISTINCT ja.customer_id)::int AS managed_users
+      SELECT es.id,es.max_users,COUNT(DISTINCT (ja.customer_id::text||':'||COALESCE(ja.access_lane,'primary')))::int AS managed_users
       FROM eligible_servers es
       LEFT JOIN jellyfin_accounts ja ON ja.server_id=es.id AND ja.disabled=FALSE AND ja.account_purpose='jellyfin'
       GROUP BY es.id,es.max_users
@@ -191,11 +325,11 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
   // An already-entitled customer who has not yet received an enabled account
   // owns one place. This prevents a failed setup from reopening that place to
   // somebody else before the owed customer is repaired.
-  const pending=await db(`SELECT COUNT(DISTINCT s.customer_id)::int AS pending_users
+  const pending=await db(`SELECT COUNT(DISTINCT (s.customer_id::text||':'||CASE WHEN COALESCE(p.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END))::int AS pending_users
     FROM subscriptions s
     JOIN plans p ON p.id=s.plan_id
     LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
-    WHERE s.superseded_by IS NULL AND s.starts_at<=NOW()
+    WHERE s.superseded_by IS NULL AND s.starts_at<=clock_timestamp()
       AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN('jellyfin','bundle')
       AND EXISTS(
         SELECT 1
@@ -243,6 +377,8 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
         WHERE existing.customer_id=s.customer_id
           AND existing.disabled=FALSE
           AND existing.account_purpose='jellyfin'
+          AND COALESCE(existing.access_lane,'primary')=
+              CASE WHEN COALESCE(p.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END
           AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
           AND (
             EXISTS(SELECT 1 FROM plan_server_eligibility current_existing_map WHERE current_existing_map.plan_id=$4 AND current_existing_map.server_id=existing_server.id)
@@ -302,7 +438,7 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
           ON o.customer_id=s.customer_id AND o.subscription_id=s.id
         WHERE s.plan_id=$1
           AND s.superseded_by IS NULL
-          AND s.starts_at<=NOW()
+          AND s.starts_at<=clock_timestamp()
           AND (
             (o.permanent_access=TRUE AND o.revoked_at IS NULL)
             OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
@@ -329,6 +465,8 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
          FROM billing_checkout_intents i
          WHERE i.plan_id=$1 AND ${checkoutHold}
            AND ($4::uuid IS NULL OR i.id<>$4::uuid))
+        + ${pendingPlanChangeUsersSql('$1')}
+        + ${immediatePlanChangeUsersSql('$1')}
       ) AS reserved`,[
         plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId,Boolean(plan.is_free_tier)
       ]);
@@ -360,9 +498,9 @@ async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeChecko
   };
 }
 
-async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
-  if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
+  if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
   if(model!=='fleet_users')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   const fleet=await fleetUsers(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   if(!fleet){
@@ -373,19 +511,34 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
   return{...state,...scarcity(state)};
 }
 
-async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
-  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,households});
+async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
+  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
   if(state.soldOut){const error=new Error(`${label} is currently sold out.`);error.code='PLAN_CAPACITY_EXHAUSTED';error.planId=String(planId);throw error;}
   return state;
 }
 
-async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+async function lockAndAssertLogicalMedia(client,planId,label='This plan'){
+  const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params));
+  if(capacityModel(plan)!=='fleet_users')return lockAndAssert(client,planId,label);
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,['fleet-users']);
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[`fleet-users:${serverClass(plan)||'unclassified'}`]);
+  const state=await logicalMediaPlanUsage(plan,(sql,params)=>client.query(sql,params));
+  if(state.soldOut){
+    const error=new Error(`${label} is currently sold out.`);
+    error.code='PLAN_CAPACITY_EXHAUSTED';
+    error.planId=String(planId);
+    throw error;
+  }
+  return state;
+}
+
+async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
   const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?'fleet-users':`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
   // During a rolling deployment the previous release still takes the class
   // lock. Retain it after the global pool lock so both generations serialize.
   if(model==='fleet_users')await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[`fleet-users:${serverClass(plan)||'unclassified'}`]);
-  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,households});
+  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
 }
 
 function legacyAcquisitionSql(alias='p'){
@@ -393,7 +546,7 @@ function legacyAcquisitionSql(alias='p'){
   return `(${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT cs.customer_id) FROM subscriptions cs
     WHERE cs.plan_id=${alias}.id AND cs.superseded_by IS NULL
-      AND cs.starts_at<=NOW()
+      AND cs.starts_at<=clock_timestamp()
       AND (
         (cs.status IN ('active','trialing','past_due','paused') AND cs.current_period_end>NOW())
         OR (
@@ -447,7 +600,7 @@ function mediaPlanLimitAvailableSql(alias='p'){
     LEFT JOIN customer_entitlement_overrides media_o ON media_o.customer_id=media_s.customer_id AND media_o.subscription_id=media_s.id
     WHERE media_s.plan_id=${alias}.id
       AND media_s.superseded_by IS NULL
-      AND media_s.starts_at<=NOW()
+      AND media_s.starts_at<=clock_timestamp()
       AND NOT public.subscription_admin_removed(media_s.customer_id,'jellyfin')
       AND (COALESCE(${alias}.is_free_tier,FALSE)=FALSE OR ${freePendingUnblockedSql('media_s','media_plan_hold')})
       AND (
@@ -467,7 +620,7 @@ function mediaPlanLimitAvailableSql(alias='p'){
   ) + (
     SELECT COUNT(*) FROM billing_checkout_intents media_ci
     WHERE media_ci.plan_id=${alias}.id AND ${checkoutHold}
-  )))`;
+  ) + ${pendingPlanChangeUsersSql(`${alias}.id`)} + ${immediatePlanChangeUsersSql(`${alias}.id`)}))`;
 }
 
 function fleetRestrictionSql(planAlias,serverAlias){
@@ -519,7 +672,7 @@ function fleetAvailableSql(alias='p'){
   const managedUsers=`(
     SELECT COALESCE(SUM(server_load.managed_users),0)
     FROM (
-      SELECT occupancy_server.id,COUNT(DISTINCT capacity_account.customer_id) AS managed_users
+      SELECT occupancy_server.id,COUNT(DISTINCT (capacity_account.customer_id::text||':'||COALESCE(capacity_account.access_lane,'primary'))) AS managed_users
       FROM jellyfin_servers occupancy_server
       LEFT JOIN jellyfin_accounts capacity_account ON capacity_account.server_id=occupancy_server.id
         AND capacity_account.disabled=FALSE AND capacity_account.account_purpose='jellyfin'
@@ -535,12 +688,12 @@ function fleetAvailableSql(alias='p'){
     ) server_load
   )`;
   const pendingUsers=`(
-    SELECT COUNT(DISTINCT pending_subscription.customer_id)
+    SELECT COUNT(DISTINCT (pending_subscription.customer_id::text||':'||CASE WHEN COALESCE(pending_plan.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END))
     FROM subscriptions pending_subscription
     JOIN plans pending_plan ON pending_plan.id=pending_subscription.plan_id
     LEFT JOIN customer_entitlement_overrides pending_override ON pending_override.customer_id=pending_subscription.customer_id AND pending_override.subscription_id=pending_subscription.id
     WHERE pending_subscription.superseded_by IS NULL
-      AND pending_subscription.starts_at<=NOW()
+      AND pending_subscription.starts_at<=clock_timestamp()
       AND COALESCE(NULLIF(pending_subscription.service_type_snapshot,''),pending_plan.service_type,'jellyfin') IN('jellyfin','bundle')
       AND ${planPoolOverlapSql(alias,'pending_plan')}
       AND (
@@ -570,6 +723,8 @@ function fleetAvailableSql(alias='p'){
         WHERE existing_account.customer_id=pending_subscription.customer_id
           AND existing_account.disabled=FALSE
           AND existing_account.account_purpose='jellyfin'
+          AND COALESCE(existing_account.access_lane,'primary')=
+              CASE WHEN COALESCE(pending_plan.is_free_tier,FALSE)=TRUE THEN 'free' ELSE 'primary' END
           AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
           AND ${planPoolServerSql(alias,'existing_server')}
       )
@@ -600,4 +755,4 @@ function acquisitionSql(alias='p'){
   const planLimitAvailable=mediaPlanLimitAvailableSql(alias);return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND ${planLimitAvailable}))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql,managedMediaLimit};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,lockAndAssertLogicalMedia,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql,freePendingUnblockedSql,managedMediaLimit,logicalMediaPlanUsage};
