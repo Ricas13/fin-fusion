@@ -8,6 +8,7 @@ const root=path.join(__dirname,'..');
 const deploy=fs.readFileSync(path.join(root,'scripts','deploy-production.sh'),'utf8');
 const runtime=fs.readFileSync(path.join(root,'scripts','lib','compose-runtime.sh'),'utf8');
 const workflow=fs.readFileSync(path.join(root,'.github','workflows','merge-safety.yml'),'utf8');
+const compose=fs.readFileSync(path.join(root,'docker-compose.yml'),'utf8');
 
 for(const token of [
   "Starting isolated candidate portal while the current portal continues serving",
@@ -38,6 +39,10 @@ assert(liveVerify>replacementAttach,'live verification must run after replacemen
 assert(retire>liveVerify,'overlap candidate must remain serving through live post-cutover verification');
 
 assert(!deploy.includes("docker compose stop --timeout 45 app "),'deployment must never deliberately stop the live portal');
+const appService=compose.slice(compose.indexOf('\n  app:\n'),compose.indexOf('\n  automation-worker:\n'));
+assert(!appService.includes('./db:/app/db:ro'),
+  'the long-running app must use the migration files baked into its immutable image; mounting the mutable host checkout makes N-1 readiness observe future migrations before cutover');
+
 assert(runtime.includes("filter(([key])=>!String(key).startsWith(\"com.docker.compose.\"))"),
   'runtime metadata capture must preserve environment-specific labels without copying Compose internals');
 assert(runtime.includes('docker network connect "$network" "$target"'),
