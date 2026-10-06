@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const registry=require('../jellyfin/registry');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const jellyfinAdminControl=require('../jellyfin/admin-control');
 const externalDeletion=require('./customer-external-deletion');
 
 const RUNNING_STALE_MINUTES=15;
@@ -138,6 +139,17 @@ async function currentJellyfinDeletionResults(jobId){
 }
 
 async function ensureDeletionHold(job){
+  // Re-assert explicit removal on every retry while the customer still exists.
+  // Jobs created by an older release may already have access_held_at but lack
+  // the newer admin_removed authority. Conversely, a crash after the customer
+  // row was deleted must remain retryable without recreating service control.
+  const customerExists=await query('SELECT 1 FROM customers WHERE id=$1 LIMIT 1',[job.customer_id]);
+  if(customerExists.rowCount){
+    await jellyfinAdminControl.remove(job.customer_id,null,{
+      actorUserId:job.actor_user_id||null,
+      reason:'Customer hard deletion in progress'
+    });
+  }
   if(job.access_held_at)return job;
   await provisioning.holdAccess(job.customer_id,'jellyfin_deleted',job.actor_user_id||null);
   const held=await query(`UPDATE customer_deletion_jobs SET access_held_at=COALESCE(access_held_at,NOW()),updated_at=NOW() WHERE id=$1 RETURNING *`,[job.id]);
@@ -159,13 +171,24 @@ async function processDeletionJob(jobId){
     // must not create/re-add it while cleanup identity is being snapshotted.
     job=await ensureDeletionHold(job);
 
-    // 2) snapshot every currently-owned cleanup identity before any destructive
+    // 2) Reconcile any in-flight media creation first. A remote account may
+    // already exist even though jellyfin_accounts has not been persisted yet.
+    // Customer deletion must not cascade-delete that intent and erase the only
+    // durable pointer to the remote identity.
+    const intentCleanup=await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(job.customer_id);
+    if(Number(intentCleanup?.failed||0)>0){
+      const error=new Error(intentCleanup.warning||'In-flight media account cleanup is incomplete.');
+      error.code='CUSTOMER_DELETE_MEDIA_INTENT_CLEANUP_INCOMPLETE';
+      throw error;
+    }
+
+    // 3) snapshot every currently-owned cleanup identity before any destructive
     // external API call. A crash immediately after this point is recoverable.
     await externalDeletion.persistTargets(job);
 
     let targets;
     try{
-      // 3) each target is an idempotent desired-state operation with durable
+      // 4) each target is an idempotent desired-state operation with durable
       // attempts/error/result. Discord removal is awaited and verified here.
       targets=await externalDeletion.reconcileJobTargets(job);
     }catch(error){
