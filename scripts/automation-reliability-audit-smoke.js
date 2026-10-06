@@ -82,11 +82,16 @@ assert(jellyfinJobs.includes('ensureFailureBackoff'), 'entitlement reconciliatio
 const creationRecovery = source('src/automation/jellyfin-creation-intent-recovery.js');
 const compactCreationRecovery = creationRecovery.replace(/\s+/g, '');
 assert(
-    creationRecovery.includes("admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin'"),
-    'creation-intent recovery must preserve explicit admin-present/server-pin authority'
+    creationRecovery.includes("const adminOwns = admin?.mode === 'admin_present'"),
+    'creation-intent recovery must preserve explicit admin-present access authority without treating a placement-only server pin as entitlement authority'
+);
+assert(
+    creationRecovery.includes("authority.admin?.mode === 'admin_server_pin'")
+      && creationRecovery.includes("intent?.access_lane"),
+    'creation-intent recovery may honor an admin server pin only for a still-entitled matching access lane'
 );
 const creationCustomerLockAt = compactCreationRecovery.indexOf('SELECTidFROMcustomersWHEREid=$1FORUPDATE');
-const creationIntentLockAt = compactCreationRecovery.indexOf('SELECT*FROMjellyfin_account_creation_intentsWHEREid=$1FORUPDATE');
+const creationIntentLockAt = compactCreationRecovery.indexOf("SELECTi.*,COALESCE(s.media_server_type,'jellyfin')ASmedia_server_typeFROMjellyfin_account_creation_intentsiJOINjellyfin_serverssONs.id=i.server_idWHEREi.id=$1FORUPDATEOFi");
 const creationAuthorityRecheckAt = compactCreationRecovery.indexOf('constauthoritative=awaitentitlementStillOwnsJellyfin(intent.customer_id,{client})');
 const creationRemoteDeleteAt = compactCreationRecovery.indexOf('awaitcompensation.removeCreatedUser({');
 assert(
