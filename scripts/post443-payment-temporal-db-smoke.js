@@ -75,6 +75,22 @@ async function attachedCancellationCreditInvariant() {
 async function frozenDiscountInvariant() {
   const owner = await customer('frozen-discount');
   const p = await plan('Frozen discount plan', 1000);
+  // This invariant predates location-aware checkout, but it is still a real
+  // Jellyfin purchase. Give the plan one valid physical destination so the
+  // test exercises discount freezing rather than failing at the newer,
+  // intentionally earlier media-placement gate.
+  const mediaServer = (await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,public_url,location,
+      api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,
+      priority,max_users,health_status,placement_mode
+    ) VALUES($1,$2,'premium','jellyfin',$3,$3,'Temporal Test','key',TRUE,TRUE,TRUE,TRUE,1,100,'healthy','active')
+    RETURNING id
+  `, [`Temporal discount ${suffix}`, unique('temporal-discount-server'), `https://temporal-${suffix}.example.invalid`])).rows[0];
+  await query(
+    'INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)',
+    [p.id, mediaServer.id]
+  );
   const code = unique('FROZEN').toUpperCase();
   const discount = (await query(`INSERT INTO discount_codes(code,discount_type,percent_off,max_redemptions,per_customer_limit,active) VALUES($1,'percent',20,1,1,TRUE) RETURNING *`, [code])).rows[0];
   const intent = await intents.createIntent({ scope: 'customer', customerId: owner.id, planId: p.id, provider: 'stripe', checkoutMode: 'payment', commercialSnapshot: { kind:'direct_plan',planId:p.id,provider:'stripe',checkoutMode:'payment' } });
