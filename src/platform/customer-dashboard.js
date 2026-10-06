@@ -27,6 +27,7 @@ const productReadiness=require('./product-readiness');
 const checkoutIntents=require('../payments/checkout-intents');
 const planChange=require('../payments/customer-plan-change');
 const csrf=require('../auth/csrf');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
 async function hideInternalAccounts(_customerId,portal){if(!portal||!Array.isArray(portal.accounts))return portal;portal.accounts=portal.accounts.filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');return portal;}
@@ -68,7 +69,20 @@ async function catalogPlans(){
   return variantCapacity.decoratePlans(catalogue);
 }
 async function sellablePlans(includePlanIds=[]){return readySalePlans(await catalogPlans(),includePlanIds);}
-function accountForEntitlement(portal,entitlement){if(!Array.isArray(portal?.accounts)||!entitlement)return null;const lane=entitlement.is_free_tier?'free':'primary';return portal.accounts.find(a=>String(a.media_server_type||'jellyfin')==='jellyfin'&&a.access_lane===lane&&!a.disabled)||portal.accounts.find(a=>String(a.media_server_type||'jellyfin')==='jellyfin'&&a.access_lane===lane)||null;}
+function accountForEntitlement(portal,entitlement){
+  if(!Array.isArray(portal?.accounts)||!entitlement)return null;
+  const lane=entitlement.is_free_tier?'free':'primary';
+  const candidates=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'&&account.access_lane===lane);
+  const assignedServerId=String(entitlement.admin_forced_server_id||entitlement.media_server_id||'').trim();
+  if(assignedServerId){
+    return candidates.find(account=>String(account.server_id||'')===assignedServerId&&!account.disabled)
+      ||candidates.find(account=>String(account.server_id||'')===assignedServerId)
+      ||null;
+  }
+  const enabled=candidates.filter(account=>!account.disabled);
+  if(enabled.length===1)return enabled[0];
+  return candidates.length===1?candidates[0]:null;
+}
 function onboardingMessage(portal,currentPlan){if(!currentPlan||!['jellyfin','bundle'].includes(deliveryType(currentPlan)))return null;const account=accountForEntitlement(portal,currentPlan);if(!account||account.disabled||account.last_activity_at)return null;const username=account.jellyfin_username||portal.customer?.login_username||'your Jellyfin username';if(account.password_setup_required)return 'Your Jellyfin account is ready. Choose your password below to start watching.';return `Your Jellyfin account is ready. Open Jellyfin and sign in as ${username}.`;}
 function customerProvisioningMessage(state){const message=String(state?.last_error||'');if(/no eligible (?:jellyfin|emby) server|no (?:jellyfin|emby) server|no suitable server/i.test(message))return 'No suitable streaming server is available for this plan right now. We will retry automatically, or you can retry now.';if(/username .* already exists|target_username_exists/i.test(message))return 'That streaming username is already in use on the target server. Please retry; if it continues, contact support.';if(/capacity|max_users|sold out/i.test(message))return 'The eligible streaming server is currently at capacity. We will retry automatically when space is available.';if(state&&['blocked','failed','pending','running'].includes(String(state.status||'')))return 'One of your streaming services is still being prepared. CAPTAiNFiN will keep retrying automatically.';return null;}
 function stremioDeepLink(manifestUrl){if(!manifestUrl)return null;const url=new URL(manifestUrl);return `stremio://${url.host}${url.pathname}${url.search}`;}
@@ -93,11 +107,11 @@ async function recentFreeInactivityRemoval(customerId){
     SELECT a.created_at
     FROM audit_log a
     WHERE a.entity_type='customer'
-      AND a.entity_id=$1
+      AND a.entity_id=$1::text
       AND a.action IN ('customer.inactivity.remove_jellyfin','customer.inactivity.finalize_free_plan')
       AND NOT EXISTS (
         SELECT 1 FROM subscriptions s
-        WHERE s.customer_id=$1
+        WHERE s.customer_id=$1::uuid
           AND s.created_at>a.created_at
       )
     ORDER BY a.created_at DESC
@@ -111,6 +125,36 @@ function createCustomerDashboardRouter(){
   const r=express.Router();
   r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){const{message,status}=publicError.present(error,{context:'Discount preview failed',fallback:'Promo code could not be checked.'});return res.status(status).json({valid:false,plans:{},message});}});
   r.get('/account/plan-variants',requireCustomer,async(req,res)=>{try{res.setHeader('Cache-Control','no-store, private, max-age=0');return res.json({plans:await customerVariantState(req.session.customerId)});}catch(error){console.warn('Customer plan variant state failed:',error.message);return res.status(503).json({plans:[],error:'Plan options are temporarily unavailable.'});}});
+  r.get('/account/media-locations',requireCustomer,async(req,res)=>{try{
+    res.setHeader('Cache-Control','no-store, private, max-age=0');
+    const planCode=String(req.query.planCode||'').trim();
+    if(!planCode)return res.status(400).json({media:false,requiresSelection:false,locations:[],error:'Plan is required.'});
+    const found=await query(`SELECT * FROM plans WHERE code=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND audience IN('direct','both') AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) LIMIT 1`,[planCode]);
+    if(!found.rowCount)return res.status(404).json({media:false,requiresSelection:false,locations:[],error:'Plan is not available.'});
+    const plan=found.rows[0],media=Boolean(customerServerChoice.mediaServerType(plan));
+    if(!media)return res.json({media:false,requiresSelection:false,locations:[]});
+    const locations=await customerServerChoice.choicesForPlan(plan);
+    let selectedLocation=null;
+    const current=await planChange.currentRecurring(req.session.customerId,plan).catch(()=>null);
+    if(current?.media_server_id){
+      const assigned=await customerServerChoice.reusableAssignedServerForPlan(current,plan,null).catch(()=>null);
+      if(assigned){
+        selectedLocation=assigned.selected_location||customerServerChoice.locationLabel(assigned.location);
+        if(!locations.some(location=>String(location.value)===String(selectedLocation))){
+          locations.push({
+            value:selectedLocation,
+            label:selectedLocation,
+            remaining:0,
+            serverCount:1,
+            testUrl:await customerServerChoice.safeTestUrl(assigned),
+            existingAssignment:true
+          });
+        }
+      }
+    }
+    locations.sort((a,b)=>String(a.label||a.value).localeCompare(String(b.label||b.value)));
+    return res.json({media:true,requiresSelection:locations.length>1,selectedLocation,locations});
+  }catch(error){console.warn('Customer media location state failed:',error.message);return res.status(503).json({media:true,requiresSelection:false,locations:[],error:'Server locations are temporarily unavailable.'});}});
   r.get('/account/free-access',requireCustomer,async(req,res,next)=>{
     try{
       const customerId=req.session.customerId;
