@@ -13,6 +13,7 @@ const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
+const accessExtensions = require('./subscription-access-extensions');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -411,9 +412,10 @@ async function activatePurchase(input) {
     if (!planResult.rowCount) throw new Error('Plan not found.');
     const plan=state.assertAudience(planResult.rows[0], 'customer');
     const same = input.providerSubscriptionId ? await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider,input.providerSubscriptionId]) : {rowCount:0};
-    if(!same.rowCount)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
+    const isAccessExtension=input.commercialSnapshot?.kind==='subscription_extension';
+    if(!same.rowCount&&!isAccessExtension)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
     const mode=checkoutBillingMode(input);
-    if (billingMode.isRecurring({ source: input.provider, billing_mode: mode })) {
+    if (!isAccessExtension&&billingMode.isRecurring({ source: input.provider, billing_mode: mode })) {
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
     const activated=await primitives.activatePurchase(input);
@@ -492,7 +494,9 @@ async function attachDiscoveredProviderSubscription({
              WHERE id=$1
              RETURNING *
         `, [local.id, provider, providerCustomerId || null, providerSubscriptionId, providerMap.external_id || null, providerMap.plan_price_id || null, providerMap.id || null, status, periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd)]);
-        const row = updated.rows[0];
+        let row = updated.rows[0];
+        const rebasedExtensions = await accessExtensions.recomputeActivePurchasedDaysTx(client, row.id, row.customer_id);
+        row = rebasedExtensions.subscription || row;
         const oldDelinquencyKey = primitives.paymentDelinquencySourceKey(local.source, local.provider_subscription_id, local.billing_mode);
         const newDelinquencyKey = primitives.paymentDelinquencySourceKey(provider, providerSubscriptionId, row.billing_mode);
         if (oldDelinquencyKey && oldDelinquencyKey !== newDelinquencyKey) {

@@ -114,11 +114,11 @@ async function main() {
     expect(returnSource.includes("providerCheckoutId:sessionId")&&returnSource.includes("provider:'stripe'")&&returnSource.includes('ownerId:req.session.customerId'), 'Stripe return must verify intent, session and owner together.');
     expect(returnSource.includes('stripe.confirmCheckout(sessionId,row)'), 'Stripe return must ask the provider adapter to confirm payment state.');
     expect(stripeSource.includes('async function confirmCheckout(sessionId)')&&stripeSource.includes("case 'checkout.session.expired'"), 'Stripe adapter must own browser confirmation and expiration completion.');
+    expect(routeSource.includes("/account/checkout/cancel-open"), 'a self-service cancel-open route must exist.');
     expect(stripeSource.includes('async function abandonCheckout(sessionId)')&&stripeSource.includes('checkout.sessions.expire(id)'), 'Stripe adapter must be able to make an abandoned open Checkout Session conclusively non-payable.');
     expect(stripeSource.includes("status==='complete'&&['paid','no_payment_required'].includes(paymentStatus)")&&stripeSource.includes('await activateCheckoutSession(session)'), 'Stripe abandonment must fulfill a payment that completed during the provider-switch race instead of expiring it.');
     expect(routeSource.includes("existing.provider==='stripe'&&existing.provider_checkout_id")&&routeSource.includes('await stripe.abandonCheckout(existing.provider_checkout_id)'), 'switching away from an outstanding Stripe checkout must terminalize the old provider checkout before releasing the customer lock.');
     expect(routeSource.includes("open.provider==='stripe'")&&routeSource.includes('await stripe.abandonCheckout(open.provider_checkout_id)'), 'self-service cancel-open must terminalize an attached Stripe checkout before allowing another checkout.');
-
     const stripeWebhook = webhookSource.match(/router\.post\('\/webhooks\/stripe'[\s\S]*?router\.post\('\/webhooks\/paypal'/)?.[0] || '';
     expect(stripeWebhook.includes('stripe.processWebhook(req.body,signature)'), 'Stripe webhook must delegate fulfillment to the Stripe adapter.');
     expect(!stripeWebhook.includes('completeCheckoutOrIncident'), 'Stripe webhook must not run a second local checkout-completion pass.');

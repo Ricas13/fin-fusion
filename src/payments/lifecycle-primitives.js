@@ -11,6 +11,7 @@ const billingPeriods = require('./billing-periods');
 const billingMode = require('./subscription-billing-mode');
 const serviceCreditReservations = require('./service-credit-reservations');
 const financialState = require('./provider-financial-state');
+const accessExtensions = require('./subscription-access-extensions');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -144,7 +145,10 @@ async function claimRetryablePaymentEvents({ limit = 25 } = {}) {
 function purchaseSnapshot(snapshot, { provider, planId }) {
     if (!snapshot) return null;
     if (typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Invalid checkout commercial snapshot');
-    if (snapshot.kind !== 'direct_plan') throw new Error('Unsupported checkout commercial snapshot');
+    if (!['direct_plan','subscription_extension'].includes(snapshot.kind)) throw new Error('Unsupported checkout commercial snapshot');
+    if (snapshot.kind === 'subscription_extension' && !String(snapshot.extensionSubscriptionId || '').trim()) {
+        throw new Error('Access-extension checkout is missing its target subscription.');
+    }
     if (String(snapshot.planId || '') !== String(planId)) throw new Error('Checkout contract plan does not match activation plan');
     if (snapshot.provider !== provider) throw new Error('Checkout contract provider does not match activation provider');
     const durationDays = Number(snapshot.durationDays), priceMinor = Number(snapshot.priceMinor);
@@ -226,7 +230,17 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
     `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
         reason: error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
             ? 'service_credit_unavailable_after_provider_settlement'
-            : 'capacity_exhausted_after_provider_settlement',
+            : error?.code === 'PLAN_CAPACITY_EXHAUSTED'
+                ? 'capacity_exhausted_after_provider_settlement'
+                : error?.code === 'ACCESS_EXTENSION_TARGET_STALE'
+                    ? 'extension_target_changed_after_provider_settlement'
+                    : error?.code === 'ACCESS_EXTENSION_ACCESS_BLOCKED'
+                        ? 'extension_target_blocked_after_provider_settlement'
+                        : error?.code === 'ACCESS_EXTENSION_PLAN_CHANGE_OPEN'
+                            ? 'extension_plan_change_open_after_provider_settlement'
+                            : error?.code === 'ACCESS_EXTENSION_ALLOWANCE_CHANGED'
+                                ? 'extension_allowance_changed_after_provider_settlement'
+                                : 'provider_payment_settled_but_local_fulfillment_failed',
         planId,
         checkoutIntentId,
         providerSubscriptionId,
@@ -294,8 +308,28 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
+            const isAccessExtension = contract?.kind === 'subscription_extension';
 
-            if (!existing.rowCount && !activationSuppressedByMoneyLoss) {
+            if (!isAccessExtension) {
+                const extensionOwner = await client.query(`
+                    SELECT customer_id,subscription_id
+                    FROM subscription_access_extensions
+                    WHERE provider=$1 AND provider_payment_id=$2
+                    LIMIT 1
+                    FOR SHARE
+                `, [provider, String(providerSubscriptionId)]);
+                if (extensionOwner.rowCount) {
+                    const error = new Error('This provider payment is already attached to an access extension and cannot also create or update a subscription.');
+                    error.code = 'PROVIDER_PAYMENT_ALREADY_USED_FOR_EXTENSION';
+                    throw error;
+                }
+            }
+
+            if (isAccessExtension && checkoutBillingMode !== billingMode.BILLING_MODES.PAYMENT) {
+                throw new Error('Access extensions must use a one-time payment.');
+            }
+
+            if (!isAccessExtension && !existing.rowCount && !activationSuppressedByMoneyLoss) {
                 if (billingMode.isRecurring({ source: provider, billing_mode: checkoutBillingMode })) {
                     await subscriptionState.assertNoOtherLiveRecurring(client, customerId, null, planId);
                 }
@@ -307,7 +341,24 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             }
 
             let row;
-            if (existing.rowCount) {
+            if (isAccessExtension) {
+                if (activationSuppressedByMoneyLoss) {
+                    const error = new Error('A reversed access-extension payment cannot activate paid time.');
+                    error.code = 'ACCESS_EXTENSION_MONEY_LOSS';
+                    throw error;
+                }
+                const applied = await accessExtensions.applyPurchase(client, {
+                    customerId,
+                    subscriptionId: contract?.extensionSubscriptionId,
+                    planId,
+                    provider,
+                    providerPaymentId: providerSubscriptionId,
+                    checkoutIntentId: settlementCheckoutIntentId,
+                    commercialSnapshot: contract
+                });
+                row = applied.subscription;
+                historicalCheckoutReplay = Boolean(applied.replay);
+            } else if (existing.rowCount) {
                 const existingSubscription = existing.rows[0];
                 if (String(existingSubscription.customer_id) !== String(customerId)) {
                     const mismatch = new Error('Provider subscription is already attached to a different customer.');
@@ -332,6 +383,10 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 } else {
                     const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,billing_mode=COALESCE($15,billing_mode),updated_at=NOW() WHERE id=$16 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, checkoutBillingMode, existingSubscription.id]);
                     row = updated.rows[0];
+                    if (row) {
+                        const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, row.id, row.customer_id);
+                        row = rebased.subscription || row;
+                    }
                 }
             } else if (activationSuppressedByMoneyLoss) {
                 const inserted = await client.query(`
@@ -352,7 +407,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             }
 
             const effectiveStatus = row.status;
-            await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
+            if (!isAccessExtension) await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
             if (effectiveDiscountCodeId && !historicalCheckoutReplay) {
@@ -367,11 +422,16 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 await settleCheckoutServiceCredit(client, settlementCheckoutIntentId, contract);
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
-            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null })]);
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`, [isAccessExtension?'payment.access_extension.activate':'payment.subscription.activate',row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null, accessExtension:isAccessExtension })]);
             return row;
         });
     } catch (error) {
-        if (['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code) && settlementCheckoutIntentId) {
+        const extensionFulfillmentFailure = contract?.kind === 'subscription_extension'
+            && error?.code !== 'ACCESS_EXTENSION_MONEY_LOSS';
+        if (settlementCheckoutIntentId && (
+            ['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'].includes(error?.code)
+            || extensionFulfillmentFailure
+        )) {
             try {
                 await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error });
                 error.paidButUnfulfilled = true;
@@ -397,8 +457,11 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
     const row = await transaction(async client => {
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
-        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status: result.rows[0].status, billingMode: result.rows[0].billing_mode }, client);
-        return result.rows[0];
+        let updated = result.rows[0];
+        const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, updated.id, updated.customer_id);
+        updated = rebased.subscription || updated;
+        if (status) await syncProviderAccessState({ customerId: updated.customer_id, provider, providerSubscriptionId, status: updated.status, billingMode: updated.billing_mode }, client);
+        return updated;
     });
     if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
     return row;

@@ -33,6 +33,44 @@ function mappingIdentity(mapping){return String(mapping?.provider_mapping_id||ma
 function selectedTarget(target,mapping,requestedKind=null,requestedQuantity=null){const kind=normalizedKind(target,mapping,requestedKind),quantity=mappingQuantity(target,mapping,requestedQuantity,requestedKind);return{...target,price_minor:Number(mapping.price_minor),currency:String(mapping.currency).toUpperCase(),plan_price_id:mapping.plan_price_id||target.plan_price_id||null,access_variant_id:mapping.access_variant_id||null,variant_kind:kind,access_quantity:quantity,streams:kind==='streams'?quantity:Number(mapping.streams||target.streams||1),stremio_household_network_limit:kind==='households'?quantity:Number(mapping.stremio_household_network_limit||target.stremio_household_network_limit||1)};}
 function targetAccessLabel(target){const kind=normalizedKind(target,target,target.variant_kind),quantity=mappingQuantity(target,target,target.access_quantity,target.variant_kind);return kind==='households'?`${quantity} household${quantity===1?'':'s'}`:`${quantity} stream${quantity===1?'':'s'}`;}
 
+async function outstandingExtensionCheckout(customerId,subscriptionId,{db=query}={}){
+    if(!customerId||!subscriptionId)return null;
+    const result=await db(`
+        SELECT i.id,i.state,i.provider,i.provider_checkout_id
+        FROM billing_checkout_intents i
+        WHERE i.customer_id=$1
+          AND COALESCE(i.commercial_snapshot->>'kind','')='subscription_extension'
+          AND COALESCE(i.commercial_snapshot->>'extensionSubscriptionId','')=$2
+          AND (
+            (
+              i.provider_checkout_id IS NOT NULL
+              AND i.provider_terminal_at IS NULL
+              AND COALESCE(i.capacity_hold_until,i.expires_at)>NOW()
+            )
+            OR (
+              i.state='open'
+              AND i.provider_checkout_id IS NULL
+              AND i.expires_at>NOW()
+            )
+            OR (
+              i.state='completed'
+              AND NOT EXISTS(
+                SELECT 1 FROM subscription_access_extensions extension_owner
+                WHERE extension_owner.checkout_intent_id=i.id
+              )
+            )
+          )
+        ORDER BY i.created_at DESC
+        LIMIT 1
+    `,[customerId,String(subscriptionId)]);
+    return result.rows[0]||null;
+}
+async function assertNoOutstandingExtensionCheckout(customerId,subscriptionId,{db=query}={}){
+    const checkout=await outstandingExtensionCheckout(customerId,subscriptionId,{db});
+    if(checkout)throw planChangeRefusal('A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.');
+    return true;
+}
+
 async function currentRecurring(customerId,target=null){
     const [jellyfin,stremio,emby,addons]=await Promise.all([
         entitlement.effectiveSubscription(customerId,{includeBlocked:true}),
@@ -72,6 +110,7 @@ async function replacementMapping(current,target,provider,currency,quantity){
 async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null}={}){
     mapping=mapping||await replacementMapping(current,target,'stripe',currency,accessQuantity);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
     const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_immediate',localReference:subscriptionId,idempotencyKey:`customer-plan-immediate:${subscriptionId}:${target.id}:${identity}:${proration?'prorate':'no-prorate'}`,request:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,accessQuantity),targetVariantKind:normalizedKind(target,mapping),targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration)}});
+    await assertNoOutstandingExtensionCheckout(current.customer_id,subscriptionId);
     let providerMutationAttempted=false;
     try{
         const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);if(remote.schedule)throw planChangeRefusal('This Stripe subscription already has a scheduled change. Cancel the pending change first.');const item=remote.items?.data?.[0];if(!item?.id)throw planChangeRefusal('Stripe subscription has no editable item.');
@@ -87,6 +126,8 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
 
 async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null}={}){
     return transaction(async client=>{
+        await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
+        await assertNoOutstandingExtensionCheckout(customerId,current.subscription_id||current.id,{db:(sql,params)=>client.query(sql,params)});
         const prior=await client.query(`SELECT id FROM customer_plan_changes WHERE customer_id=$1 AND state IN ('pending','awaiting_checkout') LIMIT 1 FOR UPDATE`,[customerId]);if(prior.rowCount)throw new Error('A plan change is already open. Cancel or complete it before requesting another one.');
         const effective=new Date(current.current_period_end),created=await client.query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,requested_by,provider_action_required,target_access_quantity,target_variant_kind) VALUES($1,$2,$3,$4,'period_end','pending',$5,$6,$7,$8,$9) RETURNING *`,[customerId,current.subscription_id||current.id,target.id,provider,effective,actorUserId,Boolean(providerActionRequired),targetAccessQuantity,targetVariantKind]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.schedule','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({changeId:created.rows[0].id,fromPlanId:current.plan_id,toPlanId:target.id,targetAccessQuantity,targetVariantKind,provider,effectiveAt:effective.toISOString(),providerActionRequired:Boolean(providerActionRequired)})]);
@@ -118,6 +159,8 @@ async function requestChange({customerId,targetPlanCode,targetCurrency='GBP',tar
     const targetResult=await query(`SELECT * FROM plans WHERE code=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN ('direct','both') LIMIT 1`,[String(targetPlanCode||'').trim()]);if(!targetResult.rowCount)throw new Error('Target plan is not available.');
     const baseTarget=targetResult.rows[0],price=await query(`SELECT * FROM plan_prices WHERE plan_id=$1 AND currency=$2 AND active=TRUE LIMIT 1`,[baseTarget.id,String(targetCurrency||'').toUpperCase()]);if(!price.rowCount)throw new Error(`Target plan is not available in ${targetCurrency}.`);
     let target={...baseTarget,price_minor:Number(price.rows[0].price_minor),currency:price.rows[0].currency,plan_price_id:price.rows[0].id},current=await currentRecurring(customerId,target);if(!current)return{handled:false};
+    await assertNoOutstandingExtensionCheckout(customerId,current.subscription_id||current.id);
+    if(Number(current.service_extension_days||0)>0)throw planChangeRefusal('This subscription has prepaid extension time remaining. Use that paid time before changing plan, currency or access allowance.');
     const provider=current.source;if(!['stripe','paypal'].includes(provider))return{handled:false};
     const mapping=await replacementMapping(current,target,provider,target.currency,targetAccessQuantity);if(!mapping)throw new Error(`The selected access option is not configured for ${provider==='stripe'?'Stripe':'PayPal'} recurring billing in ${target.currency}.`);
     target=selectedTarget(target,mapping,targetVariantKind,targetAccessQuantity);
@@ -177,4 +220,4 @@ async function expireDuePaypal(){const due=await query(`SELECT pc.*,p.code targe
 async function cancelPendingChange(customerId,actorUserId=null){const pending=await pendingForCustomer(customerId);if(!pending)throw new Error('There is no open plan change to cancel.');let warning='';if(pending.provider==='stripe'&&pending.provider_schedule_id){const client=await stripeClient();try{const schedule=await client.subscriptionSchedules.retrieve(pending.provider_schedule_id);if(['active','not_started'].includes(String(schedule.status)))await client.subscriptionSchedules.release(schedule.id);}catch(error){throw new Error(`Stripe schedule could not be released safely: ${error.message}`);}}if(pending.provider==='paypal'&&pending.provider_action_required)warning=' Your existing PayPal renewal state is unchanged; cancelling this target does not create or restore a PayPal agreement.';await transaction(async client=>{await client.query(`UPDATE customer_plan_changes SET state='cancelled',provider_schedule_state=CASE WHEN provider='stripe' THEN 'released' ELSE provider_schedule_state END,updated_at=NOW() WHERE id=$1`,[pending.id]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.cancel','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({changeId:pending.id,targetPlanId:pending.target_plan_id,targetAccessQuantity:pending.target_access_quantity,targetVariantKind:pending.target_variant_kind,effectiveAt:pending.effective_at,provider:pending.provider,providerScheduleId:pending.provider_schedule_id,previousState:pending.state})]);});return{...pending,warning};}
 async function pendingForCustomer(customerId){const result=await query(`SELECT pc.*,p.name target_plan_name,p.code target_plan_code FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id WHERE pc.customer_id=$1 AND pc.state IN ('pending','awaiting_checkout') ORDER BY pc.created_at DESC LIMIT 1`,[customerId]);return result.rows[0]||null;}
 
-module.exports={requestChange,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget};
+module.exports={requestChange,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};

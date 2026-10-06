@@ -145,6 +145,7 @@ module.exports = {
       "node scripts/plisio-payments-smoke.js",
       "node scripts/customer-playback-trust-smoke.js",
       "node scripts/checkout-abandonment-smoke.js",
+      "node scripts/same-plan-access-extension-smoke.js",
       "node scripts/customer-error-sanitization-smoke.js"
     ],
     "check:fast:dashboards": [
@@ -238,6 +239,7 @@ module.exports = {
       "node scripts/provider-financial-state-db-smoke.js",
       "node scripts/payment-history-coverage-timezone-db-smoke.js",
       "node scripts/prepaid-access-stacking-smoke.js",
+      "node scripts/same-plan-access-extension-db-smoke.js",
       "node scripts/prorata-refund-db-smoke.js",
       "node scripts/prorata-refund-retry-db-smoke.js",
       "node scripts/affiliate-first-payment-only-db-smoke.js",
