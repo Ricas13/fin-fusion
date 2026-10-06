@@ -67,7 +67,7 @@
         <form method="post" action="/account/communications/discord/unlink"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary">Disconnect</button></form>
       <% } else { %>
         <span class="pill warn">Not connected</span>
-        <p><form method="post" action="/account/communications/discord/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary">Connect Discord</button></form></p>
+        <form class="notifyRow" method="post" action="/account/communications/discord/start" target="_blank" rel="noopener noreferrer"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary" type="submit">Connect Discord</button></form>
       <% } %>
     </section>
     <% } %>
