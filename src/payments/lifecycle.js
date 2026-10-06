@@ -6,11 +6,13 @@ const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
 const serviceScope = require('../entitlements/service-scope');
 const capacity = require('../entitlements/plan-capacity');
+const customerServerChoice = require('../jellyfin/customer-server-choice');
 const inactivityHolds = require('../entitlements/inactivity-hold-reconciliation');
 const planExpiry = require('../entitlements/plan-expiry');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const mediaReconciliation = require('../jellyfin/media-service-reconciliation');
 const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
 const accessExtensions = require('./subscription-access-extensions');
@@ -145,6 +147,17 @@ async function readyPrimaryJellyfinAccountForSubscription(customerId,subscriptio
     return access.state===customerAccessState.ACCESS_STATES.ACTIVE_READY?access.account:null;
 }
 
+async function readyEmbyAccountForSubscription(customerId,subscriptionId){
+    const entitlement=await state.effectiveEmbySubscription(customerId,{includeBlocked:true});
+    if(!entitlement||entitlement.blocked||String(entitlement.subscription_id||'')!==String(subscriptionId||''))return null;
+    const accounts=await mediaReconciliation.accountsFor(customerId,'emby');
+    return accounts.find(account=>
+        !account.disabled&&
+        account.server_enabled&&
+        (!entitlement.media_server_id||String(account.server_id)===String(entitlement.media_server_id))
+    )||null;
+}
+
 async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
     let targetIsCurrent=false;
     try{
@@ -203,14 +216,73 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
     }
 }
 
-async function startFreeTrial(customerId, planCode) {
+async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason='Emby trial server assignment failed'}={}){
+    let targetIsCurrent=false;
+    try{
+        return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+            const current=await state.effectiveEmbySubscription(customerId,{includeBlocked:true});
+            targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+            if(targetIsCurrent){
+                const accounts=await mediaReconciliation.accountsFor(customerId,'emby');
+                const targetServerId=current.media_server_id?String(current.media_server_id):null;
+                for(const account of accounts){
+                    if(!account.disabled&&account.server_enabled&&(!targetServerId||String(account.server_id)===targetServerId)){
+                        await provisioning.deleteJellyfinAccount(account,{reason:'Emby trial activation failed before server assignment completed'});
+                    }
+                }
+            }
+
+            return transaction(async client=>{
+                const ended=await client.query(`
+                    UPDATE subscriptions
+                    SET status='cancelled',
+                        current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                        service_extension_days=0,
+                        cancel_at_period_end=TRUE,
+                        replacement_reason='trial_activation_failed',
+                        updated_at=NOW()
+                    WHERE id=$1 AND customer_id=$2
+                    RETURNING id,status,current_period_end,superseded_by
+                `,[subscriptionId,customerId]);
+                await client.query(`
+                    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+                    VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
+                `,[subscriptionId,JSON.stringify({
+                    customerId,
+                    serviceType:'emby',
+                    reason:String(reason||'Emby trial activation failed').slice(0,500),
+                    targetWasCurrent:targetIsCurrent,
+                    noPlanNoServer:targetIsCurrent
+                })]);
+                return ended.rows[0]||null;
+            });
+        });
+    }catch(error){
+        // If remote account cleanup succeeded but the trial row could not be
+        // ended, restore the exact current entitlement rather than leaving an
+        // unpaid live plan with no Emby identity.
+        if(targetIsCurrent){
+            await provisioning.reconcileCustomer(customerId).catch(repairError=>{
+                console.error('Emby trial rollback compensation failed to restore server assignment.',{
+                    customerId,subscriptionId,error:repairError.message
+                });
+            });
+        }
+        throw error;
+    }
+}
+
+async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {}) {
     await commerce.assertOpen();
     const plan = await assertDirectPlan(planCode, { trial: true });
     if(plan.is_addon)throw new Error('Trial access must use a primary plan, not an add-on.');
+    const preferredLocation = await customerServerChoice.resolveAcquisitionLocation(plan, mediaLocation, { requireSelection: true });
     await enforceTrialEligibility(customerId, plan);
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         await capacity.lockAndAssert(client,plan.id,plan.name||'This trial');
+        const selectedServer=await customerServerChoice.selectServerForLocationLocked(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:true});
+        const selectedLocation=selectedServer?.selected_location||preferredLocation||null;
         const live = await client.query(`
             SELECT s.id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
@@ -228,8 +300,8 @@ async function startFreeTrial(customerId, planCode) {
         const conflict=live.rows.find(row=>serviceScope.overlaps(row,plan)&&!serviceScope.isFreeTier(row));
         if (conflict) throw new Error(`You already have active ${serviceScope.label(conflict)} access. Change or cancel that service before starting another overlapping trial.`);
         const startsAt = new Date(), endsAt = addPlanDuration(plan, startsAt);
-        const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
-            VALUES($1,$2,'trialing','manual',$3,$4) RETURNING *`, [customerId, plan.id, startsAt, endsAt]);
+        const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,media_location_preference,media_server_id,media_location_snapshot)
+            VALUES($1,$2,'trialing','manual',$3,$4,$5,$6,$7) RETURNING *`, [customerId, plan.id, startsAt, endsAt, selectedLocation, selectedServer?.id||null, selectedLocation]);
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code, serviceType: serviceScope.serviceType(plan) })]);
         return row.rows[0];
@@ -237,8 +309,8 @@ async function startFreeTrial(customerId, planCode) {
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
 
     const type=serviceScope.serviceType(plan);
-    const jellyfinTrial=serviceScope.capabilities(plan).has('jellyfin');
-    if(jellyfinTrial){
+    const mediaType=customerServerChoice.mediaServerType(plan);
+    if(mediaType==='jellyfin'){
         await unpaidAccessActivation.activateOrRollback({
             customerId,
             subscriptionId:created.id,
@@ -249,6 +321,17 @@ async function startFreeTrial(customerId, planCode) {
             failureMessage:'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.',
             failureCode:'TRIAL_JELLYFIN_PROVISIONING_FAILED'
         });
+    }else if(mediaType==='emby'){
+        await unpaidAccessActivation.activateOrRollback({
+            customerId,
+            subscriptionId:created.id,
+            reconcile:primitives.reconcileCommittedCustomerStrict,
+            verify:readyEmbyAccountForSubscription,
+            rollback:rollbackUnprovisionedEmbyTrial,
+            missingReason:'Emby trial reconciliation completed without an enabled Emby account.',
+            failureMessage:'The Emby trial could not be activated because a server account could not be created. No trial plan was retained.',
+            failureCode:'TRIAL_EMBY_PROVISIONING_FAILED'
+        });
     }else{
         await primitives.reconcileCommittedCustomer(customerId, 'Trial');
     }
@@ -257,7 +340,7 @@ async function startFreeTrial(customerId, planCode) {
 
 async function reservedFreePlan(reservationId){
     if(!reservationId)return null;
-    const result=await query(`SELECT p.* FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id WHERE r.id=$1 AND r.consumed_at IS NULL AND r.released_at IS NULL AND r.expires_at>NOW() AND ${availableWindowSql('p')} LIMIT 1`,[reservationId]);
+    const result=await query(`SELECT p.*,r.media_location AS reserved_media_location FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id WHERE r.id=$1 AND r.consumed_at IS NULL AND r.released_at IS NULL AND r.expires_at>NOW() AND ${availableWindowSql('p')} LIMIT 1`,[reservationId]);
     if(!result.rowCount)return null;
     const plan=state.assertAudience(result.rows[0],'customer');
     stremio.assertAcquirable(plan,{context:'reserved free claim'});
@@ -343,11 +426,15 @@ async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reserva
     }
 }
 
-async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null } = {}) {
+async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null, mediaLocation = null } = {}) {
     if(!automatic)await commerce.assertOpen();
     const plan = reservationId ? await reservedFreePlan(reservationId) : await assertDirectPlan(planCode, { free: true });
     if(!plan)throw new Error('Your Free Access hold has expired.');
     if(plan.is_addon)throw new Error('Free primary access cannot be claimed from an add-on product.');
+    const requestedLocation = plan.reserved_media_location || mediaLocation || null;
+    const preferredLocation = automatic && !requestedLocation
+        ? null
+        : await customerServerChoice.resolveAcquisitionLocation(plan, requestedLocation, { requireSelection: !reservationId });
     const policy = await trialPolicy();
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
@@ -361,11 +448,19 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         const liveFree = await state.lockLiveFreeClaimSubscriptions(client,customerId);
         if(liveFree.some(row=>String(row.plan_id)===String(plan.id)))throw new Error('You already have free access on this plan.');
         if(policy.freeMode!=='renewable'&&historical.rowCount)throw new Error('Free access on this plan has already been claimed.');
+        let selectedServer=null;
+        if(customerServerChoice.mediaServerType(plan)){
+            selectedServer=reservation?.media_server_id
+                ? await customerServerChoice.reservedServerIfEligible(plan,reservation.media_server_id,preferredLocation,{db:(sql,params)=>client.query(sql,params)})
+                : null;
+            if(!selectedServer)selectedServer=await customerServerChoice.selectServerForLocationLocked(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:!automatic&&!reservationId});
+        }
+        const selectedLocation=selectedServer?.selected_location||preferredLocation||null;
         const startsAt=new Date(),endsAt=permanentEnd();
-        const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',$3,$4) RETURNING *`,[customerId,plan.id,startsAt,endsAt]);
+        const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,media_location_preference,media_server_id,media_location_snapshot) VALUES($1,$2,'active','free_claim',$3,$4,$5,$6,$7) RETURNING *`,[customerId,plan.id,startsAt,endsAt,selectedLocation,selectedServer?.id||null,selectedLocation]);
         for(const old of liveFree)await state.markSuperseded(client,{subscriptionId:old.id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
-        if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id]);
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,parallelWithPaid:true,reservationId:reservation?.id||null})]);
+        if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,media_location=COALESCE($4,media_location),media_server_id=COALESCE($5,media_server_id),updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id,selectedLocation,selectedServer?.id||null]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,parallelWithPaid:true,reservationId:reservation?.id||null,mediaLocation:selectedLocation||null,mediaServerId:selectedServer?.id||null})]);
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
@@ -558,7 +653,9 @@ module.exports = {
     getProviderPlanByExternalId,
     startFreeTrial,
     readyPrimaryJellyfinAccountForSubscription,
+    readyEmbyAccountForSubscription,
     rollbackUnprovisionedJellyfinTrial,
+    rollbackUnprovisionedEmbyTrial,
     readyFreeAccountForSubscription,
     rollbackUnprovisionedFreeClaim,
     claimFreePlan,
