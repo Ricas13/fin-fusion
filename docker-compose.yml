@@ -111,8 +111,6 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:3030:3030"
-    volumes:
-      - ./db:/app/db:ro
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
