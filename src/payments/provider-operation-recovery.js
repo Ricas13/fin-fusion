@@ -8,6 +8,10 @@ const providerSettings = require('./provider-settings');
 const providerPricing = require('./provider-plan-pricing');
 const providerHttp = require('./provider-http');
 const billingControl = require('./billing-control');
+const planCapacity = require('../entitlements/plan-capacity');
+const customerServerChoice = require('../jellyfin/customer-server-choice');
+const customerPlanChange = require('./customer-plan-change');
+const provisioningHelpers = require('../jellyfin/provisioning-helpers');
 
 const PLAN_OPERATION_TYPES = ['plan_change_immediate','plan_change_schedule'];
 const RENEWAL_OPERATION_TYPES = ['renewal_stop','renewal_resume'];
@@ -41,16 +45,37 @@ async function assertNewest(op, types) {
   const newer = await providerOps.newerOperation(op, { operationTypes:types });
   if (newer) throw superseded(`Superseded by newer ${newer.operation_type} operation ${newer.id}.`);
 }
-function contractSnapshot(target, mapping) {
+function contractSnapshot(target, mapping, {
+  mediaLocation = null,
+  mediaServerId = null,
+  targetAccessQuantity = null,
+  targetVariantKind = null
+} = {}) {
+  const variantKind = String(mapping?.variant_kind || mapping?.access_variant_kind || targetVariantKind || '').trim() || null;
+  const requestedQuantity = Number(mapping?.access_quantity ?? mapping?.quantity ?? targetAccessQuantity);
+  const accessQuantity = Number.isInteger(requestedQuantity) && requestedQuantity > 0
+    ? requestedQuantity
+    : variantKind === 'households'
+      ? Math.max(1, Number(target?.stremio_household_network_limit || 1))
+      : Math.max(1, Number(target?.streams || 1));
+  const streams = variantKind === 'streams'
+    ? accessQuantity
+    : Math.max(1, Number(target?.streams || 1));
+  const households = variantKind === 'households'
+    ? accessQuantity
+    : Math.max(1, Number(target?.stremio_household_network_limit || 1));
   return {
     kind:'direct_plan',provider:'stripe',planId:target.id,planPriceId:mapping.plan_price_id||null,
-    planCode:target.code,planName:target.name,priceMinor:Number(mapping.price_minor),discountedMinor:Number(mapping.price_minor),
+    planCode:target.code,planName:target.name,accessVariantId:mapping.access_variant_id||null,
+    accessVariantKind:variantKind,accessQuantity,
+    priceMinor:Number(mapping.price_minor),discountedMinor:Number(mapping.price_minor),
     currency:String(mapping.currency).toUpperCase(),billingInterval:target.billing_interval,durationDays:Number(target.duration_days||30),
-    streams:Number(target.streams||1),allowDownloads:Boolean(target.allow_downloads),allowVideoTranscoding:Boolean(target.allow_video_transcoding),
+    streams,stremioHouseholdNetworkLimit:households,
+    allowDownloads:Boolean(target.allow_downloads),allowVideoTranscoding:Boolean(target.allow_video_transcoding),
     allowAudioTranscoding:Boolean(target.allow_audio_transcoding),allowLiveTv:Boolean(target.allow_live_tv),allowLiveTvManagement:Boolean(target.allow_live_tv_management),
     serverClass:target.server_class,requestMovieQuotaLimit:target.request_movie_quota_limit==null?null:Number(target.request_movie_quota_limit),
     requestMovieQuotaDays:target.request_movie_quota_days==null?null:Number(target.request_movie_quota_days),requestTvQuotaLimit:target.request_tv_quota_limit==null?null:Number(target.request_tv_quota_limit),
-    requestTvQuotaDays:target.request_tv_quota_days==null?null:Number(target.request_tv_quota_days),checkoutMode:'subscription',
+    requestTvQuotaDays:target.request_tv_quota_days==null?null:Number(target.request_tv_quota_days),mediaLocation,mediaServerId,checkoutMode:'subscription',
     providerMappingId:mapping.external_id||null,providerMappingRecordId:mapping.provider_mapping_id||null
   };
 }
@@ -62,23 +87,104 @@ async function loadTarget(request) {
   if (!mapping || String(mapping.id) !== String(target.id) || mapping.checkout_mode !== 'subscription') throw manual('Target Stripe price no longer maps to the intended plan.');
   return { target, mapping };
 }
-async function applyPlanSnapshot(db, subscriptionId, target, mapping) {
-  const snapshot = contractSnapshot(target, mapping);
-  await db.query(`UPDATE subscriptions SET plan_id=$2,provider_price_id_snapshot=$3,plan_name_snapshot=$4,plan_code_snapshot=$5,price_minor_snapshot=$6,currency_snapshot=$7,billing_interval_snapshot=$8,duration_days_snapshot=$9,commercial_snapshot=$10::jsonb,plan_price_id_snapshot=$11,provider_mapping_id_snapshot=$12,provider_mapping_external_id_snapshot=$3,updated_at=NOW() WHERE id=$1`, [subscriptionId,target.id,mapping.external_id,target.name,target.code,Number(mapping.price_minor),String(mapping.currency).toUpperCase(),target.billing_interval,Number(target.duration_days||30),JSON.stringify(snapshot),mapping.plan_price_id||null,mapping.provider_mapping_id||null]);
+async function applyPlanSnapshot(db, subscriptionId, target, mapping, {
+  mediaLocation = null,
+  mediaServerId = null,
+  targetAccessQuantity = null,
+  targetVariantKind = null
+} = {}) {
+  const snapshot = contractSnapshot(target, mapping, { mediaLocation, mediaServerId, targetAccessQuantity, targetVariantKind });
+  await db.query(`UPDATE subscriptions SET plan_id=$2,provider_price_id_snapshot=$3,plan_name_snapshot=$4,plan_code_snapshot=$5,price_minor_snapshot=$6,currency_snapshot=$7,billing_interval_snapshot=$8,duration_days_snapshot=$9,commercial_snapshot=$10::jsonb,plan_price_id_snapshot=$11,provider_mapping_id_snapshot=$12,provider_mapping_external_id_snapshot=$3,service_type_snapshot=$15,media_location_preference=CASE WHEN $13::text IS NULL THEN media_location_preference ELSE $13 END,media_server_id=CASE WHEN $14::uuid IS NULL THEN media_server_id ELSE $14 END,media_location_snapshot=CASE WHEN $13::text IS NULL THEN media_location_snapshot ELSE $13 END,updated_at=NOW() WHERE id=$1`, [subscriptionId,target.id,mapping.external_id,target.name,target.code,Number(mapping.price_minor),String(mapping.currency).toUpperCase(),target.billing_interval,Number(target.duration_days||30),JSON.stringify(snapshot),mapping.plan_price_id||null,mapping.provider_mapping_id||null,mediaLocation,mediaServerId,target.service_type||'jellyfin']);
 }
 async function finishImmediateLocal(op, subscription, target, mapping) {
   await transaction(async db => {
     const locked = (await db.query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE', [subscription.id,op.owner_id])).rows[0];
     if (!locked) throw manual('Local subscription disappeared during provider recovery.');
     await assertNewest(op, PLAN_OPERATION_TYPES);
-    await applyPlanSnapshot(db, locked.id, target, mapping);
+    const request = op.request_snapshot || {};
+    await applyPlanSnapshot(db, locked.id, target, mapping, {
+      mediaLocation: request.targetMediaLocation || null,
+      mediaServerId: request.targetMediaServerId || null,
+      targetAccessQuantity: request.targetAccessQuantity || null,
+      targetVariantKind: request.targetVariantKind || null
+    });
     const updated = await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1 AND attempt_count=$3 RETURNING id`, [op.id,providerOps.ACTIVE_LEASE_SECONDS,op.attempt_count]);
     if (!updated.rowCount) throw providerOps.leaseLost(op.id);
   });
 }
+async function ensureImmediateAdmission(op, subscription, target) {
+  const request = op.request_snapshot || {};
+  if (op.state !== 'planned') return op;
+  if (String(subscription.plan_id) === String(target.id)) return op;
+  if (String(op.provider_result?.capacityReserved || '') === 'true' || op.provider_result?.capacityReserved === true) return op;
+
+  let selectedServer = null;
+  let selectedLocation = request.targetMediaLocation || null;
+  const updated = await transaction(async db => {
+    await planCapacity.lockAndAssert(db, target.id, target.name || 'This plan');
+
+    if (customerServerChoice.mediaServerType(target)
+        && (request.targetMediaLocation || request.targetMediaServerId)) {
+      if (!selectedLocation && request.targetMediaServerId) {
+        const prior = (await db.query('SELECT location FROM jellyfin_servers WHERE id=$1 LIMIT 1', [request.targetMediaServerId])).rows[0] || null;
+        selectedLocation = prior ? customerServerChoice.locationLabel(prior.location) : null;
+      }
+      if (!selectedLocation) {
+        throw manual('Immediate plan-change recovery cannot prove the customer-selected media location. Refusing to mutate Stripe.');
+      }
+
+      if (request.targetMediaServerId) {
+        selectedServer = await customerServerChoice.reservedServerIfEligible(
+          target,
+          request.targetMediaServerId,
+          selectedLocation,
+          { db:(sql,params)=>db.query(sql,params) }
+        );
+        if (!selectedServer) {
+          throw manual('Immediate plan-change recovery cannot safely re-admit the originally selected media server. Refusing to mutate Stripe.');
+        }
+      } else {
+        selectedServer = await customerServerChoice.selectServerForLocationLocked(
+          target,
+          selectedLocation,
+          { db:(sql,params)=>db.query(sql,params), requireSelection:true }
+        );
+      }
+
+      // Re-win the exact physical slot inside this same admission transaction.
+      // If the original target is full, recovery stops before touching Stripe.
+      selectedServer = await provisioningHelpers.reservePlacement(
+        op.owner_id,
+        selectedServer,
+        { db, allowOverCapacity:false }
+      );
+      selectedLocation = selectedServer?.selected_location || customerServerChoice.locationLabel(selectedServer?.location);
+    }
+    // Rolling-deploy compatibility: an N-1 operation has no media commitment
+    // fields. It may re-win logical plan capacity, but must retain the existing
+    // subscription placement rather than inventing a location on recovery.
+
+    const requestPatch = {
+      ...(selectedLocation ? { targetMediaLocation:selectedLocation } : {}),
+      ...(selectedServer?.id ? { targetMediaServerId:selectedServer.id } : {})
+    };
+    const result = await db.query(`
+      UPDATE provider_operations
+      SET request_snapshot=request_snapshot||$2::jsonb,
+          provider_result=provider_result||'{"capacityReserved":true}'::jsonb,
+          updated_at=NOW()
+      WHERE id=$1 AND state='planned' AND attempt_count=$3
+      RETURNING *
+    `, [op.id, JSON.stringify(requestPatch), op.attempt_count]);
+    if (!result.rowCount) throw providerOps.leaseLost(op.id);
+    return result.rows[0];
+  });
+  return updated;
+}
+
 async function recoverImmediate(op) {
   await assertNewest(op, PLAN_OPERATION_TYPES);
-  const request = op.request_snapshot || {};
+  let request = op.request_snapshot || {};
   const subscriptionId = request.subscriptionId || op.local_reference;
   if (!subscriptionId || !request.targetPlanId || !request.targetPriceId) throw manual('Immediate plan-change recovery snapshot is incomplete.');
   const subscription = (await query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2', [subscriptionId,op.owner_id])).rows[0];
@@ -90,6 +196,11 @@ async function recoverImmediate(op) {
   await providerOps.observed(op.id, { result:{observedPrice,status:remote.status||null} });
   if (observedPrice !== request.targetPriceId) {
     if (['provider_applied','local_applied'].includes(op.state)) throw manual('Stripe no longer reflects the already-applied target price; refusing to overwrite a later provider decision.');
+    // Provider has not changed yet. Re-win logical/physical admission before
+    // making any billable mutation after a crash that occurred before the
+    // original capacity reservation was durably recorded.
+    op = await ensureImmediateAdmission(op, subscription, target);
+    request = op.request_snapshot || request;
     const item = remote.items?.data?.[0];
     if (!item?.id) throw manual('Stripe subscription has no editable item.');
     remote = await client.subscriptions.update(subscription.provider_subscription_id, {
@@ -100,7 +211,19 @@ async function recoverImmediate(op) {
     observedPrice = stripePriceId(remote);
     if (observedPrice !== request.targetPriceId) throw manual('Stripe accepted recovery but did not expose the intended target price.');
   }
-  if (op.state === 'planned') await providerOps.providerApplied(op.id, { providerReference:remote.id, result:{priceId:observedPrice,status:remote.status||null,recovered:true} });
+  if (op.state === 'planned') {
+    const alreadyBilledDifferentPlan = observedPrice === request.targetPriceId
+      && String(subscription.plan_id) !== String(target.id);
+    await providerOps.providerApplied(op.id, {
+      providerReference:remote.id,
+      result:{
+        priceId:observedPrice,
+        status:remote.status||null,
+        recovered:true,
+        ...(alreadyBilledDifferentPlan ? { capacityReserved:true } : {})
+      }
+    });
+  }
   if (op.state !== 'local_applied') await finishImmediateLocal(op, subscription, target, mapping);
   const synced = await billingControl.syncSubscription(subscription.id, { expectedProviderPriceId:request.targetPriceId });
   if (!synced.ok) throw new Error(`Recovered local plan change but provider verification is still failing: ${synced.error}`);
@@ -178,8 +301,12 @@ async function recoverSchedule(op) {
 }
 async function recoverOne(op) {
   if (op.attempt_count >= MAX_AUTOMATIC_ATTEMPTS) throw manual(`Automatic recovery exhausted after ${op.attempt_count} attempts.`);
-  if (op.operation_type === 'plan_change_immediate') return recoverImmediate(op);
-  if (op.operation_type === 'plan_change_schedule') return recoverSchedule(op);
+  if (op.operation_type === 'plan_change_immediate') {
+    return customerPlanChange.withPlanChangeLock(op.owner_id, () => recoverImmediate(op));
+  }
+  if (op.operation_type === 'plan_change_schedule') {
+    return customerPlanChange.withPlanChangeLock(op.owner_id, () => recoverSchedule(op));
+  }
   if (op.operation_type === 'prorata_refund') return require('./prorata-refunds').recoverProviderOperation(op);
   if (RENEWAL_OPERATION_TYPES.includes(op.operation_type) && typeof billingControl.recoverProviderOperation === 'function') return billingControl.recoverProviderOperation(op);
   if (TERMINATION_OPERATION_TYPES.includes(op.operation_type)) return require('./subscription-termination').recoverProviderOperation(op);
@@ -226,4 +353,4 @@ async function run({ limit=25 } = {}) {
 }
 async function attention({ limit=100 } = {}) { return providerOps.open({ limit }); }
 
-module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,recoverOne,run,attention };
+module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,ensureImmediateAdmission,recoverOne,run,attention };
