@@ -53,7 +53,7 @@ async function main(){
     const parsed=planCreate.parse({
       __submitted:'1',code:PLAN,name:'Browser Deferred Jellyfin',description:'Deferred provisioning browser fixture',
       serviceType:'jellyfin',audience:'direct',billingInterval:'month',durationDays:'30',price:'5',currency:'GBP',
-      capacityLimit:'20',streams:'2',serverClass:'premium',sortOrder:'900',visible:'on',active:'on',allowAudioTranscoding:'on',allowRemoteAccess:'on'
+      mediaUserLimit:'20',streams:'2',serverClass:'premium',sortOrder:'900',visible:'on',active:'on',allowAudioTranscoding:'on',allowRemoteAccess:'on'
     });
     await planCreate.create(parsed,null);
 

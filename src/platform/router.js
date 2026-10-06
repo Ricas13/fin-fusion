@@ -13,7 +13,9 @@ const TRIAL_CLAIM_SAFE = [
     'This trial is not available.', 'This trial has already been used.', 'Trial access must use a primary plan, not an add-on.',
     /^A .+ trial has already been used on this account\.$/,
     /^.+ trials are only available before the first paid subscription for that service\.$/,
-    /^You already have active .+ access\. Change or cancel that service before starting another overlapping trial\.$/
+    /^You already have active .+ access\. Change or cancel that service before starting another overlapping trial\.$/,
+    'Choose a server location before continuing.',
+    'That server location is no longer available. Choose another location.'
 ];
 const { createPublicHelpRouter } = require('./public-help');
 const { createPublicPagesRouter } = require('./public-pages');
@@ -125,7 +127,7 @@ function createRouter() {
 
     router.post('/account/trial/start', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
-            const subscription = await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null);
+            const subscription = await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null, { mediaLocation: req.body.mediaLocation || null });
             try {
                 const stremioSetup = await autoCreateStremioTrialInstallation(req.session.customerId, req.session.customerUserId, subscription);
                 if (stremioSetup) {
@@ -151,7 +153,7 @@ function createRouter() {
 
     router.post('/account/claim-free/:planCode', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
-            await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
+            await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode, { mediaLocation: req.body.mediaLocation || null });
             const provisioning=await freeClaimProvisioning.ensureFreeClaimProvisioned(req.session.customerId);
             if(!provisioning.ready)throw provisioning.error||new Error('Free Access did not create an enabled Free Server account.');
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your Jellyfin account is ready.'));

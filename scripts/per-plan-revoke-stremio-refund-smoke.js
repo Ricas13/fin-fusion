@@ -40,6 +40,6 @@ assert(termination.includes('const remaining=await stremio.entitledSubscription(
 assert(termination.includes('await stremio.revoke(customerId)'),'a fully refunded last Stremio plan must invalidate the install credential');
 assert(termination.includes('await managed.revokeCustomerInactiveMappings(customerId)'),'a fully refunded last Stremio plan must retire only that customer\'s inactive managed Stremio mappings');
 assert(termination.includes("reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType"),'duplicate refund delivery must retain enough service identity to retry Stremio cleanup');
-assert(termination.includes('return hardRevokeRefundedStremio(customerId,local)'),'refund termination must always pass through hard cleanup after local convergence');
+assert(termination.includes('const result=await hardRevokeRefundedStremio(customerId,local)')&&termination.includes('return result;'),'refund termination must always pass through hard cleanup after local convergence before returning');
 
 console.log('per-plan revoke + Stremio refund smoke: ok');

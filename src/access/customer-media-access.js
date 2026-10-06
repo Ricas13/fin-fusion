@@ -11,7 +11,7 @@ function mediaType(account) {
 
 async function mediaRows(customerId) {
   const result = await query(`
-    SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,
+    SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url,js.location AS server_location,
            COALESCE(js.media_server_type,'jellyfin') AS media_server_type
     FROM jellyfin_accounts ja
     JOIN jellyfin_servers js ON js.id=ja.server_id
@@ -43,18 +43,53 @@ async function accessContext(customerId, { accounts = null, accessSnapshot = nul
 
 function entitlementForAccountFromContext(account, context = {}) {
   if (!account) return null;
-  if (mediaType(account) === 'emby') return context.accessSnapshot?.emby?.entitlement || context.embyEntitlement || null;
-  const access = context.accessSnapshot || null;
-  if (String(account.access_lane || 'primary') === 'free') {
-    return access?.free?.entitlement || null;
+  if (mediaType(account) === 'emby') {
+    const entitlement = context.accessSnapshot?.emby?.entitlement || context.embyEntitlement || null;
+    if (!entitlement) return null;
+    if (!Array.isArray(context.accounts)) return entitlement;
+    const assignedServerId = String(entitlement.media_server_id || '').trim();
+    if (assignedServerId) return String(account.server_id || '') === assignedServerId ? entitlement : null;
+
+    // Rolling/legacy rows can predate persisted assignment. Only infer the
+    // account when there is exactly one enabled Emby candidate; multiple
+    // historical accounts are ambiguous and credential management must fail
+    // closed until the subscription is repaired/pinned.
+    const embyAccounts = (context.accounts || [])
+      .filter(row => mediaType(row) === 'emby' && !row.disabled && row.server_enabled);
+    return embyAccounts.length === 1 && String(embyAccounts[0].id) === String(account.id)
+      ? entitlement
+      : null;
   }
-  return access?.primary?.entitlement || null;
+  const access = context.accessSnapshot || null;
+  const lane = String(account.access_lane || 'primary') === 'free' ? 'free' : 'primary';
+  const entitlement = lane === 'free' ? access?.free?.entitlement || null : access?.primary?.entitlement || null;
+  if (!entitlement) return null;
+  if (!Array.isArray(context.accounts)) return entitlement;
+  if (!customerAccessState.accountMatchesEntitlement(account, entitlement, lane)) return null;
+
+  // A persisted server assignment is authoritative. For legacy rows without
+  // one, only expose credential controls when exactly one account in the lane
+  // can satisfy the entitlement; otherwise an old same-class account could be
+  // mistaken for the current one.
+  if (entitlement.media_server_id || entitlement.admin_forced_server_id || !Array.isArray(context.accounts)) {
+    return entitlement;
+  }
+  const candidates = context.accounts.filter(row =>
+    mediaType(row) === 'jellyfin' &&
+    customerAccessState.accountMatchesEntitlement(row, entitlement, lane)
+  );
+  return candidates.length === 1 && String(candidates[0].id) === String(account.id)
+    ? entitlement
+    : null;
 }
 
 async function entitlementForAccount(customerId, account, { accessSnapshot = null, embyEntitlement } = {}) {
   if (!account) return null;
-  const access = accessSnapshot || await customerAccessState.snapshot(customerId).catch(() => null);
-  return entitlementForAccountFromContext(account, { accessSnapshot: access, embyEntitlement });
+  const [access, accounts] = await Promise.all([
+    accessSnapshot ? Promise.resolve(accessSnapshot) : customerAccessState.snapshot(customerId).catch(() => null),
+    mediaRows(customerId)
+  ]);
+  return entitlementForAccountFromContext(account, { accessSnapshot: access, embyEntitlement, accounts });
 }
 
 function evaluateCredentialAccess(account, entitlement) {

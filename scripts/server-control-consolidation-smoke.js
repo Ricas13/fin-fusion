@@ -48,7 +48,7 @@ assert(css.includes('.serverControlTable') && css.includes('.serverControlOvervi
 assert(serverForm.includes('serverEditorGrid') && serverForm.includes("server ? 'serverEditorGrid--existing' : 'serverEditorGrid--new'"), 'server editor must declare explicit existing/new responsive body states');
 assert(serverForm.includes('section class="section serverEditorConfigCard"') && serverForm.includes('section class="section serverEditorConnectivityCard"'), 'server configuration and connectivity must retain independent semantic cards inside the shared body grid');
 assert(serverForm.includes('serverEditorSafetyNote'), 'server destructive-workflow safety guidance must remain outside the compact card grid');
-assert(serverForm.includes('Customer capacity') && serverForm.includes('Every Jellyfin customer uses exactly one place'), 'server form must describe max_users as customer-user capacity');
+assert(serverForm.includes('Customer capacity') && serverForm.includes('Every managed Jellyfin/Emby customer uses one place'), 'server form must describe max_users as provider-neutral customer-user capacity');
 assert(!serverForm.includes('Sellable stream capacity') && !serverForm.includes('3-stream plan consumes'), 'server form must not contain retired stream-weighted capacity language');
 assert(css.includes('.serverEditorGrid--existing{grid-template-columns:minmax(0,2fr) minmax(280px,1fr)'), 'wide existing-server editors must devote two thirds to configuration and one third to the operational rail');
 assert(css.includes('.serverEditorGrid--existing>.serverEditorConfigCard{grid-column:1;grid-row:1 / span 2}'), 'configuration must occupy the full left side of the wide server editor');

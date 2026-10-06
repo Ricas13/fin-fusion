@@ -113,7 +113,12 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
           AND COALESCE(p.is_free_tier,FALSE)=FALSE
           AND LOWER(COALESCE(s.billing_interval_snapshot,p.billing_interval,''))<>'trial'
           AND (
-            s.billing_mode='payment'
+            s.billing_mode IN('payment','manual')
+            OR (
+              COALESCE(BTRIM(s.billing_mode),'')=''
+              AND LOWER(BTRIM(COALESCE(s.source,''))) IN('manual','admin_grant')
+              AND NULLIF(BTRIM(COALESCE(s.provider_subscription_id,'')),'') IS NULL
+            )
             OR (
               s.billing_mode='subscription'
               AND s.source IN ('stripe','paypal')
@@ -303,6 +308,29 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onA
                 failed += 1;
                 if (typeof onAutoDowngradeError === 'function') onAutoDowngradeError(customerId, error);
             }
+        }
+        // Expiry can race a remote media account create that has not yet
+        // persisted its local account row. Clean those durable intents
+        // immediately so expired access cannot survive until the stale-worker
+        // threshold. A successful Free downgrade is safe: lane-aware intent
+        // ownership preserves the new Free entitlement while retiring the old
+        // primary/Emby authority.
+        try {
+            const cleanup = await require('../automation/jellyfin-creation-intent-recovery').recoverCustomer(customerId);
+            if (Number(cleanup?.failed || 0) > 0) {
+                failed += 1;
+                console.warn('Subscription expiry media creation-intent cleanup incomplete.', {
+                    customerId,
+                    failed: Number(cleanup.failed || 0),
+                    warning: cleanup.warning || null
+                });
+            }
+        } catch (error) {
+            failed += 1;
+            console.warn('Subscription expiry media creation-intent cleanup deferred.', {
+                customerId,
+                error: String(error?.message || error).slice(0, 500)
+            });
         }
         if (downgraded) continue;
         try { await reconcileCustomer(customerId); }

@@ -22,6 +22,7 @@ const recognizedProviderReference = manualEntitlement.recognizedProviderReferenc
 const normalizedGrantInput = manualEntitlement.normalizedGrantInput;
 const currentPrimarySubscription = manualEntitlement.currentPrimarySubscription;
 const grantPlans = manualEntitlement.grantPlans;
+const grantablePlansForCustomer = manualEntitlement.grantablePlansForCustomer;
 const createManualGrant = manualEntitlement.createManualGrant;
 const isoDate = manualEntitlement.isoDate;
 function customerPath(customerId, tab, key = '', message = '') {
@@ -91,19 +92,18 @@ function createAdminManualEntitlementRouter() {
         if (!surface) return next();
         try {
             const existing = await currentPrimarySubscription(req.params.customerId);
-            const plans = !existing && surface !== 'overview' ? await grantPlans() : [];
+            const plans = surface !== 'overview' ? await grantablePlansForCustomer(req.params.customerId) : [];
             const send = res.send.bind(res);
             res.send = body => {
                 let html = body;
-                if (!existing) {
-                    html = hideEmptyManualEdit(html);
-                    // customer-360-compact.js already renders its own compact "Add plan
-                    // manually…" form (class manualGrantCompact, same element IDs) whenever
-                    // the customer has no current subscription, independently of this
-                    // middleware. Only add this fuller version where that one is absent, so
-                    // the page never carries two forms - and two sets of duplicate IDs - for
-                    // the same action.
-                    if ((surface === 'access' || surface === 'billing') && !html.includes('manualGrantCompact')) html = insertBeforeMainEnd(html, grantForm(req, req.params.customerId, plans));
+                if (!existing) html = hideEmptyManualEdit(html);
+                // Independent service lanes are allowed: for example a customer
+                // with Stremio may still receive a Jellyfin manual grant. Render
+                // only plans whose capabilities do not overlap current access.
+                // The compact empty-account form still wins when present so the
+                // page never carries duplicate form IDs.
+                if ((surface === 'access' || surface === 'billing') && plans.length && !html.includes('manualGrantCompact')) {
+                    html = insertBeforeMainEnd(html, grantForm(req, req.params.customerId, plans));
                 }
                 return send(html);
             };
@@ -123,6 +123,7 @@ module.exports = {
     normalizedGrantInput,
     currentPrimarySubscription,
     grantForm,
+    grantablePlansForCustomer,
     hideEmptyManualEdit,
     createManualGrant,
     createAdminManualEntitlementRouter

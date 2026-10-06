@@ -7,6 +7,8 @@ const registry = require('../jellyfin/registry');
 const runtimeSettings = require('./runtime-settings');
 const outbound = require('../security/outbound-url-policy');
 const { encryptWithEnv } = require('../security/purpose-crypto');
+const userCapacity = require('../jellyfin/user-capacity');
+const mediaCapacityConfig = require('../jellyfin/plan-capacity-configuration');
 
 const SERVER_CLASSES = new Set(['premium', 'free', 'custom']);
 const SERVER_ID_PARAM = ':serverId([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})';
@@ -20,7 +22,9 @@ const SAFE_ERROR_PREFIXES = [
     'URL hostname is required.', 'Internal/base URL is required.', 'Jellyfin API key is required.',
     'Jellyfin API key format is invalid.', 'Emby API key is required.', 'Emby API key format is invalid.',
     'Media-server API key is required.', 'Media-server API key format is invalid.',
-    'Priority must be between ', 'Maximum users must be between ',
+    'Priority must be between ', 'Maximum users must be between ', 'Location is required.', 'Customer/public URL is required.',
+    'Maximum users cannot be lower than ', 'Media server type cannot be changed while ', 'Maximum customers on this plan cannot exceed ', 'Set physical customer capacity on every selected media server ',
+    'This plan has no media servers with configured physical capacity.',
     'Initial playback grace days must be between ', 'Playback window days must be between ',
     'Minimum playback minutes must be between ', 'Invalid server class.',
     'Invalid media server type.', 'Jellyfin returned HTTP ', 'Emby returned HTTP ',
@@ -29,6 +33,7 @@ const SAFE_ERROR_PREFIXES = [
     'Could not validate the Jellyfin server securely.', 'Could not validate the Emby server securely.',
     'Jellyfin destination ', 'Emby destination ', 'Jellyfin hostname ', 'Emby hostname ',
     'Could not connect to Jellyfin at ', 'Could not connect to Emby at ',
+    'Customer/public URL hostname could not be resolved.', 'Customer/public URL must resolve only to public internet addresses',
     'Server name is required.', 'Server not found.'
 ];
 
@@ -54,13 +59,32 @@ function allowedHosts() { return new Set(); }
 function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
     const fieldName = field || (baseUrl ? 'baseUrl' : 'publicUrl');
     const raw = cleanText(value, 500);
-    if (!raw) { if (baseUrl) throw invalidField(fieldName, 'Internal/base URL is required.'); return null; }
+    if (!raw) {
+        if (baseUrl) throw invalidField(fieldName, 'Internal/base URL is required.');
+        if (fieldName === 'publicUrl') throw invalidField(fieldName, 'Customer/public URL is required.');
+        return null;
+    }
     let parsed;
     try { parsed = new URL(raw); } catch (_) { throw invalidField(fieldName, 'Enter a valid http/https URL.'); }
     if (!['http:', 'https:'].includes(parsed.protocol)) throw invalidField(fieldName, 'Only http and https URLs are allowed.');
     if (parsed.username || parsed.password || parsed.hash) throw invalidField(fieldName, 'URLs may not contain credentials or fragments.');
     if (!parsed.hostname) throw invalidField(fieldName, 'URL hostname is required.');
     parsed.pathname = parsed.pathname.replace(/\/+$/, ''); parsed.search = ''; parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+}
+async function assertPublicCustomerUrl(value) {
+    let parsed;
+    try { parsed = new URL(String(value || '').trim()); }
+    catch (_) { throw invalidField('publicUrl', 'Enter a valid customer/public http/https URL.'); }
+    let addresses;
+    try { addresses = await outbound.resolveHost(parsed.hostname); }
+    catch (_) { throw invalidField('publicUrl', 'Customer/public URL hostname could not be resolved.'); }
+    if (!addresses.length || addresses.some(address => {
+        const info = outbound.classify(address);
+        return info.hard || info.private;
+    })) {
+        throw invalidField('publicUrl', 'Customer/public URL must resolve only to public internet addresses; private, loopback, link-local and reserved destinations cannot be exposed to customers.');
+    }
     return parsed.toString().replace(/\/$/, '');
 }
 function mediaServerType(value) {
@@ -106,9 +130,9 @@ function parseServerForm(body, { apiKeyRequired = false } = {}) {
         name, slug: cleanSlug(body.slug), serverClass, mediaServerType: type,
         baseUrl: normalizeUrl(body.baseUrl, { baseUrl: true, field: 'baseUrl' }),
         publicUrl: normalizeUrl(body.publicUrl, { field: 'publicUrl' }),
-        location: cleanText(body.location, 100) || null,
+        location: (()=>{const value=cleanText(body.location,100);if(!value)throw invalidField('location','Location is required.');return value;})(),
         priority: intField(body.priority, { min: 0, max: 10000, field: 'priority', label: 'Priority' }),
-        maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: true, field: 'maxUsers', label: 'Maximum users' }),
+        maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: false, field: 'maxUsers', label: 'Maximum users' }),
         allowNewUsers: boolField(body.allowNewUsers), trialEnabled: boolField(body.trialEnabled),
         paidEnabled: boolField(body.paidEnabled), apiKey: validateApiKey(body.apiKey, apiKeyRequired, type)
     };
@@ -149,11 +173,12 @@ async function serverList() {
                js.allow_new_users,js.trial_enabled,js.paid_enabled,js.priority,js.max_users,
                js.free_first_playback_grace_days,js.free_playback_window_days,js.free_minimum_playback_minutes,
                js.health_status,js.last_health_check,js.created_at,js.updated_at,
-               COUNT(DISTINCT ja.id)::int assigned_users,COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams
+               COUNT(DISTINCT ja.id) FILTER(WHERE ja.disabled=FALSE AND ja.account_purpose='jellyfin')::int active_users,COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams
         FROM jellyfin_servers js LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id
         LEFT JOIN active_playback_sessions aps ON aps.server_id=js.id
         GROUP BY js.id ORDER BY js.priority,js.name`);
-    return result.rows;
+    const decorated=await userCapacity.decorateServers(result.rows);
+    return decorated.map(server=>({...server,pending_reserved_users:Math.max(0,Number(server.assigned_users||0)-Number(server.active_users||0))}));
 }
 async function serverDetail(serverId) {
     const result = await query(`SELECT id,name,slug,server_class,media_server_type,base_url,public_url,location,enabled,allow_new_users,
@@ -185,6 +210,7 @@ async function persistHealthCheck(serverId, status) {
     if (!result.rowCount) throw new Error('Server not found.'); return result.rows[0].last_health_check;
 }
 async function createServer(actorUserId, form) {
+    await assertPublicCustomerUrl(form.publicUrl);
     await probeCredentials(form.baseUrl, form.apiKey, form.mediaServerType);
     return transaction(async client => {
         const result = await client.query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check)
@@ -196,14 +222,23 @@ async function createServer(actorUserId, form) {
 async function updateServer(actorUserId, serverId, form) {
     const current = await registry.getServerSecret(serverId); if (!current) throw new Error('Server not found.');
     const candidateKey = form.apiKey || current.apiKey, providerChanged=form.mediaServerType!==registry.mediaProvider.normalizeType(current.media_server_type), connectivityChanged = form.baseUrl !== current.base_url || Boolean(form.apiKey) || providerChanged;
+    await assertPublicCustomerUrl(form.publicUrl);
     if (connectivityChanged) await probeCredentials(form.baseUrl, candidateKey, form.mediaServerType);
     await transaction(async client => {
+        const locked=(await client.query(`SELECT id,server_class,media_server_type,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`,[serverId])).rows[0];
+        if(!locked)throw new Error('Server not found.');
+        const counts=await userCapacity.countsForServers([serverId],(sql,params)=>client.query(sql,params));
+        const occupied=Number(counts.get(String(serverId))||0);
+        if(providerChanged&&occupied>0)throw invalidField('mediaServerType',`Media server type cannot be changed while ${occupied} customer place(s) are occupied or reserved. Complete, cancel, migrate or release those commitments before converting this server between Jellyfin and Emby.`);
+        if(Number(form.maxUsers)<occupied)throw invalidField('maxUsers',`Maximum users cannot be lower than the ${occupied} customer place(s) already occupied or reserved on this server.`);
         const result = await client.query(`UPDATE jellyfin_servers SET name=$2,slug=$3,server_class=$4,media_server_type=$5,base_url=$6,public_url=$7,location=$8,
             priority=$9,max_users=$10,allow_new_users=$11,trial_enabled=$12,paid_enabled=$13,
             api_key_encrypted=CASE WHEN $14::text IS NULL THEN api_key_encrypted ELSE $14 END,
             health_status=CASE WHEN base_url<>$6 OR media_server_type<>$5 OR $14::text IS NOT NULL THEN 'unknown' ELSE health_status END,updated_at=NOW()
             WHERE id=$1 RETURNING id`, [serverId,form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,form.location,form.priority,form.maxUsers,form.allowNewUsers,form.trialEnabled,form.paidEnabled,form.apiKey?encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'):null]);
         if (!result.rowCount) throw new Error('Server not found.');
+        const impacted=await mediaCapacityConfig.impactedManagedPlans(client,serverId,{oldClass:locked.server_class,newClass:form.serverClass,oldProvider:locked.media_server_type,newProvider:form.mediaServerType});
+        for(const planId of impacted)await mediaCapacityConfig.assertPlanLimitWithinPool(client,{planId});
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.update','jellyfin_server',$2,$3::jsonb)`, [actorUserId,serverId,JSON.stringify({mediaServerType:form.mediaServerType,providerChanged,credentialRotated:Boolean(form.apiKey),connectivityChanged})]);
     });
 }
@@ -231,6 +266,9 @@ function createAdminServersRouter() {
         try {
             const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found');
             const form=parseServerForm(req.body,{apiKeyRequired:false}),impact=await serverImpact(req.params.serverId),risk=riskyServerChange(server,form,impact);
+            if (registry.mediaProvider.normalizeType(server.media_server_type) !== form.mediaServerType && Number(impact.assigned_accounts) > 0) {
+                throw invalidField('mediaServerType', `Media server type cannot be changed while ${impact.assigned_accounts} account(s) are assigned. Migrate or remove those accounts before converting this server between Jellyfin and Emby.`);
+            }
             if (risk.risky && String(req.body.confirmation||'').trim() !== 'CHANGE') throw invalidField('confirmation', `This server has ${impact.assigned_accounts} assigned account(s) and ${impact.explicit_plan_rules} explicit plan rule(s). Type CHANGE to confirm: ${risk.reasons.join(', ')}.`);
             await updateServer(req.session.authUserId,req.params.serverId,form);
             return res.redirect('/admin/servers?message='+encodeURIComponent('Server configuration updated.'));
@@ -244,4 +282,4 @@ function createAdminServersRouter() {
     router.use('/admin/servers', async (error,_req,res,_next) => { console.error('Admin servers route error:',error.message); await runtimeSettings.ensureLoaded().catch(()=>{}); return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Servers unavailable',message:'Server administration could not be loaded safely.',link:'/admin',linkText:'Return to Administration'}); });
     return router;
 }
-module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType,FREE_POLICY_DEFAULTS };
+module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,assertPublicCustomerUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType,FREE_POLICY_DEFAULTS };

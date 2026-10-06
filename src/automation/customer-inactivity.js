@@ -135,6 +135,7 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
             s.customer_id,
             s.id subscription_id,
             s.plan_id,
+            s.media_server_id,
             s.starts_at,
             s.current_period_end,
             s.created_at subscription_created_at,
@@ -223,6 +224,19 @@ async function candidates(globalCfg = null, { customerId = null } = {}) {
          AND ja.account_purpose='jellyfin'
          AND ja.access_lane='free'
          AND ja.disabled=FALSE
+         -- Explicit administrator server pins are the current placement
+         -- authority; otherwise use the persisted subscription assignment.
+         -- Preserve legacy single-lane behaviour only when neither exists.
+         AND (
+           COALESCE(
+             CASE WHEN admin_ctl.mode='admin_server_pin' THEN admin_ctl.server_id END,
+             fa.media_server_id
+           ) IS NULL
+           OR ja.server_id=COALESCE(
+             CASE WHEN admin_ctl.mode='admin_server_pin' THEN admin_ctl.server_id END,
+             fa.media_server_id
+           )
+         )
         JOIN jellyfin_servers js ON js.id=ja.server_id
         LEFT JOIN LATERAL (
           SELECT MAX(revoked_at) resumed_at

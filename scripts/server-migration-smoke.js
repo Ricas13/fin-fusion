@@ -58,14 +58,14 @@ registry.request = async (serverId, endpoint, options = {}) => {
 const migration = require('../src/jellyfin/server-migration');
 const resilient = require('../src/jellyfin/resilient-provisioning');
 
-async function makeServer(name, slug) {
+async function makeServer(name, slug, serverClass = 'premium') {
     const result = await query(`
         INSERT INTO jellyfin_servers(
             name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,
             health_status,allow_new_users,trial_enabled,paid_enabled
-        ) VALUES($1,$2,'premium',$3,$3,'not-used-by-stub',TRUE,100,100,'healthy',TRUE,TRUE,TRUE)
+        ) VALUES($1,$2,$3,$4,$4,'not-used-by-stub',TRUE,100,100,'healthy',TRUE,TRUE,TRUE)
         RETURNING *
-    `, [name, slug, `https://${slug}.example.test`]);
+    `, [name, slug, serverClass, `https://${slug}.example.test`]);
     state(result.rows[0].id);
     return result.rows[0];
 }
@@ -97,7 +97,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
 (async () => {
     const source = await makeServer('Source', 'source');
-    const target = await makeServer('Target', 'target');
+    const target = await makeServer('Target', 'target', 'custom');
     const outside = await makeServer('Outside Pool', 'outside');
     const plan = await makePlan('migration-plan', [source.id, target.id]);
     const first = await makeCustomer('move-user', plan.id, source, 'source-user-1');
@@ -107,6 +107,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
     const check = await migration.preflight(first.customerId, target.id);
     assert.strictEqual(check.source.jellyfin_username, 'move-user');
+    assert.strictEqual(check.target.server_class, 'custom', 'explicit plan server eligibility must override the legacy plan/server class label during migration');
     assert.strictEqual(check.target.id, target.id);
     assert.strictEqual(check.libraryAccess.missing.length, 0);
     await assert.rejects(() => migration.preflight(first.customerId, outside.id), error => error.code === 'TARGET_NOT_ELIGIBLE');
@@ -120,6 +121,8 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
     const accountsAfterMove = await query(`SELECT id,server_id,disabled,is_primary,password_setup_required,jellyfin_user_id FROM jellyfin_accounts WHERE customer_id=$1`, [first.customerId]);
     assert.strictEqual(accountsAfterMove.rowCount, 1, 'successful move must retain only the enabled target account');
+    const assignmentAfterMove = await query(`SELECT media_server_id,media_location_snapshot FROM subscriptions WHERE customer_id=$1 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`, [first.customerId]);
+    assert.strictEqual(String(assignmentAfterMove.rows[0]?.media_server_id), String(target.id), 'successful admin migration must move the sticky subscription assignment to the target server');
     const primary = accountsAfterMove.rows[0];
     assert.strictEqual(String(primary.server_id), String(target.id));
     assert.strictEqual(primary.disabled, false);
@@ -142,6 +145,8 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     assert.strictEqual(rolledBack.status, 'rolled_back');
     const afterRollback = await query(`SELECT server_id,disabled,is_primary,password_setup_required FROM jellyfin_accounts WHERE customer_id=$1`, [first.customerId]);
     assert.strictEqual(afterRollback.rowCount, 1, 'rollback must retain only the recreated enabled source account');
+    const assignmentAfterRollback = await query(`SELECT media_server_id,media_location_snapshot FROM subscriptions WHERE customer_id=$1 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`, [first.customerId]);
+    assert.strictEqual(String(assignmentAfterRollback.rows[0]?.media_server_id), String(source.id), 'migration rollback must restore the sticky subscription assignment to the source server');
     assert.strictEqual(String(afterRollback.rows[0].server_id), String(source.id));
     assert.strictEqual(afterRollback.rows[0].disabled, false);
     assert.strictEqual(afterRollback.rows[0].is_primary, true);

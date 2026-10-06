@@ -33,6 +33,7 @@ const freeBackfill = read('src/automation/free-capacity-backfill.js');
 const customerAccessState = read('src/access/customer-access-state.js');
 const accessRepair = readMaybe('src/access/access-repair.js');
 const creationIntentRecovery = read('src/automation/jellyfin-creation-intent-recovery.js');
+const creationIntentRecoveryApi = require('../src/automation/jellyfin-creation-intent-recovery');
 const inactivity = read('src/automation/customer-inactivity.js');
 const scopedInactivity = read('src/automation/customer-inactivity-scoped.js');
 const inactivityGrace = read('src/entitlements/jellyfin-inactivity-grace.js');
@@ -164,13 +165,62 @@ execFileSync(process.execPath, [path.join(root, 'scripts/access-repair-behavior-
 
 const compactIntentRecovery = compact(creationIntentRecovery);
 const customerLockAt = compactIntentRecovery.indexOf("SELECTidFROMcustomersWHEREid=$1FORUPDATE");
-const intentLockAt = compactIntentRecovery.indexOf("SELECT*FROMjellyfin_account_creation_intentsWHEREid=$1FORUPDATE");
+const intentLockAt = compactIntentRecovery.indexOf("SELECTi.*,COALESCE(s.media_server_type,'jellyfin')ASmedia_server_typeFROMjellyfin_account_creation_intentsiJOINjellyfin_serverssONs.id=i.server_idWHEREi.id=$1FORUPDATEOFi");
 const authorityRecheckAt = compactIntentRecovery.indexOf('constauthoritative=awaitentitlementStillOwnsJellyfin(intent.customer_id,{client})');
 const remoteDeleteAt = compactIntentRecovery.indexOf('awaitcompensation.removeCreatedUser({');
 assert(customerLockAt >= 0 && intentLockAt > customerLockAt && authorityRecheckAt > intentLockAt && remoteDeleteAt > authorityRecheckAt,
     'stale Jellyfin creation cleanup must lock customer+intent and re-check authority before remote deletion');
-assert(creationIntentRecovery.includes("admin?.mode === 'admin_present' || admin?.mode === 'admin_server_pin'"),
-    'stale creation cleanup must preserve both admin-present and admin-server-pin authority');
+assert(creationIntentRecovery.includes("const adminOwns = admin?.mode === 'admin_present'"),
+    'stale creation cleanup must treat admin-present as access authority while keeping server pins placement-only');
+const durableCreationSource = read('src/jellyfin/durable-account-creation.js');
+assert(durableCreationSource.includes("provider === 'emby' && accessLane === 'primary'")
+    && durableCreationSource.includes('return setIntent(intent.id, { accessLane })'),
+    'legacy lane-less Emby creation intents must be immediately adoptable as the Emby primary lane');
+assert(creationIntentRecovery.includes('intentServerStillOwned')
+    && creationIntentRecovery.includes('intent?.access_lane')
+    && creationIntentRecovery.includes('String(row.media_server_id) === serverId'),
+    'stale creation recovery must scope persisted entitlements to the exact access lane and assigned server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-old', access_lane:'primary' },
+    { owns:true, primary:{ media_server_id:'server-new' }, free:null, admin:null }
+), false, 'an intent on a superseded server must no longer be preserved by a different persisted assignment');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-old', access_lane:'primary' },
+    { owns:true, primary:{ media_server_id:null }, free:null, admin:null }
+), true, 'legacy entitlements without a persisted assignment must remain fail-closed and preserve the matching lane intent');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-pin', access_lane:'primary' },
+    { owns:false, primary:null, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), false, 'a placement-only admin pin must never preserve a creation intent after entitlement authority ends');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-pin', access_lane:'free' },
+    { owns:true, primary:{ media_server_id:'server-pin' }, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), false, 'a paid primary entitlement must not preserve a stale Free-lane creation intent on the same pinned server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-pin', access_lane:'primary' },
+    { owns:true, primary:{ media_server_id:'server-old' }, free:null, admin:{ mode:'admin_server_pin', server_id:'server-pin' } }
+), true, 'a server pin may redirect the still-entitled matching lane to the pinned server');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'emby-a', access_lane:'primary', media_server_type:'emby' },
+    { owns:true, jellyfinOwns:false, embyOwns:true, primary:null, free:null, emby:{ media_server_id:'emby-a' }, admin:null }
+), true, 'an active Emby entitlement must preserve its durable creation intent on the assigned Emby server');
+assert.strictEqual(
+    creationIntentRecoveryApi.entitlementOwnsLane({ media_server_id:'server-a', blocked:true }),
+    false,
+    'blocked media entitlements must never retain creation-intent ownership'
+);
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'emby-a', access_lane:'primary', media_server_type:'emby' },
+    { owns:true, jellyfinOwns:false, embyOwns:true, primary:null, free:null, emby:{ media_server_id:'emby-a', blocked:true }, admin:null }
+), false, 'a blocked/refunded Emby entitlement must not preserve an unmanaged remote creation intent');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'server-a', access_lane:'primary', media_server_type:'jellyfin' },
+    { owns:true, jellyfinOwns:true, primary:{ media_server_id:'server-a', blocked:true }, free:null, admin:null }
+), false, 'a blocked paid Jellyfin entitlement must not preserve an unmanaged remote creation intent');
+assert.strictEqual(creationIntentRecoveryApi.intentServerStillOwned(
+    { server_id:'emby-old', access_lane:'primary', media_server_type:'emby' },
+    { owns:true, jellyfinOwns:true, embyOwns:true, primary:{ media_server_id:'jellyfin-a' }, free:null, emby:{ media_server_id:'emby-new' }, admin:{ mode:'admin_present' } }
+), false, 'Jellyfin admin authority must never preserve an Emby creation intent on a superseded Emby server');
 
 const compactScopedInactivity = compact(scopedInactivity);
 assert(compactScopedInactivity.includes("INACTIVITY_MAX_ENFORCEMENTS_PER_RUN',100")

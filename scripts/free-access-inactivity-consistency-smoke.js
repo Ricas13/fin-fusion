@@ -11,6 +11,21 @@ const inactivity = require('../src/automation/customer-inactivity');
 const scoped = require('../src/automation/customer-inactivity-scoped');
 const legacyGrace = require('../src/entitlements/jellyfin-inactivity-grace');
 
+const inactivitySource = read('src/automation/customer-inactivity.js');
+const freeBackfillSource = read('src/automation/free-capacity-backfill.js');
+assert(
+    inactivitySource.includes("admin_ctl.mode='admin_server_pin'") &&
+    inactivitySource.includes('fa.media_server_id') &&
+    inactivitySource.includes('ja.server_id=COALESCE('),
+    'Free inactivity must assess the effective admin-pinned server first, otherwise the persisted assigned Free server'
+);
+assert(
+    freeBackfillSource.includes("admin_ctl.mode='admin_server_pin'") &&
+    freeBackfillSource.includes('s.media_server_id') &&
+    freeBackfillSource.includes('ja.server_id=COALESCE('),
+    'Free capacity backfill must treat the effective admin-pinned/persisted Free server as the ready account'
+);
+
 const policy = {
     firstPlaybackGraceDays: 3,
     playbackWindowDays: 7,
