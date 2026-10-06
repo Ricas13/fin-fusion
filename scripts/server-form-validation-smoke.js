@@ -19,7 +19,7 @@ const valid = {
     publicUrl: 'https://watch.example',
     location: 'UK',
     priority: '100',
-    maxUsers: '',
+    maxUsers: '200',
     allowNewUsers: 'on',
     trialEnabled: 'on',
     paidEnabled: 'on',
