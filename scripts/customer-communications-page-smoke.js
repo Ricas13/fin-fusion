@@ -35,6 +35,10 @@ assert(view.includes("channels.includes('telegram')")&&view.includes("channels.i
 assert(!view.toLowerCase().includes('whatsapp'),'retired WhatsApp UI must not reappear');
 assert(!source.toLowerCase().includes('whatsapp'),'retired WhatsApp routing must not reappear');
 assert(view.includes('channels.forEach(function(channel)'),'event columns must use the same visible-channel list as cards');
+assert(view.includes('action="/account/communications/discord/start" target="_blank" rel="noopener noreferrer"'),'Discord connect must use an explicit external browsing context so a normal click reaches OAuth instead of reloading the portal');
+assert(view.includes('<button class="button primary" type="submit">Connect Discord</button>'),'Discord connect button must remain an explicit form submit control');
+assert(!view.includes('<p><form method="post" action="/account/communications/discord/start"'),'Discord connect form must not use invalid paragraph/form nesting');
+
 
 require('./discord-role-reconciliation-smoke');
 console.log('customer communications page resilience smoke passed');
