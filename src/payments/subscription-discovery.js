@@ -89,8 +89,7 @@ async function premiumEntitlements() {
           JOIN subscriptions s ON s.id=e.subscription_id
           JOIN customers c ON c.id=e.customer_id
           LEFT JOIN app_users u ON u.id=c.user_id
-         WHERE e.server_class='premium'
-           AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
+         WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','emby','bundle')
            AND COALESCE(e.price_minor_snapshot,e.price_minor,0)>0
            AND COALESCE(e.is_free_tier,FALSE)=FALSE
          ORDER BY c.email,e.customer_id
@@ -369,8 +368,7 @@ async function coverageStats() {
                    s.billing_mode,s.commercial_snapshot
               FROM effective_customer_entitlements e
               JOIN subscriptions s ON s.id=e.subscription_id
-             WHERE e.server_class='premium'
-               AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','bundle')
+             WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) IN ('jellyfin','emby','bundle')
                AND COALESCE(e.price_minor_snapshot,e.price_minor,0)>0
                AND COALESCE(e.is_free_tier,FALSE)=FALSE
         ),
@@ -407,7 +405,14 @@ async function coverageStats() {
                        AND (
                            LOWER(BTRIM(COALESCE(billing_mode,'')))='payment'
                            OR (
-                               LOWER(BTRIM(COALESCE(billing_mode,'')))='manual'
+                               (
+                                 LOWER(BTRIM(COALESCE(billing_mode,'')))='manual'
+                                 OR (
+                                   BTRIM(COALESCE(billing_mode,''))=''
+                                   AND LOWER(BTRIM(COALESCE(source,''))) IN('manual','admin_grant')
+                                   AND NULLIF(BTRIM(COALESCE(provider_subscription_id,'')),'') IS NULL
+                                 )
+                               )
                                AND NOT legacy_import
                            )
                            OR (
