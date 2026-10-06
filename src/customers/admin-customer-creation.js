@@ -3,6 +3,8 @@
 const {query,transaction}=require('../db');
 const accountCommands=require('../security/customer-account-provisioning');
 const manualSubscriptions=require('../entitlements/manual-subscriptions');
+const planCapacity=require('../entitlements/plan-capacity');
+const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 async function create({
   username,
@@ -25,7 +27,7 @@ async function create({
            AND (effective_until IS NULL OR effective_until>NOW())
            AND audience IN('direct','both')
            AND COALESCE(is_addon,FALSE)=FALSE
-           AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio')`,
+           AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','emby','bundle')`,
         [planCode]
       );
       if(!found.rowCount)throw new Error('Choose an active standalone direct-customer plan.');
@@ -43,7 +45,38 @@ async function create({
     );
 
     let subscription=null;
+    let mediaServer=null;
+    let mediaLocation=null;
     if(plan){
+      const mediaPlan=Boolean(customerServerChoice.mediaServerType(plan));
+      const deferredMediaProvisioning=mediaPlan&&provisioningMode==='after_activation';
+      // Deferred admin creation intentionally allows a paid media entitlement
+      // to exist before physical infrastructure is available. This is an
+      // operator recovery/workflow feature: the portal account may activate,
+      // while media provisioning remains visibly failed until capacity/server
+      // health is repaired. Enforce the product's logical customer limit here,
+      // but deliberately defer physical-server admission until reconciliation.
+      if(deferredMediaProvisioning){
+        await planCapacity.lockAndAssertLogicalMedia(client,plan.id,plan.name||'This plan');
+      }else{
+        await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan',{
+          households:plan.stremio_household_network_limit||null
+        });
+      }
+      if(mediaPlan){
+        try{
+          mediaServer=await customerServerChoice.selectServerForLocationLocked(plan,null,{
+            db:(sql,params)=>client.query(sql,params),
+            requireSelection:false
+          });
+          mediaLocation=mediaServer?.selected_location||customerServerChoice.locationLabel(mediaServer?.location);
+        }catch(error){
+          if(!(deferredMediaProvisioning&&error?.code==='MEDIA_LOCATION_UNAVAILABLE'))throw error;
+          mediaServer=null;
+          mediaLocation=null;
+        }
+      }
+
       const now=new Date();
       const days=Number(plan.duration_days||30);
       const end=new Date(now.getTime()+days*86400000);
@@ -60,9 +93,23 @@ async function create({
           planCode:plan.code,
           serviceType:plan.service_type||null,
           activationRequired:true,
-          provisioningMode
+          provisioningMode,
+          mediaServerId:mediaServer?.id||null,
+          mediaLocation
         }
       });
+      if(mediaServer){
+        const assigned=await client.query(`
+          UPDATE subscriptions
+          SET media_server_id=$2,
+              media_location_preference=$3,
+              media_location_snapshot=$3,
+              updated_at=NOW()
+          WHERE id=$1 AND customer_id=$4
+          RETURNING id
+        `,[subscription.id,mediaServer.id,mediaLocation,customer.rows[0].id]);
+        if(!assigned.rowCount)throw new Error('New customer subscription changed before its media-server reservation could be persisted.');
+      }
     }
 
     await client.query(
