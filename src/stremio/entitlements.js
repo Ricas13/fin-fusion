@@ -85,11 +85,18 @@ async function ensureInstallationCredential(customerId,{entitlement=null,actorUs
     // strand an entitled customer without an installation URL.
     const issued=foundation.issueInstallCredential();
     const activated=await transaction(async client=>{
+      const preserveInstalled=Boolean(row.token_hash&&!rotate);
       const result=await client.query(`UPDATE stremio_entitlements
-        SET token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',
+        SET token_hash_aliases=CASE
+              WHEN $5::boolean AND token_hash IS NOT NULL
+                THEN array_append(array_remove(COALESCE(token_hash_aliases,'{}'::text[]),token_hash),token_hash)
+              WHEN $6::boolean THEN '{}'::text[]
+              ELSE COALESCE(token_hash_aliases,'{}'::text[])
+            END,
+            token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',
             install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW()
         WHERE id=$1 AND ($4::boolean OR status<>'revoked')
-        RETURNING *`,[row.id,issued.hash,issued.hint,allowRevoked]);
+        RETURNING *`,[row.id,issued.hash,issued.hint,allowRevoked,preserveInstalled,rotate]);
       if(!result.rowCount){
         const latest=await client.query(`SELECT * FROM stremio_entitlements WHERE id=$1 LIMIT 1`,[row.id]);
         const current=latest.rows[0]||row;
@@ -169,7 +176,7 @@ async function findByInstallToken(raw){const token=String(raw||'');if(token.leng
       ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled account_disabled,js.base_url,js.public_url,js.name server_name,js.media_server_type,js.enabled server_enabled,js.stremio_enabled,
       EXISTS(SELECT 1 FROM plan_stremio_sources ps WHERE ps.plan_id=s.plan_id AND ps.enabled=TRUE) has_shared_sources
     FROM stremio_entitlements e JOIN effective ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id LEFT JOIN jellyfin_accounts ja ON ja.id=e.jellyfin_account_id LEFT JOIN jellyfin_servers js ON js.id=e.server_id
-    WHERE e.token_hash=$1 AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW() LIMIT 1`,[hash]),row=r.rows[0]||null;if(!row||!['stremio','bundle'].includes(serviceType(row)))return null;return row;}
+    WHERE (e.token_hash=$1 OR COALESCE(e.token_hash_aliases,'{}'::text[]) @> ARRAY[$1]::text[]) AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW() LIMIT 1`,[hash]),row=r.rows[0]||null;if(!row||!['stremio','bundle'].includes(serviceType(row)))return null;return row;}
 function accessToken(entitlement){return entitlement?.jellyfin_access_token_encrypted?decryptWithEnv(entitlement.jellyfin_access_token_encrypted,TOKEN_ENV,TOKEN_PREFIX):null;}
 async function markUse(id,kind){if(kind==='manifest')return query(`UPDATE stremio_entitlements SET last_manifest_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);return query(`UPDATE stremio_entitlements SET last_stream_request_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);}
 
