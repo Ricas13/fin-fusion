@@ -95,14 +95,15 @@ assert(router.includes("['stremio', 'bundle'].includes(serviceType)"),'automatic
 assert(router.includes('return issueCustomerInstallation(customerId, { actorUserId: customerUserId });')&&router.includes('await autoCreateStremioTrialInstallation(req.session.customerId, req.session.customerUserId, subscription)'),'trial flow must issue the link immediately after trial activation through the shared customer installation helper');
 assert(router.includes('Your Stremio trial is active, but the installation link could not be created automatically.'),'automatic-link failure must not claim the trial itself failed');
 
-// The install link route must not claim success when managed-account
-// provisioning underneath actually failed -- it has to check the outcome
-// instead of always redirecting to the success message.
-assert(/const\{provisioned\}\s*=\s*await issueCustomerInstallation/.test(customer),'install route must capture the managed-provisioning outcome instead of discarding it');
-assert(/homeRedirect\(provisioned\s*\?\s*'message'\s*:\s*'error'/.test(customer),'install route must show an error state when managed provisioning did not complete');
-assert(customer.includes('automatic access setup is still finishing'),'a failed managed-provisioning attempt must tell the customer setup is still in progress rather than silently claiming success');
-assert(customer.includes('if(!entitlement)return false;'),'install pre-provisioning must never report ready when the newly-issued token does not resolve to the current entitlement');
-assert(customer.includes('if(entitlement.has_shared_sources)return true;'),'external-source plans must not create unrelated managed Stremio identities during installation');
+// Installation-link issuance is authoritative local state. Managed Jellyfin/Emby
+// provisioning starts immediately afterward but must not hold up the response or
+// downgrade a successfully-created bearer link into an error.
+const customerIssueBlock=customer.slice(customer.indexOf('async function issueCustomerInstallation'),customer.indexOf('async function trialState'));
+assert(customerIssueBlock.includes('scheduleManagedPreprovision(issued.credential)')&&!customerIssueBlock.includes('await preprovisionManaged'),'trial/manual link creation must return without waiting for managed provisioning');
+assert(customer.includes('if(ensured?.credential)scheduleManagedPreprovision(ensured.credential);'),'idempotent My Access recovery must also return before managed provisioning finishes');
+assert(!customer.includes('const{provisioned}=await issueCustomerInstallation')&&!customer.includes("homeRedirect(provisioned?'message':'error'"),'managed provisioning readiness must not decide whether a valid install-link mutation succeeded');
+assert(customer.includes('if(!entitlement)return false;'),'best-effort managed pre-provisioning must ignore a token that does not resolve to the current entitlement');
+assert(!customer.includes('if(entitlement.has_shared_sources)return true;'),'external sources are additive and must not suppress managed Jellyfin/Emby provisioning');
 assert(entitlementService.includes('const sub=await entitledSubscription(customerId);if(!sub?.subscription_id)return null;'),'customer Stremio status must follow the canonical current Stremio subscription rather than the newest historical entitlement row');
 assert(entitlementService.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'installation issue/retry idempotency must be scoped to the current Stremio subscription term');
 assert(entitlementService.includes('async function ensureInstallationCredential')&&entitlementService.includes('options.ensureInstallation!==false'),'ordinary entitlement reconciliation must create the private Stremio link as part of activating access instead of leaving a pending/manual-create state');
