@@ -73,6 +73,23 @@ async function inactiveMappingRows(customerId=null){
 }
 async function revokeInactiveMappings({customerId=null}={}){const rows=await inactiveMappingRows(customerId);let revoked=0,failed=0;const failureReasons=new Map();for(const row of rows){try{await disableMapping(row,'Managed Stremio entitlement is no longer active.');revoked++;}catch(error){failed++;const reason=cleanFailure(error?.message||error);failureReasons.set(reason,Number(failureReasons.get(reason)||0)+1);console.warn(`Managed Stremio suspension will retry for ${row.mapping_id}:`,error.message);}}const warning=summarizeFailures(failureReasons,failed,'managed Stremio cleanup');return{total:rows.length,revoked,failed,...(warning?{warning}:{})};}
 async function revokeCustomerInactiveMappings(customerId){return revokeInactiveMappings({customerId});}
+async function revokeServerMappings(serverId){
+  if(!serverId)return{total:0,revoked:0,failed:0};
+  const rows=(await query(`SELECT sma.id mapping_id,sma.customer_id,sma.server_id,sma.jellyfin_account_id,sma.access_token_encrypted,
+      ja.jellyfin_user_id,ja.jellyfin_username,js.name server_name,js.base_url,js.media_server_type
+    FROM stremio_managed_accounts sma
+    JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id
+    JOIN jellyfin_servers js ON js.id=sma.server_id
+    WHERE sma.server_id=$1 AND sma.status IN('active','error')
+    ORDER BY sma.id`,[serverId])).rows;
+  let revoked=0,failed=0;const reasons=new Map();
+  for(const row of rows){
+    try{await disableMapping(row,'Managed Stremio source disabled by administrator.');revoked++;}
+    catch(error){failed++;const reason=cleanFailure(error?.message||error);reasons.set(reason,Number(reasons.get(reason)||0)+1);}
+  }
+  const warning=summarizeFailures(reasons,failed,'managed Stremio source cleanup');
+  return{total:rows.length,revoked,failed,...(warning?{warning}:{})};
+}
 async function currentMappings(entitlementId,serverIds){if(!serverIds.length)return[];return(await query(`SELECT sma.*,ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled account_disabled FROM stremio_managed_accounts sma JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id WHERE sma.entitlement_id=$1 AND sma.server_id=ANY($2::uuid[])`,[entitlementId,serverIds])).rows;}
 async function recreateMissingManagedAccount(entitlement,server,account,effective){
   const stale={accountId:account.id,serverId:account.server_id,remoteUserId:account.jellyfin_user_id,username:account.jellyfin_username};
@@ -110,4 +127,4 @@ async function syncActive(){
   return{total:rows.length+Number(revocation.total||0),processed:processed+Number(revocation.revoked||0),failed,revoked:Number(revocation.revoked||0),revocation,...(warning?{warning}:{})};
 }
 
-module.exports={PASSWORD_PREFIX,REMOTE_PRESENCE_TTL_MS,hiddenUsername,password,encryptPlaybackPassword,decryptPlaybackPassword,policyKey,mappingReady,cleanFailure,summarizeFailures,remoteMissing,presenceFresh,markPresence,clearPresence,planFor,serverFor,internalAccount,applyPolicy,ensureSource,ensure,mappings,otherActiveMappingOwns,disableStale,disableMapping,inactiveMappingRows,revokeInactiveMappings,revokeCustomerInactiveMappings,recreateMissingManagedAccount,currentMappings,syncActive};
+module.exports={PASSWORD_PREFIX,REMOTE_PRESENCE_TTL_MS,hiddenUsername,password,encryptPlaybackPassword,decryptPlaybackPassword,policyKey,mappingReady,cleanFailure,summarizeFailures,remoteMissing,presenceFresh,markPresence,clearPresence,planFor,serverFor,internalAccount,applyPolicy,ensureSource,ensure,mappings,otherActiveMappingOwns,disableStale,disableMapping,inactiveMappingRows,revokeInactiveMappings,revokeCustomerInactiveMappings,revokeServerMappings,recreateMissingManagedAccount,currentMappings,syncActive};
