@@ -91,6 +91,9 @@ assert.strictEqual(
 const source = fs.readFileSync(path.join(__dirname, 'verify-deployment.js'), 'utf8');
 assert(source.includes('workerStartedAt: automationWorker.started_at'),
     'deployment recovery proof must be anchored to the current automation worker start');
+assert(source.includes('proveBlockingCriticalJobs({'),'deployment verification must re-run historical degraded/failed critical jobs under the candidate release before rejecting the release');
+assert(source.includes("['failed','degraded'].includes(state)"),'candidate repair proof must target prior failed/degraded critical state rather than weakening healthy/stale policy globally');
+assert(source.includes("String(row?.last_outcome || '') === 'success'")&&source.includes('timestamp(row?.last_success_at) >= timestamp(marker)'),'candidate repair proof must require a fresh success completed after the force-run marker');
 assert(source.includes('AND draining_at IS NULL'),
     'deployment verification must ignore worker instances that are already draining');
 assert(source.includes("add('critical automation job enablement'"),
