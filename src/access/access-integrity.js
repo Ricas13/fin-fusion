@@ -346,7 +346,7 @@ async function scan({ limit = 100 } = {}) {
       FROM stremio_sources s
       JOIN plan_stremio_sources ps ON ps.source_id=s.id AND ps.enabled=TRUE
       JOIN stremio_source_index_state i ON i.source_id=s.id
-      WHERE s.enabled=TRUE AND s.auth_state='connected'
+      WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error')
         AND s.password_encrypted IS NULL
         AND i.last_completed_at IS NOT NULL AND i.item_count>0
       GROUP BY s.id,s.name
