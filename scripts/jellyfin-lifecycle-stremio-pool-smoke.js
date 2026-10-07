@@ -67,7 +67,7 @@ assert(!managed.includes('/PlaybackInfo')&&!external.includes('/PlaybackInfo'),'
 assert(managed.includes("url.searchParams.set('Static','true')")&&/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(external)&&external.includes('source.media_server_type'),'both Stremio source classes must return provider-aware static/original-file URLs');
 assert(!runtime.includes("require('./managed-playback-lifecycle')"),'normal Stremio delivery must not create or report media-server playback sessions');
 assert(admin.includes('External fallback playback goes directly to this Jellyfin server')&&/media bytes never pass through the portal/i.test(admin),'operator UI must remain transparent about direct upstream playback and the no-byte-proxy boundary');
-assert(admin.includes('The password is stored encrypted only when automatic token rotation is enabled.')&&admin.includes('Libraries included in Stremio'),'operator UI must explain external credential storage and indexing boundaries');
+assert(admin.includes('The password is stored encrypted for isolated customer playback sessions.')&&admin.includes('Automatic maintenance-token rotation is optional.')&&admin.includes('Libraries included in Stremio'),'operator UI must explain encrypted external credential storage, optional maintenance-token rotation, and indexing boundaries');
 
 // The clean-install baseline is a historical dump and still documents the old
 // delivery-identity guard. Migration 038 must replace that trigger contract for
