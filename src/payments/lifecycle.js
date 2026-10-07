@@ -15,6 +15,8 @@ const provisioning = require('../jellyfin/resilient-provisioning');
 const mediaReconciliation = require('../jellyfin/media-service-reconciliation');
 const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
+const stremioEntitlements = require('../stremio/entitlements');
+const stremioInstallRecovery = require('../stremio/install-credential-recovery');
 const accessExtensions = require('./subscription-access-extensions');
 
 function addPlanDuration(plan, from = new Date()) {
@@ -156,6 +158,51 @@ async function readyEmbyAccountForSubscription(customerId,subscriptionId){
         account.server_enabled&&
         (!entitlement.media_server_id||String(account.server_id)===String(entitlement.media_server_id))
     )||null;
+}
+
+async function readyStremioInstallForSubscription(customerId,subscriptionId){
+    const entitlement=await query(`SELECT id,status,token_hash,token_version,token_hint
+        FROM stremio_entitlements
+        WHERE customer_id=$1 AND subscription_id=$2
+        LIMIT 1`,[customerId,subscriptionId]);
+    const row=entitlement.rows[0]||null;
+    if(!row||row.status!=='active'||!row.token_hash)return null;
+    const recovered=await stremioInstallRecovery.current(customerId,{subscriptionId});
+    return recovered?.credential?{entitlementId:row.id,credential:recovered.credential}:null;
+}
+
+async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason='Stremio trial installation link was not created'}={}){
+    const ended=await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>transaction(async client=>{
+        const result=await client.query(`
+            UPDATE subscriptions
+            SET status='cancelled',
+                current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),
+                service_extension_days=0,
+                cancel_at_period_end=TRUE,
+                replacement_reason='trial_activation_failed',
+                updated_at=NOW()
+            WHERE id=$1 AND customer_id=$2
+            RETURNING id,status,current_period_end
+        `,[subscriptionId,customerId]);
+        await client.query(`
+            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
+        `,[subscriptionId,JSON.stringify({
+            customerId,
+            serviceType:'stremio',
+            reason:String(reason||'Stremio trial installation link was not created').slice(0,500),
+            noPlanNoLink:true
+        })]);
+        return result.rows[0]||null;
+    }));
+    // Converge any partial entitlement/token/mapping state after the exact trial
+    // has been closed. This also preserves any independent surviving service.
+    await provisioning.reconcileCustomer(customerId).catch(error=>{
+        console.error('Stremio trial rollback cleanup reconciliation failed.',{
+            customerId,subscriptionId,error:error.message
+        });
+    });
+    return ended;
 }
 
 async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
@@ -315,22 +362,53 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
             customerId,
             subscriptionId:created.id,
             reconcile:primitives.reconcileCommittedCustomerStrict,
-            verify:readyPrimaryJellyfinAccountForSubscription,
+            verify:async(customer,subscriptionId)=>{
+                const account=await readyPrimaryJellyfinAccountForSubscription(customer,subscriptionId);
+                if(!account)return null;
+                if(type!=='bundle')return account;
+                const install=await readyStremioInstallForSubscription(customer,subscriptionId);
+                return install?{account,install}:null;
+            },
             rollback:rollbackUnprovisionedJellyfinTrial,
-            missingReason:'Jellyfin trial reconciliation completed without an enabled primary account.',
-            failureMessage:'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.',
-            failureCode:'TRIAL_JELLYFIN_PROVISIONING_FAILED'
+            missingReason:type==='bundle'
+                ?'Bundle trial reconciliation completed without both an enabled Jellyfin account and a recoverable Stremio installation link.'
+                :'Jellyfin trial reconciliation completed without an enabled primary account.',
+            failureMessage:type==='bundle'
+                ?'The bundle trial could not be activated completely. No trial plan was retained.'
+                :'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.',
+            failureCode:type==='bundle'?'TRIAL_BUNDLE_PROVISIONING_FAILED':'TRIAL_JELLYFIN_PROVISIONING_FAILED'
         });
     }else if(mediaType==='emby'){
         await unpaidAccessActivation.activateOrRollback({
             customerId,
             subscriptionId:created.id,
             reconcile:primitives.reconcileCommittedCustomerStrict,
-            verify:readyEmbyAccountForSubscription,
+            verify:async(customer,subscriptionId)=>{
+                const account=await readyEmbyAccountForSubscription(customer,subscriptionId);
+                if(!account)return null;
+                if(type!=='bundle')return account;
+                const install=await readyStremioInstallForSubscription(customer,subscriptionId);
+                return install?{account,install}:null;
+            },
             rollback:rollbackUnprovisionedEmbyTrial,
-            missingReason:'Emby trial reconciliation completed without an enabled Emby account.',
-            failureMessage:'The Emby trial could not be activated because a server account could not be created. No trial plan was retained.',
-            failureCode:'TRIAL_EMBY_PROVISIONING_FAILED'
+            missingReason:type==='bundle'
+                ?'Bundle trial reconciliation completed without both an enabled Emby account and a recoverable Stremio installation link.'
+                :'Emby trial reconciliation completed without an enabled Emby account.',
+            failureMessage:type==='bundle'
+                ?'The bundle trial could not be activated completely. No trial plan was retained.'
+                :'The Emby trial could not be activated because a server account could not be created. No trial plan was retained.',
+            failureCode:type==='bundle'?'TRIAL_BUNDLE_PROVISIONING_FAILED':'TRIAL_EMBY_PROVISIONING_FAILED'
+        });
+    }else if(type==='stremio'||type==='bundle'){
+        await unpaidAccessActivation.activateOrRollback({
+            customerId,
+            subscriptionId:created.id,
+            reconcile:primitives.reconcileCommittedCustomerStrict,
+            verify:readyStremioInstallForSubscription,
+            rollback:rollbackUnprovisionedStremioTrial,
+            missingReason:'Stremio trial reconciliation completed without a recoverable installation link.',
+            failureMessage:'The Stremio trial could not be activated because its installation link could not be created. No trial plan was retained.',
+            failureCode:'TRIAL_STREMIO_INSTALL_FAILED'
         });
     }else{
         await primitives.reconcileCommittedCustomer(customerId, 'Trial');
