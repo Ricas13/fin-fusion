@@ -139,7 +139,7 @@ async function issueInstallation(customerId,{actorUserId=null}={}){
 async function revoke(customerId){return operationLock.withLock(`install-credential:${customerId}`,async()=>{
   const rows=await transaction(async client=>{
     const selected=await client.query(`SELECT e.id,e.jellyfin_account_id,e.jellyfin_access_token_encrypted,js.id server_id,js.name server_name,js.base_url,js.media_server_type FROM stremio_entitlements e LEFT JOIN jellyfin_servers js ON js.id=e.server_id WHERE e.customer_id=$1 AND e.status<>'revoked' FOR UPDATE OF e`,[customerId]);
-    if(selected.rowCount)await client.query(`UPDATE stremio_entitlements SET status='suspended',token_hash=NULL,token_hint=NULL,revoked_at=NULL,last_error='Stremio revocation cleanup pending.',updated_at=NOW() WHERE customer_id=$1 AND status<>'revoked'`,[customerId]);
+    if(selected.rowCount)await client.query(`UPDATE stremio_entitlements SET status='suspended',token_hash=NULL,token_hash_aliases='{}'::text[],token_hint=NULL,revoked_at=NULL,last_error='Stremio revocation cleanup pending.',updated_at=NOW() WHERE customer_id=$1 AND status<>'revoked'`,[customerId]);
     return selected.rows;
   });
   for(const row of rows){
