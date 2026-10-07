@@ -92,7 +92,8 @@ assert(lifecycle.includes('reconcileCommittedCustomerStrict')
 assert((
         lifecycle.includes('rollbackUnprovisionedJellyfinTrial(customerId,created.id')
         || (
-            lifecycle.includes('rollback:rollbackUnprovisionedJellyfinTrial')
+            (lifecycle.includes('rollback:rollbackUnprovisionedJellyfinTrial')
+              || lifecycle.includes(':rollbackUnprovisionedJellyfinTrial'))
             && unpaidActivation.includes('await rollback(customerId, subscriptionId')
         )
     )
