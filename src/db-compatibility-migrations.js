@@ -8,7 +8,8 @@
 const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261003113000_customer_media_location_assignment.sql',
   '20261005151000_same_plan_access_extensions.sql',
-  '20261007182500_stremio_install_token_aliases.sql'
+  '20261007182500_stremio_install_token_aliases.sql',
+  '20261007183000_stremio_retired_token_provider.sql'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {
