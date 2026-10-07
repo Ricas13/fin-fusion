@@ -24,6 +24,9 @@ const capabilityCss=read('public/css/admin-capability.css');
 const adminShell=read('src/platform/admin-html-core.js');
 const application=read('src/application.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
+const lifecyclePrimitives=read('src/payments/lifecycle-primitives.js');
+const lifecycle=read('src/payments/lifecycle.js');
+const manualEntitlementService=read('src/entitlements/admin-manual-entitlement-service.js');
 
 // Customer language describes the commercial model without exposing IP-family,
 // token/credential, lease, or addon implementation terms. Stremio management is
@@ -108,6 +111,11 @@ assert(!customer.includes('if(entitlement.has_shared_sources)return true;'),'ext
 assert(entitlementService.includes('const sub=await entitledSubscription(customerId);if(!sub?.subscription_id)return null;'),'customer Stremio status must follow the canonical current Stremio subscription rather than the newest historical entitlement row');
 assert(entitlementService.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'installation issue/retry idempotency must be scoped to the current Stremio subscription term');
 assert(entitlementService.includes('async function ensureInstallationCredential')&&entitlementService.includes('options.ensureInstallation!==false'),'ordinary entitlement reconciliation must create the private Stremio link as part of activating access instead of leaving a pending/manual-create state');
+assert(lifecycle.includes('async function readyStremioInstallForSubscription')&&lifecycle.includes("failureCode:'TRIAL_STREMIO_INSTALL_FAILED'"),'self-service Stremio trial activation must verify a recoverable installation link before retaining the trial');
+assert(lifecycle.includes("failureCode:type==='bundle'?'TRIAL_BUNDLE_PROVISIONING_FAILED'"),'bundle trial activation must verify its Stremio link as part of the same fail-closed activation contract');
+assert(manualEntitlementService.includes('stremioEntitlements.ensureInstallationCredential(customerId')&&manualEntitlementService.includes('stremioLinkReady'),'current admin-granted Stremio access must attempt link creation immediately, before broad service reconciliation');
+assert(lifecyclePrimitives.includes('async function ensureStremioInstallForSubscription')&&lifecyclePrimitives.includes("error.code = 'STREMIO_INSTALL_FULFILLMENT_PENDING'"),'paid Stremio activation must have a dedicated link-fulfillment step and expose paid-but-unfulfilled failure instead of silently succeeding without a link');
+assert(lifecyclePrimitives.indexOf('await ensureStremioInstallForSubscription(customerId, subscription.id)')<lifecyclePrimitives.indexOf("await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss"),'paid Stremio link creation must be attempted before unrelated broad reconciliation can fail');
 const fullReconcileBlock=resilientProvisioning.slice(resilientProvisioning.indexOf('const outcome = await recordRun'),resilientProvisioning.indexOf('await control.markCustomerHealthy'));
 assert(fullReconcileBlock.indexOf('stremio.reconcileForCustomer(customerId, stremioEntitlement)')<fullReconcileBlock.indexOf("reconcileLane(customerId, primaryEntitlement"),'full customer reconciliation must attempt the local Stremio installation link before remote Jellyfin work can fail');
 assert(fullReconcileBlock.includes('let stremioError = null')&&fullReconcileBlock.includes('if(stremioError)throw stremioError'),'independent early Stremio failure must remain visible to recovery state after other service lanes are attempted');
