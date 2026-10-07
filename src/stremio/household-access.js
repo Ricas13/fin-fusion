@@ -70,14 +70,17 @@ async function preview(entitlement, req, options = {}) {
 }
 
 function deniedTitle(decision) {
-  return decision?.decision === 'network_unavailable'
-    ? 'Household IP could not be verified'
-    : 'Household IP limit reached';
+  if (decision?.decision === 'network_unavailable') return 'Household IP could not be verified';
+  if (decision?.decision === 'check_failed') return 'Household access could not be verified';
+  return 'Household IP limit reached';
 }
 
 function deniedMessage(decision) {
   if (decision?.decision === 'network_unavailable') {
     return 'CAPTAiNFiN could not verify this connection\'s public household IP. Playback is blocked rather than sharing a proxy address between customers. Try again shortly or contact support if this continues.';
+  }
+  if (decision?.decision === 'check_failed') {
+    return 'CAPTAiNFiN could not complete the household-access check because of a temporary service error. Playback is blocked safely. Try again shortly; if this continues, contact support.';
   }
   return 'This Stremio plan has already reached its allowed household internet connections. Connect from a registered household connection, wait until a connection can be replaced automatically, or change your household connection from your account when eligible.';
 }
