@@ -12,7 +12,7 @@ const planExpiry=require('../entitlements/plan-expiry');
 const individualActionService=require('../access/admin-customer-individual-action-service');
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DIRECT_ACTIONS=new Set(['extend','expiry','suspend','delete-jellyfin']);
+const DIRECT_ACTIONS=new Set(['extend','expiry','reset-trial','suspend','delete-jellyfin']);
 const readLimit=routeRateLimit.middleware({scope:'admin-customer-individual-action-read',max:120,windowSeconds:60,reason:'admin_customer_individual_action_read'});
 const writeLimit=routeRateLimit.middleware({scope:'admin-customer-individual-action',max:30,windowSeconds:60,reason:'admin_customer_individual_action'});
 
@@ -79,6 +79,29 @@ async function subscriptionForCustomer(customerId,value){
   if(!sub||sub.refund_terminated)throw new Error('That subscription is not available for this customer.');
   return sub;
 }
+async function trialSubscriptionForCustomer(customerId,value){
+  const id=subscriptionId(value);
+  const result=await query(`
+    SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval,p.service_type,p.is_addon,
+      EXISTS(
+        SELECT 1 FROM audit_log terminal_audit
+        WHERE terminal_audit.entity_type='subscription'
+          AND terminal_audit.entity_id=s.id::text
+          AND terminal_audit.action='billing.subscription.terminate_for_refund'
+      ) AS refund_terminated
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    WHERE s.id=$1
+      AND s.customer_id=$2
+      AND s.superseded_by IS NULL
+    LIMIT 1
+  `,[id,customerId]);
+  const sub=result.rows[0]||null;
+  if(!sub||sub.refund_terminated)throw new Error('That trial subscription is not available for this customer.');
+  const interval=String(sub.billing_interval_snapshot||sub.billing_interval||'').toLowerCase();
+  if(String(sub.status||'').toLowerCase()!=='trialing'||interval!=='trial')throw new Error('The selected subscription is not a current trial.');
+  return sub;
+}
 
 async function jellyfinAccounts(customerId){
   const result=await query(`
@@ -119,6 +142,15 @@ async function expiryPage(req,c){
   const form=`<div class="notice"><strong>Individual action.</strong> This changes the selected subscription only and clears its previously-added service-extension days.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'expiry'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><div class="formGroup"><label>New expiry date</label><input class="input" type="date" name="expiryDate" value="${esc(current)}" required><div class="inlineHelp">Subscription ${esc(subId)}</div></div><div class="formGroup"><label>Type EXPIRY to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Set expiry for this subscription</button></form>`;
   return pageShell(req,c,'Edit expiry','Individual customer action',form);
 }
+async function resetTrialPage(req,c){
+  const sub=await trialSubscriptionForCustomer(c.id,req.query?.subscriptionId);
+  if(subscriptionState.recurringProvider(sub))return pageShell(req,c,'Reset trial duration','Provider-controlled trial','<div class="notice error"><strong>This trial is controlled by Stripe/PayPal.</strong> Change the provider trial instead so provider billing and local access do not diverge.</div>');
+  const durationDays=Math.max(1,Math.min(3650,Number(sub.duration_days_snapshot||sub.duration_days||1)));
+  const subId=sub.id||sub.subscription_id;
+  const currentEnd=sub.current_period_end?new Date(sub.current_period_end):null;
+  const form=`<div class="notice"><strong>Reset this trial clock.</strong> The same subscription and service credentials are retained. The trial starts again from the moment you confirm and runs for ${esc(durationDays)} day${durationDays===1?'':'s'}. Existing manual service-extension days are cleared. No payment-provider charge is created.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'reset-trial'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><div class="formGroup"><label>Current trial expiry</label><div class="inlineHelp">${esc(currentEnd&&!Number.isNaN(currentEnd.getTime())?currentEnd.toLocaleString('en-GB'):'Unknown')} · Subscription ${esc(subId)}</div></div><div class="formGroup"><label>New duration</label><div class="inlineHelp">Fresh ${esc(durationDays)} day${durationDays===1?'':'s'} from confirmation time.</div></div><div class="formGroup"><label>Type RESET TRIAL to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Reset trial duration</button></form>`;
+  return pageShell(req,c,'Reset trial duration','Individual customer action',form);
+}
 
 function suspendPage(req,c){
   const form=`<div class="notice error"><strong>Suspend this customer only.</strong> Access is held until an administrator releases the suspension. Billing/subscription records are not deleted.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'suspend'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<div class="formGroup"><label>Administrator reason</label><input class="input" name="reason" minlength="3" maxlength="500" required placeholder="Why is this customer being suspended?"></div><div class="formGroup"><label>Type SUSPEND to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button btn-danger" type="submit">Suspend this customer</button></form>`;
@@ -141,6 +173,7 @@ async function renderAction(req,res,next){
     await runtimeSettings.ensureLoaded();
     if(action==='extend')return res.send(await extendPage(req,c));
     if(action==='expiry')return res.send(await expiryPage(req,c));
+    if(action==='reset-trial')return res.send(await resetTrialPage(req,c));
     if(action==='suspend')return res.send(suspendPage(req,c));
     return res.send(await deleteJellyfinPage(req,c));
   }catch(error){return next(error);}
@@ -169,6 +202,15 @@ async function performExpiry(req){
     subscriptionId:subscriptionId(req.body?.subscriptionId),
     expiryDate
   });
+}
+async function performResetTrial(req){
+  if(!exactConfirmation(req,'RESET TRIAL'))throw new Error('Type RESET TRIAL exactly to confirm.');
+  const result=await individualActionService.resetTrial({
+    customerId:req.params.customerId,
+    actorUserId:req.session.authUserId,
+    subscriptionId:subscriptionId(req.body?.subscriptionId)
+  });
+  return result.message;
 }
 
 async function performSuspend(req){
@@ -202,6 +244,7 @@ async function performAction(req,res){
     let message;
     if(action==='extend')message=await performExtend(req);
     else if(action==='expiry')message=await performExpiry(req);
+    else if(action==='reset-trial')message=await performResetTrial(req);
     else if(action==='suspend')message=await performSuspend(req);
     else message=await performJellyfinDelete(req);
     return res.redirect(303,customerPath(customerId,'message',message));
@@ -223,9 +266,11 @@ module.exports={
   createAdminCustomerIndividualActionsRouter,
   currentSubscription,
   subscriptionForCustomer,
+  trialSubscriptionForCustomer,
   jellyfinAccounts,
   performExtend,
   performExpiry,
+  performResetTrial,
   performSuspend,
   performJellyfinDelete
 };
