@@ -89,7 +89,10 @@ async function indexSource(sourceId,{forceFull=false}={}){
     const auth=error?.code==='STREMIO_SOURCE_AUTH';
     await transaction(async db=>{
       await db.query(`UPDATE stremio_source_index_state SET status='failed',last_error=$2,next_incremental_at=NOW()+INTERVAL '3 hours',updated_at=NOW() WHERE source_id=$1`,[sourceId,String(error.message||error).slice(0,1500)]).catch(()=>{});
-      await db.query(`UPDATE stremio_sources SET auth_state=$2,last_auth_check_at=NOW(),last_error=$3,updated_at=NOW() WHERE id=$1`,[sourceId,auth?'reconnect_required':'error',String(error.message||error).slice(0,1000)]).catch(()=>{});
+      // A refresh/index transport failure must not disable a source whose
+      // existing credential and last completed serving snapshot are still usable.
+      // Only an actual upstream authentication failure changes auth authority.
+      await db.query(`UPDATE stremio_sources SET auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE auth_state END,last_auth_check_at=NOW(),last_error=$3,updated_at=NOW() WHERE id=$1`,[sourceId,auth,String(error.message||error).slice(0,1000)]).catch(()=>{});
     }).catch(()=>{});
     throw error;
   }
