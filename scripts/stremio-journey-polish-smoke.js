@@ -35,7 +35,7 @@ assert(customer.includes('async function issueCustomerInstallation('),'Stremio i
 assert(customer.includes('module.exports={createCustomerStremioRouter,issueCustomerInstallation};'),'customer Stremio module must export the mounted router and shared installation issuer');
 assert(customer.includes('installationLinks.current(req,customerId)'),'My Access must recover the authoritative current installation credential');
 assert(customer.includes("res.setHeader('Cache-Control','no-store, private, max-age=0')"),'installation state endpoint must remain no-store');
-assert(customer.includes("r.post('/account/stremio/ensure'")&&customer.includes('stremio.ensureInstallationCredential(req.session.customerId'),'My Access must have a CSRF-protected idempotent recovery path that creates a missing link without rotating an existing one');
+assert(customer.includes("r.post('/account/stremio/ensure'")&&customer.includes('stremio.ensureInstallationCredential(req.session.customerId'),'My Access must have a CSRF-protected idempotent recovery path that creates a missing or unrecoverable current-term link');
 
 // Trial timing is returned only for a genuinely trialing Stremio subscription.
 // Paid/free/ordinary active access gets trial:null and therefore no countdown.
@@ -106,8 +106,12 @@ assert(customer.includes('if(entitlement.has_shared_sources)return true;'),'exte
 assert(entitlementService.includes('const sub=await entitledSubscription(customerId);if(!sub?.subscription_id)return null;'),'customer Stremio status must follow the canonical current Stremio subscription rather than the newest historical entitlement row');
 assert(entitlementService.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'installation issue/retry idempotency must be scoped to the current Stremio subscription term');
 assert(entitlementService.includes('async function ensureInstallationCredential')&&entitlementService.includes('options.ensureInstallation!==false'),'ordinary entitlement reconciliation must create the private Stremio link as part of activating access instead of leaving a pending/manual-create state');
-assert(entitlementService.includes("reconcileForCustomer(customerId,sub,{ensureInstallation:false})"),'explicit link rotation must suppress reconciliation auto-issue so it cannot deadlock or issue twice');
-assert(entitlementService.includes("if(String(row.status||'')==='revoked')return{credential:null"),'automatic reconciliation must preserve an explicit customer revoke instead of silently recreating the link');
+assert(entitlementService.includes("return ensureInstallationCredential(customerId,{actorUserId,rotate:true,allowRevoked:true});"),'explicit link rotation must use the same local credential path without depending on playback reconciliation');
+assert(entitlementService.includes("if(String(row.status||'')==='revoked'&&!allowRevoked)return{credential:null"),'automatic reconciliation must preserve an explicit customer revoke instead of silently recreating the link');
+assert(!entitlementService.includes('recoveryUnavailable'),'an entitled customer must never be stranded because an old token hash has no recoverable plaintext copy');
+const issueInstallationBlock=entitlementService.slice(entitlementService.indexOf('async function issueInstallation'),entitlementService.indexOf('async function revoke'));
+assert(!issueInstallationBlock.includes('assertAcquirable')&&!issueInstallationBlock.includes('reconcileForCustomer'),'installation-link issuance must not depend on Stremio runtime/source/provisioning readiness');
+
 assert(installRecovery.includes('AND ($2::uuid IS NULL OR e.subscription_id=$2::uuid)'),'install credential recovery must be able to reject a previous trial/subscription credential');
 assert(installationLinks.includes('entitlements.entitledSubscription(customerId)')&&installationLinks.includes('subscriptionId:entitlement.subscription_id'),'My Access must recover the bearer link only for the currently-effective Stremio term');
 
