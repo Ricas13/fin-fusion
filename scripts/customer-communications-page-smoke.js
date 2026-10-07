@@ -11,6 +11,7 @@ assert.match(source,/async function safeOptional\(/,'communications page must is
 assert.match(source,/safeOptional\('delivery status'/,'delivery status must degrade independently');
 assert.match(source,/safeOptional\('notification event catalogue'/,'event catalogue must degrade independently');
 assert.match(source,/safeOptional\('customer event preferences'/,'customer event preferences must degrade independently');
+assert.match(source,/customer_notification_preferences WHERE customer_id=\$1`\s*,\s*\[customerId\]\)/,'customer notification preference lookup must bind its customer id parameter');
 assert.match(source,/safeOptional\('preferred currency'/,'preferred currency must degrade independently');
 assert.match(source,/safeOptional\('enabled currencies'/,'enabled currencies must degrade independently');
 assert.doesNotMatch(source,/Promise\.all\(\[prefs\(req\.session\.customerId\).*allowedEvents/s,'optional communications lookups must not share one fail-all Promise.all');
