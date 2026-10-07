@@ -62,6 +62,7 @@ const runtimeSource=read('src/stremio/runtime.js');
 const restrictedSource=read('src/stremio/jellyfin-runtime.js');
 const entitlementSource=read('src/stremio/entitlements.js');
 const externalTokenSource=read('src/stremio/external-playback-token.js');
+const tokenAliasMigration=read('db/migrations/20261007182500_stremio_install_token_aliases.sql');
 
 assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call PlaybackInfo');
 assert(!managedSource.includes("searchParams.set('PlaySessionId'")&&!managedSource.includes("searchParams.set('DeviceId'"),'managed raw-file URLs must not attach playback-session state');
@@ -80,6 +81,14 @@ assert(!runtimeSource.includes('managedPlayback.start(')&&!runtimeSource.include
 assert(!runtimeSource.includes('managedRuntime.playbackInfo'),'managed playback routes must not refresh PlaybackInfo');
 assert(runtimeSource.includes('managedRuntime.streamsFor(entitlement, type, videoId)'),'managed stream results must be generated as direct URLs');
 assert(runtimeSource.includes('externalRuntime.streamsFor(entitlement, type, videoId)'),'external stream results must also be generated as direct URLs');
+assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'new installation-link issuance must leave managed Jellyfin IMDb lookup/search fan-out unchanged');
+assert(externalSource.includes('sourceIndex.lookupAll(source.id,args.imdb,args.type)'),'new installation-link issuance must leave external Jellyfin IMDb lookup/search fan-out unchanged');
+assert(tokenAliasMigration.includes('token_hash_aliases text[]')&&tokenAliasMigration.includes('USING gin (token_hash_aliases)'),'automatic link recovery must preserve hashed aliases without storing another plaintext install token');
+assert(entitlementSource.includes("COALESCE(e.token_hash_aliases,'{}'::text[]) @> ARRAY[$1]::text[]"),'active addon lookup must accept an automatically-preserved previous install token so existing Stremio installs keep returning Jellyfin results');
+assert(runtimeSource.includes("COALESCE(e.token_hash_aliases,'{}'::text[]) @> ARRAY[$1]::text[]"),'subscription-ended runtime lookup must recognize preserved install-token aliases too');
+const ensureBlock=entitlementSource.slice(entitlementSource.indexOf('async function ensureInstallationCredential'),entitlementSource.indexOf('function activatedOutcome'));
+assert(ensureBlock.includes('array_append(array_remove')&&ensureBlock.includes("WHEN $6::boolean THEN '{}'::text[]"),'automatic recovery must preserve the current installed token while explicit rotation clears historical aliases');
+for(const forbidden of ['stremio_media_index','stremio_source_media_index','plan_stremio_sources','sourceIndex','mediaIndex'])assert(!ensureBlock.includes(forbidden),`installation-link issuance must not mutate or depend on Jellyfin/Stremio search state: ${forbidden}`);
 assert(runtimeSource.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household admission must be claimed before direct raw URLs are returned');
 assert(runtimeSource.includes('managedRuntime.directUrl(mapping, req.params.itemId, req.params.mediaSourceId)'),'legacy managed control URLs must fall through to raw delivery without reporting playback');
 assert(!runtimeSource.includes("restrictedPost")&&!runtimeSource.includes("managedPlayback.start("),'runtime must never report a playing session');
