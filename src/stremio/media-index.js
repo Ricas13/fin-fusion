@@ -5,6 +5,7 @@ const {query,transaction}=require('../db');
 const registry=require('../jellyfin/registry');
 const managedLibraries=require('./managed-library-selection');
 const indexLock=require('./index-lock');
+const operationLock=require('./operation-lock');
 
 const MANAGED_REFRESH_HOURS=3;
 const MANAGED_BATCH_LIMIT=1;
@@ -50,7 +51,7 @@ async function scanTarget(serverId,parentId,generation,pageSize){
   return processed;
 }
 
-async function indexServer(serverId,{pageSize=500}={}){
+async function indexServerUnlocked(serverId,{pageSize=500}={}){
   const generation=crypto.randomUUID(),startedAt=new Date();
   await transaction(async client=>{
     // A crashed/abandoned shadow build is never serving traffic, so it is safe
@@ -67,6 +68,8 @@ async function indexServer(serverId,{pageSize=500}={}){
     await transaction(async client=>{
       const staged=await client.query(`SELECT COUNT(*)::int n FROM stremio_media_index_build WHERE server_id=$1 AND generation=$2`,[serverId,generation]);
       const itemCount=Number(staged.rows[0]?.n||0);
+      const state=await client.query('SELECT status FROM stremio_media_index_state WHERE server_id=$1 FOR UPDATE',[serverId]);
+      const rerunRequested=state.rows[0]?.status==='queued';
 
       // PostgreSQL readers keep seeing the previous committed snapshot until
       // this transaction commits. The delete+insert therefore acts as one
@@ -76,7 +79,7 @@ async function indexServer(serverId,{pageSize=500}={}){
         SELECT server_id,imdb_id,item_id,item_type,name,production_year,path,generation,updated_at,seen_at
         FROM stremio_media_index_build WHERE server_id=$1 AND generation=$2`,[serverId,generation]);
       await client.query(`DELETE FROM stremio_media_index_build WHERE server_id=$1 AND generation=$2`,[serverId,generation]);
-      await client.query(`UPDATE stremio_media_index_state SET status='ready',last_completed_at=NOW(),item_count=$2,last_error=NULL,updated_at=NOW() WHERE server_id=$1`,[serverId,itemCount]);
+      await client.query(`UPDATE stremio_media_index_state SET status=$2,last_completed_at=NOW(),item_count=$3,last_error=NULL,updated_at=NOW() WHERE server_id=$1`,[serverId,rerunRequested?'queued':'ready',itemCount]);
     });
     return{serverId,processed:total,startedAt,ok:true};
   }catch(error){
@@ -84,11 +87,12 @@ async function indexServer(serverId,{pageSize=500}={}){
       await client.query(`DELETE FROM stremio_media_index_build WHERE server_id=$1 AND generation=$2`,[serverId,generation]);
       // Keep last_completed_at and item_count untouched: they describe the
       // previous complete serving snapshot, which remains valid after failure.
-      await client.query(`UPDATE stremio_media_index_state SET status='failed',last_error=$2,updated_at=NOW() WHERE server_id=$1`,[serverId,String(error.message||error).slice(0,2000)]);
+      await client.query(`UPDATE stremio_media_index_state SET status=CASE WHEN status='queued' THEN 'queued' ELSE 'failed' END,last_error=$2,updated_at=NOW() WHERE server_id=$1`,[serverId,String(error.message||error).slice(0,2000)]);
     }).catch(()=>{});
     throw error;
   }
 }
+async function indexServer(serverId,options={}){return operationLock.withLock(`managed-index:${serverId}`,()=>indexServerUnlocked(serverId,options));}
 async function indexAll(){
   const servers=await eligibleServers();let processed=0,failed=0;
   for(const server of servers){try{const r=await indexServer(server.id);processed+=Number(r.processed||0);}catch(error){failed++;console.error(`Stremio media index failed for ${server.name}:`,error.message);}}
@@ -147,9 +151,11 @@ async function queueManagedRefresh(client,serverId,itemCount){
 
 async function saveLibrariesAndReset(serverId,libraryIds,actorUserId=null){
   // Keep the currently committed catalogue serving while a replacement is
-  // built from the new library selection. Promotion is atomic in indexServer().
-  const prepared=await managedLibraries.prepareSave(serverId,libraryIds);
-  return indexLock.withIndexTransaction(async client=>{
+  // built from the new library selection. Serialize against the same server's
+  // active scan so a late scan cannot overwrite a freshly-saved selection.
+  return operationLock.withLock(`managed-index:${serverId}`,async()=>{
+    const prepared=await managedLibraries.prepareSave(serverId,libraryIds);
+    return indexLock.withIndexTransaction(async client=>{
     const selected=await managedLibraries.writePrepared(client,serverId,prepared,actorUserId);
     const preserved=await servingCount(client,serverId);
     await queueManagedRefresh(client,serverId,preserved);
@@ -157,15 +163,16 @@ async function saveLibrariesAndReset(serverId,libraryIds,actorUserId=null){
       VALUES($1,'admin.stremio.managed_index.refresh','jellyfin_server',$2,$3::jsonb)`,[actorUserId,serverId,JSON.stringify({preserved,reason:'library_selection_update',zeroDowntime:true})]);
     return{selected,preserved,deleted:0,queued:true};
   },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before changing managed library selections.'});
+  });
 }
 async function clearAndReset(serverId,actorUserId=null){
-  return indexLock.withIndexTransaction(async client=>{
+  return operationLock.withLock(`managed-index:${serverId}`,()=>indexLock.withIndexTransaction(async client=>{
     const preserved=await servingCount(client,serverId);
     await queueManagedRefresh(client,serverId,preserved);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.stremio.managed_index.refresh','jellyfin_server',$2,$3::jsonb)`,[actorUserId,serverId,JSON.stringify({preserved,reason:'manual_rebuild',zeroDowntime:true})]);
     return{preserved,deleted:0,queued:true};
-  },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding this managed source.'});
+  },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding this managed source.'}));
 }
 async function clearAll(actorUserId=null){
   return indexLock.withIndexTransaction(async client=>{
@@ -202,4 +209,4 @@ async function states(){
   return r.rows;
 }
 
-module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,states};
+module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServerUnlocked,indexServer,indexAll,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,states};
