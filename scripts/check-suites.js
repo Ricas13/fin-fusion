@@ -102,6 +102,7 @@ module.exports = {
       "node scripts/admin-guided-setup-search-smoke.js",
       "node scripts/admin-operational-dashboard-integrations-smoke.js",
       "node scripts/admin-shared-ui-smoke.js",
+      "node scripts/admin-critical-css-fallback-smoke.js",
       "node scripts/html-primitives-smoke.js",
       "node scripts/admin-accessibility-mobile-smoke.js",
       "node scripts/admin-command-palette-smoke.js",
