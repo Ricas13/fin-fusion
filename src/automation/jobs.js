@@ -81,7 +81,7 @@ const JOB_METADATA=Object.freeze({
  pending_registration_cleanup:{defaultIntervalSeconds:300,critical:false},
  stremio_managed_accounts:{defaultIntervalSeconds:300,critical:true},
  stremio_external_tokens:{defaultIntervalSeconds:300,critical:true},
- stremio_media_index:{defaultIntervalSeconds:300,critical:false}
+ stremio_media_index:{defaultIntervalSeconds:10800,critical:false}
 });
 
 
@@ -216,7 +216,7 @@ const jobs={
  async pending_registration_cleanup(){return pendingRegistrations.cleanupExpired(500)},
  async stremio_managed_accounts(){const managed=await stremioManagedSweep.syncActiveBounded();if(Number(managed?.failed||0)>0)return{...managed,orphanCleanup:{processed:0,deleted:0,skipped:0,failed:0,disabled:'managed_reconciliation_failed'}};let orphanCleanup;try{orphanCleanup=await stremioOrphanCleanup.run({apply:true,limit:5})}catch(error){const detail=String(error?.message||error).slice(0,900);orphanCleanup={processed:0,deleted:0,skipped:0,failed:1,error:detail,warning:`Stremio orphan cleanup failed: ${detail}`.slice(0,1000)}}const warning=[managed?.warning,orphanCleanup?.warning].filter(Boolean).join('; ').slice(0,1000);return{...managed,...(warning?{warning}:{}),orphanCleanup}},
  async stremio_external_tokens(){return stremioExternalTokens.maintain({rotateLimit:25,revokeLimit:100})},
- async stremio_media_index(){let external={total:0,processed:0,failed:0};try{external=await stremioSourceIndex.indexDueSources();}catch(error){external={total:0,processed:0,failed:1};console.error('External Stremio source index failed:',error.message);}let managed={total:0,processed:0,failed:0};try{managed=await stremioMediaIndex.indexAll();}catch(error){managed={total:0,processed:0,failed:1};console.error('Managed Stremio media index failed:',error.message);}return{total:Number(external.total||0)+Number(managed.total||0),processed:Number(external.processed||0)+Number(managed.processed||0),failed:Number(external.failed||0)+Number(managed.failed||0),external,managed}}
+ async stremio_media_index(){let external={total:0,processed:0,failed:0};try{external=await stremioSourceIndex.indexDueSources();}catch(error){external={total:0,processed:0,failed:1};console.error('External Stremio source index failed:',error.message);}let managed={total:0,processed:0,failed:0};try{managed=await stremioMediaIndex.indexAll();}catch(error){managed={total:0,processed:0,failed:1};console.error('Managed Stremio media index failed:',error.message);}const remainingDue=Number(external.remainingDue||0);return{total:Number(external.total||0)+Number(managed.total||0),processed:Number(external.processed||0)+Number(managed.processed||0),failed:Number(external.failed||0)+Number(managed.failed||0),remainingDue,waiting:remainingDue,external,managed}}
 };
 
 const runtimeNames=Object.keys(jobs);
