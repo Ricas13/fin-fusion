@@ -22,6 +22,7 @@ const adminJourney=read('public/js/admin-stremio-journey.js');
 const adminCss=read('public/css/admin-stremio-journey.css');
 const capabilityCss=read('public/css/admin-capability.css');
 const adminShell=read('src/platform/admin-html-core.js');
+const application=read('src/application.js');
 
 // Customer language describes the commercial model without exposing IP-family,
 // token/credential, lease, or addon implementation terms. Stremio management is
@@ -68,6 +69,8 @@ assert(!checkout.includes("querySelector('#stremio-access')"),'Home must not rel
 // My Access owns the setup experience and loads the same recovered installation
 // state used by the server. The rich setup is rendered there after a no-store read.
 assert(access.includes('id="stremio-access"')&&access.includes('data-stremio-access'),'My Access must contain the Stremio setup mount');
+assert(application.includes('app.locals.assetVersion')&&application.includes('CAPTAINFIN_BUILD_SHA'),'rendered customer assets must be versioned by the immutable deployed release');
+assert(access.includes('/js/customer-jellyfin.js?v=<%= encodeURIComponent(assetVersion) %>'),'My Access must cache-bust its Stremio JavaScript on every deployed release');
 for(const copy of ['Household access','Use a different household connection','Copy URL'])assert(accessJs.includes(copy),`My Access Stremio section missing task-focused copy: ${copy}`);
 for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.'])assert(accessJs.includes(instructions),`My Access Stremio setup instructions missing: ${instructions}`);
 assert(!accessJs.includes('Installation manifest'),'My Access must not render a duplicate installation-manifest section below the setup steps');
