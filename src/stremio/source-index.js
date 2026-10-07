@@ -43,12 +43,32 @@ async function refreshProgress(sourceId){
   await query(`UPDATE stremio_source_index_state SET status='running',item_count=$2,updated_at=NOW() WHERE source_id=$1`,[sourceId,itemCount]);
   return itemCount;
 }
+async function writeIndexedItems(db,{sourceId,library,generation,mode,items}){
+  let changed=0;
+  for(const item of items){
+    const providerIds=item.ProviderIds||item.providerIds||{},imdb=normalizeImdb(externalId(providerIds,'Imdb','IMDB','IMDb')),tmdb=externalId(providerIds,'Tmdb','TMDB','TheMovieDb','MovieDb'),tvdb=externalId(providerIds,'Tvdb','TVDB','TheTvdb'),type=String(item.Type||item.type||''),name=item.Name||null,key=titleKey(name);
+    if((!imdb&&!tmdb&&!tvdb&&!key)||!['Movie','Series'].includes(type)||!item.Id)continue;
+    const params=[sourceId,library.library_id,imdb,tmdb,tvdb,key,String(item.Id),type,name,Number.isInteger(item.ProductionYear)?item.ProductionYear:null,item.Path||null,dateValue(item.DateLastSaved),generation];
+    if(mode==='full'){
+      await db.query(`INSERT INTO stremio_source_media_index_build(generation,source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,updated_at,seen_at)
+        VALUES($13,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())
+        ON CONFLICT(generation,source_id,item_id) DO UPDATE SET library_id=EXCLUDED.library_id,imdb_id=EXCLUDED.imdb_id,tmdb_id=EXCLUDED.tmdb_id,tvdb_id=EXCLUDED.tvdb_id,title_key=EXCLUDED.title_key,item_type=EXCLUDED.item_type,name=EXCLUDED.name,production_year=EXCLUDED.production_year,path=EXCLUDED.path,date_last_saved=EXCLUDED.date_last_saved,updated_at=NOW(),seen_at=NOW()`,params);
+    }else{
+      await db.query(`INSERT INTO stremio_source_media_index(source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,scan_generation,updated_at,seen_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
+        ON CONFLICT(source_id,item_id) DO UPDATE SET library_id=EXCLUDED.library_id,imdb_id=EXCLUDED.imdb_id,tmdb_id=EXCLUDED.tmdb_id,tvdb_id=EXCLUDED.tvdb_id,title_key=EXCLUDED.title_key,item_type=EXCLUDED.item_type,name=EXCLUDED.name,production_year=EXCLUDED.production_year,path=EXCLUDED.path,date_last_saved=EXCLUDED.date_last_saved,scan_generation=EXCLUDED.scan_generation,updated_at=NOW(),seen_at=NOW()`,params);
+    }
+    changed++;
+  }
+  return changed;
+}
 async function indexSource(sourceId,{forceFull=false}={}){
   const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');if(!src.enabled)return{sourceId,processed:0,skipped:'disabled'};
   const libraries=await selectedLibraries(sourceId);if(!libraries.length)throw new Error('Select at least one Jellyfin library before indexing this source.');
   const prior=await state(sourceId),mode=fullDue(prior,forceFull)?'full':'incremental',generation=crypto.randomUUID(),startedAt=new Date(),sourceLabel=safeLog(src.name||sourceId,200);
   const overlapSince=prior?.last_completed_at?new Date(new Date(prior.last_completed_at).getTime()-5*60*1000):null;
   await query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_error,updated_at) VALUES($1,'running',$2,NOW(),NULL,NOW()) ON CONFLICT(source_id) DO UPDATE SET status='running',last_mode=EXCLUDED.last_mode,last_started_at=NOW(),last_error=NULL,updated_at=NOW()`,[sourceId,mode]);
+  if(mode==='full')await query('DELETE FROM stremio_source_media_index_build WHERE source_id=$1',[sourceId]);
   console.log(`Stremio source index started: ${sourceLabel} mode=${mode} libraries=${libraries.length}`);
   let changed=0;
   try{
@@ -59,17 +79,7 @@ async function indexSource(sourceId,{forceFull=false}={}){
         if(mode==='incremental'&&overlapSince)qs.set('MinDateLastSaved',overlapSince.toISOString());
         const payload=await client.request(src,`/Items?${qs.toString()}`,{timeoutMs:20000,maxBytes:12*1024*1024}),items=Array.isArray(payload.Items)?payload.Items:[];
         if(!items.length)break;
-        await transaction(async db=>{
-          for(const item of items){
-            const providerIds=item.ProviderIds||item.providerIds||{},imdb=normalizeImdb(externalId(providerIds,'Imdb','IMDB','IMDb')),tmdb=externalId(providerIds,'Tmdb','TMDB','TheMovieDb','MovieDb'),tvdb=externalId(providerIds,'Tvdb','TVDB','TheTvdb'),type=String(item.Type||item.type||''),name=item.Name||null,key=titleKey(name);
-            if((!imdb&&!tmdb&&!tvdb&&!key)||!['Movie','Series'].includes(type)||!item.Id)continue;
-            await db.query(`INSERT INTO stremio_source_media_index(source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,scan_generation,updated_at,seen_at)
-              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
-              ON CONFLICT(source_id,item_id) DO UPDATE SET library_id=EXCLUDED.library_id,imdb_id=EXCLUDED.imdb_id,tmdb_id=EXCLUDED.tmdb_id,tvdb_id=EXCLUDED.tvdb_id,title_key=EXCLUDED.title_key,item_type=EXCLUDED.item_type,name=EXCLUDED.name,production_year=EXCLUDED.production_year,path=EXCLUDED.path,date_last_saved=EXCLUDED.date_last_saved,scan_generation=EXCLUDED.scan_generation,updated_at=NOW(),seen_at=NOW()`,
-              [sourceId,library.library_id,imdb,tmdb,tvdb,key,String(item.Id),type,name,Number.isInteger(item.ProductionYear)?item.ProductionYear:null,item.Path||null,dateValue(item.DateLastSaved),generation]);
-            changed++;
-          }
-        });
+        changed+=await transaction(db=>writeIndexedItems(db,{sourceId,library,generation,mode,items}));
         await refreshProgress(sourceId);
         startIndex+=items.length;
         const declared=Number(payload.TotalRecordCount||0);
@@ -77,9 +87,20 @@ async function indexSource(sourceId,{forceFull=false}={}){
         await sleep(PAGE_DELAY_MS);
       }
     }
-    if(mode==='full')await query(`DELETE FROM stremio_source_media_index i WHERE i.source_id=$1 AND (i.scan_generation<>$2 OR NOT EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=i.source_id AND l.library_id=i.library_id AND l.selected=TRUE AND l.available=TRUE))`,[sourceId,generation]);
-    const count=await query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]),itemCount=Number(count.rows[0]?.n||0);
+    let itemCount=0;
     await transaction(async db=>{
+      if(mode==='full'){
+        const staged=await db.query('SELECT COUNT(*)::int n FROM stremio_source_media_index_build WHERE source_id=$1 AND generation=$2',[sourceId,generation]);
+        itemCount=Number(staged.rows[0]?.n||0);
+        await db.query('DELETE FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
+        await db.query(`INSERT INTO stremio_source_media_index(source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,scan_generation,updated_at,seen_at)
+          SELECT source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,generation,updated_at,seen_at
+          FROM stremio_source_media_index_build WHERE source_id=$1 AND generation=$2`,[sourceId,generation]);
+        await db.query('DELETE FROM stremio_source_media_index_build WHERE source_id=$1 AND generation=$2',[sourceId,generation]);
+      }else{
+        const count=await db.query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
+        itemCount=Number(count.rows[0]?.n||0);
+      }
       await db.query(`UPDATE stremio_source_index_state SET status='ready',last_mode=$2,last_completed_at=NOW(),last_full_completed_at=CASE WHEN $2='full' THEN NOW() ELSE last_full_completed_at END,next_incremental_at=NOW()+($3||' hours')::interval,force_full=FALSE,item_count=$4,last_error=NULL,updated_at=NOW() WHERE source_id=$1`,[sourceId,mode,String(INCREMENTAL_HOURS),itemCount]);
       await db.query(`UPDATE stremio_sources SET auth_state='connected',last_success_at=NOW(),last_auth_check_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[sourceId]);
     });
@@ -88,6 +109,7 @@ async function indexSource(sourceId,{forceFull=false}={}){
   }catch(error){
     const auth=error?.code==='STREMIO_SOURCE_AUTH';
     await transaction(async db=>{
+      if(mode==='full')await db.query('DELETE FROM stremio_source_media_index_build WHERE source_id=$1 AND generation=$2',[sourceId,generation]).catch(()=>{});
       await db.query(`UPDATE stremio_source_index_state SET status='failed',last_error=$2,next_incremental_at=NOW()+INTERVAL '3 hours',updated_at=NOW() WHERE source_id=$1`,[sourceId,String(error.message||error).slice(0,1500)]).catch(()=>{});
       // A refresh/index transport failure must not disable a source whose
       // existing credential and last completed serving snapshot are still usable.
@@ -109,4 +131,4 @@ async function lookupAll(sourceId,identity,itemType){const input=typeof identity
 async function lookup(sourceId,imdbId,itemType){const rows=await lookupAll(sourceId,imdbId,itemType);return rows[0]||null;}
 async function states(){const r=await query(`SELECT s.id,s.name,s.enabled,s.priority,s.auth_state,s.jellyfin_username,s.base_url,(s.password_encrypted IS NOT NULL) password_configured,s.last_connected_at,s.last_success_at,s.last_error,s.token_rotation_enabled,s.token_rotation_hours,s.token_rotates_at,s.token_last_rotated_at,COALESCE(i.status,'never') index_status,COALESCE(i.item_count,0)::int item_count,i.last_mode,i.last_started_at,i.last_completed_at,i.last_full_completed_at,i.next_incremental_at,i.last_error index_error,COUNT(l.library_id) FILTER(WHERE l.selected AND l.available)::int selected_libraries FROM stremio_sources s LEFT JOIN stremio_source_index_state i ON i.source_id=s.id LEFT JOIN stremio_source_libraries l ON l.source_id=s.id GROUP BY s.id,i.source_id ORDER BY s.enabled DESC,s.priority,s.name`);return r.rows;}
 
-module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_HOURS,SOURCE_BATCH_LIMIT,normalizeImdb,titleKey,selectedLibraries,state,fullDue,queue,clearAndQueue,refreshProgress,indexSource,sourceBatchLimit,dueSources,dueSourceCount,indexDueSources,lookupAll,lookup,states};
+module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_HOURS,SOURCE_BATCH_LIMIT,normalizeImdb,titleKey,selectedLibraries,state,fullDue,queue,clearAndQueue,refreshProgress,writeIndexedItems,indexSource,sourceBatchLimit,dueSources,dueSourceCount,indexDueSources,lookupAll,lookup,states};
