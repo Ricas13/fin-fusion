@@ -102,7 +102,7 @@ assert(hiddenScope>=2,'generic Jellyfin activity paths must keep excluding inter
 // while preserving the only remote cleanup identity until logout/disable succeeds.
 assert(entitlements.includes('const INSTALL_CONCURRENCY_WINDOW_MS=5000'),'concurrent Stremio install issuance must have a bounded idempotency window');
 assert(entitlements.includes('operationLock.withLock(`install-credential:${customerId}`'),'Stremio install issuance/revoke must serialize per customer across processes');
-assert(entitlements.includes('installRecovery.current(customerId)'),'concurrent install issuance must reuse a just-issued durable recovery credential');
+assert(entitlements.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'concurrent install issuance must reuse a just-issued durable recovery credential from the current Stremio term only');
 assert(entitlements.includes('reused:true'),'the install owner must explicitly report concurrent credential reuse');
 const revokeScope=entitlements.slice(entitlements.indexOf('async function revoke(customerId)'),entitlements.indexOf('async function findByInstallToken'));
 assert(revokeScope.includes("SET status='suspended',token_hash=NULL,token_hint=NULL"),'explicit revoke must invalidate the install bearer credential immediately');
