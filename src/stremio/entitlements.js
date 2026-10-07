@@ -77,6 +77,10 @@ async function ensureInstallationCredential(customerId,{entitlement=null,actorUs
     const recovered=await installRecovery.current(customerId,{subscriptionId:sub.subscription_id});
     const recoveredAt=recovered?.updated_at?new Date(recovered.updated_at).getTime():0;
     if(recovered?.credential&&(!rotate||(Number.isFinite(recoveredAt)&&Date.now()-recoveredAt<=INSTALL_CONCURRENCY_WINDOW_MS))){
+      if(rotate&&Array.isArray(row.token_hash_aliases)&&row.token_hash_aliases.length){
+        const cleared=await query(`UPDATE stremio_entitlements SET token_hash_aliases='{}'::text[],updated_at=NOW() WHERE id=$1 RETURNING *`,[row.id]);
+        row=cleared.rows[0]||row;
+      }
       return{credential:recovered.credential,entitlement:row,reused:true};
     }
 
