@@ -58,8 +58,43 @@ async function persistEntitlementRecord(customerId,sub,{sharedSources=false}={})
   await transaction(async client=>{if(prior)await client.query(`UPDATE stremio_entitlements SET customer_id=$2,server_id=NULL,jellyfin_account_id=NULL,stream_limit=$3,jellyfin_access_token_encrypted=NULL,jellyfin_token_issued_at=NULL,status=CASE WHEN status='revoked' THEN 'revoked' WHEN token_hash IS NULL THEN 'pending' ELSE 'active' END,last_error=NULL,updated_at=NOW() WHERE id=$1`,[prior.id,customerId,limit]);else await client.query(`INSERT INTO stremio_entitlements(customer_id,subscription_id,status,stream_limit) VALUES($1,$2,'pending',$3)`,[customerId,sub.subscription_id,limit]);});
   const refreshed=await query(`SELECT status,token_hash FROM stremio_entitlements WHERE subscription_id=$1`,[sub.subscription_id]),row=refreshed.rows[0]||{};return{active:row.status==='active'&&Boolean(row.token_hash),status:row.status||'pending',serverId:null,accountId:null,subscriptionId:sub.subscription_id,isAddon:Boolean(sub.is_addon),sharedSources:Boolean(sharedSources)};
 }
-async function reconcileSharedForCustomer(customerId,sub){const mapped=await explicitSourceCount(sub.subscription_id);if(!mapped)return null;const ready=await explicitSourceCount(sub.subscription_id,{readyOnly:true});if(!ready)throw new Error('No selected Stremio source is currently ready. Check Servers → Stremio Sources.');return persistEntitlementRecord(customerId,sub,{sharedSources:true});}
-async function reconcileForCustomer(customerId,entitlement=null,_options={}){const sub=entitlement||await entitledSubscription(customerId);if(!sub||!['stremio','bundle'].includes(serviceType(sub)))return suspend(customerId,'Stremio service is not currently entitled.');const shared=await reconcileSharedForCustomer(customerId,sub);if(shared)return shared;return persistEntitlementRecord(customerId,sub,{sharedSources:false});}
+async function ensureInstallationCredential(customerId,{entitlement=null,actorUserId=null}={}){
+  return operationLock.withLock(`install-credential:${customerId}`,async()=>{
+    const sub=entitlement||await entitledSubscription(customerId);
+    if(!sub?.subscription_id)throw new Error('Your current plan or add-on does not include Stremio.');
+    let row=(await query(`SELECT * FROM stremio_entitlements WHERE customer_id=$1 AND subscription_id=$2 LIMIT 1`,[customerId,sub.subscription_id])).rows[0]||null;
+    if(!row){
+      await persistEntitlementRecord(customerId,sub,{sharedSources:false});
+      row=(await query(`SELECT * FROM stremio_entitlements WHERE customer_id=$1 AND subscription_id=$2 LIMIT 1`,[customerId,sub.subscription_id])).rows[0]||null;
+    }
+    if(!row)throw new Error('Stremio entitlement could not be prepared.');
+    if(String(row.status||'')==='revoked')return{credential:null,entitlement:row,reused:false,revoked:true};
+
+    const recovered=await installRecovery.current(customerId,{subscriptionId:sub.subscription_id});
+    if(recovered?.credential)return{credential:recovered.credential,entitlement:row,reused:true};
+    // Never invalidate a link that may already be installed merely because its
+    // encrypted recovery copy is missing. Explicit customer rotation remains the
+    // safe recovery path for that exceptional legacy/corrupt state.
+    if(row.token_hash)return{credential:null,entitlement:row,reused:false,recoveryUnavailable:true};
+
+    const issued=foundation.issueInstallCredential();
+    const activated=await transaction(async client=>{
+      const result=await client.query(`UPDATE stremio_entitlements SET token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW() WHERE id=$1 AND token_hash IS NULL AND status<>'revoked' RETURNING *`,[row.id,issued.hash,issued.hint]);
+      if(!result.rowCount)return null;
+      await installRecovery.save({customerId,entitlement:result.rows[0],credential:issued.token,actorUserId},{client});
+      return result.rows[0];
+    });
+    if(activated)return{credential:issued.token,entitlement:activated,reused:false};
+
+    const latest=(await query(`SELECT * FROM stremio_entitlements WHERE customer_id=$1 AND subscription_id=$2 LIMIT 1`,[customerId,sub.subscription_id])).rows[0]||row;
+    const concurrent=await installRecovery.current(customerId,{subscriptionId:sub.subscription_id});
+    if(concurrent?.credential)return{credential:concurrent.credential,entitlement:latest,reused:true};
+    return{credential:null,entitlement:latest,reused:false,revoked:String(latest.status||'')==='revoked',recoveryUnavailable:Boolean(latest.token_hash)};
+  });
+}
+function activatedOutcome(outcome,ensured){return ensured?.entitlement?.status==='active'?{...outcome,active:true,status:'active'}:outcome;}
+async function reconcileSharedForCustomer(customerId,sub,options={}){const mapped=await explicitSourceCount(sub.subscription_id);if(!mapped)return null;let outcome=await persistEntitlementRecord(customerId,sub,{sharedSources:true});if(options.ensureInstallation!==false&&outcome.status!=='revoked')outcome=activatedOutcome(outcome,await ensureInstallationCredential(customerId,{entitlement:sub,actorUserId:options.actorUserId||null}));const ready=await explicitSourceCount(sub.subscription_id,{readyOnly:true});if(!ready)throw new Error('No selected Stremio source is currently ready. Check Servers → Stremio Sources.');return outcome;}
+async function reconcileForCustomer(customerId,entitlement=null,options={}){const sub=entitlement||await entitledSubscription(customerId);if(!sub||!['stremio','bundle'].includes(serviceType(sub)))return suspend(customerId,'Stremio service is not currently entitled.');const shared=await reconcileSharedForCustomer(customerId,sub,options);if(shared)return shared;let outcome=await persistEntitlementRecord(customerId,sub,{sharedSources:false});if(options.ensureInstallation!==false&&outcome.status!=='revoked')outcome=activatedOutcome(outcome,await ensureInstallationCredential(customerId,{entitlement:sub,actorUserId:options.actorUserId||null}));return outcome;}
 async function current(customerId){const sub=await entitledSubscription(customerId);if(!sub?.subscription_id)return null;const r=await query(`SELECT e.*,s.plan_id,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code,p.is_addon FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id WHERE e.customer_id=$1 AND e.subscription_id=$2 LIMIT 1`,[customerId,sub.subscription_id]);return r.rows[0]||null;}
 async function suspend(customerId,reason='No active Stremio entitlement'){
   const rows=await transaction(async client=>{
@@ -80,7 +115,7 @@ async function suspend(customerId,reason='No active Stremio entitlement'){
   await query(`UPDATE stremio_entitlements SET server_id=NULL,jellyfin_account_id=NULL,jellyfin_access_token_encrypted=NULL,jellyfin_token_issued_at=NULL,last_error=CASE WHEN status='revoked' THEN last_error ELSE $2 END,updated_at=NOW() WHERE customer_id=$1`,[customerId,String(reason).slice(0,1000)]);
   return{active:false,status:'suspended'};
 }
-async function issueInstallation(customerId,{actorUserId=null}={}){return operationLock.withLock(`install-credential:${customerId}`,async()=>{foundation.assertAcquirable({service_type:'stremio'});const sub=await entitledSubscription(customerId);if(!sub)throw new Error('Your current plan or add-on does not include Stremio.');const recent=await installRecovery.current(customerId,{subscriptionId:sub.subscription_id}),recentAt=recent?.updated_at?new Date(recent.updated_at).getTime():0;if(recent?.credential&&Number.isFinite(recentAt)&&Date.now()-recentAt<=INSTALL_CONCURRENCY_WINDOW_MS)return{credential:recent.credential,entitlement:{id:recent.entitlement_id,token_version:recent.token_version,token_hint:recent.token_hint},reused:true};await reconcileForCustomer(customerId,sub);const issued=foundation.issueInstallCredential();const entitlement=await transaction(async client=>{const r=await client.query(`UPDATE stremio_entitlements SET token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW() WHERE subscription_id=$1 RETURNING *`,[sub.subscription_id,issued.hash,issued.hint]);if(!r.rowCount)throw new Error('Stremio entitlement could not be activated.');await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client});return r.rows[0];});return{credential:issued.token,entitlement,reused:false};});}
+async function issueInstallation(customerId,{actorUserId=null}={}){return operationLock.withLock(`install-credential:${customerId}`,async()=>{foundation.assertAcquirable({service_type:'stremio'});const sub=await entitledSubscription(customerId);if(!sub)throw new Error('Your current plan or add-on does not include Stremio.');const recent=await installRecovery.current(customerId,{subscriptionId:sub.subscription_id}),recentAt=recent?.updated_at?new Date(recent.updated_at).getTime():0;if(recent?.credential&&Number.isFinite(recentAt)&&Date.now()-recentAt<=INSTALL_CONCURRENCY_WINDOW_MS)return{credential:recent.credential,entitlement:{id:recent.entitlement_id,token_version:recent.token_version,token_hint:recent.token_hint},reused:true};await reconcileForCustomer(customerId,sub,{ensureInstallation:false});const issued=foundation.issueInstallCredential();const entitlement=await transaction(async client=>{const r=await client.query(`UPDATE stremio_entitlements SET token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW() WHERE subscription_id=$1 RETURNING *`,[sub.subscription_id,issued.hash,issued.hint]);if(!r.rowCount)throw new Error('Stremio entitlement could not be activated.');await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client});return r.rows[0];});return{credential:issued.token,entitlement,reused:false};});}
 async function revoke(customerId){return operationLock.withLock(`install-credential:${customerId}`,async()=>{
   const rows=await transaction(async client=>{
     const selected=await client.query(`SELECT e.id,e.jellyfin_account_id,e.jellyfin_access_token_encrypted,js.id server_id,js.name server_name,js.base_url,js.media_server_type FROM stremio_entitlements e LEFT JOIN jellyfin_servers js ON js.id=e.server_id WHERE e.customer_id=$1 AND e.status<>'revoked' FOR UPDATE OF e`,[customerId]);
@@ -125,4 +160,4 @@ async function findByInstallToken(raw){const token=String(raw||'');if(token.leng
 function accessToken(entitlement){return entitlement?.jellyfin_access_token_encrypted?decryptWithEnv(entitlement.jellyfin_access_token_encrypted,TOKEN_ENV,TOKEN_PREFIX):null;}
 async function markUse(id,kind){if(kind==='manifest')return query(`UPDATE stremio_entitlements SET last_manifest_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);return query(`UPDATE stremio_entitlements SET last_stream_request_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);}
 
-module.exports={TOKEN_ENV,TOKEN_PREFIX,INSTALL_CONCURRENCY_WINDOW_MS,serviceType,streamLimit,jellyfinAuthHeader,clientAuthorization,restrictedTokenHeaders,entitledSubscription,explicitSourceCount,usesSharedSources,selectServer,authenticateRestrictedUser,logoutRestrictedToken,refreshRestrictedAccess,reconcileForCustomer,reconcileSharedForCustomer,issueInstallation,revoke,current,findByInstallToken,accessToken,markUse,suspend};
+module.exports={TOKEN_ENV,TOKEN_PREFIX,INSTALL_CONCURRENCY_WINDOW_MS,serviceType,streamLimit,jellyfinAuthHeader,clientAuthorization,restrictedTokenHeaders,entitledSubscription,explicitSourceCount,usesSharedSources,selectServer,authenticateRestrictedUser,logoutRestrictedToken,refreshRestrictedAccess,reconcileForCustomer,reconcileSharedForCustomer,ensureInstallationCredential,issueInstallation,revoke,current,findByInstallToken,accessToken,markUse,suspend};
