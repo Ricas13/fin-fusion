@@ -24,8 +24,8 @@ assert(managedIndex.includes('INSERT INTO stremio_media_index_build'),'managed s
 assert(managedIndex.includes('SELECT server_id,imdb_id,item_id,item_type,name,production_year,path,generation,updated_at,seen_at'),'promotion must copy one completed shadow generation into the serving table');
 const promoteDelete=managedIndex.indexOf('DELETE FROM stremio_media_index WHERE server_id=$1');
 const promoteInsert=managedIndex.indexOf('INSERT INTO stremio_media_index(server_id,imdb_id,item_id,item_type,name,production_year,path,scan_generation,updated_at,seen_at)',promoteDelete);
-const promoteReady=managedIndex.indexOf("SET status='ready'",promoteInsert);
-assert(promoteDelete>=0&&promoteInsert>promoteDelete&&promoteReady>promoteInsert,'managed promotion must flip serving rows and readiness only after the shadow build completes');
+const promoteReady=managedIndex.indexOf('UPDATE stremio_media_index_state SET status=$2',promoteInsert);
+assert(promoteDelete>=0&&promoteInsert>promoteDelete&&promoteReady>promoteInsert,'managed promotion must flip serving rows and publish ready/queued state only after the shadow build completes');
 assert(managedIndex.includes('Keep last_completed_at and item_count untouched'),'a failed managed refresh must retain the previous completed snapshot');
 assert(managedIndex.includes("VALUES($1,'queued',$2,NULL,NOW())"),'manual managed rebuilds must queue work without blanking readiness metadata');
 assert(managedIndex.includes('return{selected,preserved,deleted:0,queued:true}'),'library changes must preserve the serving managed catalogue');
