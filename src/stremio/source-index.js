@@ -41,7 +41,7 @@ async function clearAndQueue(sourceId,{actorUserId=null}={}){
 async function refreshProgress(sourceId){
   const count=await query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
   const itemCount=Number(count.rows[0]?.n||0);
-  await query(`UPDATE stremio_source_index_state SET status='running',item_count=$2,updated_at=NOW() WHERE source_id=$1`,[sourceId,itemCount]);
+  await query(`UPDATE stremio_source_index_state SET status=CASE WHEN status='queued' THEN 'queued' ELSE 'running' END,item_count=$2,updated_at=NOW() WHERE source_id=$1`,[sourceId,itemCount]);
   return itemCount;
 }
 async function writeIndexedItems(db,{sourceId,library,generation,mode,items}){
