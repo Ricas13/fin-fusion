@@ -48,7 +48,7 @@ async function cleanupStremio(customerId){
   const remaining=await stremio.entitledSubscription(customerId);
   if(remaining){await stremio.reconcileForCustomer(customerId,remaining);return{revoked:false,preserved:true};}
   await stremio.revoke(customerId);
-  const cleanup=await managedStremio.revokeInactiveMappings();
+  const cleanup=await managedStremio.revokeCustomerInactiveMappings(customerId);
   if(Number(cleanup?.failed||0)>0)throw Object.assign(new Error(cleanup.warning||'Some managed Stremio access could not be revoked.'),{code:'STREMIO_REVOKE_INCOMPLETE'});
   return{revoked:true,preserved:false,managedRevoked:Number(cleanup?.revoked||0)};
 }
