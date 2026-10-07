@@ -4,6 +4,7 @@ const crypto=require('crypto');
 const {query,transaction}=require('../db');
 const client=require('./source-client');
 const indexLock=require('./index-lock');
+const operationLock=require('./operation-lock');
 
 const PAGE_SIZE=250;
 const PAGE_DELAY_MS=100;
@@ -62,7 +63,7 @@ async function writeIndexedItems(db,{sourceId,library,generation,mode,items}){
   }
   return changed;
 }
-async function indexSource(sourceId,{forceFull=false}={}){
+async function indexSourceUnlocked(sourceId,{forceFull=false}={}){
   const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');if(!src.enabled)return{sourceId,processed:0,skipped:'disabled'};
   const libraries=await selectedLibraries(sourceId);if(!libraries.length)throw new Error('Select at least one Jellyfin library before indexing this source.');
   const prior=await state(sourceId),mode=fullDue(prior,forceFull)?'full':'incremental',generation=crypto.randomUUID(),startedAt=new Date(),sourceLabel=safeLog(src.name||sourceId,200);
@@ -119,6 +120,7 @@ async function indexSource(sourceId,{forceFull=false}={}){
     throw error;
   }
 }
+async function indexSource(sourceId,options={}){return operationLock.withLock(`external-token:${sourceId}`,()=>indexSourceUnlocked(sourceId,options));}
 function sourceBatchLimit(value=SOURCE_BATCH_LIMIT){return Math.max(1,Math.min(4,Number(value)||SOURCE_BATCH_LIMIT));}
 async function dueSources({limit=SOURCE_BATCH_LIMIT}={}){const safeLimit=sourceBatchLimit(limit),r=await query(`SELECT s.id FROM stremio_sources s JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error') AND EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=s.id AND l.selected=TRUE AND l.available=TRUE) AND (i.status IN ('never','queued') OR i.next_incremental_at<=NOW()) ORDER BY i.force_full DESC,COALESCE(i.next_incremental_at,'1970-01-01'::timestamptz),s.priority,s.name LIMIT $1`,[safeLimit]);return r.rows;}
 async function dueSourceCount(){const r=await query(`SELECT COUNT(*)::int n FROM stremio_sources s JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error') AND EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=s.id AND l.selected=TRUE AND l.available=TRUE) AND (i.status IN ('never','queued') OR i.next_incremental_at<=NOW())`);return Number(r.rows[0]?.n||0);}
@@ -131,4 +133,4 @@ async function lookupAll(sourceId,identity,itemType){const input=typeof identity
 async function lookup(sourceId,imdbId,itemType){const rows=await lookupAll(sourceId,imdbId,itemType);return rows[0]||null;}
 async function states(){const r=await query(`SELECT s.id,s.name,s.enabled,s.priority,s.auth_state,s.jellyfin_username,s.base_url,(s.password_encrypted IS NOT NULL) password_configured,s.last_connected_at,s.last_success_at,s.last_error,s.token_rotation_enabled,s.token_rotation_hours,s.token_rotates_at,s.token_last_rotated_at,COALESCE(i.status,'never') index_status,COALESCE(i.item_count,0)::int item_count,i.last_mode,i.last_started_at,i.last_completed_at,i.last_full_completed_at,i.next_incremental_at,i.last_error index_error,COUNT(l.library_id) FILTER(WHERE l.selected AND l.available)::int selected_libraries FROM stremio_sources s LEFT JOIN stremio_source_index_state i ON i.source_id=s.id LEFT JOIN stremio_source_libraries l ON l.source_id=s.id GROUP BY s.id,i.source_id ORDER BY s.enabled DESC,s.priority,s.name`);return r.rows;}
 
-module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_HOURS,SOURCE_BATCH_LIMIT,normalizeImdb,titleKey,selectedLibraries,state,fullDue,queue,clearAndQueue,refreshProgress,writeIndexedItems,indexSource,sourceBatchLimit,dueSources,dueSourceCount,indexDueSources,lookupAll,lookup,states};
+module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_HOURS,SOURCE_BATCH_LIMIT,normalizeImdb,titleKey,selectedLibraries,state,fullDue,queue,clearAndQueue,refreshProgress,writeIndexedItems,indexSourceUnlocked,indexSource,sourceBatchLimit,dueSources,dueSourceCount,indexDueSources,lookupAll,lookup,states};
