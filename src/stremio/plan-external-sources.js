@@ -43,7 +43,7 @@ async function statesForAllPlans(){
   const result=await query(`SELECT
       p.id plan_id,
       COUNT(ps.source_id) FILTER(WHERE ps.enabled=TRUE)::int selected,
-      COUNT(ps.source_id) FILTER(WHERE ps.enabled=TRUE AND s.enabled=TRUE AND s.auth_state='connected' AND i.last_completed_at IS NOT NULL AND i.item_count>0)::int ready
+      COUNT(ps.source_id) FILTER(WHERE ps.enabled=TRUE AND s.enabled=TRUE AND s.auth_state='connected' AND s.password_encrypted IS NOT NULL AND i.last_completed_at IS NOT NULL AND i.item_count>0)::int ready
     FROM plans p
     LEFT JOIN plan_stremio_sources ps ON ps.plan_id=p.id
     LEFT JOIN stremio_sources s ON s.id=ps.source_id
