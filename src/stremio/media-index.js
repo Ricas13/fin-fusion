@@ -200,6 +200,12 @@ async function lookupAll(serverId,imdbId,itemType){
 async function lookup(serverId,imdbId,itemType){
   return (await lookupAll(serverId,imdbId,itemType))[0]||null;
 }
+async function removeItem(serverId,itemId){
+  if(!serverId||!itemId)return 0;
+  const result=await query('DELETE FROM stremio_media_index WHERE server_id=$1 AND item_id=$2',[serverId,String(itemId)]);
+  if(result.rowCount)await query(`UPDATE stremio_media_index_state SET item_count=GREATEST(0,item_count-$2),updated_at=NOW() WHERE server_id=$1`,[serverId,Number(result.rowCount)]).catch(()=>{});
+  return Number(result.rowCount||0);
+}
 
 async function states(){
   const r=await query(`SELECT s.id,s.name,s.stremio_enabled,s.enabled,s.health_status,
@@ -209,4 +215,4 @@ async function states(){
   return r.rows;
 }
 
-module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServerUnlocked,indexServer,indexAll,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,states};
+module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServerUnlocked,indexServer,indexAll,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,removeItem,states};
