@@ -135,6 +135,65 @@ async function proveAutomationRecoveryPass({
     throw new Error(`Timed out waiting for the post-deploy automation recovery probe (${detail}).`);
 }
 
+async function proveBlockingCriticalJobs({
+    jobKeys = [],
+    timeoutMs = DEPLOYMENT_PROBE_TIMEOUT_MS,
+    workerStartedAt = null
+} = {}) {
+    const keys = [...new Set((Array.isArray(jobKeys) ? jobKeys : []).map(String).filter(Boolean))];
+    if (!keys.length) return [];
+
+    const requestedAt = new Map();
+    for (const jobKey of keys) {
+        const requested = await jobHealth.requestRun(jobKey);
+        requestedAt.set(jobKey, new Date(requested?.updated_at || Date.now()));
+    }
+
+    const deadline = Date.now() + Math.max(15000, Number(timeoutMs) || DEPLOYMENT_PROBE_TIMEOUT_MS);
+    while (Date.now() < deadline) {
+        const rows = await jobHealth.list();
+        const byKey = new Map(rows.map(row => [row.job_key, row]));
+        const snapshots = keys.map(jobKey => {
+            const row = byKey.get(jobKey);
+            const marker = requestedAt.get(jobKey);
+            const state = deploymentCriticalState(row, workerStartedAt);
+            const completedAfterRequest = timestamp(row?.last_completed_at) >= timestamp(marker);
+            const successAfterRequest = String(row?.last_outcome || '') === 'success'
+                && timestamp(row?.last_success_at) >= timestamp(marker);
+            return {
+                jobKey,
+                state,
+                completedAfterRequest,
+                successAfterRequest,
+                completedAt: row?.last_completed_at || null,
+                successAt: row?.last_success_at || null,
+                warning: row?.last_warning || null,
+                error: row?.last_error || null
+            };
+        });
+
+        if (snapshots.every(item => item.successAfterRequest)) return snapshots;
+
+        const completedBad = snapshots.filter(item =>
+            item.completedAfterRequest && ['failed','degraded'].includes(item.state)
+        );
+        if (completedBad.length) {
+            throw new Error(completedBad.map(item =>
+                `${item.jobKey}:${item.state}${item.warning ? ` warning=${item.warning}` : ''}${item.error ? ` error=${item.error}` : ''}`
+            ).join('; '));
+        }
+
+        await sleep(2000);
+    }
+
+    const rows = await jobHealth.list();
+    const byKey = new Map(rows.map(row => [row.job_key, row]));
+    throw new Error(keys.map(jobKey => {
+        const row = byKey.get(jobKey);
+        return `${jobKey}:state=${deploymentCriticalState(row, workerStartedAt)} completed=${row?.last_completed_at || 'never'} success=${row?.last_success_at || 'never'}`;
+    }).join('; '));
+}
+
 async function main() {
     const checks = [];
     const add = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail: String(detail || '') });
@@ -226,9 +285,36 @@ async function main() {
                     ? `instance=${backupWorker.instance_id} heartbeat_age=${backupWorker.age}s last_success=${backupWorker.last_success_at || 'never'}${backupWorker.last_error ? ` degraded_error=${backupWorker.last_error} retry=${backupWorker.next_run_at || 'unscheduled'}` : ''}`
                     : 'no heartbeat');
 
-            const jobs = await jobHealth.list();
-            const jobsByKey = new Map(jobs.map(job => [job.job_key, job]));
+            let jobs = await jobHealth.list();
+            let jobsByKey = new Map(jobs.map(job => [job.job_key, job]));
             const critical = new Set(requiredJobs);
+
+            // A release that fixes a degraded critical automation must be able
+            // to prove that fix before web cutover. Otherwise deployment can
+            // deadlock forever on historical state produced by the previous
+            // worker: the candidate contains the repair, but the verifier
+            // rejects it before that candidate job is ever exercised.
+            if (automationWorkerHealthy && automationShaMatches && missingRegisteredJobs.length === 0) {
+                const historicalBlockers = jobs.filter(job => {
+                    if (!critical.has(job.job_key) || job.enabled === false) return false;
+                    const state = deploymentCriticalState(job, automationWorker?.started_at);
+                    return ['failed','degraded'].includes(state) && deploymentJobBlocks(job.job_key, state);
+                });
+                if (historicalBlockers.length) {
+                    try {
+                        const repaired = await proveBlockingCriticalJobs({
+                            jobKeys: historicalBlockers.map(job => job.job_key),
+                            workerStartedAt: automationWorker.started_at
+                        });
+                        add('critical automation repair probe', true,
+                            repaired.map(item => `${item.jobKey}:success`).join(', '));
+                    } catch (error) {
+                        add('critical automation repair probe', false, error.message);
+                    }
+                    jobs = await jobHealth.list();
+                    jobsByKey = new Map(jobs.map(job => [job.job_key, job]));
+                }
+            }
             // A degraded critical job means one or more customer/revenue sub-operations
             // failed. Treat that as a deployment blocker rather than accepting a green
             // worker heartbeat while customers remain stranded. Deliberately disabled
@@ -327,5 +413,6 @@ module.exports = {
     formatProbeSnapshot,
     deploymentCriticalState,
     proveAutomationRecoveryPass,
+    proveBlockingCriticalJobs,
     main
 };
