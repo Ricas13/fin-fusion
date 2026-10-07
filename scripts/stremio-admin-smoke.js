@@ -96,7 +96,7 @@ assert(sources.includes('tokenRotationEnabled')&&sources.includes('value="4"'),'
 
 assert(sourceIndex.includes('INCREMENTAL_HOURS=3')&&sourceIndex.includes('FULL_RECONCILE_HOURS=84'),'Index policy must remain three-hour incremental plus twice-weekly full reconciliation');
 assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'External indexing must remain incremental and low-footprint');
-assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
+assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexDueServers()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(automationJobs.includes('stremio_external_tokens')&&automationJobs.includes('stremioExternalTokens.maintain'),'External token maintenance must remain a dedicated automation job');
 assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_external_tokens'),300,'External token housekeeping must retain its five-minute cadence');
 assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_media_index'),300,'Bounded external-index sweeps must retain their five-minute cadence');
