@@ -17,6 +17,8 @@ const customerAccessState = require('../access/customer-access-state');
 const unpaidAccessActivation = require('./unpaid-access-activation');
 const stremioEntitlements = require('../stremio/entitlements');
 const stremioInstallRecovery = require('../stremio/install-credential-recovery');
+const stremioExternalPlaybackToken = require('../stremio/external-playback-token');
+const stremioManagedEntitlements = require('../stremio/managed-entitlements');
 const accessExtensions = require('./subscription-access-extensions');
 
 function addPlanDuration(plan, from = new Date()) {
@@ -172,7 +174,30 @@ async function readyStremioInstallForSubscription(customerId,subscriptionId){
 }
 
 async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason='Stremio trial installation link was not created'}={}){
+    let entitlementId=null;
     const ended=await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>transaction(async client=>{
+        const entitlement=await client.query(`
+            SELECT id FROM stremio_entitlements
+            WHERE customer_id=$1 AND subscription_id=$2
+            LIMIT 1
+            FOR UPDATE
+        `,[customerId,subscriptionId]);
+        entitlementId=entitlement.rows[0]?.id||null;
+        if(entitlementId){
+            await client.query(`
+                UPDATE stremio_entitlements
+                SET status='revoked',
+                    token_hash=NULL,
+                    token_hash_aliases='{}'::text[],
+                    token_hint=NULL,
+                    install_issued_at=NULL,
+                    revoked_at=NOW(),
+                    last_error=$2,
+                    updated_at=NOW()
+                WHERE id=$1
+            `,[entitlementId,String(reason||'Stremio trial activation failed').slice(0,1000)]);
+            await client.query('DELETE FROM stremio_install_credential_recovery WHERE entitlement_id=$1',[entitlementId]);
+        }
         const result=await client.query(`
             UPDATE subscriptions
             SET status='cancelled',
@@ -190,13 +215,27 @@ async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reas
         `,[subscriptionId,JSON.stringify({
             customerId,
             serviceType:'stremio',
+            entitlementId,
             reason:String(reason||'Stremio trial installation link was not created').slice(0,500),
             noPlanNoLink:true
         })]);
         return result.rows[0]||null;
     }));
-    // Converge any partial entitlement/token/mapping state after the exact trial
-    // has been closed. This also preserves any independent surviving service.
+
+    if(entitlementId){
+        await stremioExternalPlaybackToken.revokeEntitlement(entitlementId).catch(error=>{
+            console.error('Stremio trial rollback could not revoke external playback sessions immediately.',{
+                customerId,subscriptionId,entitlementId,error:error.message
+            });
+        });
+    }
+    await stremioManagedEntitlements.revokeCustomerInactiveMappings(customerId).catch(error=>{
+        console.error('Stremio trial rollback could not revoke managed mappings immediately.',{
+            customerId,subscriptionId,error:error.message
+        });
+    });
+    // Converge any remaining service state after the exact trial has been
+    // closed. Another independent entitlement, if present, is preserved.
     await provisioning.reconcileCustomer(customerId).catch(error=>{
         console.error('Stremio trial rollback cleanup reconciliation failed.',{
             customerId,subscriptionId,error:error.message
