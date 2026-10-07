@@ -6,6 +6,7 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
 const migration=read('db/migrations/20261002081500_stremio_zero_downtime_index_refresh.sql');
+const externalShadowMigration=read('db/migrations/20261007190000_stremio_external_index_shadow.sql');
 const managedIndex=read('src/stremio/media-index.js');
 const externalIndex=read('src/stremio/source-index.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
@@ -31,6 +32,15 @@ assert(managedIndex.includes('return{selected,preserved,deleted:0,queued:true}')
 assert(managedIndex.includes('return{preserved,deleted:0,queued:true}'),'manual managed rebuilds must preserve the serving catalogue');
 
 assert(!externalIndex.slice(externalIndex.indexOf('async function clearAndQueue('),externalIndex.indexOf('async function refreshProgress(')).includes('DELETE FROM stremio_source_media_index'),'manual external rebuilds must keep the previous source index live');
+assert(externalShadowMigration.includes('CREATE TABLE IF NOT EXISTS public.stremio_source_media_index_build'),'external full refreshes need their own shadow generation table');
+assert(externalShadowMigration.includes('PRIMARY KEY(generation,source_id,item_id)'),'external shadow generations must be isolated by generation/source/item');
+assert(externalIndex.includes("if(mode==='full')")&&externalIndex.includes('INSERT INTO stremio_source_media_index_build'),'full external scans must write only to the shadow generation while serving rows remain untouched');
+const externalPromoteDelete=externalIndex.indexOf("DELETE FROM stremio_source_media_index WHERE source_id=$1");
+const externalPromoteInsert=externalIndex.indexOf('INSERT INTO stremio_source_media_index(source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,scan_generation,updated_at,seen_at)',externalPromoteDelete);
+const externalPromoteReady=externalIndex.indexOf("SET status='ready'",externalPromoteInsert);
+assert(externalPromoteDelete>=0&&externalPromoteInsert>externalPromoteDelete&&externalPromoteReady>externalPromoteInsert,'external full promotion must atomically replace serving rows before publishing the new completed snapshot');
+const externalCatch=externalIndex.slice(externalIndex.indexOf('}catch(error){'),externalIndex.indexOf('function sourceBatchLimit'));
+assert(externalCatch.includes("DELETE FROM stremio_source_media_index_build")&&!externalCatch.includes("DELETE FROM stremio_source_media_index WHERE source_id=$1"),'failed external full refresh must discard only its shadow generation and leave the serving snapshot intact');
 assert(externalIndex.includes('preservedItems:preserved')&&externalIndex.includes('zeroDowntime:true'),'external rebuild audit metadata must record snapshot preservation');
 assert(!maintenance.includes('DELETE FROM stremio_media_index')&&!maintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must not clear serving Stremio indexes');
 assert(maintenance.includes("UPDATE stremio_media_index_state SET status='queued'")&&maintenance.includes("UPDATE stremio_source_index_state SET status='queued'"),'global rebuild must queue replacements while preserving current rows');
