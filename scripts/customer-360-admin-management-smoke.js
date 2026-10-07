@@ -116,6 +116,15 @@ assert(individualActionService.includes('async function resetExpiryToPlan')
     && individualActionService.includes('subscriptionState.effectiveSubscription(customerId,{includeBlocked:true})')
     && individualActionService.includes("'admin.customer.expiry.reset_to_plan'"),
   'access-domain individual action service must own reset-to-plan expiry selection, mutation and audit');
+assert(individualActionService.includes('async function resetTrial({customerId,actorUserId,subscriptionId})')
+    && individualActionService.includes("'admin.customer.trial.reset_duration'")
+    && individualActionService.includes('duration_days_snapshot||sub.duration_days||1')
+    && individualActionService.includes('cancel_at_period_end=FALSE'),
+  'trial reset must preserve the contracted duration, clear cancellation state and audit the exact selected subscription');
+assert(individualActionService.includes("String(sub.status||'').toLowerCase()!=='trialing'")
+    && individualActionService.includes("interval!=='trial'")
+    && individualActionService.includes('subscriptionState.recurringProvider(sub)'),
+  'trial reset must reject non-trials, inactive trials and provider-controlled trials');
 
 assert(customer360Route.includes('lifecycleService.resetAutomaticPlacement(')
     && !customer360Route.includes("require('../jellyfin/server-migration')"),
@@ -220,7 +229,9 @@ assert(compact360.includes('accessCards.accessLibrariesRequests(detail,token,opt
 assert(!compact360.includes('bulkForm(')&&!compact360.includes('/admin/customers/bulk/preview'),'Customer 360 compact single-customer actions must not submit through the bulk preview workflow');
 assert(!primaryActions.includes('/admin/customers/bulk/preview')&&primaryActions.includes('/admin/users/${encodeURIComponent(id)}/move-server'),'Customer 360 primary actions must route server movement directly instead of through bulk preview');
 assert(compact360.includes("customerLink(id,'change-plan','Change plan'")&&compact360.includes("customerLink(id,'subscriptions/revoke','Revoke a plan'")&&compact360.includes("customerLink(id,'move-server','Move Jellyfin server'")&&compact360.includes("customerLink(id,'delete-customer','Review permanent deletion'"),'Customer 360 must expose direct plan-change, targeted subscription-revoke, server-move and permanent-delete workflows');
+assert(compact360.includes("actionLink(id,'reset-trial','Reset trial'")&&compact360.includes("String(sub.status||'').toLowerCase()==='trialing'"),'Customer 360 plans card must show Reset trial only when a current trial subscription exists');
 assert(directIndividual.includes("COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')"),'individual subscription actions must only target Jellyfin-capable subscriptions');
+assert(directIndividual.includes("'reset-trial'")&&directIndividual.includes('trialSubscriptionForCustomer')&&directIndividual.includes("Type RESET TRIAL exactly to confirm."),'Customer 360 must expose trial reset as an explicit confirmed action that can target Stremio-only trials without broadening Jellyfin-only expiry actions');
 assert(directLifecycle.includes('lifecycleService.moveServer(')&&directLifecycleService.includes('return forceMove.move(customerId,serverId')&&directLifecycle.includes('ownerStatus(req.session.authUserId)')&&directLifecycle.includes('deletion.hardDeletePortalCustomer'),'single-customer lifecycle routes must reuse canonical move/deletion safeguards through the domain boundary');
 assert(directLifecycle.includes("serviceScope=require('../entitlements/service-scope')")&&directLifecycle.includes("function jellyfinCapable(row){return serviceScope.capabilities(row).has('jellyfin');}")&&directLifecycle.includes('serviceScope.overlaps(sub,plan)&&jellyfinCapable(plan)')&&directLifecycleService.includes('!serviceScope.overlaps(sub,target)||!jellyfinCapable(target)'),'single-customer plan changes must only offer and accept service-compatible Jellyfin-capable target plans');
 assert(directLifecycle.includes('!(subscriptionState.recurringProvider(sub)&&planExpiry.isFreeTier(plan))')&&directLifecycleService.includes('subscriptionState.recurringProvider(sub)&&planExpiry.isFreeTier(target)'),'recurring provider subscriptions must not be manually moved to the free tier while provider billing remains active');
