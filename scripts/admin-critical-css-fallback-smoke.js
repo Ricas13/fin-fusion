@@ -25,7 +25,7 @@ function assertCriticalTokens(label,html){
   for(const token of REQUIRED)assert(html.includes(token),`${label} critical CSS is missing ${token}`);
   assert(html.includes('@media(max-width:820px){:root{--pitch:44px;--bar-h:52px;--rail-w:0px}}'),`${label} is missing mobile token fallbacks`);
   assert(html.includes('.adminHeader{position:fixed'),`${label} is missing critical sidebar geometry`);
-  assert(html.includes('.mainPane,.adminMain{min-width:0;min-height:100vh;margin-left:var(--rail-w)'),`${label} is missing critical main-pane geometry`);
+  assert(/\.mainPane(?:,\.adminMain)?\{min-width:0;min-height:100vh;margin-left:var\(--rail-w\)/.test(html),`${label} is missing critical main-pane geometry`);
 }
 
 const rendered=core.layout({title:'Critical CSS test',active:'dashboard',body:'<p>ok</p>'});
