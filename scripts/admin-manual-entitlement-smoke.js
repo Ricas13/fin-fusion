@@ -13,6 +13,7 @@ const routes = fs.readFileSync(path.join(root, 'src/platform/admin-route-composi
 const customerActions = fs.readFileSync(path.join(root, 'src/platform/admin-actions.js'), 'utf8');
 const customerCreation = fs.readFileSync(path.join(root, 'src/customers/admin-customer-creation.js'), 'utf8');
 const clientScript = fs.readFileSync(path.join(root, 'public/js/admin-manual-entitlement.js'), 'utf8');
+const lifecycle = fs.readFileSync(path.join(root, 'src/payments/lifecycle.js'), 'utf8');
 
 assert(customerActions.includes('adminCustomerCreation.create({') && customerCreation.includes('manualSubscriptions.createManualSubscriptionTx') && !customerActions.includes('INSERT INTO subscriptions'), 'Add customer flow must delegate subscription creation to the canonical entitlement owner');
 assert(customerCreation.includes('planCapacity.lockAndAssert(client,plan.id') && customerCreation.includes('selectServerForLocationLocked(plan,null'), 'Add customer with a plan must reserve plan capacity and a concrete media server inside the creation transaction');
@@ -44,6 +45,9 @@ assert(manual.includes('grantablePlansForCustomer') && manual.includes('plans.le
 assert(manualService.includes('conflictingPrimarySubscription') && manualService.includes('serviceScope.overlaps(row, plan)') && manualService.includes("IN ('jellyfin','stremio','emby','bundle')"), 'manual grants must block only overlapping current service access and keep bundle plans grantable');
 assert(manualService.includes('o.permanent_access=TRUE') && manualService.includes('service_extension_days'), 'permanent and extension-backed overlapping access must still block duplicate manual grants');
 assert(manualService.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect overlapping existing subscriptions to the normal manual edit flow');
+assert(manualService.includes("const adminTrialRegrant = plan.billing_interval === 'trial';")&&manualService.includes('adminTrialRegrant,'),'administrator trial grants must explicitly preserve repeat-trial semantics after an earlier trial has ended');
+assert(manualService.includes('Administrator grants intentionally bypass customer self-service trial-history'),'admin repeat-trial behavior must stay intentional and documented at the domain boundary');
+assert(lifecycle.includes('await enforceTrialEligibility(customerId, plan);'),'customer self-service trial creation must continue enforcing prior-trial eligibility even though administrators may grant another trial');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
 assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
 assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf("mountCritical('customer360', createAdminCustomer360Router())"), 'manual entitlement injection must mount before Customer 360');
