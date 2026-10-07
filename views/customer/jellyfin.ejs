@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
   <link rel="stylesheet" href="/css/customer-jellyfin.css">
-  <script src="/js/customer-jellyfin.js" defer></script>
+  <script src="/js/customer-jellyfin.js?v=<%= encodeURIComponent(assetVersion) %>" defer></script>
 </head>
 <%
   function validDate(value){if(!value)return null;const date=new Date(value);return Number.isNaN(date.getTime())?null:date;}

@@ -16,6 +16,14 @@ RUN npm ci --omit=dev --ignore-scripts \
 
 COPY . .
 
+# Production verification and runtime health inspect the packaged migration
+# catalogue as the unprivileged node user. Normalize read/traverse permissions
+# inside the image so restrictive checkout metadata cannot make a safe release
+# fail verification after migrations have already succeeded.
+RUN chmod a+rx /app/db /app/db/migrations \
+    && find /app/db/migrations -type d -exec chmod a+rx {} + \
+    && find /app/db/migrations -type f -exec chmod a+r {} +
+
 USER node
 EXPOSE 3030
 

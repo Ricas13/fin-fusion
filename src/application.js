@@ -345,6 +345,10 @@ function createApplication() {
   app.locals.adminNavActiveKey = adminNav.activeKey;
   app.locals.adminNavGroupFor = adminNav.groupFor;
   app.locals.adminNavSidebarKey = adminNav.sidebarKey;
+  // Static assets are intentionally cacheable in production. Version customer-facing
+  // asset URLs with the immutable release SHA so a zero-downtime deploy cannot leave
+  // an already-signed-in browser running stale JavaScript from the previous release.
+  app.locals.assetVersion = String(process.env.CAPTAINFIN_BUILD_SHA || process.env.CAPTAINFIN_BUILD_TIME || 'dev');
   app.use(requestContext);
   app.use(securityHeaders);
   mountPlatform(app);
