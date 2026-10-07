@@ -44,6 +44,22 @@ async function current(sourceId, entitlementId) {
     WHERE source_id=$1 AND entitlement_id=$2 LIMIT 1`, [sourceId, entitlementId]);
   return result.rows[0] || null;
 }
+async function planIdForEntitlement(entitlement) {
+  if(entitlement?.plan_id)return String(entitlement.plan_id);
+  const result=await query(`SELECT s.plan_id FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id WHERE e.id=$1 LIMIT 1`,[entitlement?.id||null]);
+  return result.rows[0]?.plan_id?String(result.rows[0].plan_id):null;
+}
+async function sourceAuthorized(sourceId,entitlementId,db=query) {
+  const result=await db(`SELECT EXISTS(
+      SELECT 1
+      FROM stremio_entitlements e
+      JOIN subscriptions sub ON sub.id=e.subscription_id
+      JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=$2 AND ps.enabled=TRUE
+      JOIN stremio_sources s ON s.id=ps.source_id
+      WHERE e.id=$1 AND s.enabled=TRUE AND s.auth_state='connected' AND s.password_encrypted IS NOT NULL
+    ) AS allowed`,[entitlementId,sourceId]);
+  return result.rows[0]?.allowed===true;
+}
 async function currentlyDue(row) {
   if (!row?.source_id || !row?.entitlement_id) return false;
   if (new Date(row.expires_at).getTime() <= Date.now()) return true;
@@ -79,10 +95,17 @@ async function revokeRow(row) {
 
 async function tokenFor(source, entitlement) {
   if (!source?.id || !entitlement?.id) throw new Error('External raw playback requires a source and current Stremio entitlement.');
-  return operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
+  const planId=await planIdForEntitlement(entitlement);
+  if(!planId)throw new Error('External raw playback could not resolve the current Stremio plan.');
+  return operationLock.withLock(`stremio-plan:${planId}`,()=>operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
     if (!await entitlementActive(entitlement.id)) {
       const error = new Error('Stremio entitlement is no longer active.');
       error.code = 'STREMIO_ENTITLEMENT_INACTIVE';
+      throw error;
+    }
+    if(!await sourceAuthorized(source.id,entitlement.id)){
+      const error=new Error('This external Stremio source is no longer authorized for the current plan.');
+      error.code='STREMIO_SOURCE_NOT_AUTHORIZED';
       throw error;
     }
 
@@ -126,6 +149,11 @@ async function tokenFor(source, entitlement) {
 
     try {
       if (!await entitlementActive(entitlement.id)) throw new Error('Stremio entitlement ended while external playback access was being prepared.');
+      if(!await sourceAuthorized(source.id,entitlement.id)){
+        const error=new Error('External Stremio source authorization changed while playback access was being prepared.');
+        error.code='STREMIO_SOURCE_NOT_AUTHORIZED';
+        throw error;
+      }
       const encrypted = client.encryptToken(auth.accessToken);
       const hours = ttlHours();
       const stored = await transaction(async db => {
@@ -159,7 +187,7 @@ async function tokenFor(source, entitlement) {
       await client.logoutToken(auth.baseUrl, auth.accessToken, source.name || source.jellyfin_username || 'Media server', auth.mediaServerType).catch(() => {});
       throw error;
     }
-  });
+  }));
 }
 
 async function revokeEntitlement(entitlementId) {
@@ -272,4 +300,4 @@ async function revokeDue({ limit = 100 } = {}) {
   return { total: rows.length, revoked, failed };
 }
 
-module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, currentlyDue, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeUnauthorizedForPlan, revokeDue };
+module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, planIdForEntitlement, sourceAuthorized, currentlyDue, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeUnauthorizedForPlan, revokeDue };
