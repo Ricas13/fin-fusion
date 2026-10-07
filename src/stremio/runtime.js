@@ -73,7 +73,7 @@ async function installTokenState(raw) {
      FROM stremio_entitlements e
      JOIN subscriptions s ON s.id=e.subscription_id
      JOIN plans p ON p.id=s.plan_id
-     WHERE e.token_hash=$1 AND e.status IN ('active','suspended')
+     WHERE (e.token_hash=$1 OR COALESCE(e.token_hash_aliases,'{}'::text[]) @> ARRAY[$1]::text[]) AND e.status IN ('active','suspended')
      ORDER BY e.updated_at DESC
      LIMIT 1`,
     [hash]
