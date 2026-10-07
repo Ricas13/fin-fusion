@@ -6,6 +6,9 @@ const registry=require('../jellyfin/registry');
 const managedLibraries=require('./managed-library-selection');
 const indexLock=require('./index-lock');
 
+const MANAGED_REFRESH_HOURS=3;
+const MANAGED_BATCH_LIMIT=1;
+
 function normalizeImdb(value){const id=String(value||'').trim().toLowerCase();return /^tt\d{5,12}$/.test(id)?id:null;}
 function valueItems(payload){return Array.isArray(payload?.Items)?payload.Items:Array.isArray(payload?.items)?payload.items:[];}
 
@@ -92,6 +95,46 @@ async function indexAll(){
   return{total:servers.length,processed,failed};
 }
 
+function managedBatchLimit(value=MANAGED_BATCH_LIMIT){return Math.max(1,Math.min(4,Number(value)||MANAGED_BATCH_LIMIT));}
+async function dueServers({limit=MANAGED_BATCH_LIMIT}={}){
+  const safeLimit=managedBatchLimit(limit);
+  const result=await query(`SELECT js.id,js.name
+    FROM jellyfin_servers js
+    LEFT JOIN stremio_media_index_state i ON i.server_id=js.id
+    WHERE js.enabled=TRUE AND js.stremio_enabled=TRUE
+      AND (
+        i.server_id IS NULL
+        OR i.status IN ('never','queued')
+        OR i.last_completed_at IS NULL
+        OR i.last_completed_at<=NOW()-($2||' hours')::interval
+        OR (i.status='failed' AND COALESCE(i.last_started_at,'1970-01-01'::timestamptz)<=NOW()-INTERVAL '15 minutes')
+      )
+    ORDER BY CASE WHEN i.status='queued' THEN 0 WHEN i.last_completed_at IS NULL THEN 1 ELSE 2 END,
+             COALESCE(i.last_completed_at,'1970-01-01'::timestamptz),js.priority,js.name
+    LIMIT $1`,[safeLimit,String(MANAGED_REFRESH_HOURS)]);
+  return result.rows;
+}
+async function dueServerCount(){
+  const result=await query(`SELECT COUNT(*)::int n
+    FROM jellyfin_servers js
+    LEFT JOIN stremio_media_index_state i ON i.server_id=js.id
+    WHERE js.enabled=TRUE AND js.stremio_enabled=TRUE
+      AND (
+        i.server_id IS NULL
+        OR i.status IN ('never','queued')
+        OR i.last_completed_at IS NULL
+        OR i.last_completed_at<=NOW()-($1||' hours')::interval
+        OR (i.status='failed' AND COALESCE(i.last_started_at,'1970-01-01'::timestamptz)<=NOW()-INTERVAL '15 minutes')
+      )`,[String(MANAGED_REFRESH_HOURS)]);
+  return Number(result.rows[0]?.n||0);
+}
+async function indexDueServers({limit=MANAGED_BATCH_LIMIT}={}){
+  const rows=await dueServers({limit});let processed=0,failed=0;
+  for(const server of rows){try{const r=await indexServer(server.id);processed+=Number(r.processed||0);}catch(error){failed++;console.error(`Stremio media index failed for ${server.name}:`,error.message);}}
+  const remainingDue=await dueServerCount();
+  return{total:rows.length,processed,failed,remainingDue,waiting:remainingDue};
+}
+
 async function servingCount(client,serverId){
   const count=await client.query(`SELECT COUNT(*)::int n FROM stremio_media_index WHERE server_id=$1`,[serverId]);
   return Number(count.rows[0]?.n||0);
@@ -159,4 +202,4 @@ async function states(){
   return r.rows;
 }
 
-module.exports={normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,states};
+module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,states};
