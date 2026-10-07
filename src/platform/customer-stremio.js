@@ -77,7 +77,7 @@ async function currentLeaseState(req,entitlement){
 }
 async function customerSetupState(req,customerId){
   const links=await installationLinks.current(req,customerId);
-  const entitlement=await stremio.current(customerId).catch(()=>null);
+  const entitlement=await stremio.current(customerId).catch(error=>{console.warn('Customer Stremio entitlement lookup unavailable:',{customerId,error:error.message});return null;});
   if(!entitlement)return{...links,household:null,trial:null};
   const trial=await trialState(entitlement).catch(error=>{console.warn('Customer Stremio trial status unavailable:',{customerId,error:error.message});return null;});
   try{
