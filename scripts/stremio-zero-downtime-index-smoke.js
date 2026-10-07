@@ -34,6 +34,7 @@ assert(managedIndex.includes('return{preserved,deleted:0,queued:true}'),'manual 
 assert(!externalIndex.slice(externalIndex.indexOf('async function clearAndQueue('),externalIndex.indexOf('async function refreshProgress(')).includes('DELETE FROM stremio_source_media_index'),'manual external rebuilds must keep the previous source index live');
 assert(externalShadowMigration.includes('CREATE TABLE IF NOT EXISTS public.stremio_source_media_index_build'),'external full refreshes need their own shadow generation table');
 assert(externalShadowMigration.includes('PRIMARY KEY(generation,source_id,item_id)'),'external shadow generations must be isolated by generation/source/item');
+assert(externalIndex.includes("operationLock.withLock(`external-token:${sourceId}`")&&externalIndex.includes('indexSourceUnlocked(sourceId,options)'),'external indexing must serialize with reconnect/rotation/disable so a stale source identity cannot publish after credentials change');
 assert(externalIndex.includes("if(mode==='full')")&&externalIndex.includes('INSERT INTO stremio_source_media_index_build'),'full external scans must write only to the shadow generation while serving rows remain untouched');
 const externalPromoteDelete=externalIndex.indexOf("DELETE FROM stremio_source_media_index WHERE source_id=$1");
 const externalPromoteInsert=externalIndex.indexOf('INSERT INTO stremio_source_media_index(source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,scan_generation,updated_at,seen_at)',externalPromoteDelete);
