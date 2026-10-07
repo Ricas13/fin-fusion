@@ -44,6 +44,20 @@ async function current(sourceId, entitlementId) {
     WHERE source_id=$1 AND entitlement_id=$2 LIMIT 1`, [sourceId, entitlementId]);
   return result.rows[0] || null;
 }
+async function currentlyDue(row) {
+  if (!row?.source_id || !row?.entitlement_id) return false;
+  if (new Date(row.expires_at).getTime() <= Date.now()) return true;
+  if (!await entitlementActive(row.entitlement_id)) return true;
+  const authorized = await query(`SELECT EXISTS(
+      SELECT 1
+      FROM stremio_entitlements e
+      JOIN subscriptions sub ON sub.id=e.subscription_id
+      JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=$2 AND ps.enabled=TRUE
+      JOIN stremio_sources s ON s.id=ps.source_id AND s.enabled=TRUE
+      WHERE e.id=$1
+    ) AS allowed`, [row.entitlement_id, row.source_id]);
+  return authorized.rows[0]?.allowed !== true;
+}
 
 async function extend(row) {
   // TTL is absolute from authentication, not sliding. Reusing a live token may
@@ -239,18 +253,23 @@ async function revokeDue({ limit = 100 } = {}) {
   let failed = 0;
   for (const row of rows) {
     try {
-      await revokeRow(row);
-      revoked += 1;
+      await operationLock.withLock(`external-playback:${row.source_id}:${row.entitlement_id}`, async () => {
+        const latest = await current(row.source_id, row.entitlement_id);
+        if (!latest || !await currentlyDue(latest)) return;
+        await revokeRow(latest);
+        revoked += 1;
+      });
     } catch (error) {
       failed += 1;
-      await query(`UPDATE stremio_external_playback_tokens
+      const latest = await current(row.source_id, row.entitlement_id).catch(() => null);
+      if (latest) await query(`UPDATE stremio_external_playback_tokens
         SET last_revoke_attempt_at=NOW(),revoke_attempt_count=revoke_attempt_count+1,last_error=$2,
             expires_at=NOW()+($3||' minutes')::interval
-        WHERE id=$1`, [row.id, compactError(error), String(RETRY_MINUTES)]).catch(() => {});
+        WHERE id=$1`, [latest.id, compactError(error), String(RETRY_MINUTES)]).catch(() => {});
       console.error(`External Stremio playback-token revocation failed for ${row.source_name || row.source_id}:`, compactError(error));
     }
   }
   return { total: rows.length, revoked, failed };
 }
 
-module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeUnauthorizedForPlan, revokeDue };
+module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, currentlyDue, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeUnauthorizedForPlan, revokeDue };
