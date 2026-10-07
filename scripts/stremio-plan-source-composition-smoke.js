@@ -41,6 +41,7 @@ assert(!admin.includes('Selecting at least one source removes the managed-server
 assert(!admin.includes("throw new Error('Select at least one Stremio source.')"),'saving zero external sources must be valid');
 assert(admin.includes('sourcePool.savePlanSources(req.params.id,selections'),'admin must persist an empty selection as no external additions');
 assert(sourcePool.includes('const rows=Array.isArray(selections)?selections:[]'),'canonical plan-source writer must accept an empty external selection');
+assert(sourcePool.includes('operationLock.withLock(`stremio-plan:${planId}`')&&sourcePool.includes('externalPlaybackToken.revokeUnauthorizedForPlan(planId)'),'plan-source mutations must serialize with raw session issuance through authorization change and cleanup');
 
 assert(readiness.includes('eligibleManagedServers:checks.eligibleServers'),'plan readiness must distinguish usable managed servers from raw server counts');
 assert(readiness.includes('managedReadyIndexes:checks.managedReadyIndexes'),'plan readiness must retain managed index state');
