@@ -356,6 +356,19 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
 
     const type=serviceScope.serviceType(plan);
+    if(type==='stremio'||type==='bundle'){
+        try{
+            await stremioEntitlements.ensureInstallationCredential(customerId,{
+                entitlement:{subscription_id:created.id,service_type_snapshot:type}
+            });
+        }catch(error){
+            await rollbackUnprovisionedStremioTrial(customerId,created.id,{reason:error.message});
+            const failure=new Error('The Stremio trial could not be activated because its installation link could not be created. No trial plan was retained.');
+            failure.code='TRIAL_STREMIO_INSTALL_FAILED';
+            failure.cause=error;
+            throw failure;
+        }
+    }
     const mediaType=customerServerChoice.mediaServerType(plan);
     if(mediaType==='jellyfin'){
         await unpaidAccessActivation.activateOrRollback({
