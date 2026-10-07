@@ -102,7 +102,15 @@ async function indexSourceUnlocked(sourceId,{forceFull=false}={}){
         const count=await db.query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
         itemCount=Number(count.rows[0]?.n||0);
       }
-      await db.query(`UPDATE stremio_source_index_state SET status='ready',last_mode=$2,last_completed_at=NOW(),last_full_completed_at=CASE WHEN $2='full' THEN NOW() ELSE last_full_completed_at END,next_incremental_at=NOW()+($3||' hours')::interval,force_full=FALSE,item_count=$4,last_error=NULL,updated_at=NOW() WHERE source_id=$1`,[sourceId,mode,String(INCREMENTAL_HOURS),itemCount]);
+      const latestState=await db.query('SELECT status,force_full FROM stremio_source_index_state WHERE source_id=$1 FOR UPDATE',[sourceId]);
+      const rerunRequested=latestState.rows[0]?.status==='queued';
+      const rerunFull=rerunRequested&&latestState.rows[0]?.force_full===true;
+      await db.query(`UPDATE stremio_source_index_state
+        SET status=$2,last_mode=$3,last_completed_at=NOW(),
+            last_full_completed_at=CASE WHEN $3='full' THEN NOW() ELSE last_full_completed_at END,
+            next_incremental_at=CASE WHEN $2='queued' THEN NOW() ELSE NOW()+($4||' hours')::interval END,
+            force_full=$5,item_count=$6,last_error=NULL,updated_at=NOW()
+        WHERE source_id=$1`,[sourceId,rerunRequested?'queued':'ready',mode,String(INCREMENTAL_HOURS),rerunFull,itemCount]);
       await db.query(`UPDATE stremio_sources SET auth_state='connected',last_success_at=NOW(),last_auth_check_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[sourceId]);
     });
     console.log(`Stremio source index completed: ${sourceLabel} mode=${mode} indexed=${itemCount} changed=${changed}`);
@@ -111,7 +119,12 @@ async function indexSourceUnlocked(sourceId,{forceFull=false}={}){
     const auth=error?.code==='STREMIO_SOURCE_AUTH';
     await transaction(async db=>{
       if(mode==='full')await db.query('DELETE FROM stremio_source_media_index_build WHERE source_id=$1 AND generation=$2',[sourceId,generation]).catch(()=>{});
-      await db.query(`UPDATE stremio_source_index_state SET status='failed',last_error=$2,next_incremental_at=NOW()+INTERVAL '3 hours',updated_at=NOW() WHERE source_id=$1`,[sourceId,String(error.message||error).slice(0,1500)]).catch(()=>{});
+      await db.query(`UPDATE stremio_source_index_state
+        SET status=CASE WHEN status='queued' THEN 'queued' ELSE 'failed' END,
+            last_error=$2,
+            next_incremental_at=CASE WHEN status='queued' THEN NOW() ELSE NOW()+INTERVAL '3 hours' END,
+            updated_at=NOW()
+        WHERE source_id=$1`,[sourceId,String(error.message||error).slice(0,1500)]).catch(()=>{});
       // A refresh/index transport failure must not disable a source whose
       // existing credential and last completed serving snapshot are still usable.
       // Only an actual upstream authentication failure changes auth authority.
