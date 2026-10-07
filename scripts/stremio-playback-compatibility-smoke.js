@@ -85,6 +85,9 @@ assert(runtimeSource.includes('managedRuntime.streamsFor(entitlement, type, vide
 assert(runtimeSource.includes('externalRuntime.streamsFor(entitlement, type, videoId)'),'external stream results must also be generated as direct URLs');
 assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'new installation-link issuance must leave managed Jellyfin IMDb lookup/search fan-out unchanged');
 assert(externalSource.includes('sourceIndex.lookupAll(source.id,args,args.type)'),'external Jellyfin search must keep IMDb matching while also carrying metadata fallbacks for incomplete provider IDs');
+const externalItemsBlock=externalSource.slice(externalSource.indexOf('async function items('),externalSource.indexOf('function mediaSources('));
+assert(externalItemsBlock.includes('Promise.allSettled')&&externalItemsBlock.includes('if(found.length)'),'one stale/broken external Jellyfin copy must not erase healthy matching copies from the Stremio result set');
+assert(externalItemsBlock.includes('if(failures.length)throw failures[0].reason'),'all-copy external failures must still propagate so authentication/source health is not falsely reported healthy');
 const externalStreamsBlock=externalSource.slice(externalSource.indexOf('async function streamsFor'),externalSource.indexOf('async function playbackTargetFor'));
 assert(externalStreamsBlock.indexOf('planExternalSources.forEntitlement(entitlement)')<externalStreamsBlock.indexOf('sourcePool.stremioMeta'),'managed-only plans must never wait on external metadata lookup');
 assert(externalStreamsBlock.indexOf('const direct=await resolveSources')<externalStreamsBlock.indexOf('sourcePool.stremioMeta'),'external sources must try their local IMDb index before any metadata fallback');
