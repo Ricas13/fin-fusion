@@ -129,7 +129,13 @@ async function scan({ limit = 100 } = {}) {
     freeServerWithoutPlan,
     unpaidTrialWithoutServer,
     primaryServerWithoutPlan,
-    paidPlanWithoutRecovery
+    paidPlanWithoutRecovery,
+    stremioMissingInstallCredential,
+    stremioMissingRecoverableLink,
+    staleActiveStremioEntitlement,
+    externalStremioPlaybackCredentialGap,
+    externalStremioIndexCountDrift,
+    managedStremioIndexCountDrift
   ] = await Promise.all([
     query(`
       SELECT s.id AS subscription_id,s.customer_id,p.code AS plan_code,s.created_at
@@ -273,6 +279,103 @@ async function scan({ limit = 100 } = {}) {
         AND COALESCE(cps.status,'') NOT IN('pending','running','failed','blocked')
       ORDER BY s.created_at
       LIMIT $1
+    `, [bounded]),
+    query(`
+      WITH effective AS (
+        SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
+        UNION ALL
+        SELECT a.customer_id,a.subscription_id,a.access_expires_at,
+               public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+        FROM effective_customer_addons a
+        JOIN subscriptions s ON s.id=a.subscription_id
+      )
+      SELECT ee.subscription_id,ee.customer_id,e.id AS entitlement_id,e.status,e.token_hash
+      FROM effective ee
+      LEFT JOIN stremio_entitlements e
+        ON e.customer_id=ee.customer_id AND e.subscription_id=ee.subscription_id
+      WHERE ee.blocked=FALSE AND ee.access_expires_at>NOW()
+        AND (e.id IS NULL OR e.status<>'active' OR e.token_hash IS NULL)
+      ORDER BY ee.access_expires_at
+      LIMIT $1
+    `, [bounded]),
+    query(`
+      WITH effective AS (
+        SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
+        UNION ALL
+        SELECT a.customer_id,a.subscription_id,a.access_expires_at,
+               public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+        FROM effective_customer_addons a
+        JOIN subscriptions s ON s.id=a.subscription_id
+      )
+      SELECT e.id,e.customer_id,e.subscription_id,e.token_version,e.token_hint
+      FROM effective ee
+      JOIN stremio_entitlements e
+        ON e.customer_id=ee.customer_id AND e.subscription_id=ee.subscription_id
+      LEFT JOIN stremio_install_credential_recovery r
+        ON r.customer_id=e.customer_id AND r.entitlement_id=e.id
+       AND r.token_version=e.token_version
+       AND COALESCE(r.token_hint,'')=COALESCE(e.token_hint,'')
+      WHERE ee.blocked=FALSE AND ee.access_expires_at>NOW()
+        AND e.status='active' AND e.token_hash IS NOT NULL
+        AND r.customer_id IS NULL
+      ORDER BY e.updated_at
+      LIMIT $1
+    `, [bounded]),
+    query(`
+      WITH effective AS (
+        SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
+        UNION ALL
+        SELECT a.customer_id,a.subscription_id,a.access_expires_at,
+               public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+        FROM effective_customer_addons a
+        JOIN subscriptions s ON s.id=a.subscription_id
+      )
+      SELECT e.id,e.customer_id,e.subscription_id,e.updated_at
+      FROM stremio_entitlements e
+      WHERE e.status='active'
+        AND NOT EXISTS(
+          SELECT 1 FROM effective ee
+          WHERE ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
+            AND ee.blocked=FALSE AND ee.access_expires_at>NOW()
+        )
+      ORDER BY e.updated_at
+      LIMIT $1
+    `, [bounded]),
+    query(`
+      SELECT s.id,s.name,COUNT(DISTINCT ps.plan_id)::int AS mapped_plans
+      FROM stremio_sources s
+      JOIN plan_stremio_sources ps ON ps.source_id=s.id AND ps.enabled=TRUE
+      JOIN stremio_source_index_state i ON i.source_id=s.id
+      WHERE s.enabled=TRUE AND s.auth_state IN ('connected','error')
+        AND s.password_encrypted IS NULL
+        AND i.last_completed_at IS NOT NULL AND i.item_count>0
+      GROUP BY s.id,s.name
+      ORDER BY s.name
+      LIMIT $1
+    `, [bounded]),
+    query(`
+      SELECT i.source_id AS id,s.name,i.item_count,
+             COUNT(m.item_id)::int AS serving_count
+      FROM stremio_source_index_state i
+      JOIN stremio_sources s ON s.id=i.source_id
+      LEFT JOIN stremio_source_media_index m ON m.source_id=i.source_id
+      WHERE i.last_completed_at IS NOT NULL
+      GROUP BY i.source_id,s.name,i.item_count
+      HAVING i.item_count<>COUNT(m.item_id)::int
+      ORDER BY s.name
+      LIMIT $1
+    `, [bounded]),
+    query(`
+      SELECT i.server_id AS id,js.name,i.item_count,
+             COUNT(m.item_id)::int AS serving_count
+      FROM stremio_media_index_state i
+      JOIN jellyfin_servers js ON js.id=i.server_id
+      LEFT JOIN stremio_media_index m ON m.server_id=i.server_id
+      WHERE i.last_completed_at IS NOT NULL
+      GROUP BY i.server_id,js.name,i.item_count
+      HAVING i.item_count<>COUNT(m.item_id)::int
+      ORDER BY js.name
+      LIMIT $1
     `, [bounded])
   ]);
 
@@ -317,6 +420,48 @@ async function scan({ limit = 100 } = {}) {
       'paid_plan_without_recovery_state',
       row,
       `Paid Jellyfin subscription ${row.subscription_id} has no enabled primary account and no provisioning recovery state. Paid entitlement may be retained, but retry state must exist.`
+    ));
+  }
+  for (const row of stremioMissingInstallCredential.rows) {
+    findings.push(finding(
+      'stremio_entitlement_without_install_link',
+      row,
+      `Live Stremio subscription ${row.subscription_id} is missing an active install credential. Entitlement reconciliation must converge to active entitlement + private installation link.`
+    ));
+  }
+  for (const row of stremioMissingRecoverableLink.rows) {
+    findings.push(finding(
+      'stremio_install_link_not_recoverable',
+      row,
+      `Active Stremio entitlement ${row.id} has a published install token but no matching encrypted recovery copy for token version ${row.token_version}. My Access cannot redisplay the canonical link without self-healing.`
+    ));
+  }
+  for (const row of staleActiveStremioEntitlement.rows) {
+    findings.push(finding(
+      'stremio_active_without_effective_subscription',
+      row,
+      `Stremio entitlement ${row.id} is still active even though subscription ${row.subscription_id} is no longer an effective unblocked Stremio entitlement.`
+    ));
+  }
+  for (const row of externalStremioPlaybackCredentialGap.rows) {
+    findings.push(finding(
+      'stremio_external_source_not_playback_ready',
+      row,
+      `External Stremio source ${row.name} is mapped to ${row.mapped_plans} plan(s) and has a serving index, but no encrypted password is available to mint isolated playback sessions. Reconnect the source before relying on it for customer results.`
+    ));
+  }
+  for (const row of externalStremioIndexCountDrift.rows) {
+    findings.push(finding(
+      'stremio_external_index_count_drift',
+      row,
+      `External Stremio source ${row.name} reports ${row.item_count} serving item(s) but the live index contains ${row.serving_count}.`
+    ));
+  }
+  for (const row of managedStremioIndexCountDrift.rows) {
+    findings.push(finding(
+      'stremio_managed_index_count_drift',
+      row,
+      `Managed Stremio server ${row.name} reports ${row.item_count} serving item(s) but the live index contains ${row.serving_count}.`
     ));
   }
   return findings;

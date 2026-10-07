@@ -39,9 +39,24 @@ stub('src/db.js',{
       const compact=String(sql).replace(/\s+/g,' ').trim();
       txQueries.push({sql:compact,params});
       if(compact.startsWith('SELECT id FROM subscriptions'))return{rows:[{id:subscriptionId}],rowCount:1};
+      if(compact.startsWith('SELECT s.*,p.is_free_tier')&&compact.includes('FOR UPDATE OF s'))return{rows:[{
+        ...entitlement,
+        id:subscriptionId,
+        status:'trialing',
+        billing_interval:'trial',
+        billing_interval_snapshot:'trial',
+        duration_days:1,
+        duration_days_snapshot:1,
+        current_period_end:new Date('2026-10-08T00:00:00.000Z'),
+        service_extension_days:3,
+        superseded_by:null,
+        refund_terminated:false
+      }],rowCount:1};
+      if(compact.startsWith('UPDATE subscriptions SET starts_at='))return{rows:[{id:subscriptionId,status:'trialing'}],rowCount:1};
       if(compact.startsWith('UPDATE subscriptions SET current_period_end='))return{rows:[{id:subscriptionId}],rowCount:1};
       if(compact.includes("'admin.customer.expiry.reset_to_plan'"))return{rows:[{id:'audit'}],rowCount:1};
-      throw new Error('Unexpected expiry transaction query: '+compact.slice(0,180));
+      if(compact.includes("'admin.customer.trial.reset_duration'"))return{rows:[{id:'trial-audit'}],rowCount:1};
+      throw new Error('Unexpected expiry/trial transaction query: '+compact.slice(0,180));
     }
   })
 });
@@ -81,6 +96,22 @@ const individual=require('../src/access/admin-customer-individual-action-service
   const audit=txQueries.find(row=>row.sql.includes("'admin.customer.expiry.reset_to_plan'"));
   assert(audit,'reset-to-plan expiry and audit must share the transaction');
   assert.deepStrictEqual(reconciled,[customerId],'expiry reset must reconcile access after the transaction');
+
+  txQueries=[];
+  reconciled=[];
+  const trialReset=await individual.resetTrial({customerId,actorUserId,subscriptionId});
+  assert.strictEqual(trialReset.subId,subscriptionId,'trial reset must target the explicitly selected subscription');
+  assert.strictEqual(trialReset.durationDays,1,'trial reset must preserve the contracted trial duration');
+  assert.strictEqual(trialReset.end.getTime()-trialReset.start.getTime(),86400000,'one-day trial reset must grant exactly a fresh 24 hours');
+  const trialUpdate=txQueries.find(row=>row.sql.startsWith('UPDATE subscriptions SET starts_at='));
+  assert(trialUpdate,'trial reset must update start and end together');
+  assert(trialUpdate.sql.includes('service_extension_days=0'),'trial reset must clear stale manual extensions');
+  assert(trialUpdate.sql.includes('cancel_at_period_end=FALSE'),'trial reset must leave the refreshed trial active for its full new term');
+  assert.strictEqual(trialUpdate.params[0],subscriptionId);
+  assert.strictEqual(trialUpdate.params[3],customerId,'trial reset mutation must stay customer-scoped');
+  const trialAudit=txQueries.find(row=>row.sql.includes("'admin.customer.trial.reset_duration'"));
+  assert(trialAudit,'trial reset must be audited in the same transaction as its date mutation');
+  assert.deepStrictEqual(reconciled,[customerId],'trial reset must reconcile service access without rotating existing credentials');
 
   // Re-load the lifecycle service with placement-specific collaborators.
   delete require.cache[modulePath('src/access/admin-customer-lifecycle-service.js')];

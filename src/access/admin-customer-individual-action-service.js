@@ -38,6 +38,32 @@ async function lockedSubscriptionForCustomer(client,customerId,subscriptionId){
   return sub;
 }
 
+async function lockedTrialSubscriptionForCustomer(client,customerId,subscriptionId){
+  const result=await client.query(`
+    SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval,p.service_type,p.is_addon,
+      EXISTS(
+        SELECT 1 FROM audit_log terminal_audit
+        WHERE terminal_audit.entity_type='subscription'
+          AND terminal_audit.entity_id=s.id::text
+          AND terminal_audit.action='billing.subscription.terminate_for_refund'
+      ) AS refund_terminated
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    WHERE s.id=$1
+      AND s.customer_id=$2
+      AND s.superseded_by IS NULL
+    LIMIT 1
+    FOR UPDATE OF s
+  `,[subscriptionId,customerId]);
+  const sub=result.rows[0]||null;
+  if(!sub||sub.refund_terminated)throw new Error('That trial subscription is not available for this customer.');
+  if(String(sub.status||'').toLowerCase()!=='trialing')throw new Error('Only a currently trialing subscription can have its trial clock reset.');
+  const interval=String(sub.billing_interval_snapshot||sub.billing_interval||'').toLowerCase();
+  if(interval!=='trial')throw new Error('The selected subscription is not a trial.');
+  if(subscriptionState.recurringProvider(sub))throw new Error('Provider-controlled trials must be changed at Stripe/PayPal so billing and access stay aligned.');
+  return sub;
+}
+
 async function jellyfinAccounts(customerId){
   const result=await query(`
     SELECT ja.*,js.name AS server_name
@@ -173,6 +199,55 @@ async function resetExpiryToPlan({customerId,actorUserId=null}){
   return{subscriptionId,end};
 }
 
+async function resetTrial({customerId,actorUserId,subscriptionId}){
+  const now=new Date();
+  const result=await transaction(async client=>{
+    const sub=await lockedTrialSubscriptionForCustomer(client,customerId,subscriptionId);
+    const subId=sub.id||sub.subscription_id;
+    const durationDays=Math.max(1,Math.min(3650,Number(sub.duration_days_snapshot||sub.duration_days||1)));
+    const end=new Date(now.getTime()+durationDays*86400000);
+    const previous={
+      startsAt:sub.starts_at?new Date(sub.starts_at).toISOString():null,
+      currentPeriodEnd:sub.current_period_end?new Date(sub.current_period_end).toISOString():null,
+      serviceExtensionDays:Number(sub.service_extension_days||0)
+    };
+    const updated=await client.query(`
+      UPDATE subscriptions
+      SET starts_at=$2,
+          current_period_end=$3,
+          service_extension_days=0,
+          cancel_at_period_end=FALSE,
+          updated_at=NOW()
+      WHERE id=$1 AND customer_id=$4 AND status='trialing'
+      RETURNING id,starts_at,current_period_end,status
+    `,[subId,now,end,customerId]);
+    if(!updated.rowCount)throw new Error('The trial changed before its duration could be reset.');
+    await client.query(`
+      INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+      VALUES($1,'admin.customer.trial.reset_duration','subscription',$2,$3::jsonb)
+    `,[actorUserId,subId,JSON.stringify({
+      customerId,
+      subscriptionId:subId,
+      planId:sub.plan_id,
+      serviceType:String(sub.service_type_snapshot||sub.service_type||'jellyfin'),
+      durationDays,
+      previous,
+      startsAt:now.toISOString(),
+      currentPeriodEnd:end.toISOString(),
+      clearedServiceExtensions:true,
+      providerBillingChanged:false
+    })]);
+    return{subId,durationDays,start:now,end};
+  });
+  const warnings=[];
+  try{await provisioning.reconcileCustomer(customerId);}
+  catch(error){warnings.push(`access reconciliation needs retry: ${clean(error.message||error,180)}`);}
+  return{
+    ...result,
+    message:`Trial reset to a fresh ${result.durationDays} day${result.durationDays===1?'':'s'} from now (ends ${result.end.toISOString()}). Existing service-extension days were cleared.${warnings.length?` Warning: ${warnings.join('; ')}`:''}`
+  };
+}
+
 async function suspend({customerId,actorUserId,reason}){
   await accessHolds.addHold({
     customerId,type:'admin_suspended',sourceKey:'admin',reason,actorUserId,metadata:{origin:'customer_360'}
@@ -231,10 +306,12 @@ async function deleteJellyfin({customerId,actorUserId,reason}){
 
 module.exports={
   lockedSubscriptionForCustomer,
+  lockedTrialSubscriptionForCustomer,
   jellyfinAccounts,
   extend,
   setExpiry,
   resetExpiryToPlan,
+  resetTrial,
   suspend,
   deleteJellyfin
 };

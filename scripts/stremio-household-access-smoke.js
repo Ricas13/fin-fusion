@@ -105,7 +105,7 @@ assert(entitlements.includes('operationLock.withLock(`install-credential:${custo
 assert(entitlements.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'concurrent install issuance must reuse a just-issued durable recovery credential from the current Stremio term only');
 assert(entitlements.includes('reused:true'),'the install owner must explicitly report concurrent credential reuse');
 const revokeScope=entitlements.slice(entitlements.indexOf('async function revoke(customerId)'),entitlements.indexOf('async function findByInstallToken'));
-assert(revokeScope.includes("SET status='suspended',token_hash=NULL,token_hint=NULL"),'explicit revoke must invalidate the install bearer credential immediately');
+assert(revokeScope.includes("SET status='suspended',token_hash=NULL,token_hash_aliases='{}'::text[],token_hint=NULL"),'explicit revoke must invalidate the current and historical install bearer credentials immediately');
 assert(revokeScope.includes('Could not verify revocation of legacy Stremio access; revoke will retry without discarding cleanup identity.'),'failed legacy token logout must remain a retryable revoke failure');
 assert(revokeScope.indexOf("SET status='suspended',token_hash=NULL")<revokeScope.indexOf('detachLegacyToken(row)'),'local bearer access must fail closed before remote cleanup starts');
 assert(revokeScope.indexOf('detachLegacyToken(row)')<revokeScope.lastIndexOf("SET status='revoked',server_id=NULL"),'remote token cleanup must complete before its stored identity is erased');

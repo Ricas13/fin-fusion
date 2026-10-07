@@ -28,6 +28,7 @@ const automationJobs=read('src/automation/jobs.js');
 const automationRegistry=require('../src/automation/jobs');
 const automationWorker=read('scripts/automation-worker.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
+const planExternal=read('src/stremio/plan-external-sources.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 const rotationMigration=read('db/migrations/004_stremio_source_token_rotation.sql');
 const maintenanceMigration=read('db/migrations/020_stremio_external_maintenance.sql');
@@ -57,6 +58,12 @@ assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfi
 assert(sources.includes("routeRateLimit.middleware({scope:'admin-stremio-sources'"),'Source mutations must use the persistent admin rate limiter');
 assert(sources.includes('Attempt log ID')&&sources.includes('failureLogPayload')&&sources.includes('stremio_source_attempt'),'External connection failures must retain traceable audit attempt IDs');
 assert(sourcePool.includes('discoveryWarning')&&sourcePool.includes('sourcePersisted:true'),'Library discovery failure must preserve an authenticated external source for diagnosis/retry');
+assert(sourcePool.includes("auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE 'error' END"),'a reconnect discovery failure must be recorded as degraded rather than falsely healthy');
+assert((sourcePool.match(/auth_state IN \('connected','error'\)/g)||[]).length>=2,'a degraded external source with a completed snapshot must remain eligible to serve while recovery retries');
+assert(runtimeSettings.includes("s.auth_state IN ('connected','error')")&&planExternal.includes("s.auth_state IN ('connected','error')"),'runtime and plan readiness must preserve a completed degraded external snapshot without presenting it as healthy');
+assert(planExternal.includes('l.selected=TRUE AND l.available=TRUE')&&sourcePool.includes('l.selected=TRUE AND l.available=TRUE'),'external source readiness must require at least one currently selected, available library so a stale completed index cannot keep serving after its libraries disappear');
+assert(sourcePool.includes('selectedAvailabilityChanged')&&sourcePool.includes("force_full=TRUE")&&sourcePool.includes("status='queued'"),'library discovery must queue a full rebuild whenever a selected library disappears or reappears so serving state converges automatically');
+assert(sourcePool.includes('identityChanged=Boolean(source.jellyfin_user_id)')&&sourcePool.includes('last_completed_at=CASE WHEN $2 THEN NULL ELSE last_completed_at END')&&sourcePool.includes('item_count=CASE WHEN $2 THEN 0 ELSE item_count END'),'reconnecting an external source as a different upstream user must invalidate the old serving snapshot instead of preserving another user\'s indexed catalogue under zero-downtime rules');
 assert(sources.includes("r.post('/admin/servers/stremio/:id/configure'")&&sources.includes('sourceAdminConfig.configure'),'single page must provide inline external source enable/priority updates');
 assert(externalConfig.includes('priority must be between 1 and 10000')&&externalConfig.includes('enabled=$2,priority=$3'),'external inline configuration must validate and persist source participation/priority');
 assert(sourceIndex.includes('SELECT s.id,s.name,s.enabled,s.priority,s.auth_state'),'external source read model must return persisted priority for inline editing');
@@ -96,7 +103,7 @@ assert(sources.includes('tokenRotationEnabled')&&sources.includes('value="4"'),'
 
 assert(sourceIndex.includes('INCREMENTAL_HOURS=3')&&sourceIndex.includes('FULL_RECONCILE_HOURS=84'),'Index policy must remain three-hour incremental plus twice-weekly full reconciliation');
 assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'External indexing must remain incremental and low-footprint');
-assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
+assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexDueServers()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(automationJobs.includes('stremio_external_tokens')&&automationJobs.includes('stremioExternalTokens.maintain'),'External token maintenance must remain a dedicated automation job');
 assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_external_tokens'),300,'External token housekeeping must retain its five-minute cadence');
 assert.strictEqual(automationRegistry.defaultIntervalSeconds('stremio_media_index'),300,'Bounded external-index sweeps must retain their five-minute cadence');

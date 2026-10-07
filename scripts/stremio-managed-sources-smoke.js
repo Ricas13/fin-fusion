@@ -34,6 +34,8 @@ assert(managed.includes('media_server_type'),'managed source rows must carry the
 assert(managed.includes('api_configured'),'managed source view may expose credential presence but not its value');
 assert(managed.includes('public_url IS NOT NULL'),'managed direct playback sources must require a public URL');
 assert(managed.includes('ORDER BY stremio_priority,priority,name'),'managed sources must have explicit deterministic source ordering');
+assert(managed.includes("require('./managed-entitlements').revokeServerMappings(serverId)")&&managed.includes("STREMIO_MANAGED_SOURCE_CLEANUP_INCOMPLETE"),'disabling a managed Stremio source must synchronously start restricted-token/account cleanup instead of waiting for the periodic sweep');
+assert(managedEntitlements.includes('async function revokeServerMappings(serverId)')&&managedEntitlements.includes("Managed Stremio source disabled by administrator."),'managed entitlement cleanup must support a bounded server-scoped disable path');
 assert(managed.includes('stremio_managed_accounts'),'managed runtime foundation must use a per-entitlement/server account mapping');
 assert((managedEntitlements.match(/effective_stremio_entitlements/g)||[]).length>=2,'managed Stremio revoke and sync must use the Stremio effective entitlement view');
 assert(!managedEntitlements.includes('effective_customer_entitlements'),'managed Stremio lifecycle must not use the media-server-only primary entitlement view');
@@ -75,11 +77,12 @@ assert(disableScope.indexOf('logoutRestrictedToken')<disableScope.indexOf('other
 
 // Installation credential publication is also externalized state: the new hash
 // must never commit unless the encrypted recovery secret commits with it.
-const installScope=entitlements.slice(entitlements.indexOf('async function issueInstallation'),entitlements.indexOf('async function revoke'));
-assert(installScope.includes('const entitlement=await transaction(async client=>'),'install credential activation must own one database transaction');
-assert(installScope.includes('await client.query(`UPDATE stremio_entitlements SET token_hash=$2'),'install token hash must be written through that transaction client');
-assert(installScope.includes('await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client})'),'recoverable install secret must be saved through the same transaction client');
+const installScope=entitlements.slice(entitlements.indexOf('async function ensureInstallationCredential'),entitlements.indexOf('function activatedOutcome'));
+assert(installScope.includes('const activated=await transaction(async client=>'),'canonical install credential activation must own one database transaction');
+assert(installScope.includes('const result=await client.query(`UPDATE stremio_entitlements'),'install token hash must be written through that transaction client');
+assert(installScope.includes('await installRecovery.save({customerId,entitlement:result.rows[0],credential:issued.token,actorUserId},{client})'),'recoverable install secret must be saved through the same transaction client');
 assert(installScope.indexOf('client.query(`UPDATE stremio_entitlements')<installScope.indexOf('installRecovery.save'),'recovery persistence must happen before the token transaction can commit');
+assert(entitlements.includes('return ensureInstallationCredential(customerId,{actorUserId,rotate:true,allowRevoked:true});'),'explicit install issuance must delegate to the canonical transactional credential owner');
 assert(installRecovery.includes('const db=client||{query}'),'credential recovery save must accept the canonical caller transaction');
 assert(customerStremio.includes('async function issueCustomerInstallation(customerId')&&customerStremio.includes('stremio.issueInstallation(customerId,{actorUserId})')&&customerStremio.includes('issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer install route must delegate actor-aware persistence through the shared canonical installation helper');
 assert(!customerStremio.includes("require('../stremio/install-credential-recovery')"),'customer route must not perform a second non-atomic credential recovery write');
@@ -104,6 +107,7 @@ assert(sources.includes('action="/admin/servers/stremio/managed/${esc(server.id)
 assert(sources.includes('action="/admin/servers/stremio/${esc(source.id)}/configure"'),'external sources must be configurable inline on the same page');
 assert(sources.includes('name="enabled" value="1"')&&sources.includes('name="priority"'),'both source groups must expose participation and priority controls');
 assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must state that fallback playback bypasses CAPTAiNFiN media transport');
+assert(sources.includes("VALUES('stremio_media_index',TRUE,300,NOW(),TRUE)")&&!sources.includes("DO UPDATE SET enabled=TRUE,interval_seconds="),'manual Stremio sync/reindex must wake the index worker immediately without overwriting its configured scheduler cadence');
 assert(/media bytes never pass through the portal/i.test(sources),'source UI must state the no-byte-proxy invariant');
 assert(externalConfig.includes('UPDATE stremio_sources SET enabled=$2,priority=$3'),'external source participation and priority must update atomically');
 assert(externalConfig.includes("'admin.stremio.source.configure'"),'external source inline configuration must be audited');

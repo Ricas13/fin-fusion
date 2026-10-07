@@ -21,7 +21,7 @@ assert(revokeService.includes('subscriptionTermination.terminateRecurringNow(row
 assert(revokeService.includes("if(['stremio','bundle'].includes(type))stremioCleanup=await cleanupStremio"),'selected Stremio/bundle revocation must clean up live Stremio access');
 assert(revokeService.includes('const remaining=await stremio.entitledSubscription(customerId)'),'Stremio cleanup must preserve access when another valid Stremio entitlement remains');
 assert(revokeService.includes('await stremio.revoke(customerId)'),'last Stremio entitlement must hard-revoke its installation credential');
-assert(revokeService.includes('await managedStremio.revokeInactiveMappings()'),'last Stremio entitlement must revoke managed media-server mappings too');
+assert(revokeService.includes('await managedStremio.revokeCustomerInactiveMappings(customerId)'),'last Stremio entitlement must revoke only the customer\'s inactive managed media-server mappings too');
 assert(revokeService.includes("'admin.subscription.revoke_selected.completed'"),'targeted plan revocation must be auditable');
 assert(targeted.includes('Other plans were preserved.'),'operator feedback must state that unrelated plans were preserved');
 

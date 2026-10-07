@@ -25,7 +25,9 @@ async function preprovisionManaged(credential){
   try{
     const entitlement=await stremio.findByInstallToken(credential);
     if(!entitlement)return false;
-    if(entitlement.has_shared_sources)return true;
+    // External plan sources are additive. Their presence must never suppress
+    // the managed Jellyfin path, otherwise a freshly-created install can miss
+    // managed results until the periodic reconciliation sweep catches up.
     const sources=await managedSources.enabled();
     if(!sources.length)return true;
     const ready=await managedEntitlements.ensure(entitlement);
@@ -35,10 +37,17 @@ async function preprovisionManaged(credential){
     return false;
   }
 }
+function scheduleManagedPreprovision(credential){
+  if(!credential)return;
+  preprovisionManaged(credential).catch(error=>console.warn('Managed Stremio pre-provisioning launch failed:',error.message));
+}
 async function issueCustomerInstallation(customerId,{actorUserId=null}={}){
   const issued=await stremio.issueInstallation(customerId,{actorUserId});
-  const provisioned=await preprovisionManaged(issued.credential);
-  return{issued,provisioned};
+  // The bearer link is a local credential and is ready as soon as issuance
+  // commits. Managed Jellyfin/Emby provisioning is best-effort follow-up work:
+  // it must never delay or downgrade successful installation-link creation.
+  scheduleManagedPreprovision(issued.credential);
+  return{issued};
 }
 async function trialState(entitlement){
   if(!entitlement?.subscription_id)return null;
@@ -68,7 +77,7 @@ async function currentLeaseState(req,entitlement){
 }
 async function customerSetupState(req,customerId){
   const links=await installationLinks.current(req,customerId);
-  const entitlement=await stremio.current(customerId).catch(()=>null);
+  const entitlement=await stremio.current(customerId).catch(error=>{console.warn('Customer Stremio entitlement lookup unavailable:',{customerId,error:error.message});return null;});
   if(!entitlement)return{...links,household:null,trial:null};
   const trial=await trialState(entitlement).catch(error=>{console.warn('Customer Stremio trial status unavailable:',{customerId,error:error.message});return null;});
   try{
@@ -108,16 +117,17 @@ function createCustomerStremioRouter(){
     res.setHeader('Pragma','no-cache');
     if(!csrf.verify(req))return res.status(403).json({error:'Invalid security token'});
     try{
-      await stremio.ensureInstallationCredential(req.session.customerId,{actorUserId:req.session.customerUserId});
+      const ensured=await stremio.ensureInstallationCredential(req.session.customerId,{actorUserId:req.session.customerUserId});
+      if(ensured?.credential)scheduleManagedPreprovision(ensured.credential);
       return res.json(await customerSetupState(req,req.session.customerId));
     }catch(error){
       console.warn('Customer Stremio installation ensure failed:',{customerId:req.session.customerId,error:error.message});
       return res.status(503).json({manifestUrl:null,installUrl:null,household:null,trial:null,error:error.message||'Stremio installation link could not be created automatically.'});
     }
   });
-  r.post('/account/stremio/install',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const{provisioned}=await issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId});const message=provisioned?'Your new Stremio installation link is ready. This is a secret bearer link: anyone who has it can use your Stremio access, so treat it like a password and do not share it. Any previous installation link has been replaced.':'Your new Stremio installation link is ready, but automatic access setup is still finishing. Treat the link like a password and do not share it. If playback does not work within a few minutes, retry Stremio setup.';const target=req.body?.returnTo==='access'?accessRedirect(provisioned?'message':'error',message):homeRedirect(provisioned ? 'message' : 'error',message);return res.redirect(target);}catch(error){return res.redirect(requestRedirect(req,'error',error.message||'Stremio installation link could not be created.'));}});
+  r.post('/account/stremio/install',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId});const message='Your new Stremio installation link is ready. This is a secret bearer link: anyone who has it can use your Stremio access, so treat it like a password and do not share it. Any previous installation link has been replaced.';return res.redirect(requestRedirect(req,'message',message));}catch(error){return res.redirect(requestRedirect(req,'error',error.message||'Stremio installation link could not be created.'));}});
   r.post('/account/stremio/reset-household',mutationBurstLimit,mutateLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const row=await stremio.current(req.session.customerId);if(!row||String(row.status||'')!=='active')throw new Error('No active household connection is available to replace.');const released=await householdAccess.release(row,{actorUserId:req.session.customerUserId,reason:'customer_reset',customerInitiated:true});return res.redirect(requestRedirect(req,'message',released?'Household connection released. Your next Stremio playback will register the internet connection you are using now.':'No household connection needed replacing.'));}catch(error){return res.redirect(requestRedirect(req,'error',error.message));}});
-  r.post('/account/stremio/revoke',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await stremio.revoke(req.session.customerId);await managedEntitlements.revokeInactiveMappings();return res.redirect(requestRedirect(req,'message','Stremio installation link revoked. Create a new link whenever you want to use Stremio again.'));}catch(error){return res.redirect(requestRedirect(req,'error',error.message));}});
+  r.post('/account/stremio/revoke',mutateLimit,mutationBurstLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await stremio.revoke(req.session.customerId);await managedEntitlements.revokeCustomerInactiveMappings(req.session.customerId);return res.redirect(requestRedirect(req,'message','Stremio installation link revoked. Create a new link whenever you want to use Stremio again.'));}catch(error){return res.redirect(requestRedirect(req,'error',error.message));}});
   return r;
 }
 module.exports={createCustomerStremioRouter,issueCustomerInstallation};

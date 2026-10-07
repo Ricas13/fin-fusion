@@ -98,6 +98,14 @@ function injectBanner(html, req) {
     if (!body) return value + html;
     return html.slice(0,body.index + body[0].length) + value + html.slice(body.index + body[0].length);
 }
+function shouldInjectBanner(res, body) {
+    if (typeof body !== 'string') return false;
+    const contentType = String(res.getHeader?.('Content-Type') || '').toLowerCase();
+    if (contentType.includes('application/json') || contentType.includes('+json')) return false;
+    if (contentType && !contentType.includes('text/html')) return false;
+    if (contentType.includes('text/html')) return true;
+    return /<!doctype\s+html|<html(?:\s|>)|<body(?:\s|>)/i.test(body);
+}
 function impersonateButton(req, customerId) {
     return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/impersonate" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button" type="submit">Manage customer portal</button></form>`;
 }
@@ -148,7 +156,7 @@ function createImpersonationAuditRouter() {
         }
         if (req.session?.impersonation && req.path.startsWith('/account')) {
             const send = res.send.bind(res);
-            res.send = body => send(injectBanner(body,req));
+            res.send = body => send(shouldInjectBanner(res,body) ? injectBanner(body,req) : body);
         }
         return next();
     });
@@ -270,4 +278,4 @@ function createAdminImpersonationRouter() {
     return router;
 }
 
-module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, wantsJson, injectBanner, injectAdminButton, coherentOwnerImpersonation };
+module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, restrictedImpersonationAction, wantsJson, injectBanner, shouldInjectBanner, injectAdminButton, coherentOwnerImpersonation };

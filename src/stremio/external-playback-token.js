@@ -44,12 +44,51 @@ async function current(sourceId, entitlementId) {
     WHERE source_id=$1 AND entitlement_id=$2 LIMIT 1`, [sourceId, entitlementId]);
   return result.rows[0] || null;
 }
+async function currentSource(sourceId) {
+  const result = await query('SELECT * FROM stremio_sources WHERE id=$1 LIMIT 1', [sourceId]);
+  return result.rows[0] || null;
+}
+async function planIdForEntitlement(entitlement) {
+  if(entitlement?.plan_id)return String(entitlement.plan_id);
+  const result=await query(`SELECT s.plan_id FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id WHERE e.id=$1 LIMIT 1`,[entitlement?.id||null]);
+  return result.rows[0]?.plan_id?String(result.rows[0].plan_id):null;
+}
+async function sourceAuthorized(sourceId,entitlementId,db=query) {
+  const result=await db(`SELECT EXISTS(
+      SELECT 1
+      FROM stremio_entitlements e
+      JOIN subscriptions sub ON sub.id=e.subscription_id
+      JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=$2 AND ps.enabled=TRUE
+      JOIN stremio_sources s ON s.id=ps.source_id
+      WHERE e.id=$1 AND s.enabled=TRUE AND s.auth_state IN ('connected','error') AND s.password_encrypted IS NOT NULL
+    ) AS allowed`,[entitlementId,sourceId]);
+  return result.rows[0]?.allowed===true;
+}
+async function currentlyDue(row) {
+  if (!row?.source_id || !row?.entitlement_id) return false;
+  if (new Date(row.expires_at).getTime() <= Date.now()) return true;
+  if (!await entitlementActive(row.entitlement_id)) return true;
+  const authorized = await query(`SELECT EXISTS(
+      SELECT 1
+      FROM stremio_entitlements e
+      JOIN subscriptions sub ON sub.id=e.subscription_id
+      JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=$2 AND ps.enabled=TRUE
+      JOIN stremio_sources s ON s.id=ps.source_id
+      WHERE e.id=$1
+        AND s.enabled=TRUE
+        AND s.auth_state IN ('connected','error')
+        AND s.password_encrypted IS NOT NULL
+    ) AS allowed`, [row.entitlement_id, row.source_id]);
+  return authorized.rows[0]?.allowed !== true;
+}
 
 async function extend(row) {
-  const hours = ttlHours();
+  // TTL is absolute from authentication, not sliding. Reusing a live token may
+  // update observability, but must not keep an upstream Jellyfin/Emby session
+  // alive forever just because a customer keeps opening titles.
   const result = await query(`UPDATE stremio_external_playback_tokens
-    SET last_issued_at=NOW(),expires_at=NOW()+($2||' hours')::interval,last_error=NULL
-    WHERE id=$1 RETURNING *`, [row.id, String(hours)]);
+    SET last_issued_at=NOW(),last_error=NULL
+    WHERE id=$1 RETURNING *`, [row.id]);
   return result.rows[0] || row;
 }
 
@@ -61,19 +100,34 @@ async function revokeRow(row) {
   return true;
 }
 
-async function tokenFor(source, entitlement) {
+async function tokenFor(source, entitlement, { returnContext = false } = {}) {
   if (!source?.id || !entitlement?.id) throw new Error('External raw playback requires a source and current Stremio entitlement.');
-  return operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
+  const planId=await planIdForEntitlement(entitlement);
+  if(!planId)throw new Error('External raw playback could not resolve the current Stremio plan.');
+  return operationLock.withLock(`stremio-plan:${planId}`,()=>operationLock.withLock(`external-token:${source.id}`,()=>operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
+    const latestSource=await currentSource(source.id);
+    if(!latestSource){
+      const error=new Error('External Stremio source no longer exists.');
+      error.code='STREMIO_SOURCE_NOT_AUTHORIZED';
+      throw error;
+    }
+    source=latestSource;
     if (!await entitlementActive(entitlement.id)) {
       const error = new Error('Stremio entitlement is no longer active.');
       error.code = 'STREMIO_ENTITLEMENT_INACTIVE';
+      throw error;
+    }
+    if(!await sourceAuthorized(source.id,entitlement.id)){
+      const error=new Error('This external Stremio source is no longer authorized for the current plan.');
+      error.code='STREMIO_SOURCE_NOT_AUTHORIZED';
       throw error;
     }
 
     const existing = await current(source.id, entitlement.id);
     if (existing && new Date(existing.expires_at).getTime() > Date.now()) {
       const refreshed = await extend(existing);
-      return client.decryptToken(refreshed.token_encrypted);
+      const token=client.decryptToken(refreshed.token_encrypted);
+      return returnContext?{token,source}:token;
     }
     if (existing) {
       // Jellyfin/Emby access tokens are server sessions rather than true TTL
@@ -110,6 +164,11 @@ async function tokenFor(source, entitlement) {
 
     try {
       if (!await entitlementActive(entitlement.id)) throw new Error('Stremio entitlement ended while external playback access was being prepared.');
+      if(!await sourceAuthorized(source.id,entitlement.id)){
+        const error=new Error('External Stremio source authorization changed while playback access was being prepared.');
+        error.code='STREMIO_SOURCE_NOT_AUTHORIZED';
+        throw error;
+      }
       const encrypted = client.encryptToken(auth.accessToken);
       const hours = ttlHours();
       const stored = await transaction(async db => {
@@ -138,12 +197,13 @@ async function tokenFor(source, entitlement) {
         ]);
         return result.rows[0];
       });
-      return client.decryptToken(stored.token_encrypted);
+      const token=client.decryptToken(stored.token_encrypted);
+      return returnContext?{token,source}:token;
     } catch (error) {
       await client.logoutToken(auth.baseUrl, auth.accessToken, source.name || source.jellyfin_username || 'Media server', auth.mediaServerType).catch(() => {});
       throw error;
     }
-  });
+  })));
 }
 
 async function revokeEntitlement(entitlementId) {
@@ -154,6 +214,53 @@ async function revokeEntitlement(entitlementId) {
   for (const row of rows) {
     await operationLock.withLock(`external-playback:${row.source_id}:${entitlementId}`, async () => {
       const currentRow = await current(row.source_id, entitlementId);
+      if (!currentRow) return;
+      await revokeRow(currentRow);
+      revoked += 1;
+    });
+  }
+  return { total: rows.length, revoked };
+}
+
+async function revokeSource(sourceId) {
+  if (!sourceId) return { total: 0, revoked: 0 };
+  const rows = (await query(`SELECT * FROM stremio_external_playback_tokens
+    WHERE source_id=$1 ORDER BY id`, [sourceId])).rows;
+  let revoked = 0;
+  for (const row of rows) {
+    await operationLock.withLock(`external-playback:${sourceId}:${row.entitlement_id}`, async () => {
+      const currentRow = await current(sourceId, row.entitlement_id);
+      if (!currentRow) return;
+      await revokeRow(currentRow);
+      revoked += 1;
+    });
+  }
+  return { total: rows.length, revoked };
+}
+
+async function revokeUnauthorizedForPlan(planId) {
+  if (!planId) return { total: 0, revoked: 0 };
+  const rows = (await query(`SELECT t.*
+    FROM stremio_external_playback_tokens t
+    JOIN stremio_entitlements e ON e.id=t.entitlement_id
+    JOIN subscriptions sub ON sub.id=e.subscription_id
+    WHERE sub.plan_id=$1
+      AND NOT EXISTS(
+        SELECT 1
+        FROM plan_stremio_sources ps
+        JOIN stremio_sources s ON s.id=ps.source_id
+        WHERE ps.plan_id=sub.plan_id
+          AND ps.source_id=t.source_id
+          AND ps.enabled=TRUE
+          AND s.enabled=TRUE
+          AND s.auth_state IN ('connected','error')
+          AND s.password_encrypted IS NOT NULL
+      )
+    ORDER BY t.id`, [planId])).rows;
+  let revoked = 0;
+  for (const row of rows) {
+    await operationLock.withLock(`external-playback:${row.source_id}:${row.entitlement_id}`, async () => {
+      const currentRow = await current(row.source_id, row.entitlement_id);
       if (!currentRow) return;
       await revokeRow(currentRow);
       revoked += 1;
@@ -178,24 +285,40 @@ async function revokeDue({ limit = 100 } = {}) {
          JOIN effective ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
          WHERE e.id=t.entitlement_id AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW()
        )
+       OR NOT EXISTS(
+         SELECT 1
+         FROM stremio_entitlements e
+         JOIN subscriptions sub ON sub.id=e.subscription_id
+         JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=t.source_id AND ps.enabled=TRUE
+         JOIN stremio_sources s ON s.id=ps.source_id
+         WHERE e.id=t.entitlement_id
+           AND s.enabled=TRUE
+           AND s.auth_state IN ('connected','error')
+           AND s.password_encrypted IS NOT NULL
+       )
     ORDER BY t.expires_at,t.id LIMIT $1`, [Math.max(1, Math.min(1000, Number(limit) || 100))])).rows;
 
   let revoked = 0;
   let failed = 0;
   for (const row of rows) {
     try {
-      await revokeRow(row);
-      revoked += 1;
+      await operationLock.withLock(`external-playback:${row.source_id}:${row.entitlement_id}`, async () => {
+        const latest = await current(row.source_id, row.entitlement_id);
+        if (!latest || !await currentlyDue(latest)) return;
+        await revokeRow(latest);
+        revoked += 1;
+      });
     } catch (error) {
       failed += 1;
-      await query(`UPDATE stremio_external_playback_tokens
+      const latest = await current(row.source_id, row.entitlement_id).catch(() => null);
+      if (latest) await query(`UPDATE stremio_external_playback_tokens
         SET last_revoke_attempt_at=NOW(),revoke_attempt_count=revoke_attempt_count+1,last_error=$2,
             expires_at=NOW()+($3||' minutes')::interval
-        WHERE id=$1`, [row.id, compactError(error), String(RETRY_MINUTES)]).catch(() => {});
+        WHERE id=$1`, [latest.id, compactError(error), String(RETRY_MINUTES)]).catch(() => {});
       console.error(`External Stremio playback-token revocation failed for ${row.source_name || row.source_id}:`, compactError(error));
     }
   }
   return { total: rows.length, revoked, failed };
 }
 
-module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeEntitlement, revokeDue };
+module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, currentSource, planIdForEntitlement, sourceAuthorized, currentlyDue, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeUnauthorizedForPlan, revokeDue };

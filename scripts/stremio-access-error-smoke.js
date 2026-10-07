@@ -20,6 +20,7 @@ assert(runtime.includes('const state = await installTokenState(req.params.token)
 assert(household.includes('function deniedStream('), 'household-limit failure must keep returning a fake Stremio stream result');
 assert(household.includes("'Household IP limit reached'"), 'household-limit fake result must name the actual access error');
 assert(household.includes("'Household IP could not be verified'"), 'unresolved proxy identity must produce a visible fail-closed household error');
+assert(household.includes("decision === 'check_failed'")&&household.includes("'Household access could not be verified'"),'temporary household-check failures must not be mislabeled as a customer household-limit violation');
 assert(household.includes("decision: 'network_unavailable'"), 'unresolved public visitor identity must fail closed before a shared proxy lease can be used');
 assert(household.includes('CAPTAiNFiN • ${title}'), 'household-limit fake result must remain visibly branded');
 assert(household.includes('already reached its allowed household internet connections'), 'household-limit result must explain that the plan allowance is exhausted');

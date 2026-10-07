@@ -13,6 +13,7 @@ const serviceCreditReservations = require('./service-credit-reservations');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
 const financialState = require('./provider-financial-state');
 const accessExtensions = require('./subscription-access-extensions');
+const stremioEntitlements = require('../stremio/entitlements');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -95,6 +96,40 @@ async function reconcileCommittedCustomer(customerId, context = 'Entitlement') {
 
 async function reconcileCommittedCustomerStrict(customerId) {
     return reconcileCustomer(customerId);
+}
+
+async function effectiveStremioSubscriptionById(customerId, subscriptionId) {
+    if (!customerId || !subscriptionId) return null;
+    const result = await query(`
+        WITH effective AS (
+            SELECT customer_id,subscription_id,access_expires_at,blocked
+            FROM effective_stremio_entitlements
+            UNION ALL
+            SELECT a.customer_id,a.subscription_id,a.access_expires_at,
+                   public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+            FROM effective_customer_addons a
+            JOIN subscriptions s ON s.id=a.subscription_id
+        )
+        SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,e.access_expires_at,e.blocked
+        FROM effective e
+        JOIN subscriptions s ON s.id=e.subscription_id
+        JOIN plans p ON p.id=s.plan_id
+        WHERE e.customer_id=$1
+          AND e.subscription_id=$2
+          AND e.blocked=FALSE
+          AND e.access_expires_at>NOW()
+          AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('stremio','bundle')
+        LIMIT 1
+    `, [customerId, subscriptionId]);
+    return result.rows[0] || null;
+}
+
+async function ensureStremioInstallForSubscription(customerId, subscriptionId) {
+    const entitlement = await effectiveStremioSubscriptionById(customerId, subscriptionId);
+    if (!entitlement) return null;
+    const issued = await stremioEntitlements.ensureInstallationCredential(customerId, { entitlement });
+    if (issued?.revoked) return { ...issued, ready: false };
+    return { ...issued, ready: Boolean(issued?.credential) };
 }
 
 async function ensurePaymentCustomer({ customerId, provider, providerCustomerId }) {
@@ -470,7 +505,53 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
     }
     const oneTimeReplay = historicalCheckoutReplay && billingMode.normalize(subscription?.billing_mode) === billingMode.BILLING_MODES.PAYMENT;
     if (providerCustomerId && (!historicalCheckoutReplay || oneTimeReplay)) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
+
+    let stremioFulfillmentError = null;
+    if (!activationSuppressedByMoneyLoss && subscription?.id) {
+        try {
+            await ensureStremioInstallForSubscription(customerId, subscription.id);
+        } catch (error) {
+            stremioFulfillmentError = error;
+            console.error('Paid Stremio installation-link fulfillment failed before general reconciliation:', {
+                customerId,
+                subscriptionId: subscription.id,
+                provider,
+                providerSubscriptionId,
+                error: error.message
+            });
+        }
+    }
+
     await reconcileCommittedCustomer(customerId, activationSuppressedByMoneyLoss ? 'Money-loss checkout replay' : historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription');
+
+    if (stremioFulfillmentError && !historicalCheckoutReplay && subscription?.id) {
+        // Retry once after the broad reconciler has repaired any adjacent local
+        // entitlement state. A settled payment must never silently finish with
+        // a missing Stremio bearer link.
+        try {
+            const retried = await ensureStremioInstallForSubscription(customerId, subscription.id);
+            if (retried?.ready) stremioFulfillmentError = null;
+        } catch (retryError) {
+            stremioFulfillmentError = retryError;
+        }
+        if (stremioFulfillmentError) {
+            const error = new Error('Payment was received, but Stremio access could not finish creating its installation link. Automatic recovery will retry.');
+            error.code = 'STREMIO_INSTALL_FULFILLMENT_PENDING';
+            error.paidButUnfulfilled = true;
+            error.cause = stremioFulfillmentError;
+            if (settlementCheckoutIntentId) {
+                await recordCapacitySettlementIncident({
+                    customerId,
+                    planId,
+                    provider,
+                    providerSubscriptionId,
+                    checkoutIntentId: settlementCheckoutIntentId,
+                    error
+                }).catch(incidentError => console.error('Stremio paid-but-unfulfilled incident could not be recorded:', incidentError.message));
+            }
+            throw error;
+        }
+    }
     if (!historicalCheckoutReplay) {
         try { await referrals.rewardIfQualifying(customerId); }
         catch (error) { console.error('Referral reward check failed:', error.message); }
@@ -490,7 +571,16 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
         if (status) await syncProviderAccessState({ customerId: updated.customer_id, provider, providerSubscriptionId, status: updated.status, billingMode: updated.billing_mode }, client);
         return updated;
     });
-    if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
+    if (row) {
+        if (['active','trialing'].includes(String(row.status||''))) {
+            await ensureStremioInstallForSubscription(row.customer_id,row.id).catch(error=>{
+                console.error('Provider subscription Stremio link recovery pending:',{
+                    customerId:row.customer_id,subscriptionId:row.id,error:error.message
+                });
+            });
+        }
+        await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
+    }
     return row;
 }
 
@@ -505,6 +595,8 @@ module.exports = {
     syncProviderAccessState,
     reconcileCommittedCustomer,
     reconcileCommittedCustomerStrict,
+    effectiveStremioSubscriptionById,
+    ensureStremioInstallForSubscription,
     ensurePaymentCustomer,
     findPaymentCustomer,
     beginPaymentEvent,

@@ -139,12 +139,20 @@ async function runPage({
         console.warn(`${label} item failed:`, reason);
     }
 
-    if (rows.length && hasMore) {
+    let nextCursor = after || null;
+    if (failed > 0) {
+        // Do not advance past a failed row. Replaying successful rows is cheap
+        // and idempotent; skipping a failed mapping until the entire keyset
+        // wraps can strand a customer for hours or days.
+        if (!after) await cursorStore.clear(key, queryFn);
+    } else if (rows.length && hasMore) {
         const id = String(rows[rows.length - 1].mapping_id || rows[rows.length - 1].id || '');
         if (!isUuid(id)) throw new Error(`${label} returned an invalid keyset cursor.`);
         await cursorStore.save(key, id, queryFn);
+        nextCursor = id;
     } else {
         await cursorStore.clear(key, queryFn);
+        nextCursor = null;
     }
 
     return {
@@ -153,7 +161,7 @@ async function runPage({
         failed,
         hasMore,
         warning: failureSummary(reasons, failed, label),
-        cursor: rows.length && hasMore ? String(rows[rows.length - 1].mapping_id || rows[rows.length - 1].id) : null
+        cursor: nextCursor
     };
 }
 

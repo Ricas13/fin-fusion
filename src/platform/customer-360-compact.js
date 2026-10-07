@@ -56,11 +56,13 @@ function plansCard(detail,token,plans,pendingChange=null){
   if(current.length){
     const primary=current.find(s=>String(s.id)===String(detail.primaryEntitlement?.subscription_id))||current[0];
     const jellyfinPrimary=(jellyfinPlan(primary)?primary:null)||current.find(jellyfinPlan)||null;
+    const trial=current.find(sub=>String(sub.status||'').toLowerCase()==='trialing'&&String(sub.billing_interval_snapshot||sub.billing_interval||'').toLowerCase()==='trial')||null;
     if(jellyfinPrimary){
       actions.push(customerLink(id,'change-plan','Change plan',{params:{subscriptionId:jellyfinPrimary.id}}));
       actions.push(actionLink(id,'extend','Extend',{params:{subscriptionId:jellyfinPrimary.id}}));
       actions.push(actionLink(id,'expiry','Edit expiry',{params:{subscriptionId:jellyfinPrimary.id}}));
     }
+    if(trial)actions.push(actionLink(id,'reset-trial','Reset trial',{params:{subscriptionId:trial.id||trial.subscription_id}}));
     if(recurring(primary))actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/renewal`,primary.cancel_at_period_end?'Resume renewal':'Stop renewal',{fields:{enabled:primary.cancel_at_period_end?'1':'0'}}));
     if(pendingChange)actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/plan-change/cancel`,'Cancel pending change'));
     actions.push(customerLink(id,'subscriptions/revoke','Revoke a plan',{tone:'danger'}));

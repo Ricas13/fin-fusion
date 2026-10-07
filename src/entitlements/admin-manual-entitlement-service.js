@@ -2,6 +2,7 @@
 
 const { query, transaction } = require('../db');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const stremioEntitlements = require('../stremio/entitlements');
 const manualSubscriptions = require('./manual-subscriptions');
 const planCapacity = require('./plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
@@ -196,14 +197,36 @@ async function createManualGrant(customerId, actorUserId, input) {
       `, [sub.id, mediaServer.id, mediaLocation, customerId]);
       if (!assigned.rowCount) throw new Error('Manual entitlement changed before its media-server reservation could be persisted.');
     }
-    return { subscriptionId: sub.id, planName: plan.name, mediaServerId: mediaServer?.id || null, mediaLocation };
+    return { subscriptionId: sub.id, planName: plan.name, serviceType: String(plan.service_type || 'jellyfin'), startsAt: input.startAt, endsAt: input.endAt, mediaServerId: mediaServer?.id || null, mediaLocation };
   });
+  let stremioLinkReady = null;
+  const now = new Date();
+  if (['stremio','bundle'].includes(created.serviceType)
+      && created.startsAt <= now
+      && created.endsAt > now) {
+    try {
+      const issued = await stremioEntitlements.ensureInstallationCredential(customerId, {
+        entitlement: {
+          subscription_id: created.subscriptionId,
+          service_type_snapshot: created.serviceType
+        }
+      });
+      stremioLinkReady = Boolean(issued?.credential || issued?.reused);
+    } catch (error) {
+      stremioLinkReady = false;
+      console.error('Manual Stremio entitlement could not create its installation link immediately:', {
+        customerId,
+        subscriptionId: created.subscriptionId,
+        error: error.message
+      });
+    }
+  }
   try {
     await provisioning.reconcileCustomer(customerId);
-    return { ...created, reconciled: true };
+    return { ...created, reconciled: true, stremioLinkReady };
   } catch (error) {
     console.error('Manual customer entitlement reconciliation failed:', { customerId, error: error.message });
-    return { ...created, reconciled: false };
+    return { ...created, reconciled: false, stremioLinkReady };
   }
 }
 

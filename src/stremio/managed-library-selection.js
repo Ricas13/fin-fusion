@@ -2,6 +2,7 @@
 
 const {query,transaction}=require('../db');
 const registry=require('../jellyfin/registry');
+const operationLock=require('./operation-lock');
 
 const SUPPORTED_TYPES=new Set(['movies','tvshows','mixed']);
 
@@ -35,7 +36,7 @@ async function forPage(serverId){
   try{return{libraries:mergeDiscovered(saved,await discover(serverId)),error:null};}
   catch(error){return{libraries:saved,error:String(error?.message||error).slice(0,700)};}
 }
-async function refresh(serverId,actorUserId=null){
+async function refreshUnlocked(serverId,actorUserId=null){
   const [saved,discovered]=await Promise.all([stored(serverId),discover(serverId)]),hasSaved=saved.length>0,prior=new Map(saved.map(row=>[String(row.library_id),row]));
   await transaction(async db=>{
     await db.query(`UPDATE stremio_managed_source_libraries SET available=FALSE,updated_at=NOW() WHERE server_id=$1`,[serverId]);
@@ -51,6 +52,7 @@ async function refresh(serverId,actorUserId=null){
   });
   return stored(serverId);
 }
+async function refresh(serverId,actorUserId=null){return operationLock.withLock(`managed-index:${serverId}`,()=>refreshUnlocked(serverId,actorUserId));}
 function requestedSet(libraryIds){return new Set((Array.isArray(libraryIds)?libraryIds:[libraryIds]).map(value=>String(value||'')).filter(Boolean));}
 async function prepareSave(serverId,libraryIds){
   const requested=requestedSet(libraryIds),discovered=await discover(serverId),allowed=new Set(discovered.map(library=>String(library.libraryId)));
@@ -86,4 +88,4 @@ async function counts(serverId){
   return result.rows[0]||{available:0,selected:0};
 }
 
-module.exports={SUPPORTED_TYPES,normalizedLibrary,discover,stored,mergeDiscovered,forPage,refresh,requestedSet,prepareSave,writePrepared,save,indexFilter,counts};
+module.exports={SUPPORTED_TYPES,normalizedLibrary,discover,stored,mergeDiscovered,forPage,refreshUnlocked,refresh,requestedSet,prepareSave,writePrepared,save,indexFilter,counts};

@@ -21,12 +21,12 @@ async function retireEncryptedTokenTx(db,source,{encryptedToken=null,actorUserId
   const token=encryptedToken||source?.access_token_encrypted;
   if(!source?.id||!source?.base_url||!token)return false;
   const hours=graceHours(grace);
-  const inserted=await db.query(`INSERT INTO stremio_source_retired_tokens(source_id,base_url,source_name,token_encrypted,revoke_at)
-    SELECT $1,$2,$3,$4,NOW()+($5||' hours')::interval
+  const inserted=await db.query(`INSERT INTO stremio_source_retired_tokens(source_id,base_url,source_name,media_server_type,token_encrypted,revoke_at)
+    SELECT $1,$2,$3,$4,$5,NOW()+($6||' hours')::interval
     WHERE NOT EXISTS(
       SELECT 1 FROM stremio_source_retired_tokens
-      WHERE source_id=$1 AND token_encrypted=$4
-    ) RETURNING id`,[source.id,source.base_url,source.name||null,token,String(hours)]);
+      WHERE source_id=$1 AND token_encrypted=$5
+    ) RETURNING id`,[source.id,source.base_url,source.name||null,client.providerType(source.media_server_type||'jellyfin'),token,String(hours)]);
   if(inserted.rowCount)await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
     VALUES($1,'admin.stremio.source.token_retired','stremio_source',$2,$3::jsonb)`,[actorUserId,source.id,JSON.stringify({reason,graceHours:hours})]);
   return Boolean(inserted.rowCount);
@@ -47,6 +47,12 @@ async function rotateSourceToken(source,actorUserId=null){
     if(!current.access_token_encrypted)throw new Error('External Jellyfin source has no current token to rotate.');
     const password=client.decryptPassword(current.password_encrypted);
     const auth=await client.authenticate(current.base_url,current.jellyfin_username,password,current.media_server_type||null);
+    if(current.jellyfin_user_id&&String(auth.jellyfinUserId)!==String(current.jellyfin_user_id)){
+      await cleanupIssuedAuth(auth,{sourceName:current.name||current.jellyfin_username,mediaServerType:current.media_server_type});
+      const error=new Error('Automatic Stremio source token rotation resolved to a different media-server user. Reconnect the source explicitly before rotating credentials.');
+      error.code='STREMIO_SOURCE_IDENTITY_CHANGED';
+      throw error;
+    }
     const encrypted=client.encryptToken(auth.accessToken),hours=rotationHours(current.token_rotation_hours);
     try{
       await transaction(async db=>{
@@ -78,7 +84,7 @@ async function rotateDueTokens({limit=25}={}){
   let rotated=0,failed=0,skipped=0;
   for(const source of rows){
     try{const result=await rotateSourceToken(source);if(result?.skipped)skipped++;else rotated++;}
-    catch(error){failed++;await query(`UPDATE stremio_sources SET auth_state='error',last_auth_check_at=NOW(),last_error=$2,token_rotates_at=NOW()+INTERVAL '1 hour',updated_at=NOW() WHERE id=$1`,[source.id,String(error.message||error).slice(0,1000)]).catch(()=>{});console.error(`Stremio source token rotation failed for ${source.name}:`,error.message);}
+    catch(error){failed++;await query(`UPDATE stremio_sources SET last_auth_check_at=NOW(),last_error=$2,token_rotates_at=NOW()+INTERVAL '1 hour',updated_at=NOW() WHERE id=$1`,[source.id,String(error.message||error).slice(0,1000)]).catch(()=>{});console.error(`Stremio source token rotation failed for ${source.name}:`,error.message);}
   }
   return{total:rows.length,rotated,skipped,failed};
 }
@@ -90,7 +96,7 @@ async function revokeRetiredTokens({limit=100,sourceId=null,force=false}={}){
   let revoked=0,failed=0;
   for(const row of rows){
     try{
-      const token=client.decryptToken(row.token_encrypted),ok=await client.logoutToken(row.base_url,token,row.source_name||'Jellyfin');
+      const token=client.decryptToken(row.token_encrypted),ok=await client.logoutToken(row.base_url,token,row.source_name||client.providerLabel(row.media_server_type||'jellyfin'),row.media_server_type||'jellyfin');
       if(!ok)throw new Error('Jellyfin did not confirm retired token logout.');
       await transaction(async db=>{
         await db.query('DELETE FROM stremio_source_retired_tokens WHERE id=$1',[row.id]);

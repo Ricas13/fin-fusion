@@ -28,6 +28,8 @@ assert(manualService.includes('media_server_id=$2') && manualService.includes('m
 assert(!manual.includes('INSERT INTO subscriptions'), 'admin route must not own subscription INSERT SQL');
 assert(manualService.includes("auditAction: 'admin.customer.manual_grant'"), 'manual grants must be audit logged');
 assert(manualService.includes('await provisioning.reconcileCustomer(customerId);'), 'manual grants must reconcile customer access after commit');
+assert(manualService.includes("require('../stremio/entitlements')")&&manualService.includes('stremioEntitlements.ensureInstallationCredential(customerId'),'current Stremio/bundle admin grants must create their private installation credential immediately before broader service reconciliation');
+assert(manualService.includes('stremioLinkReady = Boolean(issued?.credential || issued?.reused)'),'manual Stremio grant result must expose whether immediate link creation succeeded');
 assert(manualService.includes('reconciled: false') && manual.includes('service reconciliation still needs attention'), 'a post-commit reconciliation failure must not falsely report that the grant itself failed');
 assert(manualService.includes('chargedProvider: false') && manualService.includes('renewal: false') && manualService.includes('providerLinked: false'), 'audit metadata must record non-provider, non-renewing semantics');
 assert(!manualService.includes('payment_events'), 'manual grants must not fabricate payment_events');
@@ -48,6 +50,8 @@ assert(manualService.includes('Use Manual entitlement edit instead.'), 'server-s
 assert(manualService.includes("const adminTrialRegrant = plan.billing_interval === 'trial';")&&manualService.includes('adminTrialRegrant,'),'administrator trial grants must explicitly preserve repeat-trial semantics after an earlier trial has ended');
 assert(manualService.includes('Administrator grants intentionally bypass customer self-service trial-history'),'admin repeat-trial behavior must stay intentional and documented at the domain boundary');
 assert(lifecycle.includes('await enforceTrialEligibility(customerId, plan);'),'customer self-service trial creation must continue enforcing prior-trial eligibility even though administrators may grant another trial');
+assert(lifecycle.includes('readyStremioInstallForSubscription')&&lifecycle.includes("failureCode:'TRIAL_STREMIO_INSTALL_FAILED'"),'customer Stremio trials must fail closed and roll back when an immediate recoverable installation link cannot be created');
+assert(lifecycle.includes("type==='bundle'?'TRIAL_BUNDLE_PROVISIONING_FAILED'"),'bundle trials must verify both their media-server lane and Stremio installation link before the trial is retained');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
 assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
 assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf("mountCritical('customer360', createAdminCustomer360Router())"), 'manual entitlement injection must mount before Customer 360');

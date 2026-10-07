@@ -53,6 +53,14 @@ async function configure({serverId,enabled,sourcePriority,actorUserId=null}){
       actorUserId,serverId,JSON.stringify({enabled:target,priority:nextPriority,mediaServerType:registry.mediaProvider.normalizeType(server.media_server_type)})
     ]);
   });
+  if(!target){
+    const cleanup=await require('./managed-entitlements').revokeServerMappings(serverId);
+    if(Number(cleanup?.failed||0)>0){
+      const error=new Error(cleanup.warning||'Some managed Stremio sessions could not be revoked immediately. Automatic cleanup will keep retrying.');
+      error.code='STREMIO_MANAGED_SOURCE_CLEANUP_INCOMPLETE';
+      throw error;
+    }
+  }
   return get(serverId);
 }
 

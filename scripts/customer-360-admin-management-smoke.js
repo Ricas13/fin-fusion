@@ -42,8 +42,10 @@ assert(migration.includes('credential_encrypted text NOT NULL'),'recoverable ins
 assert(!migration.includes('credential text NOT NULL'),'raw Stremio credentials must never be stored as plaintext');
 assert(recovery.includes("encryptWithEnv(String(credential),KEY_ENV,PREFIX)"),'Stremio recovery must encrypt credentials before persistence');
 assert(recovery.includes('current_token_version')&&recovery.includes("row.status!=='active'"),'recovered credentials must be rejected when the live entitlement/token version no longer matches');
-assert(entitlements.includes('installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client})')&&customerDashboard.includes('installRecovery.current('),'customer-issued Stremio URLs must be persisted atomically by the canonical issuance owner and remain recoverable after page reload through Account Home');
+assert(entitlements.includes('installRecovery.save({customerId,entitlement:result.rows[0],credential:issued.token,actorUserId},{client})')&&customerStremio.includes('installationLinks.current(req,customerId)'),'customer-issued Stremio URLs must be persisted atomically by the canonical issuance owner and remain recoverable after page reload through My Access');
 assert(customerStremio.includes('async function issueCustomerInstallation')&&customerStremio.includes('stremio.issueInstallation(customerId,{actorUserId})')&&customerStremio.includes('issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer Stremio install route must delegate recovery persistence to the canonical issuance owner through the shared installation helper');
+const adminStremioInstallBlock=management.slice(management.indexOf("r.post('/admin/users/:customerId/manage/stremio/install'"),management.indexOf("r.post('/admin/users/:customerId/manage/stremio/revoke'"));
+assert(adminStremioInstallBlock.includes('scheduleManagedStremioProvision(issued.credential)')&&!adminStremioInstallBlock.includes('await managedEntitlements.ensure'),'admin installation URL generation must return without waiting for managed media-server provisioning');
 assert(entitlements.includes('installRecovery.clear(customerId)'),'canonical Stremio revoke must delete the recoverable credential');
 
 for(const route of [
@@ -114,6 +116,15 @@ assert(individualActionService.includes('async function resetExpiryToPlan')
     && individualActionService.includes('subscriptionState.effectiveSubscription(customerId,{includeBlocked:true})')
     && individualActionService.includes("'admin.customer.expiry.reset_to_plan'"),
   'access-domain individual action service must own reset-to-plan expiry selection, mutation and audit');
+assert(individualActionService.includes('async function resetTrial({customerId,actorUserId,subscriptionId})')
+    && individualActionService.includes("'admin.customer.trial.reset_duration'")
+    && individualActionService.includes('duration_days_snapshot||sub.duration_days||1')
+    && individualActionService.includes('cancel_at_period_end=FALSE'),
+  'trial reset must preserve the contracted duration, clear cancellation state and audit the exact selected subscription');
+assert(individualActionService.includes("String(sub.status||'').toLowerCase()!=='trialing'")
+    && individualActionService.includes("interval!=='trial'")
+    && individualActionService.includes('subscriptionState.recurringProvider(sub)'),
+  'trial reset must reject non-trials, inactive trials and provider-controlled trials');
 
 assert(customer360Route.includes('lifecycleService.resetAutomaticPlacement(')
     && !customer360Route.includes("require('../jellyfin/server-migration')"),
@@ -218,7 +229,9 @@ assert(compact360.includes('accessCards.accessLibrariesRequests(detail,token,opt
 assert(!compact360.includes('bulkForm(')&&!compact360.includes('/admin/customers/bulk/preview'),'Customer 360 compact single-customer actions must not submit through the bulk preview workflow');
 assert(!primaryActions.includes('/admin/customers/bulk/preview')&&primaryActions.includes('/admin/users/${encodeURIComponent(id)}/move-server'),'Customer 360 primary actions must route server movement directly instead of through bulk preview');
 assert(compact360.includes("customerLink(id,'change-plan','Change plan'")&&compact360.includes("customerLink(id,'subscriptions/revoke','Revoke a plan'")&&compact360.includes("customerLink(id,'move-server','Move Jellyfin server'")&&compact360.includes("customerLink(id,'delete-customer','Review permanent deletion'"),'Customer 360 must expose direct plan-change, targeted subscription-revoke, server-move and permanent-delete workflows');
+assert(compact360.includes("actionLink(id,'reset-trial','Reset trial'")&&compact360.includes("String(sub.status||'').toLowerCase()==='trialing'"),'Customer 360 plans card must show Reset trial only when a current trial subscription exists');
 assert(directIndividual.includes("COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')"),'individual subscription actions must only target Jellyfin-capable subscriptions');
+assert(directIndividual.includes("'reset-trial'")&&directIndividual.includes('trialSubscriptionForCustomer')&&directIndividual.includes("Type RESET TRIAL exactly to confirm."),'Customer 360 must expose trial reset as an explicit confirmed action that can target Stremio-only trials without broadening Jellyfin-only expiry actions');
 assert(directLifecycle.includes('lifecycleService.moveServer(')&&directLifecycleService.includes('return forceMove.move(customerId,serverId')&&directLifecycle.includes('ownerStatus(req.session.authUserId)')&&directLifecycle.includes('deletion.hardDeletePortalCustomer'),'single-customer lifecycle routes must reuse canonical move/deletion safeguards through the domain boundary');
 assert(directLifecycle.includes("serviceScope=require('../entitlements/service-scope')")&&directLifecycle.includes("function jellyfinCapable(row){return serviceScope.capabilities(row).has('jellyfin');}")&&directLifecycle.includes('serviceScope.overlaps(sub,plan)&&jellyfinCapable(plan)')&&directLifecycleService.includes('!serviceScope.overlaps(sub,target)||!jellyfinCapable(target)'),'single-customer plan changes must only offer and accept service-compatible Jellyfin-capable target plans');
 assert(directLifecycle.includes('!(subscriptionState.recurringProvider(sub)&&planExpiry.isFreeTier(plan))')&&directLifecycleService.includes('subscriptionState.recurringProvider(sub)&&planExpiry.isFreeTier(target)'),'recurring provider subscriptions must not be manually moved to the free tier while provider billing remains active');

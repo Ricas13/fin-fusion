@@ -126,8 +126,8 @@ async function main(){
     assert(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled(),'Runtime must remain disabled before a selected indexed source exists');
     await screenshot(page,'stremio-sources-empty');
 
-    const seeded=(await pool.query(`INSERT INTO stremio_sources(name,enabled,source_kind,base_url,public_url,jellyfin_user_id,jellyfin_username,access_token_encrypted,weight,priority,authorization_confirmed,auth_state,last_connected_at,last_auth_check_at)
-      VALUES('Browser External Jellyfin',TRUE,'external','https://jellyfin.example.invalid','https://jellyfin.example.invalid','browser-user-id','browser-source-user','encrypted-test-token',100,50,TRUE,'connected',NOW(),NOW()) RETURNING id`)).rows[0];
+    const seeded=(await pool.query(`INSERT INTO stremio_sources(name,enabled,source_kind,base_url,public_url,jellyfin_user_id,jellyfin_username,access_token_encrypted,password_encrypted,weight,priority,authorization_confirmed,auth_state,last_connected_at,last_auth_check_at)
+      VALUES('Browser External Jellyfin',TRUE,'external','https://jellyfin.example.invalid','https://jellyfin.example.invalid','browser-user-id','browser-source-user','encrypted-test-token','encrypted-test-password',100,50,TRUE,'connected',NOW(),NOW()) RETURNING id`)).rows[0];
     await pool.query(`INSERT INTO stremio_source_libraries(source_id,library_id,name,collection_type,selected,available) VALUES($1,'movies-lib','Movies','movies',TRUE,TRUE),($1,'tv-lib','TV Shows','tvshows',FALSE,TRUE)`,[seeded.id]);
     await pool.query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_completed_at,last_full_completed_at,next_incremental_at,force_full,item_count) VALUES($1,'ready','full',NOW(),NOW(),NOW(),NOW()+INTERVAL '6 hours',FALSE,42)`,[seeded.id]);
 

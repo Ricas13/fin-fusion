@@ -77,8 +77,8 @@ async function logout(source){if(!source?.access_token_encrypted)return false;re
 async function request(source,endpoint,{method='GET',body=null,timeoutMs=15000,maxBytes=8*1024*1024}={}){
   const provider=providerType(source.media_server_type),label=providerLabel(provider),url=sourceUrl(source.base_url,endpoint,provider),headers=userTokenHeaders(provider,sourceToken(source));if(body!=null)headers['Content-Type']='application/json';
   const response=await outbound.safeFetch(url,{purpose:`Stremio source request on ${source.name||label}`,method,timeoutMs,maxBytes,headers,body:body==null?undefined:JSON.stringify(body)});
-  if(response.status===401||response.status===403){const error=new Error(`${label} authentication expired. Reconnect this Stremio source.`);error.code='STREMIO_SOURCE_AUTH';throw error;}
-  if(!response.ok)throw new Error(`${label} source returned HTTP ${response.status}.`);return parseJson(response,label);
+  if(response.status===401||response.status===403){const error=new Error(`${label} authentication expired. Reconnect this Stremio source.`);error.code='STREMIO_SOURCE_AUTH';error.status=response.status;throw error;}
+  if(!response.ok){const error=new Error(`${label} source returned HTTP ${response.status}.`);error.code='STREMIO_SOURCE_HTTP';error.status=response.status;error.retryable=response.status===408||response.status===429||response.status>=500;throw error;}return parseJson(response,label);
 }
 async function discoverLibraries(source){const payload=await request(source,`/Users/${encodeURIComponent(source.jellyfin_user_id)}/Views?IncludeExternalContent=false`,{maxBytes:4*1024*1024}),supported=new Set(['movies','tvshows','mixed']);return(Array.isArray(payload.Items)?payload.Items:[]).map(item=>({libraryId:String(item.Id||''),name:String(item.Name||'Library'),collectionType:String(item.CollectionType||'').toLowerCase()})).filter(item=>item.libraryId&&supported.has(item.collectionType));}
 
