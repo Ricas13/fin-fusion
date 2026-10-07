@@ -81,7 +81,7 @@ const JOB_METADATA=Object.freeze({
  pending_registration_cleanup:{defaultIntervalSeconds:300,critical:false},
  stremio_managed_accounts:{defaultIntervalSeconds:300,critical:true},
  stremio_external_tokens:{defaultIntervalSeconds:300,critical:true},
- stremio_media_index:{defaultIntervalSeconds:10800,critical:false}
+ stremio_media_index:{defaultIntervalSeconds:300,critical:false}
 });
 
 
