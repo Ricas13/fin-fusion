@@ -34,6 +34,8 @@ assert(managed.includes('media_server_type'),'managed source rows must carry the
 assert(managed.includes('api_configured'),'managed source view may expose credential presence but not its value');
 assert(managed.includes('public_url IS NOT NULL'),'managed direct playback sources must require a public URL');
 assert(managed.includes('ORDER BY stremio_priority,priority,name'),'managed sources must have explicit deterministic source ordering');
+assert(managed.includes("require('./managed-entitlements').revokeServerMappings(serverId)")&&managed.includes("STREMIO_MANAGED_SOURCE_CLEANUP_INCOMPLETE"),'disabling a managed Stremio source must synchronously start restricted-token/account cleanup instead of waiting for the periodic sweep');
+assert(managedEntitlements.includes('async function revokeServerMappings(serverId)')&&managedEntitlements.includes("Managed Stremio source disabled by administrator."),'managed entitlement cleanup must support a bounded server-scoped disable path');
 assert(managed.includes('stremio_managed_accounts'),'managed runtime foundation must use a per-entitlement/server account mapping');
 assert((managedEntitlements.match(/effective_stremio_entitlements/g)||[]).length>=2,'managed Stremio revoke and sync must use the Stremio effective entitlement view');
 assert(!managedEntitlements.includes('effective_customer_entitlements'),'managed Stremio lifecycle must not use the media-server-only primary entitlement view');
