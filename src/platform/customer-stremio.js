@@ -25,7 +25,9 @@ async function preprovisionManaged(credential){
   try{
     const entitlement=await stremio.findByInstallToken(credential);
     if(!entitlement)return false;
-    if(entitlement.has_shared_sources)return true;
+    // External plan sources are additive. Their presence must never suppress
+    // the managed Jellyfin path, otherwise a freshly-created install can miss
+    // managed results until the periodic reconciliation sweep catches up.
     const sources=await managedSources.enabled();
     if(!sources.length)return true;
     const ready=await managedEntitlements.ensure(entitlement);
@@ -108,7 +110,8 @@ function createCustomerStremioRouter(){
     res.setHeader('Pragma','no-cache');
     if(!csrf.verify(req))return res.status(403).json({error:'Invalid security token'});
     try{
-      await stremio.ensureInstallationCredential(req.session.customerId,{actorUserId:req.session.customerUserId});
+      const ensured=await stremio.ensureInstallationCredential(req.session.customerId,{actorUserId:req.session.customerUserId});
+      if(ensured?.credential)await preprovisionManaged(ensured.credential);
       return res.json(await customerSetupState(req,req.session.customerId));
     }catch(error){
       console.warn('Customer Stremio installation ensure failed:',{customerId:req.session.customerId,error:error.message});
