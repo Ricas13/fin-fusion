@@ -75,11 +75,12 @@ assert(disableScope.indexOf('logoutRestrictedToken')<disableScope.indexOf('other
 
 // Installation credential publication is also externalized state: the new hash
 // must never commit unless the encrypted recovery secret commits with it.
-const installScope=entitlements.slice(entitlements.indexOf('async function issueInstallation'),entitlements.indexOf('async function revoke'));
-assert(installScope.includes('const entitlement=await transaction(async client=>'),'install credential activation must own one database transaction');
-assert(installScope.includes('await client.query(`UPDATE stremio_entitlements SET token_hash=$2'),'install token hash must be written through that transaction client');
-assert(installScope.includes('await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client})'),'recoverable install secret must be saved through the same transaction client');
+const installScope=entitlements.slice(entitlements.indexOf('async function ensureInstallationCredential'),entitlements.indexOf('function activatedOutcome'));
+assert(installScope.includes('const activated=await transaction(async client=>'),'canonical install credential activation must own one database transaction');
+assert(installScope.includes('const result=await client.query(`UPDATE stremio_entitlements'),'install token hash must be written through that transaction client');
+assert(installScope.includes('await installRecovery.save({customerId,entitlement:result.rows[0],credential:issued.token,actorUserId},{client})'),'recoverable install secret must be saved through the same transaction client');
 assert(installScope.indexOf('client.query(`UPDATE stremio_entitlements')<installScope.indexOf('installRecovery.save'),'recovery persistence must happen before the token transaction can commit');
+assert(entitlements.includes('return ensureInstallationCredential(customerId,{actorUserId,rotate:true,allowRevoked:true});'),'explicit install issuance must delegate to the canonical transactional credential owner');
 assert(installRecovery.includes('const db=client||{query}'),'credential recovery save must accept the canonical caller transaction');
 assert(customerStremio.includes('async function issueCustomerInstallation(customerId')&&customerStremio.includes('stremio.issueInstallation(customerId,{actorUserId})')&&customerStremio.includes('issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer install route must delegate actor-aware persistence through the shared canonical installation helper');
 assert(!customerStremio.includes("require('../stremio/install-credential-recovery')"),'customer route must not perform a second non-atomic credential recovery write');
