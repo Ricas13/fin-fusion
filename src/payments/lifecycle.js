@@ -244,6 +244,23 @@ async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reas
     return ended;
 }
 
+async function rollbackUnprovisionedBundleTrial(customerId,subscriptionId,{mediaType='jellyfin',reason='Bundle trial activation failed'}={}){
+    const mediaRollback=mediaType==='emby'?rollbackUnprovisionedEmbyTrial:rollbackUnprovisionedJellyfinTrial;
+    let mediaResult=null,mediaError=null;
+    try{mediaResult=await mediaRollback(customerId,subscriptionId,{reason});}
+    catch(error){mediaError=error;}
+    let stremioError=null;
+    try{await rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason});}
+    catch(error){stremioError=error;}
+    if(mediaError||stremioError){
+        const failure=new Error('Bundle trial rollback did not fully converge.');
+        failure.code='TRIAL_BUNDLE_ROLLBACK_INCOMPLETE';
+        failure.cause=mediaError||stremioError;
+        throw failure;
+    }
+    return mediaResult;
+}
+
 async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
     let targetIsCurrent=false;
     try{
@@ -421,7 +438,9 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
                 const install=await readyStremioInstallForSubscription(customer,subscriptionId);
                 return install?{account,install}:null;
             },
-            rollback:rollbackUnprovisionedJellyfinTrial,
+            rollback:type==='bundle'
+                ?(customer,subscriptionId,options)=>rollbackUnprovisionedBundleTrial(customer,subscriptionId,{...options,mediaType:'jellyfin'})
+                :rollbackUnprovisionedJellyfinTrial,
             missingReason:type==='bundle'
                 ?'Bundle trial reconciliation completed without both an enabled Jellyfin account and a recoverable Stremio installation link.'
                 :'Jellyfin trial reconciliation completed without an enabled primary account.',
@@ -442,7 +461,9 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
                 const install=await readyStremioInstallForSubscription(customer,subscriptionId);
                 return install?{account,install}:null;
             },
-            rollback:rollbackUnprovisionedEmbyTrial,
+            rollback:type==='bundle'
+                ?(customer,subscriptionId,options)=>rollbackUnprovisionedBundleTrial(customer,subscriptionId,{...options,mediaType:'emby'})
+                :rollbackUnprovisionedEmbyTrial,
             missingReason:type==='bundle'
                 ?'Bundle trial reconciliation completed without both an enabled Emby account and a recoverable Stremio installation link.'
                 :'Emby trial reconciliation completed without an enabled Emby account.',
