@@ -46,10 +46,12 @@ async function current(sourceId, entitlementId) {
 }
 
 async function extend(row) {
-  const hours = ttlHours();
+  // TTL is absolute from authentication, not sliding. Reusing a live token may
+  // update observability, but must not keep an upstream Jellyfin/Emby session
+  // alive forever just because a customer keeps opening titles.
   const result = await query(`UPDATE stremio_external_playback_tokens
-    SET last_issued_at=NOW(),expires_at=NOW()+($2||' hours')::interval,last_error=NULL
-    WHERE id=$1 RETURNING *`, [row.id, String(hours)]);
+    SET last_issued_at=NOW(),last_error=NULL
+    WHERE id=$1 RETURNING *`, [row.id]);
   return result.rows[0] || row;
 }
 
