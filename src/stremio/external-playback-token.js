@@ -180,6 +180,35 @@ async function revokeSource(sourceId) {
   return { total: rows.length, revoked };
 }
 
+async function revokeUnauthorizedForPlan(planId) {
+  if (!planId) return { total: 0, revoked: 0 };
+  const rows = (await query(`SELECT t.*
+    FROM stremio_external_playback_tokens t
+    JOIN stremio_entitlements e ON e.id=t.entitlement_id
+    JOIN subscriptions sub ON sub.id=e.subscription_id
+    WHERE sub.plan_id=$1
+      AND NOT EXISTS(
+        SELECT 1
+        FROM plan_stremio_sources ps
+        JOIN stremio_sources s ON s.id=ps.source_id
+        WHERE ps.plan_id=sub.plan_id
+          AND ps.source_id=t.source_id
+          AND ps.enabled=TRUE
+          AND s.enabled=TRUE
+      )
+    ORDER BY t.id`, [planId])).rows;
+  let revoked = 0;
+  for (const row of rows) {
+    await operationLock.withLock(`external-playback:${row.source_id}:${row.entitlement_id}`, async () => {
+      const currentRow = await current(row.source_id, row.entitlement_id);
+      if (!currentRow) return;
+      await revokeRow(currentRow);
+      revoked += 1;
+    });
+  }
+  return { total: rows.length, revoked };
+}
+
 async function revokeDue({ limit = 100 } = {}) {
   const rows = (await query(`SELECT t.*
     FROM stremio_external_playback_tokens t
@@ -195,6 +224,14 @@ async function revokeDue({ limit = 100 } = {}) {
          SELECT 1 FROM stremio_entitlements e
          JOIN effective ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
          WHERE e.id=t.entitlement_id AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW()
+       )
+       OR NOT EXISTS(
+         SELECT 1
+         FROM stremio_entitlements e
+         JOIN subscriptions sub ON sub.id=e.subscription_id
+         JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=t.source_id AND ps.enabled=TRUE
+         JOIN stremio_sources s ON s.id=ps.source_id AND s.enabled=TRUE
+         WHERE e.id=t.entitlement_id
        )
     ORDER BY t.expires_at,t.id LIMIT $1`, [Math.max(1, Math.min(1000, Number(limit) || 100))])).rows;
 
@@ -216,4 +253,4 @@ async function revokeDue({ limit = 100 } = {}) {
   return { total: rows.length, revoked, failed };
 }
 
-module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeDue };
+module.exports = { DEFAULT_TTL_HOURS, RETRY_MINUTES, ttlHours, deviceIdFor, entitlementActive, current, tokenFor, revokeRow, revokeEntitlement, revokeSource, revokeUnauthorizedForPlan, revokeDue };
