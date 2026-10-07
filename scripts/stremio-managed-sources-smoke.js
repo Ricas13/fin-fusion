@@ -105,6 +105,7 @@ assert(sources.includes('action="/admin/servers/stremio/managed/${esc(server.id)
 assert(sources.includes('action="/admin/servers/stremio/${esc(source.id)}/configure"'),'external sources must be configurable inline on the same page');
 assert(sources.includes('name="enabled" value="1"')&&sources.includes('name="priority"'),'both source groups must expose participation and priority controls');
 assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must state that fallback playback bypasses CAPTAiNFiN media transport');
+assert(sources.includes("VALUES('stremio_media_index',TRUE,300,NOW(),TRUE)")&&sources.includes("interval_seconds=300"),'manual Stremio sync/reindex must keep the worker on the 5-minute backlog-drain cadence');
 assert(/media bytes never pass through the portal/i.test(sources),'source UI must state the no-byte-proxy invariant');
 assert(externalConfig.includes('UPDATE stremio_sources SET enabled=$2,priority=$3'),'external source participation and priority must update atomically');
 assert(externalConfig.includes("'admin.stremio.source.configure'"),'external source inline configuration must be audited');
