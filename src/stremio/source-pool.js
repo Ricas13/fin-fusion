@@ -16,7 +16,7 @@ const META_TTL_MS=6*60*60*1000;
 const metaCache=new Map();
 function cleanText(v,max=200){return String(v||'').trim().slice(0,max);}
 function bool(v){return v===true||['true','1','on','yes'].includes(String(v||'').toLowerCase());}
-function rotationHours(value){return Math.max(1,Math.min(168,Number.parseInt(value,10)||12));}
+function rotationHours(value){return Math.max(1,Math.min(168,Number.parseInt(value,10)||4));}
 function rotationEnabled(input){return bool(input?.tokenRotationEnabled||input?.storePasswordForRotation);}
 function normalizeSettings(){return{enabled:true,selectionMode:'priority'};}
 async function settings(){return normalizeSettings();}
