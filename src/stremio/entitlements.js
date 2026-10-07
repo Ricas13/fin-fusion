@@ -86,17 +86,17 @@ async function ensureInstallationCredential(customerId,{entitlement=null,actorUs
     const issued=foundation.issueInstallCredential();
     const activated=await transaction(async client=>{
       const preserveInstalled=Boolean(row.token_hash&&!rotate);
+      const previousAliases=Array.isArray(row.token_hash_aliases)?row.token_hash_aliases.map(String):[];
+      const nextAliases=rotate?[]:[
+        ...previousAliases.filter(hash=>hash&&hash!==String(row.token_hash||'')),
+        ...(preserveInstalled?[String(row.token_hash)]:[])
+      ].slice(-4);
       const result=await client.query(`UPDATE stremio_entitlements
-        SET token_hash_aliases=CASE
-              WHEN $5::boolean AND token_hash IS NOT NULL
-                THEN array_append(array_remove(COALESCE(token_hash_aliases,'{}'::text[]),token_hash),token_hash)
-              WHEN $6::boolean THEN '{}'::text[]
-              ELSE COALESCE(token_hash_aliases,'{}'::text[])
-            END,
+        SET token_hash_aliases=$5::text[],
             token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',
             install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW()
         WHERE id=$1 AND ($4::boolean OR status<>'revoked')
-        RETURNING *`,[row.id,issued.hash,issued.hint,allowRevoked,preserveInstalled,rotate]);
+        RETURNING *`,[row.id,issued.hash,issued.hint,allowRevoked,nextAliases]);
       if(!result.rowCount){
         const latest=await client.query(`SELECT * FROM stremio_entitlements WHERE id=$1 LIMIT 1`,[row.id]);
         const current=latest.rows[0]||row;
