@@ -100,7 +100,7 @@ async function tokenFor(source, entitlement) {
   if (!source?.id || !entitlement?.id) throw new Error('External raw playback requires a source and current Stremio entitlement.');
   const planId=await planIdForEntitlement(entitlement);
   if(!planId)throw new Error('External raw playback could not resolve the current Stremio plan.');
-  return operationLock.withLock(`stremio-plan:${planId}`,()=>operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
+  return operationLock.withLock(`stremio-plan:${planId}`,()=>operationLock.withLock(`external-token:${source.id}`,()=>operationLock.withLock(`external-playback:${source.id}:${entitlement.id}`, async () => {
     if (!await entitlementActive(entitlement.id)) {
       const error = new Error('Stremio entitlement is no longer active.');
       error.code = 'STREMIO_ENTITLEMENT_INACTIVE';
@@ -190,7 +190,7 @@ async function tokenFor(source, entitlement) {
       await client.logoutToken(auth.baseUrl, auth.accessToken, source.name || source.jellyfin_username || 'Media server', auth.mediaServerType).catch(() => {});
       throw error;
     }
-  }));
+  })));
 }
 
 async function revokeEntitlement(entitlementId) {
