@@ -26,15 +26,16 @@ async function save({customerId,entitlement,credential,actorUserId=null},{client
   return{tokenVersion,tokenHint:entitlement.token_hint||null};
 }
 
-async function current(customerId){
+async function current(customerId,{subscriptionId=null}={}){
   const r=await query(`
     SELECT r.*,e.status,e.token_version current_token_version,e.token_hint current_token_hint,
-           e.install_issued_at,e.last_manifest_at,e.last_stream_request_at,e.last_error
+           e.install_issued_at,e.last_manifest_at,e.last_stream_request_at,e.last_error,e.subscription_id
     FROM stremio_install_credential_recovery r
     JOIN stremio_entitlements e ON e.id=r.entitlement_id AND e.customer_id=r.customer_id
     WHERE r.customer_id=$1
+      AND ($2::uuid IS NULL OR e.subscription_id=$2::uuid)
     LIMIT 1
-  `,[customerId]);
+  `,[customerId,subscriptionId]);
   if(!r.rowCount)return null;
   const row=r.rows[0];
   if(row.status!=='active'||Number(row.current_token_version)!==Number(row.token_version))return null;
