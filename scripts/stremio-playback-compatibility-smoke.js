@@ -64,6 +64,7 @@ const entitlementSource=read('src/stremio/entitlements.js');
 const externalTokenSource=read('src/stremio/external-playback-token.js');
 const sourcePoolSource=read('src/stremio/source-pool.js');
 const externalTokenMaintenanceSource=read('src/stremio/external-token-maintenance.js');
+const sourceClientSource=read('src/stremio/source-client.js');
 const tokenAliasMigration=read('db/migrations/20261007182500_stremio_install_token_aliases.sql');
 
 assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call PlaybackInfo');
@@ -89,7 +90,7 @@ const externalItemsBlock=externalSource.slice(externalSource.indexOf('async func
 assert(externalItemsBlock.includes('Promise.allSettled')&&externalItemsBlock.includes('if(found.length)'),'one stale/broken external Jellyfin copy must not erase healthy matching copies from the Stremio result set');
 assert(externalItemsBlock.includes('if(failures.length)throw failures[0].reason'),'all-copy external failures must still propagate so authentication/source health is not falsely reported healthy');
 assert(externalSource.includes('removeStaleIndexItem(source.id,item.Id)')&&externalSource.includes('Number(error?.status)===404'),'external 404s must prune stale indexed items immediately instead of returning the same dead stream until the next full reconcile');
-assert(sourceClient.includes("error.code='STREMIO_SOURCE_HTTP'")&&sourceClient.includes('error.status=response.status'),'external source HTTP failures must retain status so stale-item 404s are distinguishable from retryable provider failures');
+assert(sourceClientSource.includes("error.code='STREMIO_SOURCE_HTTP'")&&sourceClientSource.includes('error.status=response.status'),'external source HTTP failures must retain status so stale-item 404s are distinguishable from retryable provider failures');
 assert(managedSource.includes('mediaIndex.removeItem(mapping.server_id,id)')&&managedSource.includes('Number(error?.status)===404'),'managed 404s must self-heal stale index rows instead of repeating dead results until the periodic rebuild');
 assert(mediaIndexSource.includes('async function removeItem(serverId,itemId)')&&mediaIndexSource.includes('item_count=GREATEST(0,item_count-$2)'),'managed stale-index pruning must keep serving-count metadata in sync');
 const externalStreamsBlock=externalSource.slice(externalSource.indexOf('async function streamsFor'),externalSource.indexOf('async function playbackTargetFor'));
