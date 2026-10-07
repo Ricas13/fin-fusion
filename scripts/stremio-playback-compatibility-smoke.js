@@ -62,6 +62,8 @@ const runtimeSource=read('src/stremio/runtime.js');
 const restrictedSource=read('src/stremio/jellyfin-runtime.js');
 const entitlementSource=read('src/stremio/entitlements.js');
 const externalTokenSource=read('src/stremio/external-playback-token.js');
+const sourcePoolSource=read('src/stremio/source-pool.js');
+const externalTokenMaintenanceSource=read('src/stremio/external-token-maintenance.js');
 const tokenAliasMigration=read('db/migrations/20261007182500_stremio_install_token_aliases.sql');
 
 assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call PlaybackInfo');
@@ -111,6 +113,12 @@ assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSo
 assert(!externalSource.includes('/Sessions/Playing')&&!externalSource.includes('/Sessions/Playing/Progress')&&!externalSource.includes('/Sessions/Playing/Stopped'),'external fallback playback must not manufacture media-server playback reporting');
 
 assert(externalTokenSource.includes('async function revokeEntitlement(entitlementId)'),'isolated raw sessions must support synchronous per-entitlement revocation');
+assert(externalTokenSource.includes('async function currentlyDue(row)')&&externalTokenSource.includes('operationLock.withLock(`external-playback:${row.source_id}:${row.entitlement_id}`'),'background raw-token expiry cleanup must share the same per-session serialization lock as token issuance');
+assert(externalTokenSource.includes('const latest = await current(row.source_id, row.entitlement_id)')&&externalTokenSource.includes('!await currentlyDue(latest)'),'expiry cleanup must re-read and revalidate the current session after acquiring its lock so it cannot revoke a freshly renewed token');
+const reconnectBlock=sourcePoolSource.slice(sourcePoolSource.indexOf('async function reconnect'),sourcePoolSource.indexOf('async function rotateSourceToken'));
+assert(reconnectBlock.indexOf('await externalPlaybackToken.revokeSource(sourceId)')>=0&&reconnectBlock.indexOf('await externalPlaybackToken.revokeSource(sourceId)')<reconnectBlock.indexOf('UPDATE stremio_sources SET base_url='),'source reconnect must revoke isolated raw playback sessions before changing source identity/base URL');
+const rotateBlock=externalTokenMaintenanceSource.slice(externalTokenMaintenanceSource.indexOf('async function rotateSourceToken'),externalTokenMaintenanceSource.indexOf('async function rotateDueTokens'));
+assert(rotateBlock.includes("String(auth.jellyfinUserId)!==String(current.jellyfin_user_id)")&&rotateBlock.includes("error.code='STREMIO_SOURCE_IDENTITY_CHANGED'"),'automatic source-token rotation must fail closed instead of silently switching the configured Jellyfin/Emby user identity');
 assert((entitlementSource.match(/externalPlaybackToken\.revokeEntitlement\(row\.id\)/g)||[]).length>=2,'both Stremio suspension and explicit revocation must synchronously revoke isolated external playback sessions');
 assert(entitlementSource.includes("SET status=CASE WHEN status='revoked' THEN status ELSE 'suspended' END")&&entitlementSource.includes("SET status='suspended',token_hash=NULL"),'Stremio access must become non-active before external session cleanup so a racing stream request cannot mint a replacement token');
 
