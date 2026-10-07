@@ -66,9 +66,24 @@ async function writeIndexedItems(db,{sourceId,library,generation,mode,items}){
 async function indexSourceUnlocked(sourceId,{forceFull=false}={}){
   const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');if(!src.enabled)return{sourceId,processed:0,skipped:'disabled'};
   const libraries=await selectedLibraries(sourceId);if(!libraries.length)throw new Error('Select at least one Jellyfin library before indexing this source.');
-  const prior=await state(sourceId),mode=fullDue(prior,forceFull)?'full':'incremental',generation=crypto.randomUUID(),startedAt=new Date(),sourceLabel=safeLog(src.name||sourceId,200);
+  const generation=crypto.randomUUID(),startedAt=new Date(),sourceLabel=safeLog(src.name||sourceId,200);
+  // Atomically consume the queue state that caused this run. Without the row
+  // lock, a rebuild queued between reading state and publishing "running"
+  // could be overwritten by this scan and then silently cleared on completion.
+  // Clearing force_full here marks only the request this scan has consumed;
+  // any later queue(full) writes it back to TRUE and survives for the rerun.
+  const startState=await transaction(async db=>{
+    await db.query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,updated_at)
+      VALUES($1,'never',NOW(),FALSE,NOW()) ON CONFLICT(source_id) DO NOTHING`,[sourceId]);
+    const locked=await db.query('SELECT * FROM stremio_source_index_state WHERE source_id=$1 FOR UPDATE',[sourceId]);
+    const prior=locked.rows[0]||null,mode=fullDue(prior,forceFull)?'full':'incremental';
+    await db.query(`UPDATE stremio_source_index_state
+      SET status='running',last_mode=$2,last_started_at=NOW(),last_error=NULL,force_full=FALSE,updated_at=NOW()
+      WHERE source_id=$1`,[sourceId,mode]);
+    return{prior,mode};
+  });
+  const prior=startState.prior,mode=startState.mode;
   const overlapSince=prior?.last_completed_at?new Date(new Date(prior.last_completed_at).getTime()-5*60*1000):null;
-  await query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_error,updated_at) VALUES($1,'running',$2,NOW(),NULL,NOW()) ON CONFLICT(source_id) DO UPDATE SET status='running',last_mode=EXCLUDED.last_mode,last_started_at=NOW(),last_error=NULL,updated_at=NOW()`,[sourceId,mode]);
   if(mode==='full')await query('DELETE FROM stremio_source_media_index_build WHERE source_id=$1',[sourceId]);
   console.log(`Stremio source index started: ${sourceLabel} mode=${mode} libraries=${libraries.length}`);
   let changed=0;
