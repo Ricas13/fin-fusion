@@ -23,6 +23,7 @@ const adminCss=read('public/css/admin-stremio-journey.css');
 const capabilityCss=read('public/css/admin-capability.css');
 const adminShell=read('src/platform/admin-html-core.js');
 const application=read('src/application.js');
+const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 
 // Customer language describes the commercial model without exposing IP-family,
 // token/credential, lease, or addon implementation terms. Stremio management is
@@ -107,6 +108,9 @@ assert(!customer.includes('if(entitlement.has_shared_sources)return true;'),'ext
 assert(entitlementService.includes('const sub=await entitledSubscription(customerId);if(!sub?.subscription_id)return null;'),'customer Stremio status must follow the canonical current Stremio subscription rather than the newest historical entitlement row');
 assert(entitlementService.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'installation issue/retry idempotency must be scoped to the current Stremio subscription term');
 assert(entitlementService.includes('async function ensureInstallationCredential')&&entitlementService.includes('options.ensureInstallation!==false'),'ordinary entitlement reconciliation must create the private Stremio link as part of activating access instead of leaving a pending/manual-create state');
+const fullReconcileBlock=resilientProvisioning.slice(resilientProvisioning.indexOf('const outcome = await recordRun'),resilientProvisioning.indexOf('await control.markCustomerHealthy'));
+assert(fullReconcileBlock.indexOf('stremio.reconcileForCustomer(customerId, stremioEntitlement)')<fullReconcileBlock.indexOf("reconcileLane(customerId, primaryEntitlement"),'full customer reconciliation must attempt the local Stremio installation link before remote Jellyfin work can fail');
+assert(fullReconcileBlock.includes('let stremioError = null')&&fullReconcileBlock.includes('if(stremioError)throw stremioError'),'independent early Stremio failure must remain visible to recovery state after other service lanes are attempted');
 assert(entitlementService.includes("return ensureInstallationCredential(customerId,{actorUserId,rotate:true,allowRevoked:true});"),'explicit link rotation must use the same local credential path without depending on playback reconciliation');
 assert(entitlementService.includes("if(String(row.status||'')==='revoked'&&!allowRevoked)return{credential:null"),'automatic reconciliation must preserve an explicit customer revoke instead of silently recreating the link');
 assert(!entitlementService.includes('recoveryUnavailable'),'an entitled customer must never be stranded because an old token hash has no recoverable plaintext copy');
