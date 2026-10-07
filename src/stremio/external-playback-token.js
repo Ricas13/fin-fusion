@@ -56,7 +56,7 @@ async function sourceAuthorized(sourceId,entitlementId,db=query) {
       JOIN subscriptions sub ON sub.id=e.subscription_id
       JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=$2 AND ps.enabled=TRUE
       JOIN stremio_sources s ON s.id=ps.source_id
-      WHERE e.id=$1 AND s.enabled=TRUE AND s.auth_state='connected' AND s.password_encrypted IS NOT NULL
+      WHERE e.id=$1 AND s.enabled=TRUE AND s.auth_state IN ('connected','error') AND s.password_encrypted IS NOT NULL
     ) AS allowed`,[entitlementId,sourceId]);
   return result.rows[0]?.allowed===true;
 }
