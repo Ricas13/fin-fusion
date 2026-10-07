@@ -13,6 +13,7 @@ const externalPlans=read('src/stremio/plan-external-sources.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const maintenance=read('src/stremio/index-maintenance.js');
 const admin=read('src/platform/admin-stremio-sources.js');
+const entitlements=read('src/stremio/entitlements.js');
 
 assert(migration.includes('CREATE TABLE IF NOT EXISTS stremio_media_index_build'),'managed refreshes need a shadow build table');
 assert(migration.includes("status IN ('never','queued','running','ready','failed')"),'managed index state must support queued refreshes');
@@ -40,6 +41,7 @@ for(const source of [runtimeSettings,externalPlans,sourcePool]){
 assert(!runtimeSettings.includes("i.status='ready' AND i.item_count>0"),'runtime readiness must not disappear merely because a refresh is running');
 assert(!externalPlans.includes("i.status='ready'"),'plan source readiness must keep a completed source usable during refresh');
 assert(!sourcePool.includes("i.status='ready' AND i.item_count>0"),'addon source selection must keep completed source results available during refresh');
+assert(entitlements.includes('idx.last_completed_at IS NOT NULL')&&!entitlements.includes("idx.status='ready' AND idx.item_count>0"),'entitlement activation must accept the previous completed external-source snapshot while a zero-downtime refresh is queued or running');
 
 assert(admin.includes("pill('Refreshing','accent')")&&admin.includes("pill('Preparing','accent')"),'admin UI must distinguish a live refresh from the first build');
 assert(admin.includes("pill('Serving previous cache','warn')"),'failed refresh UI must make stale-but-serving behaviour explicit');

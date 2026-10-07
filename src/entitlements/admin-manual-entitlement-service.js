@@ -137,7 +137,12 @@ async function createManualGrant(customerId, actorUserId, input) {
     const existing = await conflictingPrimarySubscription(customerId, plan, { client });
     if (existing) throw new Error(`This customer already has overlapping current access (${existing.contract_plan_name || existing.name || 'active plan'}). Use Manual entitlement edit instead.`);
     const recognizedReference = recognizedProviderReference(input.method, input.externalReference);
-    const status = plan.billing_interval === 'trial' ? 'trialing' : 'active';
+    // Administrator grants intentionally bypass customer self-service trial-history
+    // eligibility. A finished trial may be granted again by an administrator;
+    // only overlapping live access is rejected above. Customer-initiated trials
+    // still go through payments/lifecycle.enforceTrialEligibility().
+    const adminTrialRegrant = plan.billing_interval === 'trial';
+    const status = adminTrialRegrant ? 'trialing' : 'active';
 
     await planCapacity.lockAndAssert(client, plan.id, plan.name || 'This plan', {
       households: plan.stremio_household_network_limit || null
@@ -173,6 +178,7 @@ async function createManualGrant(customerId, actorUserId, input) {
         externalReference: input.externalReference,
         recognizedProviderReference: recognizedReference,
         providerLinked: false,
+        adminTrialRegrant,
         note: input.note,
         renewal: false,
         chargedProvider: false

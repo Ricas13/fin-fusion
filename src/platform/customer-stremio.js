@@ -24,7 +24,8 @@ function guard(req,res,next){return req.session?.customerId&&req.session?.custom
 async function preprovisionManaged(credential){
   try{
     const entitlement=await stremio.findByInstallToken(credential);
-    if(!entitlement)return true;
+    if(!entitlement)return false;
+    if(entitlement.has_shared_sources)return true;
     const sources=await managedSources.enabled();
     if(!sources.length)return true;
     const ready=await managedEntitlements.ensure(entitlement);

@@ -7,6 +7,9 @@ const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const customer=read('src/platform/customer-stremio.js');
+const entitlementService=read('src/stremio/entitlements.js');
+const installRecovery=read('src/stremio/install-credential-recovery.js');
+const installationLinks=read('src/stremio/customer-installation-links.js');
 const router=read('src/platform/router.js');
 const dashboard=read('views/customer/dashboard.ejs');
 const checkout=read('public/js/customer-checkout.js');
@@ -91,6 +94,12 @@ assert(router.includes('Your Stremio trial is active, but the installation link 
 assert(/const\{provisioned\}\s*=\s*await issueCustomerInstallation/.test(customer),'install route must capture the managed-provisioning outcome instead of discarding it');
 assert(/homeRedirect\(provisioned\s*\?\s*'message'\s*:\s*'error'/.test(customer),'install route must show an error state when managed provisioning did not complete');
 assert(customer.includes('automatic access setup is still finishing'),'a failed managed-provisioning attempt must tell the customer setup is still in progress rather than silently claiming success');
+assert(customer.includes('if(!entitlement)return false;'),'install pre-provisioning must never report ready when the newly-issued token does not resolve to the current entitlement');
+assert(customer.includes('if(entitlement.has_shared_sources)return true;'),'external-source plans must not create unrelated managed Stremio identities during installation');
+assert(entitlementService.includes('const sub=await entitledSubscription(customerId);if(!sub?.subscription_id)return null;'),'customer Stremio status must follow the canonical current Stremio subscription rather than the newest historical entitlement row');
+assert(entitlementService.includes('installRecovery.current(customerId,{subscriptionId:sub.subscription_id})'),'installation issue/retry idempotency must be scoped to the current Stremio subscription term');
+assert(installRecovery.includes('AND ($2::uuid IS NULL OR e.subscription_id=$2::uuid)'),'install credential recovery must be able to reject a previous trial/subscription credential');
+assert(installationLinks.includes('entitlements.entitledSubscription(customerId)')&&installationLinks.includes('subscriptionId:entitlement.subscription_id'),'My Access must recover the bearer link only for the currently-effective Stremio term');
 
 // Shared labels and blocked-playback guidance use the same plain-language model
 // while all persisted compatibility field names stay unchanged. Normal household
