@@ -37,7 +37,6 @@ assert(!externalIndex.slice(externalIndex.indexOf('async function clearAndQueue(
 assert(externalShadowMigration.includes('CREATE TABLE IF NOT EXISTS public.stremio_source_media_index_build'),'external full refreshes need their own shadow generation table');
 assert(externalShadowMigration.includes('PRIMARY KEY(generation,source_id,item_id)'),'external shadow generations must be isolated by generation/source/item');
 assert(externalIndex.includes("operationLock.withLock(`external-token:${sourceId}`")&&externalIndex.includes('indexSourceUnlocked(sourceId,options)'),'external indexing must serialize with reconnect/rotation/disable so a stale source identity cannot publish after credentials change');
-const sourcePool=read('src/stremio/source-pool.js');
 assert(sourcePool.includes("operationLock.withLock(`external-token:${sourceId}`")&&sourcePool.includes('async function setLibraries(sourceId,libraryIds'),'external library-selection changes must share the source mutation/index lock and cannot race an active external scan');
 assert(externalIndex.includes("if(mode==='full')")&&externalIndex.includes('INSERT INTO stremio_source_media_index_build'),'full external scans must write only to the shadow generation while serving rows remain untouched');
 const externalPromoteDelete=externalIndex.indexOf("DELETE FROM stremio_source_media_index WHERE source_id=$1");
