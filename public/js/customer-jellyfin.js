@@ -78,22 +78,29 @@
     const manifestUrl=data?.manifestUrl||'';
     const installUrl=data?.installUrl||manifestUrl;
     const household=data?.household||null;
+    const status=String(household?.status||'').toLowerCase();
     const replacement=household?.replacementState||null;
     const lease=household?.currentLease||null;
     const actions=manifestUrl
       ? `<a class="button primary" style="width:auto;white-space:nowrap" href="${esc(installUrl)}">Install in Stremio</a>${form('/account/stremio/revoke','Revoke link','danger')}`
-      : form('/account/stremio/install','Create installation link','primary');
+      : status==='revoked'
+        ? form('/account/stremio/install','Create new link','primary')
+        : form('/account/stremio/install','Retry link','primary');
     const leaseLabel=lease?.address||((Number(lease?.activeCount)||0)>0?'Registered household connection':'Not registered yet');
     const leaseNote=lease?.address?'This browser is currently using the registered household connection.':((Number(lease?.activeCount)||0)>0?'Open My Access from the registered household connection to reveal its public IP.':'Your first Stremio playback will register the household connection.');
-    const householdPanel=household
+    const householdPanel=household&&status==='active'
       ? `<div class="panel" style="margin-bottom:12px"><strong>Household access</strong><div class="accessMeta">${esc(household.accessModel||'Unlimited streams · Unlimited devices · 1 household connection')}</div><div class="stremioLeaseLine" style="margin-top:10px;display:flex;align-items:baseline;gap:7px;flex-wrap:wrap"><span style="color:var(--muted)">Current leased IP:</span><strong>${esc(leaseLabel)}</strong><small style="width:100%;color:var(--muted);font-size:9px">${esc(leaseNote)}</small></div>${replacement?`<div class="accessMeta" style="margin-top:8px">${esc(replacement.message||'')}</div>${replacement.allowed?`<div style="margin-top:10px">${form('/account/stremio/reset-household','Use a different household connection','secondary')}</div>`:'<div style="margin-top:10px"><span class="button secondary" aria-disabled="true">Household change on cooldown</span></div>'}`:''}</div>`
-      : '<div class="panel" style="margin-bottom:12px"><strong>Household access</strong><div class="accessMeta">Your household access is being prepared.</div></div>';
+      : status==='revoked'
+        ? '<div class="panel" style="margin-bottom:12px"><strong>Household access</strong><div class="accessMeta">Your private installation link is revoked. Create a new link when you want to use Stremio again.</div></div>'
+        : '<div class="panel" style="margin-bottom:12px"><strong>Household access</strong><div class="accessMeta">Household access cannot start because the private installation link is unavailable.</div></div>';
     const setup=manifestUrl
       ? `<div class="panel" style="margin-bottom:12px"><strong>Get started with Stremio</strong><ol class="featureList"><li><strong>1. Open Stremio.</strong> Use <a href="https://web.stremio.com" target="_blank" rel="noopener noreferrer">web.stremio.com</a> or the Stremio app.</li><li><strong>2. Create or sign in to a Stremio account.</strong></li><li><strong>3. Open Profile → Addons → Add addon.</strong></li><li><strong>4. Paste this private manifest/install URL and install it.</strong><div class="buttonRow" style="margin-top:8px;align-items:center"><button class="button secondary small" type="button" data-stremio-copy>Copy URL</button><div class="field" style="margin:0;flex:1"><input class="input" value="${esc(manifestUrl)}" readonly data-stremio-manifest aria-label="Private Stremio manifest URL"></div></div><div class="accessMeta" style="margin-top:8px">Keep this link private.</div></li></ol></div>`
-      : '<div class="notice">Create your private installation link, then use the Install in Stremio button.</div>';
+      : status==='revoked'
+        ? '<div class="notice">Your private installation link has been revoked. Create a new link whenever you want to use Stremio again.</div>'
+        : '<div class="notice warn"><strong>Your private installation link could not be generated automatically.</strong> Use Retry link to replace the missing link now.</div>';
 
     stremio.className='jellyfinAccountCard stremioAccessCard sectionBlock simpleServiceCard';
-    stremio.innerHTML=`${trialBanner(data?.trial)}<div class="sectionHead"><div><h2>Stremio</h2><p>Install your private Stremio access and manage its household connection directly from here.</p><div class="accessMeta">${esc(planLine.replace(/\s*·\s*private installation manifest\s*$/i,''))}</div></div><div class="stremioHeadActions" style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;justify-content:flex-end;width:auto">${actions}</div></div>${!manifestUrl&&household?.status!=='active'?'<div class="notice">Access is being prepared.</div>':''}${householdPanel}${setup}`;
+    stremio.innerHTML=`${trialBanner(data?.trial)}<div class="sectionHead"><div><h2>Stremio</h2><p>Install your private Stremio access and manage its household connection directly from here.</p><div class="accessMeta">${esc(planLine.replace(/\s*·\s*private installation manifest\s*$/i,''))}</div></div><div class="stremioHeadActions" style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;justify-content:flex-end;width:auto">${actions}</div></div>${householdPanel}${setup}`;
 
     startTrialCountdown();
     const copy=stremio.querySelector('[data-stremio-copy]');
@@ -112,8 +119,28 @@
     });
   }
 
-  fetch('/account/stremio/installation.json',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'})
-    .then(async response=>{const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Stremio installation link could not be loaded.');return data;})
+  async function loadInstallationState(){
+    const response=await fetch('/account/stremio/installation.json',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Stremio installation link could not be loaded.');
+    return data;
+  }
+  async function ensureInstallationState(data){
+    if(data?.manifestUrl||String(data?.household?.status||'').toLowerCase()==='revoked')return data;
+    const response=await fetch('/account/stremio/ensure',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({_csrf:csrfToken}).toString(),
+      cache:'no-store'
+    });
+    const ensured=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(ensured.error||'Stremio installation link could not be created automatically.');
+    return ensured;
+  }
+
+  loadInstallationState()
+    .then(ensureInstallationState)
     .then(render)
     .catch(error=>{
       if(trialTimer){window.clearInterval(trialTimer);trialTimer=null;}
