@@ -41,8 +41,10 @@ assert(sourcePool.includes("operationLock.withLock(`external-token:${sourceId}`"
 assert(externalIndex.includes("if(mode==='full')")&&externalIndex.includes('INSERT INTO stremio_source_media_index_build'),'full external scans must write only to the shadow generation while serving rows remain untouched');
 const externalPromoteDelete=externalIndex.indexOf("DELETE FROM stremio_source_media_index WHERE source_id=$1");
 const externalPromoteInsert=externalIndex.indexOf('INSERT INTO stremio_source_media_index(source_id,library_id,imdb_id,tmdb_id,tvdb_id,title_key,item_id,item_type,name,production_year,path,date_last_saved,scan_generation,updated_at,seen_at)',externalPromoteDelete);
-const externalPromoteReady=externalIndex.indexOf("SET status='ready'",externalPromoteInsert);
+const externalPromoteReady=externalIndex.indexOf('UPDATE stremio_source_index_state',externalPromoteInsert);
 assert(externalPromoteDelete>=0&&externalPromoteInsert>externalPromoteDelete&&externalPromoteReady>externalPromoteInsert,'external full promotion must atomically replace serving rows before publishing the new completed snapshot');
+assert(externalIndex.includes("const rerunRequested=latestState.rows[0]?.status==='queued'")&&externalIndex.includes("rerunRequested?'queued':'ready'")&&externalIndex.includes("rerunRequested&&latestState.rows[0]?.force_full===true"),'a rebuild queued during an external scan must survive completion, including its full-rebuild intent');
+assert(externalIndex.includes("status=CASE WHEN status='queued' THEN 'queued' ELSE 'failed' END")&&externalIndex.includes("next_incremental_at=CASE WHEN status='queued' THEN NOW()"),'a queued external rerun must also survive the active scan failing instead of being delayed for the normal retry interval');
 const externalCatch=externalIndex.slice(externalIndex.indexOf('}catch(error){'),externalIndex.indexOf('function sourceBatchLimit'));
 assert(externalCatch.includes("DELETE FROM stremio_source_media_index_build")&&!externalCatch.includes("DELETE FROM stremio_source_media_index WHERE source_id=$1"),'failed external full refresh must discard only its shadow generation and leave the serving snapshot intact');
 assert(externalIndex.includes('preservedItems:preserved')&&externalIndex.includes('zeroDowntime:true'),'external rebuild audit metadata must record snapshot preservation');
