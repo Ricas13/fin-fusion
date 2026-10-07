@@ -57,6 +57,7 @@ assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfi
 assert(sources.includes("routeRateLimit.middleware({scope:'admin-stremio-sources'"),'Source mutations must use the persistent admin rate limiter');
 assert(sources.includes('Attempt log ID')&&sources.includes('failureLogPayload')&&sources.includes('stremio_source_attempt'),'External connection failures must retain traceable audit attempt IDs');
 assert(sourcePool.includes('discoveryWarning')&&sourcePool.includes('sourcePersisted:true'),'Library discovery failure must preserve an authenticated external source for diagnosis/retry');
+assert(sourcePool.includes("auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE 'connected' END"),'a transient post-auth reconnect discovery failure must keep the last completed external source snapshot eligible to serve');
 assert(sources.includes("r.post('/admin/servers/stremio/:id/configure'")&&sources.includes('sourceAdminConfig.configure'),'single page must provide inline external source enable/priority updates');
 assert(externalConfig.includes('priority must be between 1 and 10000')&&externalConfig.includes('enabled=$2,priority=$3'),'external inline configuration must validate and persist source participation/priority');
 assert(sourceIndex.includes('SELECT s.id,s.name,s.enabled,s.priority,s.auth_state'),'external source read model must return persisted priority for inline editing');
