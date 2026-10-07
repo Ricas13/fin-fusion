@@ -47,6 +47,12 @@ async function rotateSourceToken(source,actorUserId=null){
     if(!current.access_token_encrypted)throw new Error('External Jellyfin source has no current token to rotate.');
     const password=client.decryptPassword(current.password_encrypted);
     const auth=await client.authenticate(current.base_url,current.jellyfin_username,password,current.media_server_type||null);
+    if(current.jellyfin_user_id&&String(auth.jellyfinUserId)!==String(current.jellyfin_user_id)){
+      await cleanupIssuedAuth(auth,{sourceName:current.name||current.jellyfin_username,mediaServerType:current.media_server_type});
+      const error=new Error('Automatic Stremio source token rotation resolved to a different media-server user. Reconnect the source explicitly before rotating credentials.');
+      error.code='STREMIO_SOURCE_IDENTITY_CHANGED';
+      throw error;
+    }
     const encrypted=client.encryptToken(auth.accessToken),hours=rotationHours(current.token_rotation_hours);
     try{
       await transaction(async db=>{
