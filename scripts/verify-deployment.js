@@ -13,6 +13,7 @@ const jobRegistry = require('../src/automation/jobs');
 const DEPLOYMENT_PROBE_JOBS = Object.freeze([
     'creation_intent_recovery',
     'customer_service_recovery',
+    'free_capacity_backfill',
     'revenue_integrity'
 ]);
 const DEPLOYMENT_PROBE_TIMEOUT_MS = 120000;
@@ -256,8 +257,11 @@ async function main() {
                     : 'job row missing');
 
             const freeBackfillJob = jobsByKey.get('free_capacity_backfill');
-            const freeBackfillState = freeBackfillJob ? jobHealth.healthState(freeBackfillJob) : 'missing';
-            add('Free Server recovery job', Boolean(freeBackfillJob?.enabled) && !['failed','stale','missing','degraded'].includes(freeBackfillState),
+            const freeBackfillState = freeBackfillJob
+                ? deploymentCriticalState(freeBackfillJob, automationWorker?.started_at)
+                : 'missing';
+            add('Free Server recovery job',
+                Boolean(freeBackfillJob?.enabled) && !['failed','stale','missing','degraded'].includes(freeBackfillState),
                 freeBackfillJob
                     ? `state=${freeBackfillState} interval=${freeBackfillJob.interval_seconds}s next=${freeBackfillJob.next_run_at || 'pending'}${freeBackfillJob.last_warning ? ` warning=${freeBackfillJob.last_warning}` : ''}`
                     : 'job row missing');
