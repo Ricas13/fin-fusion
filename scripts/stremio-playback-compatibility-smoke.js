@@ -116,7 +116,7 @@ assert(!externalSource.includes('controlPlaybackUrl'),'external source results m
 assert(/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(externalSource),'external sources must return static/original-file URLs');
 assert(externalSource.includes('client.sourceUrl(source.base_url')&&externalSource.includes('source.media_server_type'),'external direct URLs must route through the stored provider type');
 assert(!externalSource.includes('client.sourceToken(source)'),'external raw-file URLs must never decrypt the durable source token for playback');
-assert(externalSource.includes('externalPlaybackToken.tokenFor(source,entitlement)'),'external raw-file URLs must be issued with isolated per-entitlement playback sessions');
+assert(externalSource.includes('externalPlaybackToken.tokenFor(source,entitlement,{returnContext:true})'),'external raw-file URLs must be issued with isolated per-entitlement playback sessions and receive the locked current source context');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside playback-session reporting');
 assert(!externalSource.includes('/Sessions/Playing')&&!externalSource.includes('/Sessions/Playing/Progress')&&!externalSource.includes('/Sessions/Playing/Stopped'),'external fallback playback must not manufacture media-server playback reporting');
 
