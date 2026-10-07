@@ -524,6 +524,27 @@ async function reconcileCustomerUnlocked(customerId) {
     await control.markCustomerRunning(customerId, controlEntitlement);
     try {
         const outcome = await recordRun(customerId, controlEntitlement?.subscription_id || null, async () => {
+            // Stremio's private install credential is local control-plane state.
+            // Attempt it before any remote Jellyfin/Emby/Discord work so an
+            // unrelated service failure can never strand a live Stremio
+            // entitlement without its installation link.
+            const stremio = require('../stremio/entitlements');
+            let stremioOutcome = null;
+            let stremioError = null;
+            try {
+                if (stremioEntitlement) {
+                    stremioOutcome = await stremio.reconcileForCustomer(customerId, stremioEntitlement);
+                } else {
+                    await stremio.suspend(customerId, 'No current Stremio subscription.');
+                }
+            } catch (error) {
+                stremioError = error;
+                console.warn('Independent Stremio reconciliation failed before other service lanes.', {
+                    customerId,
+                    error: error.message
+                });
+            }
+
             let accounts = await normalAccounts(customerId);
             accounts = await adoptExistingFreeAccount(customerId, accounts, freeLaneEntitlement, primaryEntitlement);
             const primary = await reconcileLane(customerId, primaryEntitlement, 'primary', accounts, {
@@ -547,13 +568,6 @@ async function reconcileCustomerUnlocked(customerId) {
                 }
             }
 
-            const stremio = require('../stremio/entitlements');
-            let stremioOutcome = null;
-            if (stremioEntitlement) {
-                stremioOutcome = await stremio.reconcileForCustomer(customerId, stremioEntitlement);
-            } else {
-                await stremio.suspend(customerId, 'No current Stremio subscription.');
-            }
             const emby = await mediaReconciliation.reconcileCustomer(customerId, 'emby');
             const discord = assertDiscordSyncResult(await discordRoles.syncRoleForCustomer(customerId, activePlanIds));
             const account = primary.account || free.account || null;
@@ -570,6 +584,7 @@ async function reconcileCustomerUnlocked(customerId) {
             };
             assertLanePostcondition('Primary', primaryEntitlement, primary);
             assertLanePostcondition('Free', freeLaneEntitlement, free);
+            if(stremioError)throw stremioError;
             return result;
         });
         await control.markCustomerHealthy(customerId, stateDetail(controlEntitlement, outcome));
