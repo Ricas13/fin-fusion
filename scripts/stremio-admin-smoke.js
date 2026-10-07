@@ -28,6 +28,7 @@ const automationJobs=read('src/automation/jobs.js');
 const automationRegistry=require('../src/automation/jobs');
 const automationWorker=read('scripts/automation-worker.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
+const planExternal=read('src/stremio/plan-external-sources.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 const rotationMigration=read('db/migrations/004_stremio_source_token_rotation.sql');
 const maintenanceMigration=read('db/migrations/020_stremio_external_maintenance.sql');
