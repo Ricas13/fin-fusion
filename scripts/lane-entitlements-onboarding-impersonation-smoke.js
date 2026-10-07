@@ -23,7 +23,7 @@ const impersonation = read('src/platform/admin-impersonation.js');
 const planCreateClient = read('public/js/admin-plan-create-v2.js');
 const runtimeRoles = read('scripts/configure-runtime-db-roles.js');
 const { overflowRows } = require('../src/jellyfin/lane-stream-policy');
-const { restrictedImpersonationAction } = require('../src/platform/admin-impersonation');
+const { restrictedImpersonationAction, shouldInjectBanner } = require('../src/platform/admin-impersonation');
 const { assertAdminRouteOrder } = require('../src/platform/admin-route-manifest');
 
 // Lane-scoped policy storage and migration safety.
@@ -117,6 +117,10 @@ assert(/row\?\.role === 'customer'/.test(impersonation), 'privileged/admin targe
 assert(/req\.session\.impersonation = \{/.test(impersonation)&&/actorUserId: req\.session\.authUserId/.test(impersonation), 'real admin actor identity must remain attached to impersonation');
 assert(/req\.session\.customerId = target\.customer_id/.test(impersonation)&&/return res\.redirect\('\/account'\)/.test(impersonation), 'impersonation must enter the real customer portal');
 assert(/Admin editing as customer: \$\{esc\(label\)\}/.test(impersonation)&&/Exit impersonation/.test(impersonation), 'persistent admin-editing banner/exit control missing');
+const fakeRes=contentType=>({getHeader:name=>String(name).toLowerCase()==='content-type'?contentType:null});
+assert.strictEqual(shouldInjectBanner(fakeRes('application/json; charset=utf-8'),'{"ok":true}'),false,'impersonation banner must never corrupt JSON account responses');
+assert.strictEqual(shouldInjectBanner(fakeRes('text/html; charset=utf-8'),'<!doctype html><html><body>ok</body></html>'),true,'impersonation banner must still render on HTML customer pages');
+assert.strictEqual(shouldInjectBanner(fakeRes(null),'{"manifestUrl":"https://example.test/stremio/token/manifest.json"}'),false,'content-type inference must not treat raw JSON text as HTML');
 assert(/admin\.impersonation\.start/.test(impersonation)&&/admin\.impersonation\.end/.test(impersonation)&&/admin\.impersonation\.customer_action/.test(impersonation), 'impersonation lifecycle and customer mutations must be audited');
 assert(!/password_hash|currentPassword|setJellyfinPassword/.test(impersonation), 'central impersonation middleware must never read or bypass customer passwords');
 const impersonated=(method,path,body={})=>({session:{impersonation:{id:'test'}},method,path,body});
