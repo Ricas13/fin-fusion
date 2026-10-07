@@ -69,8 +69,11 @@ async function currentlyDue(row) {
       FROM stremio_entitlements e
       JOIN subscriptions sub ON sub.id=e.subscription_id
       JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=$2 AND ps.enabled=TRUE
-      JOIN stremio_sources s ON s.id=ps.source_id AND s.enabled=TRUE
+      JOIN stremio_sources s ON s.id=ps.source_id
       WHERE e.id=$1
+        AND s.enabled=TRUE
+        AND s.auth_state IN ('connected','error')
+        AND s.password_encrypted IS NOT NULL
     ) AS allowed`, [row.entitlement_id, row.source_id]);
   return authorized.rows[0]?.allowed !== true;
 }
@@ -237,6 +240,8 @@ async function revokeUnauthorizedForPlan(planId) {
           AND ps.source_id=t.source_id
           AND ps.enabled=TRUE
           AND s.enabled=TRUE
+          AND s.auth_state IN ('connected','error')
+          AND s.password_encrypted IS NOT NULL
       )
     ORDER BY t.id`, [planId])).rows;
   let revoked = 0;
@@ -272,8 +277,11 @@ async function revokeDue({ limit = 100 } = {}) {
          FROM stremio_entitlements e
          JOIN subscriptions sub ON sub.id=e.subscription_id
          JOIN plan_stremio_sources ps ON ps.plan_id=sub.plan_id AND ps.source_id=t.source_id AND ps.enabled=TRUE
-         JOIN stremio_sources s ON s.id=ps.source_id AND s.enabled=TRUE
+         JOIN stremio_sources s ON s.id=ps.source_id
          WHERE e.id=t.entitlement_id
+           AND s.enabled=TRUE
+           AND s.auth_state IN ('connected','error')
+           AND s.password_encrypted IS NOT NULL
        )
     ORDER BY t.expires_at,t.id LIMIT $1`, [Math.max(1, Math.min(1000, Number(limit) || 100))])).rows;
 
