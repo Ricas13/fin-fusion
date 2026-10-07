@@ -23,6 +23,7 @@ const composeRuntime = fs.readFileSync(composeRuntimePath, 'utf8');
 const recovery = fs.readFileSync(path.join(root, 'recovery.sh'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
+const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
 
 function bashPath() {
   const candidates = [
@@ -120,6 +121,7 @@ assert(deployScript.includes('compose_service_env_value app CAPTAINFIN_BUILD_SHA
 assert(deployScript.includes('compose_service_env_value "$service" CAPTAINFIN_BUILD_SHA'), 'runtime build verification must read the image-provided build SHA');
 assert(deployScript.indexOf('docker compose run --rm --no-deps app npm run verify:deployment') < deployScript.indexOf("log 'Candidate verified; switching the customer-facing web application'"), 'candidate verification must complete before live web cutover');
 assert(deployScript.indexOf("log 'Candidate verified; switching the customer-facing web application'") < deployScript.indexOf('docker image tag "$CAPTAINFIN_IMAGE" captainfin:current'), 'known-good current image alias must advance only after verified web cutover');
+assert(dockerfile.includes('chmod a+rx /app/db /app/db/migrations')&&dockerfile.includes("find /app/db/migrations -type f -exec chmod a+r {} +"),'runtime image must make packaged migrations readable to the unprivileged deployment verifier before switching to USER node');
 
 assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must prove worker liveness');
 assert(verifyDeployment.includes("add('backup worker', backupWorkerAlive"), 'deployment verification must require backup worker liveness');
