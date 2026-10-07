@@ -78,7 +78,7 @@ async function rotateDueTokens({limit=25}={}){
   let rotated=0,failed=0,skipped=0;
   for(const source of rows){
     try{const result=await rotateSourceToken(source);if(result?.skipped)skipped++;else rotated++;}
-    catch(error){failed++;await query(`UPDATE stremio_sources SET auth_state='error',last_auth_check_at=NOW(),last_error=$2,token_rotates_at=NOW()+INTERVAL '1 hour',updated_at=NOW() WHERE id=$1`,[source.id,String(error.message||error).slice(0,1000)]).catch(()=>{});console.error(`Stremio source token rotation failed for ${source.name}:`,error.message);}
+    catch(error){failed++;await query(`UPDATE stremio_sources SET last_auth_check_at=NOW(),last_error=$2,token_rotates_at=NOW()+INTERVAL '1 hour',updated_at=NOW() WHERE id=$1`,[source.id,String(error.message||error).slice(0,1000)]).catch(()=>{});console.error(`Stremio source token rotation failed for ${source.name}:`,error.message);}
   }
   return{total:rows.length,rotated,skipped,failed};
 }
