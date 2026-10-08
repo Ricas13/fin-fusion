@@ -5,6 +5,7 @@ require('dotenv').config();
 const path = require('path');
 const { randomUUID } = require('crypto');
 const express = require('express');
+require('./platform/async-route-errors').install();
 const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 

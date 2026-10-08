@@ -5,6 +5,7 @@ const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const provisioning=require('../jellyfin/provisioning-helpers');
 const planServers=require('../jellyfin/plan-servers');
+const planCommands=require('../catalog/plan-command-service');
 const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 
