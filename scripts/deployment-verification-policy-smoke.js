@@ -69,6 +69,8 @@ assert.strictEqual(jobRegistry.mayBeDisabled('customer_inactivity'), true,
     'customer inactivity cleanup must support intentional operator disablement');
 assert.strictEqual(jobRegistry.mayBeDisabled('revenue_integrity'), false,
     'revenue integrity must remain required-enabled');
+assert(verifier.DEPLOYMENT_PROBE_JOBS.includes('free_capacity_backfill'),
+    'free-capacity recovery must be explicitly proved under the candidate worker before cutover');
 
 const staleBeforeRestart={
     enabled:true,
@@ -99,6 +101,8 @@ assert(source.includes("add('revenue integrity execution'"),
     'deployment verification must report revenue integrity as an explicit operator-attention lane');
 assert(source.includes("add('Free Server inactivity cleanup policy'"),
     'inactivity cleanup must be reported as an operator policy rather than the whole Free Server lifecycle');
+assert(source.includes("deploymentCriticalState(freeBackfillJob, automationWorker?.started_at)"),
+    'free-capacity recovery health must honor candidate-worker warm-up semantics after restart');
 assert(!source.includes("add('Free Server lifecycle job'"),
     'the misleading Free Server lifecycle job blocker label must not return');
 assert(source.includes('if (require.main === module)'),
