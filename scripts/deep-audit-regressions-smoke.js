@@ -221,12 +221,72 @@ async function customerTwoFactorFailureCounterResetsAfterLockExpiry() {
   }
 }
 
+async function noRequireCycleHandsOutPartialExports() {
+  // Regression: affiliate-credits -> plan-pricing -> reporting-currency -> plan-command-service
+  // -> plan-pricing handed plan-command-service an empty plan-pricing export, so saving plan
+  // pricing or cloning crashed with "planPricing.resolvePrice is not a function".
+  const { spawnSync } = require('child_process');
+  const script = `
+    const Module = require('module');
+    const load = Module._load;
+    const loading = new Set();
+    const bad = [];
+    Module._load = function (request, parent, isMain) {
+      let file;
+      try { file = Module._resolveFilename(request, parent, isMain); } catch (_e) { return load.apply(this, arguments); }
+      if (file.includes('/src/') && loading.has(file)) bad.push(parent.filename + ' -> ' + file);
+      const fresh = !require.cache[file];
+      if (fresh && file.includes('/src/')) loading.add(file);
+      try { return load.apply(this, arguments); } finally { loading.delete(file); }
+    };
+    require('./src/application');
+    console.log(JSON.stringify([...new Set(bad)]));
+  `;
+  const result = spawnSync(process.execPath, ['-e', script], { cwd: require('path').join(__dirname, '..'), env: process.env, encoding: 'utf8' });
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.deepStrictEqual(JSON.parse(result.stdout.trim().split('\n').pop()), [], 'application load must not hit a require cycle that returns partial exports');
+  const planPricing = require('../src/payments/plan-pricing');
+  assert.strictEqual(typeof planPricing.resolvePrice, 'function');
+}
+
+async function planCloneUsesNumberedPlaceholders() {
+  // Regression: clonePlanVersion built placeholders as "6,7,8..." instead of "$6,$7,$8...",
+  // so Postgres rejected every plan clone with a type error on allow_downloads.
+  const db = require('../src/db');
+  const original = db.transaction;
+  const sql = [];
+  db.transaction = async fn => fn({ query: async (text, params) => {
+    const t = String(text);
+    sql.push(t);
+    if (/FROM plans WHERE id=\$1 FOR SHARE/.test(t)) return { rows: [{ id: 'p1', version_group_id: null, allow_downloads: true, streams: 2 }], rowCount: 1 };
+    if (/information_schema\.columns/.test(t)) return { rows: [{ column_name: 'allow_downloads' }, { column_name: 'streams' }], rowCount: 2 };
+    if (/MAX\(version_number\)/.test(t)) return { rows: [{ n: 2 }], rowCount: 1 };
+    if (/INSERT INTO plans/.test(t)) return { rows: [{ id: 'p2' }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  } });
+  try {
+    const modulePath = require.resolve('../src/catalog/plan-command-service');
+    delete require.cache[modulePath];
+    const planCommands = require('../src/catalog/plan-command-service');
+    await planCommands.clonePlanVersion('p1', { code: 'clone-code', name: 'Clone' }, null);
+    const insert = sql.find(t => /INSERT INTO plans/.test(t));
+    assert(insert, 'clone must insert a plan');
+    assert(/VALUES\(\$1,\$2,FALSE,FALSE,\$3,\$4,\$5,\$6,\$7\)/.test(insert.replace(/\s+/g, '')) || /\$6,\$7/.test(insert), `clone placeholders must be $-numbered (got ${insert})`);
+    assert(!/\$5,6,7/.test(insert), 'clone placeholders must not be bare integers');
+  } finally {
+    db.transaction = original;
+    delete require.cache[require.resolve('../src/catalog/plan-command-service')];
+  }
+}
+
 (async () => {
   await planLibrariesSaveReachesCommandOwner();
   await bulkPaymentsSyncUsesCanonicalBillingControl();
   await asyncHandlerRejectionsReachErrorMiddleware();
   await pathGuardsIgnoreCaseAndTrailingSlash();
   await customerTwoFactorFailureCounterResetsAfterLockExpiry();
+  await noRequireCycleHandsOutPartialExports();
+  await planCloneUsesNumberedPlaceholders();
   console.log('deep audit regressions smoke: ok');
   process.exit(0);
 })().catch(error => { console.error(error); process.exit(1); });

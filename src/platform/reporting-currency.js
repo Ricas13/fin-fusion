@@ -1,7 +1,6 @@
 'use strict';
 
 const {query,transaction}=require('../db');
-const planCommands=require('../catalog/plan-command-service');
 const CURRENCIES=Object.freeze(['GBP','USD','EUR']);
 const KEY='reporting_currency_v1';
 let refreshPromise=null;
@@ -23,7 +22,9 @@ function convertMinor(minor,from,to,state){from=cleanCurrency(from);to=cleanCurr
 // The canonical free tier is a deliberate schema exception: its compatibility
 // price rows must remain active and zero in every supported storage currency.
 // Only the selected portal currency is exposed by live storefront APIs.
-async function switchCatalogueCurrency(client,currency){return planCommands.switchCatalogueCurrency(client,currency);}
+// Required lazily: plan-command-service -> plan-pricing -> this module would otherwise form a
+// require cycle that hands plan-pricing's half-built exports to plan-command-service.
+async function switchCatalogueCurrency(client,currency){return require('../catalog/plan-command-service').switchCatalogueCurrency(client,currency);}
 
 async function saveCurrency(currency,actorUserId=null){
   currency=assertCurrency(currency);
