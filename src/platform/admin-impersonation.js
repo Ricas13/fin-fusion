@@ -7,6 +7,7 @@ const csrf = require('../auth/csrf');
 const { requireOwner, ownerStatus } = require('../auth/owner-guard');
 const impersonationCredentials = require('../security/admin-impersonation-credentials');
 const { query } = require('../db');
+const { canonicalPath } = require('./canonical-path');
 
 const impersonationCredentialLimit=rateLimit({
     windowMs:300_000,
@@ -47,7 +48,7 @@ function restrictedImpersonationAction(req) {
     if (!req.session?.impersonation) return null;
     const method = String(req.method || '').toUpperCase();
     if (['GET','HEAD','OPTIONS'].includes(method)) return null;
-    const path = String(req.path || req.originalUrl || '').split('?')[0].replace(/\/$/,'') || '/';
+    const path = canonicalPath(req.path || req.originalUrl || '');
     if (!path.startsWith('/account')) return null;
     if (method === 'POST' && path === '/account/impersonation/exit') return null;
 
@@ -118,7 +119,7 @@ function injectAdminButton(html, req, customerId) {
 }
 async function auditImpersonatedMutation(req,res) {
     const imp = req.session?.impersonation;
-    if (!imp || !req.path.startsWith('/account') || ['GET','HEAD','OPTIONS'].includes(req.method)) return;
+    if (!imp || !canonicalPath(req.path).startsWith('/account') || ['GET','HEAD','OPTIONS'].includes(req.method)) return;
     const snapshot = { ...imp };
     const restriction = restrictedImpersonationAction(req);
     res.once('finish', () => {
@@ -154,7 +155,7 @@ function createImpersonationAuditRouter() {
             if (wantsJson(req)) return res.status(403).json({ error:'impersonation_spending_disabled', message });
             return res.status(403).send(message);
         }
-        if (req.session?.impersonation && req.path.startsWith('/account')) {
+        if (req.session?.impersonation && canonicalPath(req.path).startsWith('/account')) {
             const send = res.send.bind(res);
             res.send = body => send(shouldInjectBanner(res,body) ? injectBanner(body,req) : body);
         }

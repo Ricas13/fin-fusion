@@ -173,10 +173,60 @@ async function asyncHandlerRejectionsReachErrorMiddleware() {
   }
 }
 
+async function pathGuardsIgnoreCaseAndTrailingSlash() {
+  // Regression: Express routes case-insensitively, but the owner boundary, step-up,
+  // CSRF, rate-limit, Turnstile and impersonation guards compared req.path exactly.
+  const { canonicalPath } = require('../src/platform/canonical-path');
+  assert.strictEqual(canonicalPath('/Admin//Settings/X/?a=1'), '/admin/settings/x');
+  assert.strictEqual(canonicalPath('/'), '/');
+  const { isOwnerOnlyPath } = require('../src/auth/owner-guard');
+  for (const p of ['/Settings/platform', '/BACKUPS/run', '/Payments/', '/Provider-Mappings/x', '//settings/x', '/security/2fa-policy', '/Security/2FA-Policy/']) {
+    assert(isOwnerOnlyPath(p), `${p} must be owner-only`);
+  }
+  assert(!isOwnerOnlyPath('/users/1'), '/users stays available to support admins');
+  const stepUp = require('../src/auth/admin-step-up');
+  for (const p of ['/Admin/Plans/1/edit', '/admin/PAYMENTS/x', '/admin/backups/Restore']) {
+    assert(stepUp.sensitive({ method: 'POST', path: p }), `${p} must require step-up`);
+  }
+  const abuse = require('../src/security/public-abuse-protection');
+  const cfg = { enabled: true, protectPasswordReset: true };
+  for (const p of ['/login/', '/LOGIN', '/Account/Login/', '/account/Register', '/account/forgot-password/']) {
+    assert(abuse.shouldProtect(cfg, p), `${p} must be Turnstile-protected`);
+  }
+  const imp = require('../src/platform/admin-impersonation');
+  if (imp.restrictedImpersonationAction) {
+    const blocked = imp.restrictedImpersonationAction({ session: { impersonation: {} }, method: 'POST', path: '/ACCOUNT/checkout/' });
+    assert(blocked, 'impersonation spend guard must apply to /ACCOUNT/checkout/');
+  }
+}
+
+async function customerTwoFactorFailureCounterResetsAfterLockExpiry() {
+  const db = require('../src/db');
+  const original = db.transaction;
+  const updates = [];
+  db.transaction = async fn => fn({ query: async (sql, params) => {
+    const text = String(sql);
+    if (/FOR UPDATE/.test(text)) return { rowCount: 1, rows: [{ failed_login_count: 5, locked_until: new Date(Date.now() - 60000) }] };
+    if (/UPDATE app_users/.test(text)) { updates.push(params); return { rows: [{ locked_until: null }], rowCount: 1 }; }
+    return { rows: [], rowCount: 1 };
+  } });
+  try {
+    delete require.cache[require.resolve('../src/security/customer-two-factor')];
+    const result = await require('../src/security/customer-two-factor').recordFailure('u1');
+    assert.strictEqual(result.failures, 1, 'expired lock must restart the failure count');
+    assert.strictEqual(result.locked, false);
+  } finally {
+    db.transaction = original;
+    delete require.cache[require.resolve('../src/security/customer-two-factor')];
+  }
+}
+
 (async () => {
   await planLibrariesSaveReachesCommandOwner();
   await bulkPaymentsSyncUsesCanonicalBillingControl();
   await asyncHandlerRejectionsReachErrorMiddleware();
+  await pathGuardsIgnoreCaseAndTrailingSlash();
+  await customerTwoFactorFailureCounterResetsAfterLockExpiry();
   console.log('deep audit regressions smoke: ok');
   process.exit(0);
 })().catch(error => { console.error(error); process.exit(1); });

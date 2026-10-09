@@ -2,6 +2,7 @@
 
 const { query, transaction } = require('../db');
 const { encryptWithEnv, decryptWithEnv } = require('./purpose-crypto');
+const { canonicalPath } = require('../platform/canonical-path');
 
 const KEY = 'public_abuse_protection_v1';
 const SECRET_ENV = 'DATA_ENCRYPTION_KEY';
@@ -104,14 +105,15 @@ async function save(input, actorUserId = null) {
   return reload();
 }
 
-function shouldProtect(cfg, path) {
+function shouldProtect(cfg, rawPath) {
+  const path = canonicalPath(rawPath);
   if (!cfg?.enabled) return false;
   if (CORE_AUTH_PATHS.has(path)) return true;
   return path === '/account/forgot-password' && cfg.protectPasswordReset;
 }
 
 function actionForPath(path) {
-  return ACTIONS[path] || null;
+  return ACTIONS[canonicalPath(path)] || null;
 }
 
 function allowTurnstileCsp(res) {
@@ -167,7 +169,7 @@ function verificationFailure(path) {
 async function middleware(req, res, next) {
   try {
     const cfg = await get();
-    if (req.method === 'GET' && FORM_PATHS.has(req.path)) {
+    if (req.method === 'GET' && FORM_PATHS.has(canonicalPath(req.path))) {
       exposeTurnstile(res, cfg, req.path);
       return next();
     }
