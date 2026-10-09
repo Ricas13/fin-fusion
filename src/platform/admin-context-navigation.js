@@ -8,9 +8,6 @@ function esc(value) {
 
 const PERSONAL_KEYS = new Set(['my-profile', 'my-notifications', 'my-security']);
 const CONTEXT_ONLY_KEYS = new Set(['customer-jellyfin-password']);
-// Compatibility export for older callers. Analytics is intentionally NOT a
-// main Commerce tab anymore; it is owned by Orders & Growth as an in-page tool.
-const COMMERCE_ANALYTICS = Object.freeze(['commerce-overview', 'Analytics', '/admin/commerce']);
 
 const TOOL_DESCRIPTIONS = Object.freeze({
     search: 'Search across customers, plans and servers.',
@@ -75,10 +72,6 @@ function sectionActiveKey(active) {
     return current(active).sidebarKey;
 }
 
-// Compatibility exports only. Secondary upper-tab rows are intentionally retired:
-// deeper destinations now belong to the owning main tab as ordinary page tools.
-function subPages() { return []; }
-function subActiveKey() { return null; }
 
 function tabRow(items, activeKey, className = 'coherenceSectionTabs', label = 'Page sections') {
     if (!items.length || className === 'coherenceSubTabs') return '';
@@ -149,4 +142,4 @@ function model(active) {
     };
 }
 
-module.exports = { current, sectionPages, sectionActiveKey, subPages, subActiveKey, tabRow, render, ownedToolPages, renderOwnedTools, breadcrumb, model, COMMERCE_ANALYTICS, TOOL_DESCRIPTIONS, EXTRA_OWNER_TOOLS, CONTEXT_ONLY_KEYS };
+module.exports = { current, sectionPages, sectionActiveKey, tabRow, render, ownedToolPages, renderOwnedTools, breadcrumb, model, TOOL_DESCRIPTIONS, EXTRA_OWNER_TOOLS, CONTEXT_ONLY_KEYS };
