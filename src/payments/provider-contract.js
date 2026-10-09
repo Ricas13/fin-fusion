@@ -3,7 +3,6 @@
 const lifecycleState = require('./provider-lifecycle-state');
 const lifecycleAdapters = require('./provider-lifecycle-adapters');
 const refundAdapters = require('./provider-refund-adapters');
-const incidents = require('./incidents');
 
 function providerName(provider) {
   return lifecycleState.providerName(provider);
@@ -47,17 +46,6 @@ function refunds(provider) {
   return refundAdapters.forProvider(provider);
 }
 
-async function settlementIdentity(provider, providerReference) {
-  const name = providerName(provider);
-  const reference = String(providerReference || '').trim();
-  if (!reference) {
-    const error = new Error('Provider settlement reference is required.');
-    error.code = 'PROVIDER_SETTLEMENT_REFERENCE_REQUIRED';
-    throw error;
-  }
-  return incidents.identityFromProviderSubscription(name, reference);
-}
-
 function providerMissing(error) {
   return lifecycleAdapters.providerMissing(error);
 }
@@ -77,7 +65,6 @@ module.exports = {
   capabilities,
   recurring,
   refunds,
-  settlementIdentity,
   providerMissing,
   stripePeriod,
   stripePriceId

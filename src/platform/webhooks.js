@@ -9,9 +9,6 @@ const providerSettings=require('../payments/provider-settings');
 const jellyfinPlayback=require('../jellyfin/playback-webhook');
 const jellyfinWebhookAuth=require('../jellyfin/playback-webhook-auth');
 const {requestMaintenanceGuard}=require('../security/maintenance-lock');
-const STRIPE_RISK=new Set(['charge.refunded','charge.dispute.created','charge.dispute.closed']);
-const PAYPAL_RISK=new Set(['PAYMENT.SALE.REFUNDED','CUSTOMER.DISPUTE.CREATED','CUSTOMER.DISPUTE.RESOLVED']);
-const PLISIO_RISK=new Set();
 const legacyWarningServers=new Set();
 const jellyfinWebhookRateLimit=rateLimit({windowMs:60*1000,limit:600,standardHeaders:'draft-7',legacyHeaders:false,keyGenerator:req=>`${String(req.params.serverId||'unknown')}:${ipKeyGenerator(req.ip)}`,message:'Too many webhook requests. Please try again shortly.'});
 function envTrue(value){return ['1','true','yes','on'].includes(String(value||'').trim().toLowerCase())}
@@ -30,4 +27,4 @@ function createWebhookRouter(){
  router.post('/webhooks/jellyfin/:serverId',express.json({type:'application/json',limit:'256kb'}),jellyfinWebhookRateLimit,requestMaintenanceGuard,async(req,res)=>{try{const serverId=String(req.params.serverId||'');if(!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(serverId))return res.status(400).send('Invalid server id');const secret=String(process.env.JELLYFIN_WEBHOOK_SECRET||'');if(!secret)return res.status(404).end();const auth=jellyfinWebhookAuth.verifyServerSecret(req.get('x-fin-fusion-webhook-secret'),secret,serverId,{allowLegacy:envTrue(process.env.JELLYFIN_WEBHOOK_ALLOW_LEGACY_SECRET)});if(!auth.authenticated)return res.status(401).send('Webhook rejected');if(auth.mode==='legacy'&&!legacyWarningServers.has(serverId)){legacyWarningServers.add(serverId);console.warn(`Jellyfin playback webhook ${serverId} used the legacy shared secret; replace it with the server-scoped token and disable JELLYFIN_WEBHOOK_ALLOW_LEGACY_SECRET.`)}const result=await jellyfinPlayback.ingest(serverId,req.body||{});return res.json({received:true,...result})}catch(error){console.error('Jellyfin playback webhook error:',error.message);return res.status(400).send('Webhook rejected')}});
  return router;
 }
-module.exports={createWebhookRouter,STRIPE_RISK,PAYPAL_RISK,PLISIO_RISK,deferredPaymentWebhook,sameSecret:jellyfinWebhookAuth.sameSecret};
+module.exports={createWebhookRouter,deferredPaymentWebhook,sameSecret:jellyfinWebhookAuth.sameSecret};

@@ -58,15 +58,6 @@ async function withPlacementScope(entitlement) {
     return { ...entitlement, eligible_server_ids: servers.map(server => server.id) };
 }
 
-async function readyAccountForEntitlement(customerId, entitlement, lane, { accounts = null } = {}) {
-    if (!entitlement || entitlement.blocked) return null;
-    const [rows, scopedEntitlement] = await Promise.all([
-        accountsForCustomer(customerId, accounts),
-        withPlacementScope(entitlement)
-    ]);
-    return rows.find(account => accountMatchesEntitlement(account, scopedEntitlement, lane)) || null;
-}
-
 function classifyLane({ entitlement = null, accounts = [], lane, paidMissing = false } = {}) {
     const laneAccounts = (Array.isArray(accounts) ? accounts : []).filter(account => laneOf(account) === lane);
     if (!entitlement) {
@@ -178,7 +169,6 @@ module.exports = {
     isTrial,
     isPaid,
     operatorProtected,
-    readyAccountForEntitlement,
     classifyLane,
     freeJellyfin,
     primaryJellyfin,

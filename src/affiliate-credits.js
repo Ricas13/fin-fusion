@@ -78,18 +78,6 @@ async function matureDueCredits(customerId=null){
   const r=await query(`UPDATE affiliate_credit_ledger SET state='available' WHERE ${where} RETURNING id`,params);return r.rowCount;
 }
 
-async function createPendingReward({affiliateCustomerId,referredCustomerId,redemptionId,qualifyingSubscriptionId,paidMinor,currency,availableAt,referenceId,metadata={}}){
-  const amount=Number(paidMinor),settings=await loadSettings();
-  if(!settings.enabled)return{created:false,reason:'disabled'};
-  if(!Number.isInteger(amount)||amount<=0)return{created:false,reason:'no_paid_value'};
-  const reward=Math.max(1,Math.floor(amount*settings.rewardPercent/100));
-  await enroll(affiliateCustomerId);
-  const r=await query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,referred_customer_id,qualifying_subscription_id,available_at,reference_id,note,metadata)
-    VALUES($1,$2,$3,'earned','pending',$4,$5,$6,$7,$8,$9,$10::jsonb)
-    ON CONFLICT(entry_type,reference_id) DO NOTHING RETURNING id,amount_minor,currency,available_at`,[affiliateCustomerId,cleanCurrency(currency),reward,redemptionId,referredCustomerId,qualifyingSubscriptionId,availableAt,referenceId,`Affiliate reward: ${settings.rewardPercent}% of qualifying paid service`,JSON.stringify({...metadata,rewardPercent:settings.rewardPercent,paidMinor:amount})]);
-  return r.rowCount?{created:true,...r.rows[0],amountMinor:reward}:{created:false,reason:'already_recorded'};
-}
-
 async function refundStateForReward(client,row){
   const sub=(await client.query(`SELECT source,provider_subscription_id FROM subscriptions WHERE id=$1`,[row.qualifying_subscription_id])).rows[0]||{};
   const incidents=await client.query(`SELECT provider,incident_type,incident_status,amount_minor FROM payment_incidents WHERE customer_id=$1 AND provider=$2 AND provider_subscription_id=$3 AND incident_type IN('refund','chargeback') ORDER BY created_at,id`,[row.referred_customer_id,sub.source,sub.provider_subscription_id]);
@@ -219,4 +207,4 @@ async function redeemPlan({customerId,planCode,currency}){
   });await provisioning.reconcileCustomer(customerId);return result;
 }
 
-module.exports={loadSettings,enroll,profile,referralActivity,balances,matureDueCredits,createPendingReward,topUpRewardToCurrentRate,adminAdjustCredit,reverseReward,redeemPlan,cleanCurrency};
+module.exports={loadSettings,enroll,profile,referralActivity,balances,matureDueCredits,topUpRewardToCurrentRate,adminAdjustCredit,reverseReward,redeemPlan,cleanCurrency};

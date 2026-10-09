@@ -1,6 +1,5 @@
 'use strict';
 
-const modules = require('../modules/registry');
 const drivers = require('./drivers');
 const serviceCatalog = require('../catalog/service-catalog');
 
@@ -66,11 +65,6 @@ function componentForPlan(plan, moduleId) {
   return componentsForPlan(plan).find(component => component.module === String(moduleId || '').toLowerCase()) || null;
 }
 
-function assertComponentsLicensed(plan, options = {}) {
-  for (const component of componentsForPlan(plan)) modules.assertEnabled(component.module, options);
-  return true;
-}
-
 function accessLabel(plan) {
   const parts = componentsForPlan(plan).map(component => {
     if (component.module === 'stremio') {
@@ -84,4 +78,4 @@ function accessLabel(plan) {
   return parts.join(' · ');
 }
 
-module.exports = { serviceType, jellyfinHouseholdConfig, stremioReplacementPolicy, stremioHouseholdConfig, componentsForPlan, componentForPlan, assertComponentsLicensed, accessLabel };
+module.exports = { serviceType, jellyfinHouseholdConfig, stremioReplacementPolicy, stremioHouseholdConfig, componentsForPlan, componentForPlan, accessLabel };

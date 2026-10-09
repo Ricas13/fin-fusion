@@ -32,11 +32,4 @@ function assertProviderRefund({providerPaidMinor:paid,refundedMinor=0,requestedM
     return{requestedMinor:requested,remainingBeforeMinor:remaining,remainingAfterMinor:remaining-requested};
 }
 
-function assertObservedProviderRefund({providerPaidMinor:paid,refundedMinor}){
-    const providerPaid=nonNegativeMinor(paid,'Provider-paid amount');
-    const refunded=nonNegativeMinor(refundedMinor,'Provider-refunded amount');
-    if(refunded>providerPaid)throw new Error('Provider refund exceeds the money originally paid through that provider. Affiliate/service credit must never be included in a cash refund.');
-    return{providerPaidMinor:providerPaid,refundedMinor:refunded,remainingMinor:providerPaid-refunded};
-}
-
-module.exports={nonNegativeMinor,providerCashPaidMinor,remainingProviderRefundableMinor,assertProviderRefund,assertObservedProviderRefund};
+module.exports={nonNegativeMinor,providerCashPaidMinor,remainingProviderRefundableMinor,assertProviderRefund};

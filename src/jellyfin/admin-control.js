@@ -3,7 +3,6 @@
 const {query,transaction}=require('../db');
 const serviceAdminControl=require('../entitlements/service-admin-control');
 
-function same(a,b){return String(a||'')===String(b||'');}
 
 // Backward-compatible Jellyfin-scoped facade over the canonical, service-
 // scoped src/entitlements/service-admin-control.js (customer_service_admin_control).
@@ -105,9 +104,4 @@ async function clear(customerId,subscriptionId,{actorUserId=null,reason=''}={}){
   return{changed:true,previous:{mode:result.previous.mode,server_id:result.previous.server_id||null}};
 }
 
-async function isForcedTo(customerId,subscriptionId,serverId){
-  const current=await state(customerId,subscriptionId);
-  return Boolean(current?.mode==='admin_server_pin'&&same(current.server_id,serverId));
-}
-
-module.exports={state,entitlementSemantics,forcedServerForPlan,forceServer,remove,clear,isForcedTo};
+module.exports={state,entitlementSemantics,forcedServerForPlan,forceServer,remove,clear};

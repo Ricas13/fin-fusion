@@ -724,39 +724,10 @@ async function runActivityPolicyCycle() {
     }
 }
 
-async function listCustomerActivity(customerId, limit = 100) {
-    const safeLimit = Math.max(1, Math.min(250, Number(limit) || 100));
-    const result = await query(`
-        SELECT ph.id,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,
-               ph.transcode_reasons,ph.started_at,ph.last_seen_at,ph.ended_at,ph.ended_reason,
-               js.name AS server_name
-        FROM playback_history ph
-        JOIN jellyfin_servers js ON js.id=ph.server_id
-        WHERE ph.customer_id=$1
-        ORDER BY ph.started_at DESC
-        LIMIT $2
-    `, [customerId, safeLimit]);
-    return result.rows;
-}
-
-async function listCustomerPolicyEvents(customerId, limit = 50) {
-    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
-    const result = await query(`
-        SELECT decision,mode,stream_count,stream_limit,reason,created_at
-        FROM stream_policy_events
-        WHERE customer_id=$1
-        ORDER BY created_at DESC
-        LIMIT $2
-    `, [customerId, safeLimit]);
-    return result.rows;
-}
-
 module.exports = {
     ENFORCEMENT_ACK,
     config,
     effectiveStreamLimit,
     runActivityPolicyCycle,
-    listCustomerActivity,
-    listCustomerPolicyEvents,
     activeEntitlements
 };

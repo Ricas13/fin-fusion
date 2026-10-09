@@ -210,10 +210,6 @@ async function dueCustomers(limit = 250) {
     return (await dueCustomerPage(limit, { cursorStore: null })).rows;
 }
 
-async function dueActiveCustomers(limit = 250) {
-    return dueCustomers(limit);
-}
-
 async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
     const result = await accessRepair.repairUnpaidTrial(customerId, {
         reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account'
@@ -331,7 +327,6 @@ module.exports = {
     activeCustomerScanPage,
     dueCustomerPage,
     dueCustomers,
-    dueActiveCustomers,
     wakeEntitlementRetry,
     reconcileActiveEntitlements,
     ensureFailureBackoff,

@@ -37,10 +37,4 @@ function addElapsedDays(value,days){
   return new Date(start.getTime()+Number(days||0)*DAY_MS);
 }
 
-function diffDaysCeil(start,end){
-  const from=start instanceof Date?start:new Date(start),to=end instanceof Date?end:new Date(end);
-  if(Number.isNaN(from.getTime())||Number.isNaN(to.getTime()))return 0;
-  return Math.ceil((to.getTime()-from.getTime())/DAY_MS);
-}
-
-module.exports={DAY_MS,text,startUtc,addDaysUtc,addElapsedDays,diffDaysCeil};
+module.exports={DAY_MS,text,startUtc,addDaysUtc,addElapsedDays};

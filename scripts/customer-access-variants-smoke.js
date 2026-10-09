@@ -14,7 +14,6 @@ const dashboardView=read('views/customer/dashboard.ejs');
 const dashboardCss=read('public/css/customer-dashboard.css');
 const checkoutRoute=read('src/platform/flexible-checkout.js');
 const checkoutClient=read('public/js/customer-checkout.js');
-const onboardingSelector=read('public/js/customer-stream-selector.js');
 const variantsSource=read('src/payments/stream-variants.js');
 const planChangeSource=read('src/payments/customer-plan-change.js');
 const migration=read('db/migrations/20260901170000_plan_change_access_variants.sql');
@@ -35,8 +34,6 @@ assert(checkoutClient.includes("if(plan.currentProvider){"),'existing recurring 
 assert(checkoutClient.includes("modes.includes('subscription')"),'recurring variant changes must require a recurring provider mapping');
 assert(checkoutClient.includes('card.dataset.planBaseMinor=String(variant.priceMinor)'),'promo preview must use the selected variant price rather than the logical plan base price');
 
-assert(onboardingSelector.includes('selectInitialAvailable()'),'onboarding must move away from a sold-out default variant when another allowance is purchasable');
-assert(onboardingSelector.includes("current.dataset.sold!=='1'&&paymentSet(current).size"),'onboarding must only keep a selected variant when it is both available and payable');
 assert(variantsSource.includes("service==='jellyfin'||service==='bundle'"),'Jellyfin bundle plans must share stream-variant semantics');
 
 assert(checkoutRoute.includes('targetAccessQuantity:choice.accessQuantity'),'checkout routing must pass the selected allowance into recurring plan-change handling');

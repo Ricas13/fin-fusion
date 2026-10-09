@@ -10,7 +10,6 @@ const readiness = require('./product-readiness');
 const planComponents = require('../access/plan-components');
 const capacity = require('../entitlements/plan-capacity');
 const serviceCatalog = require('../catalog/service-catalog');
-const ui = require('./admin-ui');
 
 function gate(req, res, next) {
   return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId
@@ -146,10 +145,6 @@ function createAction(type) {
   if (type === 'paid' || type === 'jellyfin') return { href: '/admin/plans/new?type=paid', label: 'Add Jellyfin Share plan' };
   return { href: '/admin/plans/new', label: 'Add plan' };
 }
-function planReadinessHero(rows, ctx, create) {
-  if (!rows || !ctx || !create) return '';
-  return ui.operatorHero({ title: 'Plans', actionsHtml: '' });
-}
 async function plansPage(req) {
   await runtimeSettings.ensureLoaded();
   const allRows = await listData().then(withCapacity);
@@ -216,6 +211,5 @@ module.exports = {
   withCapacity,
   capacityCell,
   productTabs,
-  createAction,
-  planReadinessHero
+  createAction
 };

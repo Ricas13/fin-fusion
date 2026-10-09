@@ -273,11 +273,6 @@ async function managedRoleIds({ queryFn = query } = {}) {
   return new Set(result.rows.map(row => snowflake(row.discord_role_id)).filter(Boolean));
 }
 
-async function desiredRoleIdsForPlans(planIds, options = {}) {
-  const mappings = await planRoleMappings(planIds, options);
-  return mappings.desiredRoleIds;
-}
-
 async function customerDiscordUserId(customerId) {
   const result = await query(`
     SELECT discord_user_id
@@ -391,7 +386,6 @@ async function syncRoleForCustomer(customerId, activePlanIds = [], { extraManage
 module.exports = {
   syncRoleForCustomer,
   managedRoleIds,
-  desiredRoleIdsForPlans,
   planRoleMappings,
   roleFamily,
   customerDiscordUserId,

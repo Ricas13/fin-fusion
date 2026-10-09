@@ -62,8 +62,6 @@ function removeSecondaryWorkflowNavigation(html){
     .replace(/<section class="coherenceOwnedTools"[^>]*>[\s\S]*?<\/section>/g,'');
 }
 
-function removeRedundantWorkflowNavigation(html){return removeSecondaryWorkflowNavigation(html);}
-
 function actionHrefs(action=''){
   const hrefs=new Set();
   const re=/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>/gi;
@@ -93,4 +91,4 @@ function layout(options={}){
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
 
-module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,useAdminHelp,addServerContextNavigation,replaceBreadcrumb,removeSecondaryWorkflowNavigation,removeRedundantWorkflowNavigation,actionHrefs,dedupeOverviewActions};
+module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,useAdminHelp,addServerContextNavigation,replaceBreadcrumb,removeSecondaryWorkflowNavigation,actionHrefs,dedupeOverviewActions};

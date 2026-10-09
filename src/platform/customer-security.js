@@ -32,7 +32,6 @@ async function twoFactorState(userId){return securityCommands.twoFactorState(use
 async function beginEnrollment(userId){await runtimeSettings.ensureLoaded();return securityCommands.beginEnrollment(userId,{issuer:runtimeSettings.siteName()});}
 async function replaceRecoveryCodes(userId,client=null){return securityCommands.replaceRecoveryCodes(userId,client);}
 async function confirmEnrollment(userId,code){return securityCommands.confirmEnrollment(userId,code);}
-async function verifyFactor(userId,value){const out=await customerTwoFactor.verify(userId,value);return Boolean(out.ok);}
 async function bumpSecurityVersion(userId,currentSessionId,req){const updated=await securityCommands.bumpSecurityVersion(userId,currentSessionId);req.session.customerSessionVersion=updated.version;await save(req);return updated;}
 
 function frame(site,title,body,active='account',navOptions={}){const navigation=active?customerNav.nav(active,navOptions):'';return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · ${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/customer-portal.css"><link rel="stylesheet" href="/css/customer-navigation.css"><style>.securityMain{max-width:1050px;margin:auto;padding:24px}.securityGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}.panel{padding:18px}.sessionRow{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid #26303a}.credential{padding:12px;border:1px solid #2c3947;background:#0d141c;border-radius:8px;font-family:ui-monospace,monospace;word-break:break-all}@media(max-width:650px){.sessionRow{grid-template-columns:1fr}}</style></head><body><main class="securityMain">${navigation}<div class="customerPortalPageHeader"><div><h1>${esc(title)}</h1></div></div>${body}</main></body></html>`;}
@@ -58,4 +57,4 @@ function createCustomerSecurityRouter(){const router=express.Router();router.use
  return router;
 }
 
-module.exports={createCustomerSecurityRouter,securityPage,beginEnrollment,confirmEnrollment,verifyFactor,replaceRecoveryCodes,securityNoStore,emailChangeConfirmation,profilePasswordPage,twoFactorPasswordPage,securityError};
+module.exports={createCustomerSecurityRouter,securityPage,beginEnrollment,confirmEnrollment,replaceRecoveryCodes,securityNoStore,emailChangeConfirmation,profilePasswordPage,twoFactorPasswordPage,securityError};

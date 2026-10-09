@@ -166,15 +166,6 @@ async function detachedRemovalRows(limit = MAX_ENFORCEMENTS_PER_RUN) {
     return result.rows;
 }
 
-function subscriptionAlreadyEnded(row, now = Date.now()) {
-    const status = String(row?.status || '').toLowerCase();
-    if (!['cancelled', 'canceled', 'expired', 'refunded'].includes(status)) return false;
-    const extensionDays = Math.max(0, Number(row?.service_extension_days || 0));
-    if (extensionDays > 0) return false;
-    const end = row?.current_period_end ? new Date(row.current_period_end).getTime() : NaN;
-    return Number.isFinite(end) ? end <= now : true;
-}
-
 async function finalizeDetachedRemovalLocked(row, actorUserId = null) {
     const current = await subscriptionState.liveFreeJellyfinSubscription(
         row.customer_id,
@@ -687,7 +678,6 @@ module.exports = {
     freePlanEndReference,
     finishRemovedFreePlan,
     detachedRemovalRows,
-    subscriptionAlreadyEnded,
     finalizeDetachedRemovalLocked,
     finalizeDetachedRemovals,
     finalEligibility,

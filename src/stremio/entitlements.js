@@ -7,7 +7,7 @@ const subscriptionState=require('../entitlements/subscription-state');
 const registry=require('../jellyfin/registry');
 const planServers=require('../jellyfin/plan-servers');
 const outbound=require('../security/outbound-url-policy');
-const {encryptWithEnv,decryptWithEnv}=require('../security/purpose-crypto');
+const {decryptWithEnv}=require('../security/purpose-crypto');
 const foundation=require('./foundation');
 const operationLock=require('./operation-lock');
 const installRecovery=require('./install-credential-recovery');
@@ -18,7 +18,6 @@ const TOKEN_PREFIX='stremio-jf-token';
 const INSTALL_CONCURRENCY_WINDOW_MS=5000;
 function serviceType(row){return String(row?.service_type_snapshot||row?.service_type||'jellyfin');}
 function streamLimit(_row){return 1;}
-function randomPassword(){return crypto.randomBytes(32).toString('base64url');}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin user token');return `MediaBrowser Token="${token}"`;}
 function clientAuthorization(type='jellyfin',userId=''){return registry.mediaProvider.clientAuthorization(type,{userId});}
 function restrictedTokenHeaders(type,token,{jsonBody=false}={}){return registry.mediaProvider.userTokenHeaders(type,token,{jsonBody});}
@@ -26,8 +25,6 @@ function compactError(error){return String(error?.message||error||'Unknown error
 
 async function entitledSubscription(customerId){const addons=await subscriptionState.effectiveAddons(customerId),addon=addons.find(row=>['stremio','bundle'].includes(serviceType(row)));if(addon)return addon;return subscriptionState.effectiveStremioSubscription(customerId);}
 async function explicitSourceCount(subscriptionId,{readyOnly=false}={}){const conditions=readyOnly?`AND src.enabled=TRUE AND src.auth_state IN ('connected','error') AND src.password_encrypted IS NOT NULL AND idx.last_completed_at IS NOT NULL AND idx.item_count>0 AND EXISTS(SELECT 1 FROM stremio_source_libraries l WHERE l.source_id=src.id AND l.selected=TRUE AND l.available=TRUE)`:'',joins=readyOnly?`JOIN stremio_sources src ON src.id=ps.source_id JOIN stremio_source_index_state idx ON idx.source_id=src.id`:'';const r=await query(`SELECT COUNT(*)::int n FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE ${joins} WHERE s.id=$1 ${conditions}`,[subscriptionId]);return Number(r.rows[0]?.n||0);}
-async function usesSharedSources(subscriptionId){return(await explicitSourceCount(subscriptionId))>0;}
-
 async function selectServer(plan){const servers=(await planServers.eligibleServersForPlan(plan,{enabledOnly:true,forPlacement:true})).filter(server=>server.stremio_enabled===true&&server.allow_new_users!==false&&server.public_url);if(!servers.length)throw new Error('No healthy Stremio-enabled media server with a public URL is available for this plan.');return servers[0];}
 async function authenticateRestrictedUser(serverId,username,password){
   const server=await registry.getServerSecret(serverId);if(!server)throw new Error('Media server unavailable');
@@ -47,8 +44,6 @@ async function logoutRestrictedToken(server,encryptedToken){
     return false;
   }
 }
-async function refreshRestrictedAccess(account,server,priorEncryptedToken=null){if(priorEncryptedToken){const loggedOut=await logoutRestrictedToken(server,priorEncryptedToken);if(!loggedOut)throw new Error('Could not verify revocation of the previous restricted Stremio token.');}const password=randomPassword();await registry.request(server.id,`/Users/${account.jellyfin_user_id}/Password`,{method:'POST',body:{Id:account.jellyfin_user_id,NewPw:password}});const auth=await authenticateRestrictedUser(server.id,account.jellyfin_username,password);if(auth.userId!==String(account.jellyfin_user_id))throw new Error('Restricted media-server authentication returned the wrong user identity.');await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,updated_at=NOW() WHERE id=$1`,[account.id]);return{encryptedToken:encryptWithEnv(auth.accessToken,TOKEN_ENV,TOKEN_PREFIX),issuedAt:new Date(),mediaServerType:auth.mediaServerType};}
-
 async function managedAccountOwned(accountId){if(!accountId)return false;const r=await query(`SELECT EXISTS(SELECT 1 FROM stremio_managed_accounts WHERE jellyfin_account_id=$1 AND status='active') yes`,[accountId]);return r.rows[0]?.yes===true;}
 async function disableLegacyAccountIfUnowned(accountId){if(!accountId||await managedAccountOwned(accountId))return false;const a=await query(`SELECT * FROM jellyfin_accounts WHERE id=$1 AND account_purpose='stremio_internal'`,[accountId]);if(!a.rowCount)return false;await provisioning.disableJellyfinAccount(a.rows[0]);return true;}
 async function detachLegacyToken(row){if(!row?.jellyfin_access_token_encrypted||!row?.server_id||!row?.base_url)return false;return logoutRestrictedToken({id:row.server_id,name:row.server_name,base_url:row.base_url,media_server_type:row.media_server_type},row.jellyfin_access_token_encrypted);}
@@ -184,4 +179,4 @@ async function findByInstallToken(raw){const token=String(raw||'');if(token.leng
 function accessToken(entitlement){return entitlement?.jellyfin_access_token_encrypted?decryptWithEnv(entitlement.jellyfin_access_token_encrypted,TOKEN_ENV,TOKEN_PREFIX):null;}
 async function markUse(id,kind){if(kind==='manifest')return query(`UPDATE stremio_entitlements SET last_manifest_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);return query(`UPDATE stremio_entitlements SET last_stream_request_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);}
 
-module.exports={TOKEN_ENV,TOKEN_PREFIX,INSTALL_CONCURRENCY_WINDOW_MS,serviceType,streamLimit,jellyfinAuthHeader,clientAuthorization,restrictedTokenHeaders,entitledSubscription,explicitSourceCount,usesSharedSources,selectServer,authenticateRestrictedUser,logoutRestrictedToken,refreshRestrictedAccess,reconcileForCustomer,reconcileSharedForCustomer,ensureInstallationCredential,issueInstallation,revoke,current,findByInstallToken,accessToken,markUse,suspend};
+module.exports={TOKEN_ENV,TOKEN_PREFIX,INSTALL_CONCURRENCY_WINDOW_MS,serviceType,streamLimit,jellyfinAuthHeader,clientAuthorization,restrictedTokenHeaders,entitledSubscription,explicitSourceCount,selectServer,authenticateRestrictedUser,logoutRestrictedToken,reconcileForCustomer,reconcileSharedForCustomer,ensureInstallationCredential,issueInstallation,revoke,current,findByInstallToken,accessToken,markUse,suspend};

@@ -53,10 +53,6 @@ function rememberStreams(entitlementId, type, videoId, origin, streams) {
   }
 }
 
-function clearStreamResultCache() {
-  streamResultCache.clear();
-}
-
 function enabled() {
   return runtimeSettings.enabled() && modules.isEnabled('stremio');
 }
@@ -118,14 +114,6 @@ function manifest() {
 
 async function publicOrigin(req) {
   return new URL(await operations.absoluteUrl(req, '/')).origin;
-}
-
-async function hasExplicitSources(entitlement) {
-  const result = await query(
-    `SELECT EXISTS(SELECT 1 FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE WHERE s.id=$1) yes`,
-    [entitlement.subscription_id]
-  );
-  return result.rows[0]?.yes === true;
 }
 
 async function managedMapping(entitlementId, mappingId) {
@@ -376,7 +364,6 @@ module.exports = {
   installTokenState,
   subscriptionEndedStream,
   subscriptionEndedStreamResponse,
-  hasExplicitSources,
   managedMapping,
   settledStreams,
   claimHouseholdOrReject,
@@ -388,6 +375,5 @@ module.exports = {
   streamCacheKey,
   cachedStreams,
   rememberStreams,
-  clearStreamResultCache,
   createStremioRuntimeRouter
 };

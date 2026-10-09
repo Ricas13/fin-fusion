@@ -169,23 +169,10 @@ async function requestMaintenanceGuard(req, res, next) {
     }
 }
 
-async function closeMaintenanceLockPool() {
-    await serializeRequestLock(async () => {
-        requestLockRefs = 0;
-        if (requestLockHandle) {
-            const handle = requestLockHandle;
-            requestLockHandle = null;
-            await handle.release().catch(() => {});
-        }
-    });
-    await lockPool.end();
-}
-
 module.exports = {
     acquireSharedMaintenanceLock,
     acquireRequestMaintenanceLock,
     withMaintenanceSharedLock,
     requestMaintenanceGuard,
-    closeMaintenanceLockPool,
     maintenanceLockPoolMax
 };

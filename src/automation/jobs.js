@@ -161,26 +161,6 @@ async function paypalHistorySafeRun(){
  }
 }
 
-// Retained as a compatibility helper for direct callers/tests. Scheduled work uses
-// separate jobs below so provider latency/outages can never delay the core integrity
-// watchdog. If invoked directly, start both branches concurrently for the same reason.
-async function revenueIntegrityWithPayPal(){
- const[integrity,paypalHistory]=await Promise.all([revenueIntegritySafeRun(),paypalHistorySafeRun()]);
- const paypalDegraded=Boolean(paypalHistory?.error||paypalHistory?.warning||Number(paypalHistory?.skipped||0)>0||paypalHistory?.truncated);
- const paypalWarning=paypalHistory?.error
-  ?`PayPal payment-history reconciliation failed: ${paypalHistory.error}`
-  :(paypalHistory?.warning||'');
- const warning=[integrity?.warning,paypalWarning].filter(Boolean).join(' ').slice(0,1000);
- return{
-  ...integrity,
-  paypalHistory,
-  paypalHistoryDegraded:paypalDegraded?1:0,
-  failed:Number(integrity?.failed||0)+(paypalDegraded?1:0),
-  infrastructureSuppressed:Number(integrity?.infrastructureSuppressed||0)+Number(paypalHistory?.infrastructureSuppressed||0),
-  ...(warning?{warning}:{})
- };
-}
-
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0),blockedCount=Number(active.blocked||0);return{...active,blocked:blockedCount,expired:expiredCount,expiryFailed,downgradeRetries,warnings,serviceEndEmails:serviceEnd,processed:Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
@@ -239,8 +219,7 @@ function names(){return Object.keys(definitions)}
 function definition(jobKey){return definitions[String(jobKey||'')]||null}
 function defaultIntervalSeconds(jobKey){return Number(definition(jobKey)?.defaultIntervalSeconds||DEFAULT_INTERVAL_SECONDS)}
 function criticalNames(){return names().filter(jobKey=>definitions[jobKey].critical)}
-function disableableCriticalNames(){return names().filter(jobKey=>definitions[jobKey].disableableCritical)}
 function isCritical(jobKey){return Boolean(definition(jobKey)?.critical)}
 function mayBeDisabled(jobKey){return Boolean(definition(jobKey)?.disableableCritical)}
 async function run(jobKey){const def=definition(jobKey);if(!def)throw new Error(`Unknown automation job: ${jobKey}`);return def.run()}
-module.exports={jobs,definitions,names,definition,run,criticalNames,disableableCriticalNames,isCritical,mayBeDisabled,DEFAULT_INTERVAL_SECONDS:DEFAULT_INTERVALS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,providerFinancialSafeRun,revenueIntegrityWithPayPal};
+module.exports={jobs,definitions,names,definition,run,criticalNames,isCritical,mayBeDisabled,DEFAULT_INTERVAL_SECONDS:DEFAULT_INTERVALS,defaultIntervalSeconds,notificationLifecycleSafeRun,revenueIntegritySafeRun,transientIntegrityFinding,paypalHistorySafeRun,providerFinancialSafeRun};

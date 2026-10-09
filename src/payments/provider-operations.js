@@ -1,7 +1,7 @@
 'use strict';
 const crypto=require('crypto');
 const {AsyncLocalStorage}=require('async_hooks');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const ACTIVE_LEASE_SECONDS=300;
 const BASE_RETRY_SECONDS=60;
 const MAX_RETRY_SECONDS=3600;
@@ -29,5 +29,4 @@ async function open({limit=100}={}){const r=await query(`SELECT * FROM provider_
 async function get(id){const r=await query('SELECT * FROM provider_operations WHERE id=$1',[id]);return r.rows[0]||null;}
 async function claimRecoverable({limit=25}={}){const safe=Math.max(1,Math.min(100,Number(limit)||25));const r=await query(`WITH candidates AS (SELECT id FROM provider_operations WHERE state IN('planned','provider_applied','local_applied','failed') AND manual_review_required=FALSE AND COALESCE(failure_kind,'') NOT IN('terminal','superseded') AND (next_attempt_at IS NULL OR next_attempt_at<=NOW()) ORDER BY COALESCE(next_attempt_at,created_at),created_at LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE provider_operations p SET attempt_count=p.attempt_count+1,last_attempt_at=NOW(),next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() FROM candidates c WHERE p.id=c.id RETURNING p.*`,[safe,ACTIVE_LEASE_SECONDS]);return r.rows;}
 async function newerOperation(op,{operationTypes=[]}={}){const types=operationTypes.length?operationTypes:[op.operation_type];const r=await query(`SELECT id,operation_type,state,created_at FROM provider_operations WHERE scope=$1 AND owner_id=$2 AND id<>$3 AND operation_type=ANY($4::text[]) AND created_at>$5 AND state IN('planned','provider_applied','local_applied','reconciled') ORDER BY created_at DESC LIMIT 1`,[op.scope,op.owner_id,op.id,types,op.created_at]);return r.rows[0]||null;}
-async function withLocalTransaction(id,fn){return transaction(async client=>{const result=await fn(client),attempt=expectedAttempt(id);const updated=await client.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1 AND ($3::int IS NULL OR attempt_count=$3) RETURNING id`,[id,ACTIVE_LEASE_SECONDS,attempt]);if(!updated.rowCount&&attempt!=null)throw leaseLost(id);return result;});}
-module.exports={ACTIVE_LEASE_SECONDS,BASE_RETRY_SECONDS,MAX_RETRY_SECONDS,key,cleanSnapshot,retrySeconds,definitiveProviderError,ambiguousProviderError,begin,providerApplied,localApplied,reconciled,reconcileImmediatePlanAccess,compensated,recordError,markManual,markSuperseded,observed,open,get,claimRecoverable,newerOperation,withLocalTransaction,withRecoveryClaim,expectedAttempt,leaseLost};
+module.exports={ACTIVE_LEASE_SECONDS,BASE_RETRY_SECONDS,MAX_RETRY_SECONDS,key,cleanSnapshot,retrySeconds,definitiveProviderError,ambiguousProviderError,begin,providerApplied,localApplied,reconciled,reconcileImmediatePlanAccess,compensated,recordError,markManual,markSuperseded,observed,open,get,claimRecoverable,newerOperation,withRecoveryClaim,expectedAttempt,leaseLost};

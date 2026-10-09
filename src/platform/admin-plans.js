@@ -43,8 +43,6 @@ function overviewInput(body,plan){
   if(discordRoleIdRaw&&!discordRoleId)throw new Error('Choose a Discord role or enter a valid Discord role ID.');
   return{name,description,audience:plan.audience,billing,duration:n(body.durationDays,1,3650,30),serverClass:serviceKind(plan.service_type)==='stremio'?plan.server_class:(['premium','free','custom'].includes(body.serverClass)?body.serverClass:'premium'),visible:plan.is_free_tier?true:b(body.visible),active:plan.is_free_tier?true:b(body.active),sort:plan.is_free_tier?0:Number(plan.sort_order||100),features,discordRoleId};
 }
-function jellyfinInput(body){return{streams:n(body.streams,1,50,1),downloads:b(body.allowDownloads),video:b(body.allowVideoTranscoding),audio:b(body.allowAudioTranscoding),remux:b(body.allowRemuxing),live:b(body.allowLiveTv),liveManagement:b(body.allowLiveTvManagement),remoteAccess:b(body.allowRemoteAccess),fourk:b(body.allow4k)}}
-
 function discordRoleReason(reason){
   return({
     bot_not_configured:'Configure and enable the Discord bot first.',
@@ -160,4 +158,4 @@ function createAdminPlansRouter(){
   return r;
 }
 
-module.exports={createAdminPlansRouter,listData,planSubnav,planById,activeSubscriberCount,planImpact,overviewPage,jellyfinPage,overviewInput,jellyfinInput,serviceKind,discordRoleControl,discordRoleReason};
+module.exports={createAdminPlansRouter,listData,planSubnav,planById,activeSubscriberCount,planImpact,overviewPage,jellyfinPage,overviewInput,serviceKind,discordRoleControl,discordRoleReason};

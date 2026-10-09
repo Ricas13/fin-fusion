@@ -93,12 +93,6 @@ async function indexServerUnlocked(serverId,{pageSize=500}={}){
   }
 }
 async function indexServer(serverId,options={}){return operationLock.withLock(`managed-index:${serverId}`,()=>indexServerUnlocked(serverId,options));}
-async function indexAll(){
-  const servers=await eligibleServers();let processed=0,failed=0;
-  for(const server of servers){try{const r=await indexServer(server.id);processed+=Number(r.processed||0);}catch(error){failed++;console.error(`Stremio media index failed for ${server.name}:`,error.message);}}
-  return{total:servers.length,processed,failed};
-}
-
 function managedBatchLimit(value=MANAGED_BATCH_LIMIT){return Math.max(1,Math.min(4,Number(value)||MANAGED_BATCH_LIMIT));}
 async function dueServers({limit=MANAGED_BATCH_LIMIT}={}){
   const safeLimit=managedBatchLimit(limit);
@@ -174,23 +168,6 @@ async function clearAndReset(serverId,actorUserId=null){
     return{preserved,deleted:0,queued:true};
   },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding this managed source.'}));
 }
-async function clearAll(actorUserId=null){
-  return indexLock.withIndexTransaction(async client=>{
-    const counts=await client.query(`SELECT server_id,COUNT(*)::int n FROM stremio_media_index GROUP BY server_id`);
-    const byServer=new Map(counts.rows.map(row=>[String(row.server_id),Number(row.n||0)]));
-    const servers=await client.query(`SELECT id FROM jellyfin_servers WHERE enabled=TRUE AND stremio_enabled=TRUE`);
-    let preserved=0;
-    for(const server of servers.rows){
-      const itemCount=byServer.get(String(server.id))||0;
-      preserved+=itemCount;
-      await queueManagedRefresh(client,server.id,itemCount);
-    }
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-      VALUES($1,'admin.stremio.managed_index.refresh_all','stremio_runtime',NULL,$2::jsonb)`,[actorUserId,JSON.stringify({preserved,zeroDowntime:true})]);
-    return{preserved,deleted:0,queued:servers.rowCount};
-  },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding managed indexes.'});
-}
-
 async function lookupAll(serverId,imdbId,itemType){
   const imdb=normalizeImdb(imdbId);if(!imdb)return[];
   const type=itemType==='series'?'Series':'Movie';
@@ -215,4 +192,4 @@ async function states(){
   return r.rows;
 }
 
-module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServerUnlocked,indexServer,indexAll,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,removeItem,states};
+module.exports={MANAGED_REFRESH_HOURS,MANAGED_BATCH_LIMIT,normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServerUnlocked,indexServer,managedBatchLimit,dueServers,dueServerCount,indexDueServers,saveLibrariesAndReset,clearAndReset,lookupAll,lookup,removeItem,states};

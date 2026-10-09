@@ -23,14 +23,6 @@ async function data(){
   return{settings,servers:servers.rows,plans:plans.rows};
 }
 function placementEligible(server,settings){return server.placement_mode==='active'&&server.allow_new_users===true&&planServers.healthEligible(server,settings.placementHealthMode);}
-function fleetState(d){
-  const eligible=d.servers.filter(server=>placementEligible(server,d.settings));
-  const offline=d.servers.filter(server=>server.health_status==='offline');
-  const degraded=d.servers.filter(server=>server.health_status==='degraded');
-  const paused=d.servers.filter(server=>server.placement_mode!=='active');
-  const newUsersDisabled=d.servers.filter(server=>server.allow_new_users!==true);
-  return{eligible,offline,degraded,paused,newUsersDisabled};
-}
 function fleetHero(d,state){return{enabled:d.servers.length,eligible:state.eligible.length,offline:state.offline.length,degraded:state.degraded.length,paused:state.paused.length};}
 async function page(){return '/admin/servers#placement';}
 
@@ -66,4 +58,4 @@ function createAdminFleetOperationsRouter(){
   return r;
 }
 
-module.exports={createAdminFleetOperationsRouter,page,data,fleetState,placementEligible,fleetHero};
+module.exports={createAdminFleetOperationsRouter,page,data,placementEligible,fleetHero};

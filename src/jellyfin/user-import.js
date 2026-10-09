@@ -337,23 +337,6 @@ async function bulkImport({ selected, planId = null, expiresAt = null, applyPoli
     };
 }
 
-async function searchCustomers(term = '', limit = 50) {
-    const q = String(term || '').trim();
-    const result = await query(`
-        SELECT c.id,COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),'Customer') AS name,
-               au.username AS portal_username,COALESCE(NULLIF(au.email,''),NULLIF(c.email,'')) AS email,
-               COUNT(ja.id)::int AS jellyfin_accounts
-        FROM customers c
-        LEFT JOIN app_users au ON au.id=c.user_id
-        LEFT JOIN jellyfin_accounts ja ON ja.customer_id=c.id
-        WHERE $1='' OR c.display_name ILIKE '%'||$1||'%' OR au.username ILIKE '%'||$1||'%' OR au.email ILIKE '%'||$1||'%' OR c.email ILIKE '%'||$1||'%'
-        GROUP BY c.id,au.username,au.email
-        ORDER BY name
-        LIMIT $2
-    `, [q, Math.max(1, Math.min(Number(limit) || 50, 100))]);
-    return result.rows;
-}
-
 module.exports = {
     discover,
     getRemoteUser,
@@ -361,7 +344,6 @@ module.exports = {
     linkExistingCustomer,
     rebindIdentity,
     bulkImport,
-    searchCustomers,
     assertServerFitsPlan,
     expiryForPlan,
     assertImportableIdentity

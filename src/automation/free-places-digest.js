@@ -28,10 +28,6 @@ function freeRegistrationUrl(publicBaseUrl){
   const base=String(publicBaseUrl||'').replace(/\/+$/,'');
   return base?`${base}/account/register?intent=free`:'';
 }
-function digestText(remaining,publicBaseUrl){
-  const count=Math.max(0,Number(remaining)||0),noun=count===1?'place':'places',base=String(publicBaseUrl||'').replace(/\/+$/,'');
-  return `Free Server — ${count} ${noun} open\n${count>0?freeRegistrationUrl(base):base}`;
-}
 function signupExplanation(open){
   return open
     ? `Starting signup opens a ${FREE_INTENT_MINUTES}-minute window to enter your details. It does not reserve a place. Capacity is checked atomically when valid account details are submitted.`
@@ -257,4 +253,4 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};

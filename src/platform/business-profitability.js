@@ -3,7 +3,6 @@
 const { query } = require('../db');
 const expenses = require('./business-expenses');
 const reportingCurrency = require('./reporting-currency');
-const { revenueFromEvent } = require('./admin-dashboard-analytics');
 const dashboardLedger = require('../payments/dashboard-ledger');
 const calendarDate = require('../finance/calendar-date');
 
@@ -15,16 +14,6 @@ async function paymentRows(start,end){
   const result=await query(`SELECT provider,event_type,payload,created_at FROM payment_events WHERE provider IN('stripe','paypal') AND processed_at IS NOT NULL AND processing_error IS NULL AND created_at >= $1 AND created_at < $2 ORDER BY created_at`,[start,end]);
   return result.rows;
 }
-function revenueSummaryFromRows(rows,start,end,reporting){
-  let grossMinor=0,refundMinor=0;const target=reporting.currency,from=new Date(start),to=new Date(end);
-  for(const row of rows||[]){
-    const at=new Date(row.created_at);if(at<from||at>=to)continue;
-    const payment=revenueFromEvent(row);if(payment)grossMinor+=reportingCurrency.convertMinor(Number(payment.minor||0),payment.currency||target,target,reporting);
-    const refund=dashboardLedger.refundFromEvent(row);if(refund)refundMinor+=reportingCurrency.convertMinor(Number(refund.minor||0),refund.currency||target,target,reporting);
-  }
-  return{grossMinor,refundMinor,netMinor:grossMinor-refundMinor};
-}
-
 function ledgerRange(start,end,{previousStart=start,previousEnd=start,bucket='day'}={}){
   return{start:new Date(start),end:new Date(end),previousStart:new Date(previousStart),previousEnd:new Date(previousEnd),bucket};
 }
@@ -137,4 +126,4 @@ async function dashboardProfitability(reporting,{now=new Date(),weeks=8}={}){
   };
 }
 
-module.exports={PROFIT_BASIS,paymentRows,revenueSummaryFromRows,fullyCoveredByHistory,revenueFromLedger,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};
+module.exports={PROFIT_BASIS,paymentRows,fullyCoveredByHistory,revenueFromLedger,revenueSummary,profitSummary,headerProfitability,dashboardHeadlineProfitability,dashboardProfitability,monthStart,yearStart,utcDayAfter,mondayStart,hasHistoryCoverage,basisFor};

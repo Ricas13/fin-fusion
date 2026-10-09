@@ -91,14 +91,6 @@ async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, 
         return { discount: d, reservation: row.rows[0], discountedMinor: discounted };
     });
 }
-async function releaseIntentReservation(checkoutIntentId, state = 'released') {
-    if (!checkoutIntentId) return 0;
-    const normalized = state === 'consumed' ? 'consumed' : 'released';
-    const r = await query(`UPDATE discount_checkout_reservations SET state=$2,consumed_at=CASE WHEN $2='consumed' THEN NOW() ELSE consumed_at END,released_at=CASE WHEN $2='released' THEN NOW() ELSE released_at END,updated_at=NOW() WHERE checkout_intent_id=$1 AND state='reserved' RETURNING id`, [checkoutIntentId, normalized]);
-    if (normalized === 'released') await winbackOffers.releaseCheckoutReservation(checkoutIntentId);
-    return r.rowCount;
-}
-
 async function frozenReservationForSubscription(client, { discountCodeId, customerId, subscriptionId }) {
     if (!subscriptionId || !customerId || !discountCodeId) return null;
     const sub = (await client.query(`SELECT commercial_snapshot FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR SHARE`, [subscriptionId, customerId])).rows[0];
@@ -162,4 +154,4 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
     return result;
 }
 
-module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, releaseIntentReservation, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
+module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };

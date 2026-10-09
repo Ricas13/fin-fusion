@@ -19,7 +19,6 @@ const calendarDate=require('../finance/calendar-date');
 const {csrfHidden}=require('./html-primitives');
 
 const ORDERS_PATH='/admin/commerce/orders';
-const LEGACY_ORDERS_PATH='/admin/orders';
 const PAGE_SIZE=10;
 const RANGE_OPTIONS=[['7d','Weekly'],['30d','Monthly'],['90d','3 months'],['180d','6 months'],['365d','1 year'],['ytd','YTD'],['all','Since beginning'],['custom','Specific time frame']];
 
@@ -170,7 +169,6 @@ async function page(req={query:{}}){
  return layout({siteName:runtimeSettings.siteName(),active:'orders',title:'Orders',subtitle:'Order activity, billing health, and payment operations — all in one place.',body,pageClass:'page-commerce-orders'});
 }
 async function rows(){return(await query(`SELECT s.id,s.customer_id,s.status,s.source,s.created_at,COALESCE(NULLIF(s.plan_name_snapshot,''),p.name) plan_name,COALESCE(NULLIF(s.plan_code_snapshot,''),p.code) plan_code,c.display_name,COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) customer_email,u.username customer_username FROM subscriptions s JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN plans p ON p.id=s.plan_id WHERE s.source IN ('stripe','paypal') ORDER BY s.created_at DESC LIMIT 500`)).rows;}
-function ordersHero(orders){const recentCutoff=Date.now()-30*86400000,recent=(orders||[]).filter(row=>new Date(row.created_at).getTime()>=recentCutoff),attention=(orders||[]).filter(row=>row.status==='past_due');return `<div class="operatorCallout ${attention.length?'warn':'good'}"><strong>${attention.length?`${attention.length} purchased subscription(s) need billing attention`:`${recent.length} provider purchase(s) in the last 30 days`}</strong></div>`;}
 async function markOrdersSeen(req,seenThrough){if(!seenThrough)return null;try{return await readCursors.markSeen(req.session.authUserId,'orders',seenThrough);}catch(error){console.warn('Order read cursor update failed:',error.message);return null;}}
 function createAdminOrdersRouter(){const router=express.Router();router.use('/admin/commerce/orders',gate,noStore);router.use('/admin/orders',gate,noStore);router.get('/admin/commerce/orders',async(req,res,next)=>{try{const seenThrough=await readCursors.captureSeenThrough('orders').catch(error=>{console.warn('Order read cursor snapshot failed:',error.message);return null;});const html=await page(req);await markOrdersSeen(req,seenThrough);return res.send(html);}catch(error){next(error);}});router.get('/admin/orders',(_req,res)=>res.redirect(308,ORDERS_PATH));return router;}
-module.exports={createAdminOrdersRouter,page,rows,orderTable,ordersHero,markOrdersSeen,ORDERS_PATH,LEGACY_ORDERS_PATH,ordersRange,parsePurchaseFilters,purchases,periodBreakdowns,paymentIssues};
+module.exports={createAdminOrdersRouter,page,rows,orderTable,markOrdersSeen,ORDERS_PATH,ordersRange,parsePurchaseFilters,purchases,periodBreakdowns,paymentIssues};

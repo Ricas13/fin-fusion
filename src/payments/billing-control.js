@@ -23,10 +23,6 @@ function providerMissing(error) {
     return providerContract.providerMissing(error);
 }
 
-function stripeTerminalStatus(status) {
-    return providerContract.state('stripe',status).terminal;
-}
-
 function paypalTerminalStatus(status) {
     return providerContract.state('paypal',status).terminal;
 }
@@ -226,4 +222,4 @@ async function dashboardData() {
     return { subscriptions:rows,events:events.rows,stats:{recurring:rows.filter(row=>row.recurring).length,active:rows.filter(row=>row.recurring&&['active','trialing'].includes(row.status)).length,pastDue:rows.filter(row=>row.recurring&&row.status==='past_due').length,cancelling:rows.filter(row=>row.recurring&&row.cancel_at_period_end).length,syncProblems:rows.filter(row=>row.recurring&&row.last_error).length} };
 }
 
-module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,validRecurringProviderReference,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,setCustomerRenewal,recoverProviderOperation,dashboardData,recurringProviderCounts,subscriptionById,stripePeriod,stripePriceId,remoteStateForPolicy,applyRemoteState,verifyExpectedRemote };
+module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,validRecurringProviderReference,providerMissing,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,setCustomerRenewal,recoverProviderOperation,dashboardData,recurringProviderCounts,subscriptionById,stripePeriod,stripePriceId,remoteStateForPolicy,applyRemoteState,verifyExpectedRemote };
