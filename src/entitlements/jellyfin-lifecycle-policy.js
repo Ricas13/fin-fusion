@@ -77,12 +77,6 @@ async function save(input, actorUserId = null) {
     return value;
 }
 
-function categoryFor({ serverClass = null, billingInterval = null, priceMinor = 0 } = {}) {
-    if (String(serverClass || '').toLowerCase() === 'free') return 'free';
-    if (String(billingInterval || '').toLowerCase() === 'trial') return 'trial';
-    return Number(priceMinor || 0) > 0 ? 'paid' : 'free';
-}
-
 module.exports = {
     KEY,
     DEFAULTS,
@@ -90,6 +84,5 @@ module.exports = {
     normalize,
     explicitlyConfigured,
     get,
-    save,
-    categoryFor
+    save
 };

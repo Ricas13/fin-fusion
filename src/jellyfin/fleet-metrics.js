@@ -298,16 +298,6 @@ async function refreshAll(options = {}) {
     return results;
 }
 
-async function listCached() {
-    const result = await query(`
-        SELECT server_id,total_users,active_streams,managed_streams,transcode_streams,
-               direct_stream_streams,direct_play_streams,paused_streams,
-               observed_at,last_error,error_at,updated_at
-        FROM jellyfin_server_metrics
-    `);
-    return result.rows;
-}
-
 module.exports = {
     activeWindowSeconds,
     playbackMethod,
@@ -320,6 +310,5 @@ module.exports = {
     refreshServerUserActivity,
     inventory,
     pollServer,
-    refreshAll,
-    listCached
+    refreshAll
 };

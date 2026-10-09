@@ -15,7 +15,6 @@ const provisioningHelpers = require('../jellyfin/provisioning-helpers');
 
 const PLAN_OPERATION_TYPES = ['plan_change_immediate','plan_change_schedule'];
 const RENEWAL_OPERATION_TYPES = ['renewal_stop','renewal_resume'];
-const REFUND_OPERATION_TYPES = ['prorata_refund'];
 const TERMINATION_OPERATION_TYPES = ['subscription_terminate'];
 const MAX_AUTOMATIC_ATTEMPTS = 12;
 
@@ -353,4 +352,4 @@ async function run({ limit=25 } = {}) {
 }
 async function attention({ limit=100 } = {}) { return providerOps.open({ limit }); }
 
-module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,ensureImmediateAdmission,recoverOne,run,attention };
+module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,ensureImmediateAdmission,recoverOne,run,attention };

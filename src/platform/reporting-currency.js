@@ -40,7 +40,6 @@ async function saveCurrency(currency,actorUserId=null){
   });
 }
 async function saveUserCurrency(_userId,currency,_actorUserId=null){const requested=assertCurrency(currency),state=await get();if(requested!==state.currency)throw new Error(`Currency is controlled platform-wide in Settings → Portal currency. The current portal currency is ${state.currency}.`);return state.currency;}
-async function clearUserCurrency(_userId,_actorUserId=null){return null;}
 async function refreshRates({maxAgeHours=6}={}){
   const current=await get(),age=current.updatedAt?Date.now()-new Date(current.updatedAt).getTime():Infinity;
   if(age<Math.max(1,maxAgeHours)*3600000)return current;
@@ -63,4 +62,4 @@ async function refreshRates({maxAgeHours=6}={}){
     }finally{clearTimeout(timer);refreshPromise=null;}
   })();return refreshPromise;
 }
-module.exports={CURRENCIES,KEY,get,getForUser,saveCurrency,saveUserCurrency,clearUserCurrency,refreshRates,convertMinor,cleanCurrency,assertCurrency,normalize,switchCatalogueCurrency};
+module.exports={CURRENCIES,KEY,get,getForUser,saveCurrency,saveUserCurrency,refreshRates,convertMinor,cleanCurrency,assertCurrency,normalize,switchCatalogueCurrency};

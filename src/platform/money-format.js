@@ -56,14 +56,6 @@ function currencyMajorFromMinor(minor,currency='GBP'){
   return Number(minor||0)/(10**fractionDigits(currency));
 }
 
-function formatCurrencyMinor(minor,currency='GBP',options={}){
-  const digits=fractionDigits(currency);
-  return formatMajor(currencyMajorFromMinor(minor,currency),currency,{
-    minimumFractionDigits:options.minimumFractionDigits??digits,
-    maximumFractionDigits:options.maximumFractionDigits??digits
-  });
-}
-
 function currencyMinorDecimal(minor,currency='GBP'){
   const digits=fractionDigits(currency);
   return currencyMajorFromMinor(minor,currency).toFixed(digits);
@@ -118,4 +110,4 @@ function optionLabel(currency){
   return known?`${known.name} (${known.symbol})`:`${symbol(code)} currency`;
 }
 
-module.exports={COMMON,cleanCurrency,fractionDigits,symbol,formatMajor,majorFromMinor,formatMinor,currencyMajorFromMinor,formatCurrencyMinor,currencyMinorDecimal,providerFractionDigits,providerMajorFromMinor,formatProviderMinor,parseMajorToMinor,portableAmount,optionLabel};
+module.exports={COMMON,cleanCurrency,fractionDigits,symbol,formatMajor,majorFromMinor,formatMinor,currencyMajorFromMinor,currencyMinorDecimal,providerFractionDigits,providerMajorFromMinor,formatProviderMinor,parseMajorToMinor,portableAmount,optionLabel};

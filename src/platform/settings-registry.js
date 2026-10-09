@@ -90,7 +90,6 @@ const SETTINGS=Object.freeze([
   {key:'backup.configurationTransfer',owner:'backups',label:'Configuration transfer',href:'/admin/configuration',keywords:'configuration export import transfer migration'}
 ].map(Object.freeze));
 
-function domains(){return DOMAINS.slice();}
 function domain(key){return DOMAINS.find(item=>item.key===key)||null;}
 function setting(key){return SETTINGS.find(item=>item.key===key)||null;}
 function ownerForSetting(key){const item=setting(key);return item?domain(item.owner):null;}
@@ -110,4 +109,4 @@ function directoryCards(esc){
   return DOMAINS.map(item=>`<a class="quick-action" href="${e(item.href)}" data-setting-domain="${e(item.key)}"><strong>${e(item.label)}</strong><span>${e(item.description)}</span></a>`).join('');
 }
 
-module.exports={DOMAINS,SETTINGS,domains,domain,setting,ownerForSetting,search,directoryCards};
+module.exports={DOMAINS,SETTINGS,domain,setting,ownerForSetting,search,directoryCards};

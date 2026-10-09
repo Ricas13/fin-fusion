@@ -15,7 +15,6 @@ function redirectWith(res,path,key,message){
   return res.redirect(`${path}${path.includes('?')?'&':'?'}${key}=${encodeURIComponent(message)}`);
 }
 
-function redirectMessage(res,path,message){return redirectWith(res,path,'message',message);}
 function redirectError(res,path,error){return redirectWith(res,path,'error',error?.message||error||'Request failed.');}
 
-module.exports={requireAdminSession,noStore,redirectWith,redirectMessage,redirectError};
+module.exports={requireAdminSession,noStore,redirectWith,redirectError};

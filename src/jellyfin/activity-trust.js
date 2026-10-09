@@ -105,25 +105,11 @@ async function serverTelemetry(serverIds, { now = Date.now() } = {}) {
     return Object.fromEntries(ids.map(serverId => [serverId, assessPoll(byId.get(serverId) || null, now, cfg)]));
 }
 
-async function telemetryForServers(serverIds) {
-    const worker = await workerTelemetry();
-    const servers = await serverTelemetry(serverIds);
-    const values = Object.values(servers);
-    return {
-        ready: Boolean(worker.ready && values.every(server => server.ready)),
-        ...worker,
-        targetServers: values.length,
-        unsafeTargetServers: values.filter(server => !server.ready).length,
-        servers
-    };
-}
-
 module.exports = {
     timing,
     managedServerIds,
     recordCycle,
     workerTelemetry,
     assessPoll,
-    serverTelemetry,
-    telemetryForServers
+    serverTelemetry
 };

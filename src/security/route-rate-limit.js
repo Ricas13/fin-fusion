@@ -61,10 +61,6 @@ function memoryAttempt(bucket, seconds) {
     };
 }
 
-function clearMemoryBuckets() {
-    memoryBuckets.clear();
-}
-
 function sendLimited(res, reasonHeader, retryAfter) {
     res.setHeader('Retry-After', String(Math.max(1, retryAfter)));
     res.setHeader('X-CAPTAiNFiN-429-Reason', reasonHeader);
@@ -127,4 +123,4 @@ function middleware({ scope, max = 10, windowSeconds = 60, identity = null, reas
     };
 }
 
-module.exports = { middleware, requestIdentity, hashIdentity, cleanScope, memoryAttempt, clearMemoryBuckets, pruneMemoryBuckets };
+module.exports = { middleware, requestIdentity, hashIdentity, cleanScope, memoryAttempt, pruneMemoryBuckets };

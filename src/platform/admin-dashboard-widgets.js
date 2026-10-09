@@ -244,12 +244,6 @@ function widgetShell(spec, bodyHtml, { span = 6, stat = null, dataUnavailable = 
     </section>`;
 }
 
-function timeframeControl(widgetKey, allowedRanges, current) {
-    if (!allowedRanges || !allowedRanges.length) return '';
-    const labels = { today: 'Today', '7d': '7d', '30d': '30d', '90d': '90d', '365d': '12mo' };
-    return `<div class="widgetTimeframe" data-widget-timeframe="${esc(widgetKey)}">${allowedRanges.map(key => `<a class="widgetTimeframePill ${key === current ? 'active' : ''}" href="?w_${esc(widgetKey)}=${esc(key)}">${esc(labels[key] || key)}</a>`).join('')}</div>`;
-}
-
 module.exports = {
     SPAN_VALUES,
     sparkline,
@@ -265,6 +259,5 @@ module.exports = {
     emptyState,
     errorState,
     loadingSkeleton,
-    widgetShell,
-    timeframeControl
+    widgetShell
 };

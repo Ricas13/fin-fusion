@@ -176,18 +176,6 @@ async function getAccountState(accountId) {
     return result.rows[0] || null;
 }
 
-async function markAccountRunning(accountId, customerId, desiredHash = null) {
-    await query(`
-        INSERT INTO jellyfin_policy_reconciliation(
-            jellyfin_account_id,customer_id,status,requested_at,desired_policy_hash,updated_at
-        ) VALUES($1,$2,'running',NOW(),$3,NOW())
-        ON CONFLICT (jellyfin_account_id) DO UPDATE SET
-            status='running',customer_id=EXCLUDED.customer_id,
-            desired_policy_hash=COALESCE(EXCLUDED.desired_policy_hash,jellyfin_policy_reconciliation.desired_policy_hash),
-            requested_at=NOW(),updated_at=NOW()
-    `, [accountId, customerId, desiredHash]);
-}
-
 async function markAccountSuccess(accountId, customerId, desiredHash, { verified = true } = {}) {
     await query(`
         INSERT INTO jellyfin_policy_reconciliation(
@@ -201,27 +189,6 @@ async function markAccountSuccess(accountId, customerId, desiredHash, { verified
             desired_policy_hash=$3,applied_policy_hash=$3,consecutive_failures=0,
             next_retry_at=NULL,last_error=NULL,updated_at=NOW()
     `, [accountId, customerId, desiredHash, Boolean(verified)]);
-}
-
-async function markAccountVerified(accountId, customerId, desiredHash) {
-    await query(`
-        UPDATE jellyfin_policy_reconciliation
-        SET status='successful',customer_id=$2,last_verified_at=NOW(),last_success_at=NOW(),
-            desired_policy_hash=$3,applied_policy_hash=$3,consecutive_failures=0,
-            next_retry_at=NULL,last_error=NULL,updated_at=NOW()
-        WHERE jellyfin_account_id=$1
-    `, [accountId, customerId, desiredHash]);
-}
-
-async function markAccountDrift(accountId, customerId, desiredHash) {
-    await query(`
-        INSERT INTO jellyfin_policy_reconciliation(
-            jellyfin_account_id,customer_id,status,desired_policy_hash,drift_detected_at,updated_at
-        ) VALUES($1,$2,'running',$3,NOW(),NOW())
-        ON CONFLICT (jellyfin_account_id) DO UPDATE SET
-            status='running',customer_id=EXCLUDED.customer_id,desired_policy_hash=$3,
-            drift_detected_at=NOW(),updated_at=NOW()
-    `, [accountId, customerId, desiredHash]);
 }
 
 async function markAccountFailure(accountId, customerId, desiredHash, error) {
@@ -259,9 +226,6 @@ module.exports = {
     forceCustomerDue,
     forceAllProblemsDue,
     getAccountState,
-    markAccountRunning,
     markAccountSuccess,
-    markAccountVerified,
-    markAccountDrift,
     markAccountFailure
 };

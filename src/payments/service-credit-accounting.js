@@ -88,10 +88,6 @@ async function allocationBreakdownForReward(client,sourceRewardId){
   return{total:int(r.rows[0]?.total),redeemed:int(r.rows[0]?.redeemed),reversed:int(r.rows[0]?.reversed),adjusted:int(r.rows[0]?.adjusted)};
 }
 
-async function allocatedFromReward(client,sourceRewardId){
-  return (await allocationBreakdownForReward(client,sourceRewardId)).total;
-}
-
 async function sourceCapacity(client,sourceRewardId){
   const r=await client.query(`SELECT COALESCE(SUM(amount_minor),0)::int n FROM affiliate_credit_ledger
     WHERE amount_minor>0 AND state<>'void' AND (id=$1 OR metadata->>'sourceRewardId'=$1::text)`,[sourceRewardId]);
@@ -112,9 +108,4 @@ async function recordRecovery(client,{customerId,currency,sourceRewardId,amountM
   return amount;
 }
 
-async function recoverableMinorForClient(client,customerId,currency){
-  const r=await client.query(`SELECT COALESCE(SUM(amount_minor-recovered_minor),0)::int n FROM affiliate_credit_recoveries WHERE customer_id=$1 AND currency=$2`,[customerId,cleanCurrency(currency)]);
-  return int(r.rows[0]?.n);
-}
-
-module.exports={cleanCurrency,lockCustomer,rawAvailableMinorForClient,ensureHistoricalAllocations,allocateOneDebit,allocationBreakdownForReward,allocatedFromReward,sourceCapacity,recoveryForReward,recordRecovery,recoverableMinorForClient,refundPolicy};
+module.exports={cleanCurrency,lockCustomer,rawAvailableMinorForClient,ensureHistoricalAllocations,allocateOneDebit,allocationBreakdownForReward,sourceCapacity,recoveryForReward,recordRecovery,refundPolicy};

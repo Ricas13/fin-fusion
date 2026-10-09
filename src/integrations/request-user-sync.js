@@ -312,10 +312,6 @@ async function syncMainSettings(externalUserId, externalUsername, plan, external
   if (changed) await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`, { method: 'POST', body: settings });
   return { settings, changed };
 }
-async function setQuotas(externalUserId, externalUsername, plan, externalEmail = null) {
-  return (await syncMainSettings(externalUserId, externalUsername, plan, externalEmail)).settings;
-}
-
 async function mark(customerId, fields = {}) {
   const status = fields.status || 'pending';
   await query(`
@@ -755,12 +751,9 @@ async function setCustomerPassword(customerId, password) {
   await query(`UPDATE request_user_sync SET password_reset_required=FALSE,last_error=NULL,updated_at=NOW() WHERE customer_id=$1`, [customerId]);
   return true;
 }
-async function markPasswordSyncFailure(customerId, error) {
-  await query(`UPDATE request_user_sync SET password_reset_required=TRUE,last_error=$2,updated_at=NOW() WHERE customer_id=$1`, [customerId, String(error?.message || error || 'Request password sync failed').slice(0, 1000)]);
-}
 async function statusSummary() {
   const [config, counts, suspended] = await Promise.all([configuration(), query(`SELECT status,COUNT(*)::int AS count FROM request_user_sync GROUP BY status`), query(`SELECT COUNT(*)::int AS count FROM request_user_sync WHERE access_suspended=TRUE`)]);
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, withSessionAdvisoryLock, withCustomerSyncLock, withExternalSyncLock, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, markRemovalFailure, intentionallyRemoved, protectedExternalUser, deletionIdentityMatches, assertExclusiveExternalOwnership, finalizeRemovedBinding, removeCustomer, createExternalUserConvergently, syncCustomerLocked, syncCustomer, syncBatch, requestRoleRetry };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, DEFAULT_SYNC_BATCH_SIZE, MAX_SYNC_BATCH_SIZE, REQUEST_SCAN_KEY, cleanBaseUrl, requestApiUserId, requestHeaders, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, syncBatchSize, isUuid, mapBounded, withSessionAdvisoryLock, withCustomerSyncLock, withExternalSyncLock, syncCandidates, externalUsers, externalUsersForCandidates, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, statusSummary, resolveRequestCandidate, indexesFor, rememberExternal, forgetExternal, clearExternalBinding, markRemovalFailure, intentionallyRemoved, protectedExternalUser, deletionIdentityMatches, assertExclusiveExternalOwnership, finalizeRemovedBinding, removeCustomer, createExternalUserConvergently, syncCustomerLocked, syncCustomer, syncBatch, requestRoleRetry };

@@ -11,7 +11,6 @@ const subscriptionState = require('../entitlements/subscription-state');
 const subscriptionExpiry = require('../entitlements/subscription-expiry');
 const desiredAccessState = require('../entitlements/customer-access-desired-state');
 const libraryPolicy = require('./account-library-policy');
-const jellyfinPolicy = require('./policy');
 const discordRoles = require('../integrations/discord-roles');
 const mediaReconciliation = require('./media-service-reconciliation');
 const planServers = require('./plan-servers');
@@ -265,28 +264,6 @@ async function libraryPolicyForAccount(customerId, accountOrId, entitlementOverr
     if (!entitlement) return { account, entitlement: null, effective: null };
     const effective = await libraryPolicy.effectiveForAccount(customerId, entitlement, account);
     return { account, entitlement, effective };
-}
-
-async function setLibrarySelectionForAccount(customerId, accountId, names) {
-    const profile = await libraryPolicyForAccount(customerId, accountId);
-    if (!profile.entitlement || !profile.effective) {
-        throw new Error('This Jellyfin account does not have current library access.');
-    }
-    if (!profile.entitlement.allow_customer_library_choice) {
-        throw new Error('Library selection is managed by this plan.');
-    }
-    const entitled = new Map(
-        profile.effective.entitlementRows
-            .filter(row => row.effective)
-            .map(row => [jellyfinPolicy.nameKey(row.name), row.name])
-    );
-    const chosen = [];
-    for (const raw of Array.isArray(names) ? names : []) {
-        const match = entitled.get(jellyfinPolicy.nameKey(raw));
-        if (match && !chosen.includes(match)) chosen.push(match);
-    }
-    await libraryPolicy.setScopedSelection(customerId, accountId, chosen);
-    return chosen;
 }
 
 async function adoptExistingFreeAccount(customerId, accounts, freeEntitlement, primaryEntitlement) {
@@ -708,7 +685,6 @@ module.exports = {
     remoteUserMissing,
     control,
     libraryPolicyForAccount,
-    setLibrarySelectionForAccount,
     reconciliationLock,
     assertDiscordSyncResult,
     assertLanePostcondition,

@@ -38,8 +38,4 @@ function endForPlan(plan, { override = null, now = new Date() } = {}) {
     return new Date(new Date(now).getTime() + days * 86400000);
 }
 
-function visibleExpiry(plan, value) {
-    return isFreeTier(plan) ? null : value || null;
-}
-
-module.exports = { FREE_TIER_END_ISO, isFreeTier, freeTierEnd, endForPlan, visibleExpiry };
+module.exports = { FREE_TIER_END_ISO, isFreeTier, freeTierEnd, endForPlan };

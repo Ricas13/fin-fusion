@@ -19,42 +19,6 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
     return dashboardLedger.refundFromEvent(row, state, warnings);
 }
 
-function summarizeEvents(events, range, reporting) {
-    const target = reportingCurrency.cleanCurrency(reporting?.currency || 'GBP');
-    let grossMinor = 0, previousGrossMinor = 0, refundMinor = 0, refundCount = 0, previousRefundMinor = 0;
-    const payingKeys = new Set(), byBucketCurrency = new Map(), warnings = [], refundState = new Map();
-    const convert = item => reportingCurrency.convertMinor(Number(item.minor || 0), item.currency || target, target, reporting);
-    const chronological = (events || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    for (const row of chronological) {
-        const at = new Date(row.created_at), inCurrent = at >= range.start && at < range.end, inPrevious = at >= range.previousStart && at < range.previousEnd;
-        if (!inCurrent && !inPrevious) continue;
-        for (const record of dashboardLedger.eventRecords(row, refundState, warnings)) {
-            const amount = convert(record);
-            if (record.kind === 'payment') {
-                if (inCurrent) {
-                    grossMinor += amount;
-                    if (record.payerKey) payingKeys.add(record.payerKey);
-                    const key = require('./admin-dashboard-analytics').bucketKey(at, range.bucket);
-                    if (!byBucketCurrency.has(key)) byBucketCurrency.set(key, new Map());
-                    const bucket = byBucketCurrency.get(key);
-                    bucket.set(target, (bucket.get(target) || 0) + amount);
-                } else previousGrossMinor += amount;
-            } else if (record.kind === 'refund') {
-                if (inCurrent) { refundMinor += amount; refundCount += 1; }
-                else previousRefundMinor += amount;
-            }
-        }
-    }
-    return {
-        primaryCurrency: target, grossMinor, previousGrossMinor,
-        netMinor: grossMinor - refundMinor, previousNetMinor: previousGrossMinor - previousRefundMinor,
-        refundMinor, refundCount, previousRefundMinor,
-        payingCustomers: payingKeys.size,
-        arpuMinor: payingKeys.size ? Math.round(grossMinor / payingKeys.size) : 0,
-        currencies: [target], byBucketCurrency, warnings
-    };
-}
-
 async function refundAndFailureSeries(range) {
     const bucket = ['day', 'week', 'month'].includes(range.bucket) ? range.bucket : 'day';
     const [refunds, failures] = await Promise.all([
@@ -109,4 +73,4 @@ registry.register('commerce','checkoutFunnel',{title:'Checkout funnel',subtitle:
 registry.register('commerce','refundFailedTrend',{title:'Refunds & failed payments',defaultOrder:12,defaultSpan:8,lazy:true,render:async ctx=>ctx.data.refundFailureSeries.some(row=>row.refunds||row.failed)?widgets.stackedAreaChart(ctx.data.refundFailureSeries,['refunds','failed']):widgets.emptyState('No refunds or failed payment events in this period.')});
 registry.register('commerce','topPlans',{title:'Top primary plans by active customers',subtitle:'Effective primary access, not raw billing status.',defaultOrder:13,defaultSpan:4,lazy:true,render:async ctx=>{if(!ctx.data.topPlans.length)return widgets.emptyState('No customers currently have effective primary access.');return widgets.statusTable(ctx.data.topPlans,[{key:'name',label:'Plan',render:row=>esc(row.name)},{key:'service_type',label:'Service',render:row=>esc(row.service_type)},{key:'subscribers',label:'Active customers',align:'numeric',render:row=>esc(row.subscribers)}]);}});
 
-module.exports = { buildContext, refundFromEvent, summarizeEvents };
+module.exports = { buildContext, refundFromEvent };

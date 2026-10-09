@@ -23,13 +23,6 @@ function expiryDate(value) {
     return date.toLocaleDateString('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
 }
 
-function daysUntilExpiry(value, now = new Date()) {
-    const end = new Date(value);
-    const current = new Date(now);
-    if (Number.isNaN(end.getTime()) || Number.isNaN(current.getTime()) || end <= current) return null;
-    return Math.floor((end.getTime() - current.getTime()) / MS_PER_DAY);
-}
-
 function selectExpiryMilestone(value, milestones, now = new Date()) {
     const end = new Date(value);
     const current = new Date(now);
@@ -348,7 +341,6 @@ module.exports = {
     DEFAULT_PROVIDER_VERIFICATION_GRACE_HOURS,
     recurringAutoRenewal,
     expiryDate,
-    daysUntilExpiry,
     selectExpiryMilestone,
     expiryDedupeKey,
     providerVerificationGraceHours,

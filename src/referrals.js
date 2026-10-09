@@ -62,7 +62,6 @@ async function revisitRewardAfterAdversePayment({referredCustomerId,incidentId=n
   return out;
 }
 
-function unusedExtensionDays(){return 0;}
 async function processDueRewards({limit=100}={}){await affiliateCredits.matureDueCredits();const rows=await query(`SELECT referred_customer_id FROM referral_redemptions WHERE status='pending' ORDER BY created_at LIMIT $1`,[Math.max(1,Math.min(500,Number(limit)||100))]);let rewarded=0,pending=0,failed=0;for(const row of rows.rows){try{const out=await rewardIfQualifying(row.referred_customer_id);if(out?.rewarded)rewarded++;else pending++;}catch(error){failed++;console.warn('Affiliate qualification retry failed:',error.message);}}return{processed:rows.rowCount,rewarded,pending,failed};}
 
-module.exports={ensureReferralCode,attributeReferral,rewardIfQualifying,revisitRewardAfterAdversePayment,unusedExtensionDays,processDueRewards,loadSettings,attributionEnabled,sameIdentity,cumulativeRefundMinor};
+module.exports={ensureReferralCode,attributeReferral,rewardIfQualifying,revisitRewardAfterAdversePayment,processDueRewards,loadSettings,attributionEnabled,sameIdentity,cumulativeRefundMinor};

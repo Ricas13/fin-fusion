@@ -5,7 +5,7 @@ const {query}=require('../db');
 const provisioning=require('../jellyfin/provisioning-helpers');
 const registry=require('../jellyfin/registry');
 const policyControl=require('../jellyfin/reconciliation-control');
-const {encryptWithEnv,decryptWithEnv}=require('../security/purpose-crypto');
+const {encryptWithEnv}=require('../security/purpose-crypto');
 const managedSources=require('./managed-sources');
 const entitlements=require('./entitlements');
 const operationLock=require('./operation-lock');
@@ -17,7 +17,6 @@ const remotePresenceChecked=new Map();
 function hiddenUsername(customerId){return `cf_stremio_${String(customerId).replace(/-/g,'').slice(0,12)}`;}
 function password(){return crypto.randomBytes(32).toString('base64url');}
 function encryptPlaybackPassword(value){return encryptWithEnv(String(value),entitlements.TOKEN_ENV,PASSWORD_PREFIX);}
-function decryptPlaybackPassword(row){return row?.playback_password_encrypted?decryptWithEnv(row.playback_password_encrypted,entitlements.TOKEN_ENV,PASSWORD_PREFIX):null;}
 function policyKey(account){return `${String(account?.server_id||'')}:${String(account?.jellyfin_user_id||'')}`;}
 function mappingReady(row){return Boolean(row&&row.status==='active'&&!row.account_disabled&&row.access_token_encrypted&&row.playback_password_encrypted);}
 function cleanFailure(value){return String(value||'Unknown managed Stremio failure').replace(/[\r\n\t\u2028\u2029]+/g,' ').replace(/\s{2,}/g,' ').trim().slice(0,300)||'Unknown managed Stremio failure';}
@@ -127,4 +126,4 @@ async function syncActive(){
   return{total:rows.length+Number(revocation.total||0),processed:processed+Number(revocation.revoked||0),failed,revoked:Number(revocation.revoked||0),revocation,...(warning?{warning}:{})};
 }
 
-module.exports={PASSWORD_PREFIX,REMOTE_PRESENCE_TTL_MS,hiddenUsername,password,encryptPlaybackPassword,decryptPlaybackPassword,policyKey,mappingReady,cleanFailure,summarizeFailures,remoteMissing,presenceFresh,markPresence,clearPresence,planFor,serverFor,internalAccount,applyPolicy,ensureSource,ensure,mappings,otherActiveMappingOwns,disableStale,disableMapping,inactiveMappingRows,revokeInactiveMappings,revokeCustomerInactiveMappings,revokeServerMappings,recreateMissingManagedAccount,currentMappings,syncActive};
+module.exports={PASSWORD_PREFIX,REMOTE_PRESENCE_TTL_MS,hiddenUsername,password,encryptPlaybackPassword,policyKey,mappingReady,cleanFailure,summarizeFailures,remoteMissing,presenceFresh,markPresence,clearPresence,planFor,serverFor,internalAccount,applyPolicy,ensureSource,ensure,mappings,otherActiveMappingOwns,disableStale,disableMapping,inactiveMappingRows,revokeInactiveMappings,revokeCustomerInactiveMappings,revokeServerMappings,recreateMissingManagedAccount,currentMappings,syncActive};

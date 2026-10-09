@@ -93,8 +93,6 @@ const SIDEBAR_EXCLUDED_CHILDREN=new Set(Object.keys(hiddenPages));
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
 function groupFor(active){const key=activeKey(active),hidden=hiddenPages[key];if(hidden){const base=groups.find(group=>group.key===hidden.groupKey)||groups[0],personal=['my-profile','my-notifications','my-security'].includes(key);return {...base,label:personal?'My account':base.label,pages:[hidden.page,...base.pages]};}return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];}
-function workflowParentPage(active){const key=activeKey(active),hidden=hiddenPages[key];if(!hidden)return null;const base=groups.find(group=>group.key===hidden.groupKey);return base?.pages.find(page=>page[0]===hidden.parentKey)||null;}
-
 function byKind(parentKey,kind){
   const parent=String(parentKey||'');
   return Object.values(hiddenPages)
@@ -112,16 +110,6 @@ function relatedPages(parentKey){return byKind(parentKey,'page');}
 // while pages migrate; it is intentionally always empty.
 function childPages(){return[];}
 
-function workflowPages(active){
-  const key=activeKey(active),parentKey=sidebarKey(key),hidden=hiddenPages[key];
-  if(parentKey.startsWith('my-'))return[];
-  const groupKey=hidden?.groupKey||groups.find(group=>group.pages.some(page=>page[0]===parentKey))?.key;
-  const group=groups.find(item=>item.key===groupKey);
-  const parent=group?.pages.find(page=>page[0]===parentKey);
-  if(!parent)return[];
-  const children=[...viewsFor(parentKey),...relatedPages(parentKey)];
-  return children.length?[parent,...children]:[];
-}
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
 for(const group of groups){for(const page of group.pages){if(!Object.prototype.hasOwnProperty.call(page,'children'))Object.defineProperty(page,'children',{value:Object.freeze([]),enumerable:false});}}
 
@@ -133,4 +121,4 @@ for(const group of groups){for(const page of group.pages){if(!Object.prototype.h
 // module initialization time.
 Object.defineProperty(groupFor,'renderHeader',{value:(active,site)=>require('./admin-html-core-base').header(active,site),enumerable:false});
 
-module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,childPages,viewsFor,tasksFor,settingsFor,relatedPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};
+module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,childPages,viewsFor,tasksFor,settingsFor,relatedPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};

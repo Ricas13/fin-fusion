@@ -5,7 +5,6 @@ const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const {esc,layout}=require('./admin-html');
 const runtimeSettings=require('./runtime-settings');
-const stremioRuntime=require('../stremio/runtime-settings');
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
@@ -14,31 +13,6 @@ function date(value){if(!value)return'Never';const d=new Date(value);return Numb
 function metric(label,value,meta='',href=''){const body=`<div class="metricLabel">${esc(label)}</div><div class="metricValue">${esc(number(value))}</div>${meta?`<div class="subText">${esc(meta)}</div>`:''}`;return href?`<a class="metric" href="${esc(href)}" style="text-decoration:none">${body}</a>`:`<div class="metric">${body}</div>`;}
 function csrfInput(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
 function leaseResetAction(row,token){if(!row.customer_id)return'<span class="muted">No customer link</span>';return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(row.customer_id)}/stremio-household/reset">${csrfInput(token)}<button class="button secondary btn-sm" type="submit">Reset lease</button></form>`;}
-
-async function jellyfinData(){
-  const result=await query(`SELECT
-    (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE) enabled_servers,
-    (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE AND health_status='offline') offline_servers,
-    (SELECT COUNT(*)::int FROM plans WHERE archived_at IS NULL AND active=TRUE AND COALESCE(service_type,'jellyfin')='jellyfin') plans,
-    (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.superseded_by IS NULL AND s.current_period_end>NOW() AND s.status IN('active','trialing','past_due','paused') AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')) customers,
-    (SELECT COUNT(*)::int FROM active_playback_sessions) active_streams,
-    (SELECT COUNT(*)::int FROM customer_provisioning_state WHERE status IN ('blocked','failed')) provisioning_attention`);
-  return result.rows[0]||{};
-}
-
-async function stremioData(){
-  await stremioRuntime.ensureLoaded();
-  const [checks,result]=await Promise.all([
-    stremioRuntime.prerequisites(),
-    query(`SELECT
-      (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE AND stremio_enabled=TRUE) managed_sources,
-      (SELECT COUNT(*)::int FROM stremio_sources WHERE enabled=TRUE AND auth_state='connected') external_sources,
-      (SELECT COUNT(*)::int FROM plans WHERE archived_at IS NULL AND active=TRUE AND COALESCE(service_type,'jellyfin')='stremio' AND COALESCE(is_addon,FALSE)=FALSE) plans,
-      (SELECT COUNT(*)::int FROM stremio_entitlements WHERE status='active') active_entitlements,
-      (SELECT COUNT(*)::int FROM stremio_entitlements WHERE last_stream_request_at>=NOW()-INTERVAL '24 hours') active_24h`)
-  ]);
-  return{...result.rows[0],runtime_enabled:stremioRuntime.enabled(),ready_indexes:checks.readyIndexes,eligible_sources:checks.eligibleSources};
-}
 
 async function stremioPlaybackData(){
   const [summary,recent,leases]=await Promise.all([
@@ -90,4 +64,4 @@ function createAdminProductModulesRouter(){
   return router;
 }
 
-module.exports={createAdminProductModulesRouter,jellyfinData,stremioData,stremioPlaybackData};
+module.exports={createAdminProductModulesRouter,stremioPlaybackData};

@@ -11,17 +11,6 @@ function requireAdmin(req,res,next){
 }
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 
-async function libraryData(){
-  const servers=await registry.listServers({enabledOnly:true});
-  return Promise.all(servers.map(async server=>{
-    try{
-      const raw=await registry.request(server.id,'/Library/VirtualFolders',{timeoutMs:8000});
-      const folders=Array.isArray(raw)?raw:[];
-      return {server,ok:true,libraries:folders.map(v=>({name:v.Name||'Unnamed library',collectionType:v.CollectionType||'mixed',locations:Array.isArray(v.Locations)?v.Locations:[],itemId:v.ItemId||null}))};
-    }catch(error){return {server,ok:false,error:'Library information could not be loaded from this server.',libraries:[]};}
-  }));
-}
-
 function createAdminLibrariesRouter(){
   const router=express.Router();
   router.use('/admin/libraries',requireAdmin,noStore);
@@ -40,4 +29,4 @@ function createAdminLibrariesRouter(){
   return router;
 }
 
-module.exports={createAdminLibrariesRouter,libraryData};
+module.exports={createAdminLibrariesRouter};

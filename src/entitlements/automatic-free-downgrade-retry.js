@@ -125,11 +125,6 @@ async function processDue({ limit = 25, attempt = null } = {}) {
     return summary;
 }
 
-async function pendingCount() {
-    const result = await query('SELECT COUNT(*)::int AS count FROM automatic_free_downgrade_retries');
-    return Number(result.rows[0]?.count || 0);
-}
-
 module.exports = {
     RETRY_MINUTES,
     CLAIM_LEASE_MINUTES,
@@ -139,6 +134,5 @@ module.exports = {
     claimDue,
     complete,
     fail,
-    processDue,
-    pendingCount
+    processDue
 };

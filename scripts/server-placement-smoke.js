@@ -5,7 +5,6 @@ const fs = require('fs');
 const placement = require('../src/jellyfin/placement');
 const plansList = require('../src/platform/admin-plans-list');
 const capacity = require('../src/entitlements/plan-capacity');
-require('../public/js/admin-plans-table');
 
 const base = {
     health_status: 'healthy',
