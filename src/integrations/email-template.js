@@ -9,14 +9,6 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-// Kept for backwards-compatible callers. Transactional CTAs no longer use URLs
-// discovered inside message text.
-function firstUrl(text) {
-    const match = String(text || '').match(/https?:\/\/[^\s<>]+/i);
-    if (!match) return '';
-    return match[0].replace(/[),.;]+$/, '');
-}
-
 function paragraphHtml(text) {
     return String(text || '')
         .split(/\n{2,}/)
@@ -193,7 +185,6 @@ ${footerLink}${unsubscribe}
 
 module.exports = {
     escapeHtml,
-    firstUrl,
     humanizeEventType,
     eventLabel,
     normalizedFacts,

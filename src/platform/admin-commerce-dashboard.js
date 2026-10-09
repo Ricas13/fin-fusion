@@ -18,7 +18,6 @@ const { esc } = require('./admin-html');
 function refundFromEvent(row, state = new Map(), warnings = []) {
     return dashboardLedger.refundFromEvent(row, state, warnings);
 }
-async function paymentEventsInRange(range) { return dashboardLedger.paymentEventsInRange(range); }
 
 function summarizeEvents(events, range, reporting) {
     const target = reportingCurrency.cleanCurrency(reporting?.currency || 'GBP');
@@ -110,4 +109,4 @@ registry.register('commerce','checkoutFunnel',{title:'Checkout funnel',subtitle:
 registry.register('commerce','refundFailedTrend',{title:'Refunds & failed payments',defaultOrder:12,defaultSpan:8,lazy:true,render:async ctx=>ctx.data.refundFailureSeries.some(row=>row.refunds||row.failed)?widgets.stackedAreaChart(ctx.data.refundFailureSeries,['refunds','failed']):widgets.emptyState('No refunds or failed payment events in this period.')});
 registry.register('commerce','topPlans',{title:'Top primary plans by active customers',subtitle:'Effective primary access, not raw billing status.',defaultOrder:13,defaultSpan:4,lazy:true,render:async ctx=>{if(!ctx.data.topPlans.length)return widgets.emptyState('No customers currently have effective primary access.');return widgets.statusTable(ctx.data.topPlans,[{key:'name',label:'Plan',render:row=>esc(row.name)},{key:'service_type',label:'Service',render:row=>esc(row.service_type)},{key:'subscribers',label:'Active customers',align:'numeric',render:row=>esc(row.subscribers)}]);}});
 
-module.exports = { buildContext, refundFromEvent, summarizeEvents, paymentEventsInRange };
+module.exports = { buildContext, refundFromEvent, summarizeEvents };
