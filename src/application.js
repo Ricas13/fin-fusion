@@ -5,6 +5,8 @@ require('dotenv').config();
 const path = require('path');
 const { randomUUID } = require('crypto');
 const express = require('express');
+const { canonicalPath } = require('./platform/canonical-path');
+require('./platform/async-route-errors').install();
 const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 
@@ -160,7 +162,7 @@ function sessionMiddleware() {
 }
 
 async function staffLoginRateLimit(req, res, next) {
-  if (req.method !== 'POST' || req.path !== '/login') return next();
+  if (req.method !== 'POST' || canonicalPath(req.path) !== '/login') return next();
   try {
     const result = await consumeLoginAttempt(req.ip || req.socket?.remoteAddress || 'unknown', {
       windowMs: Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 900000),
@@ -181,8 +183,9 @@ async function staffLoginRateLimit(req, res, next) {
 }
 
 async function customerAuthRateLimit(req, res, next) {
-  if (req.method !== 'POST' || !['/account/login', '/account/forgot-password'].includes(req.path)) return next();
-  const reset = req.path === '/account/forgot-password';
+  const authPath = canonicalPath(req.path);
+  if (req.method !== 'POST' || !['/account/login', '/account/forgot-password'].includes(authPath)) return next();
+  const reset = authPath === '/account/forgot-password';
   try {
     const result = await customerRateLimit.consume(
       `${reset ? 'customer-reset' : 'customer-login'}:${req.ip || req.socket?.remoteAddress || 'unknown'}`,
@@ -201,7 +204,7 @@ async function customerAuthRateLimit(req, res, next) {
 
 async function publicMutationRateLimit(req, res, next) {
   if (req.method !== 'POST') return next();
-  const requestPath = req.path || '';
+  const requestPath = canonicalPath(req.path);
   const kind = requestPath === '/account/register'
     ? 'registration'
     : requestPath.startsWith('/activate/')

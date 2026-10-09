@@ -1,6 +1,7 @@
 'use strict';
 
 const { query } = require('../db');
+const { canonicalPath } = require('../platform/canonical-path');
 
 function isAdminSession(req) {
     return Boolean(req.session?.authUserId && req.session?.authRole === 'admin');
@@ -43,11 +44,12 @@ const OWNER_ONLY_PATHS = [
     /^\/notifications\/preferences(?:\/|$)/,
     /^\/email(?:\/|$)/,
     /^\/provider-mappings(?:\/|$)/,
-    /^\/data-export(?:\/|$)/
+    /^\/data-export(?:\/|$)/,
+    /^\/security\/2fa-policy$/
 ];
 
 function isOwnerOnlyPath(path) {
-    const clean = String(path || '').split('?')[0];
+    const clean = canonicalPath(path);
     return OWNER_ONLY_PATHS.some(pattern => pattern.test(clean));
 }
 

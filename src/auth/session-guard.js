@@ -2,6 +2,7 @@
 const auth=require('./service');
 const customers=require('../customers');
 const csrf=require('./csrf');
+const {canonicalPath}=require('../platform/canonical-path');
 
 const SAFE_METHODS=new Set(['GET','HEAD','OPTIONS']);
 function destroy(req){return new Promise(resolve=>{if(!req.session)return resolve();req.session.destroy(()=>resolve())})}
@@ -9,7 +10,7 @@ function destroy(req){return new Promise(resolve=>{if(!req.session)return resolv
 function csrfRequiredForAuthenticatedMutation(req,principal){
     const method=String(req.method||'GET').toUpperCase();
     if(SAFE_METHODS.has(method))return false;
-    const requestPath=String(req.path||'');
+    const requestPath=canonicalPath(req.path);
     // Editable impersonation still carries the authenticated administrator's
     // browser session, so every unsafe /account mutation must pass the same
     // CSRF boundary before the later no-spend policy decides whether the action

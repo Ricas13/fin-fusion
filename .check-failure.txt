@@ -1,0 +1,5 @@
+suite=check:fast
+index=11
+total=189
+command=node scripts/password-minimum-policy-smoke.js
+error=node scripts/password-minimum-policy-smoke.js failed with exit 1 after 0.1s

@@ -27,7 +27,8 @@ module.exports = {
       "node scripts/customer-security-domain-smoke.js",
       "node scripts/admin-mutation-rate-limit-smoke.js",
       "node scripts/totp-smoke.js",
-      "node scripts/runtime-db-isolation-smoke.js"
+      "node scripts/runtime-db-isolation-smoke.js",
+      "node scripts/deep-audit-regressions-smoke.js"
     ],
     "check:fast:operations": [
       "node scripts/production-image-content-smoke.js",
