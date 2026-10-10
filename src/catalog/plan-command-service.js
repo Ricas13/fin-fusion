@@ -1249,7 +1249,7 @@ async function clonePlanVersion(sourceId,{code,name,effectiveFrom=null},actorUse
       [group]
     )).rows[0].n||2);
     const values=cols.map(col=>source[col]);
-    const params=values.map((_,i)=>`${i+6}`);
+    const params=values.map((_,i)=>`$${i+6}`);
     const inserted=(await client.query(
       `INSERT INTO plans(code,name,active,visible,version_group_id,version_number,effective_from,${cols.map(schemaIdentifier).join(',')})
        VALUES($1,$2,FALSE,FALSE,$3,$4,$5,${params.join(',')})
