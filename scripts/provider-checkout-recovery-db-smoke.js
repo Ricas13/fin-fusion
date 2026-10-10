@@ -1,11 +1,15 @@
 'use strict';
 
 require('dotenv').config();
+// Plisio recovery only runs while Plisio is configured; give the smoke a throwaway key.
+process.env.PLISIO_SECRET_KEY = process.env.PLISIO_SECRET_KEY || 'plisio-recovery-smoke-key';
+process.env.PLISIO_ENABLED = 'true';
 const assert = require('assert');
 const { query } = require('../src/db');
 const { runDbSmoke, unique: fixtureUnique, fixtureCustomer, fixturePlan } = require('./test-fixture');
 const intents = require('../src/payments/checkout-intents');
 const recovery = require('../src/payments/provider-checkout-recovery');
+const plisio = require('../src/payments/plisio');
 
 const suffix = fixtureUnique('checkout-recovery');
 const createdCustomers = [];
@@ -259,6 +263,67 @@ async function main() {
     assert.strictEqual(recovery.paypalResourceNotFound(missingPayPalError(422)), true);
     assert.strictEqual(recovery.paypalResourceNotFound(missingPayPalError(422, 'Validation failed.')), false,
         'generic PayPal 422 must not be mistaken for resource absence');
+
+    // Plisio crypto checkouts: a lost or rejected callback must not strand a paid customer.
+    const plisioRecovered = await attachedIntent('recovery plisio paid', 'plisio', `PLISIO-${unique('paid')}`, null, 'payment', server);
+    const plisioUnverifiable = await attachedIntent('recovery plisio unverifiable', 'plisio', `PLISIO-${unique('unverifiable')}`, null, 'payment', server);
+    const plisioWaiting = await attachedIntent('recovery plisio waiting', 'plisio', `PLISIO-${unique('waiting')}`, null, 'payment', server);
+    const plisioTerminal = await attachedIntent('recovery plisio terminal', 'plisio', `PLISIO-${unique('terminal')}`, null, 'payment', server);
+    const plisioIds = [plisioRecovered.id, plisioUnverifiable.id, plisioWaiting.id, plisioTerminal.id];
+    const candidateIds = new Set((await recovery.candidates({ limit: 100 })).map(row => row.id));
+    for (const id of plisioIds) assert(candidateIds.has(id), 'open Plisio checkouts must be recovery candidates');
+
+    const plisioRun = await recovery.run({
+        limit: 20,
+        checkoutIntentIds: plisioIds,
+        handlers: {
+            async plisio(row) {
+                if (row.id === plisioRecovered.id) return { status: 'completed', completed: true };
+                if (row.id === plisioUnverifiable.id) return { status: 'completed', completed: false, waiting: true };
+                if (row.id === plisioWaiting.id) return { status: 'pending', completed: false, waiting: true };
+                return { status: 'expired', completed: false, terminal: true };
+            }
+        }
+    });
+    assert.strictEqual(plisioRun.recovered, 1, 'a verified completed Plisio payment must be recovered');
+    assert.strictEqual(plisioRun.waiting, 1, 'a pending Plisio payment must keep waiting');
+    assert.strictEqual(plisioRun.terminal, 1, 'an expired Plisio invoice must settle as terminal');
+    assert.strictEqual(plisioRun.failed, 1, 'a completed but unverifiable Plisio payment must be operator-visible, not silently waiting');
+    assert(/Plisio .*fiat amount could not be verified/.test(plisioRun.warning), 'unverifiable Plisio payment must raise a job warning');
+
+    // Candidate boundaries: finished, provider-terminal and stale checkouts are not polled.
+    await query(`UPDATE billing_checkout_intents SET state='completed' WHERE id=$1`, [plisioRecovered.id]);
+    await query(`UPDATE billing_checkout_intents SET state='expired',provider_terminal_at=NOW() WHERE id=$1`, [plisioTerminal.id]);
+    await query(`UPDATE billing_checkout_intents SET state='failed',provider_terminal_at=NOW() WHERE id=$1`, [plisioUnverifiable.id]);
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '10 days' WHERE id=$1`, [plisioWaiting.id]);
+    const afterIds = new Set((await recovery.candidates({ limit: 100 })).map(row => row.id));
+    assert(!afterIds.has(plisioRecovered.id), 'completed Plisio checkouts must not be polled');
+    assert(!afterIds.has(plisioTerminal.id), 'provider-terminal expired Plisio checkouts must not be polled');
+    assert(afterIds.has(plisioUnverifiable.id), 'recently failed (e.g. underpaid) Plisio checkouts stay eligible for a top-up');
+    assert(!afterIds.has(plisioWaiting.id), 'Plisio checkouts older than the lookback must not be polled');
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '3 days' WHERE id=$1`, [plisioUnverifiable.id]);
+    assert(!(new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(plisioUnverifiable.id),
+        'failed Plisio checkouts stop being re-polled after 48 hours');
+
+    // An old completed-but-unverifiable payment stops failing the critical job after 72 hours.
+    const staleRow = { id: plisioUnverifiable.id, provider: 'plisio', provider_checkout_id: 'PLISIO-STALE', created_at: new Date(Date.now() - 96 * 3600000) };
+    const staleOutcome = await recovery.recoverPlisio(staleRow, { plisio: async () => ({ status: 'completed', completed: false, waiting: true }) });
+    assert.strictEqual(staleOutcome.state, 'waiting');
+    await assert.rejects(
+        recovery.recoverPlisio({ ...staleRow, created_at: new Date() }, { plisio: async () => ({ status: 'completed', completed: false, waiting: true }) }),
+        /fiat amount could not be verified/
+    );
+
+    // Rejected callbacks that reference a real local Plisio checkout are recorded (deduped); noise is ignored.
+    const rejected = await attachedIntent('recovery plisio rejected', 'plisio', `PLISIO-${unique('rejected')}`, null, 'payment', server);
+    const body = Buffer.from(JSON.stringify({ order_number: rejected.id, txn_id: rejected.providerCheckoutId, status: 'completed', verify_hash: 'bad' }));
+    assert.strictEqual(await plisio.recordRejectedCallback(body, new Error('Invalid Plisio callback signature.')), true);
+    assert.strictEqual(await plisio.recordRejectedCallback(body, new Error('Invalid Plisio callback signature.')), false, 'repeat rejections inside 10 minutes are not re-recorded');
+    assert.strictEqual(await plisio.recordRejectedCallback(Buffer.from(JSON.stringify({ order_number: '00000000-0000-4000-8000-000000000000' })), new Error('x')), false);
+    assert.strictEqual(await plisio.recordRejectedCallback(Buffer.from('not json'), new Error('x')), false);
+    const logged = await query(`SELECT metadata FROM audit_log WHERE action='payment.plisio.callback_rejected' AND entity_id=$1`, [rejected.id]);
+    assert.strictEqual(logged.rowCount, 1);
+    assert(/signature/.test(logged.rows[0].metadata.reason));
 
     console.log('provider checkout recovery DB smoke: retry isolation, pending safety and terminal convergence ok');
 }

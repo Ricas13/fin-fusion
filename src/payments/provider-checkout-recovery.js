@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const stripe = require('./stripe');
 const paypal = require('./paypal');
+const plisio = require('./plisio');
 const checkoutIntents = require('./checkout-intents');
 const providerPaymentReconciliation = require('./provider-payment-reconciliation');
 const providerLifecycleState = require('./provider-lifecycle-state');
@@ -10,6 +11,14 @@ const providerLifecycleState = require('./provider-lifecycle-state');
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const LOOKBACK_DAYS = 90;
+// A Plisio invoice stays payable for 180 minutes, but a short or late crypto payment
+// can be topped up afterwards, so keep polling for a few days. Checkouts that Plisio
+// already reported as failed (e.g. mismatch) are only re-polled for the first 48 hours.
+const PLISIO_LOOKBACK_DAYS = 7;
+const PLISIO_FAILED_RETRY_HOURS = 48;
+// Past this age an unverifiable completed payment stops raising a job failure (it would
+// otherwise degrade this critical job indefinitely); it stays visible in the audit log.
+const PLISIO_UNVERIFIED_ALERT_HOURS = 72;
 const PAYPAL_RECOVERABLE = new Set(['ACTIVE', 'SUSPENDED']);
 const PAYPAL_TERMINAL = new Set(['CANCELLED', 'CANCELED', 'EXPIRED']);
 const PAYPAL_LOCALLY_ABANDONED = new Set(['expired', 'cancelled']);
@@ -45,8 +54,10 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
     const scopedIds = Array.isArray(checkoutIntentIds)
         ? checkoutIntentIds.map(value => String(value || '').trim()).filter(Boolean)
         : [];
-    const scopeSql = scopedIds.length ? 'AND i.id=ANY($3::uuid[])' : '';
-    const params = scopedIds.length ? [safeLimit, LOOKBACK_DAYS, scopedIds] : [safeLimit, LOOKBACK_DAYS];
+    const scopeSql = 'AND (cardinality($3::uuid[])=0 OR i.id=ANY($3::uuid[]))';
+    const plisioParams = [PLISIO_LOOKBACK_DAYS, PLISIO_FAILED_RETRY_HOURS];
+    // $3 is always bound (empty array when unscoped) so $4/$5 keep fixed positions.
+    const params = [safeLimit, LOOKBACK_DAYS, scopedIds, ...plisioParams, Boolean(plisio.enabled())];
     const result = await query(`
         SELECT i.id,i.customer_id,i.plan_id,i.provider,i.provider_checkout_id,i.checkout_mode,i.state,
                i.provider_terminal_at,i.created_at,i.updated_at,paid.provider_transaction_id AS paid_capture_id
@@ -89,12 +100,24 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
             ORDER BY ph.occurred_at DESC,ph.provider_transaction_id DESC
             LIMIT 1
         ) paid ON TRUE
-        WHERE i.provider IN ('stripe','paypal')
+        WHERE i.provider IN ('stripe','paypal','plisio')
           AND i.provider_checkout_id IS NOT NULL
           AND i.created_at >= NOW() - ($2::int * INTERVAL '1 day')
           AND (
               (
-                  (i.provider='stripe' OR i.checkout_mode='subscription')
+                  i.provider='plisio'
+                  AND $6::boolean
+                  AND i.checkout_mode='payment'
+                  AND i.state IN ('open','failed','expired','cancelled')
+                  AND i.created_at >= NOW() - ($4::int * INTERVAL '1 day')
+                  AND (
+                      i.provider_terminal_at IS NULL
+                      OR (i.state='failed' AND i.created_at >= NOW() - ($5::int * INTERVAL '1 hour'))
+                  )
+              )
+              OR (
+                  i.provider IN ('stripe','paypal')
+                  AND (i.provider='stripe' OR i.checkout_mode='subscription')
                   AND i.state IN ('open','failed','expired','cancelled')
                   AND i.provider_terminal_at IS NULL
               )
@@ -115,6 +138,11 @@ function defaultHandlers() {
     return {
         async stripe(row) {
             return stripe.confirmCheckout(row.provider_checkout_id);
+        },
+        async plisio(row) {
+            const intent = await checkoutIntents.findById(row.id);
+            if (!intent) throw new Error('Plisio checkout intent no longer exists.');
+            return plisio.confirmCheckout(row.provider_checkout_id, intent);
         },
         async paypalStatus(row) {
             return paypal.syncCurrentSubscription(row.provider_checkout_id, { activateMissing: false });
@@ -142,6 +170,23 @@ async function recoverStripe(row, handlers) {
     if (outcome?.completed) return { state: 'recovered', detail: outcome.status || 'completed' };
     if (outcome?.waiting) return { state: 'waiting', detail: outcome.status || 'processing' };
     return { state: 'terminal', detail: outcome?.status || 'terminal' };
+}
+
+async function recoverPlisio(row, handlers) {
+    const outcome = await handlers.plisio(row);
+    if (outcome?.completed) return { state: 'recovered', detail: outcome.status || 'completed' };
+    // Plisio says the invoice is paid but the fiat amount cannot be verified, so access
+    // cannot be activated safely. Surface it as a failure so the job shows a warning
+    // instead of waiting forever with a paid customer and no access.
+    if (outcome?.status === 'completed') {
+        const ageHours = (Date.now() - new Date(row.created_at).getTime()) / 3600000;
+        if (Number.isFinite(ageHours) && ageHours > PLISIO_UNVERIFIED_ALERT_HOURS) {
+            return { state: 'waiting', detail: 'completed_unverified' };
+        }
+        throw new Error(`Plisio ${row.provider_checkout_id} is completed but its fiat amount could not be verified; reconcile it manually.`);
+    }
+    if (outcome?.terminal) return { state: 'terminal', detail: outcome.status || 'terminal' };
+    return { state: 'waiting', detail: outcome?.status || 'pending' };
 }
 
 async function recoverPayPalPayment(row, handlers) {
@@ -236,7 +281,9 @@ async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds =
         try {
             const result = row.provider === 'stripe'
                 ? await recoverStripe(row, activeHandlers)
-                : await recoverPayPal(row, activeHandlers);
+                : row.provider === 'plisio'
+                    ? await recoverPlisio(row, activeHandlers)
+                    : await recoverPayPal(row, activeHandlers);
             summary[result.state] = Number(summary[result.state] || 0) + 1;
         } catch (error) {
             summary.failed += 1;
@@ -265,6 +312,10 @@ module.exports = {
     failureWarning,
     candidates,
     recoverStripe,
+    recoverPlisio,
+    PLISIO_LOOKBACK_DAYS,
+    PLISIO_FAILED_RETRY_HOURS,
+    PLISIO_UNVERIFIED_ALERT_HOURS,
     recoverPayPalPayment,
     recoverPayPal,
     run
