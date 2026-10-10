@@ -7,6 +7,21 @@ const crypto = require('crypto');
 function header(value) {
     return String(value || '').replace(/[\r\n]+/g, ' ').trim();
 }
+// RFC 2047: header values containing non-ASCII text (names, subjects with umlauts, euro signs or
+// dashes) must be sent as encoded words. Raw 8-bit headers are mangled by some servers and
+// penalised by spam filters. Words are split on character boundaries to stay within 75 chars.
+function encodeHeaderText(value) {
+    const text = header(value);
+    if (/^[\x20-\x7e]*$/.test(text)) return text;
+    const words = [];
+    let current = '';
+    for (const char of text) {
+        if (Buffer.byteLength(current + char, 'utf8') > 45) { words.push(current); current = ''; }
+        current += char;
+    }
+    if (current) words.push(current);
+    return words.map(word => `=?UTF-8?B?${Buffer.from(word, 'utf8').toString('base64')}?=`).join('\r\n ');
+}
 function address(value) {
     const email = String(value || '').trim();
     if (!email || !email.includes('@') || /[\r\n<>]/.test(email)) throw new Error('Invalid email address.');
@@ -25,8 +40,11 @@ function buildMessage({ fromName, fromEmail, replyTo, to, subject, text, html })
     const sender = address(fromEmail);
     const recipient = address(to);
     const safeName = header(fromName);
-    const safeSubject = header(subject);
-    const from = safeName ? `"${safeName.replace(/"/g, "'")}" <${sender}>` : `<${sender}>`;
+    const safeSubject = encodeHeaderText(subject);
+    const asciiName = /^[\x20-\x7e]*$/.test(safeName);
+    const from = !safeName ? `<${sender}>`
+        : asciiName ? `"${safeName.replace(/\\/g, '').replace(/"/g, "'")}" <${sender}>`
+        : `${encodeHeaderText(safeName.replace(/"/g, "'"))} <${sender}>`;
     const headers = [
         `From: ${from}`,
         `To: <${recipient}>`,
@@ -205,4 +223,4 @@ async function send(config, message) {
     finally { await session.close(); }
 }
 
-module.exports = { SmtpSession, buildMessage, verify, send, address, header };
+module.exports = { SmtpSession, buildMessage, verify, send, address, header, encodeHeaderText };
