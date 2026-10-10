@@ -14,6 +14,7 @@ const { query, getPool, closePool } = require('./db');
 const firstRun = require('./auth/first-run-setup');
 const controller = require('./auth/staff-controller');
 const { guardSession } = require('./auth/session-guard');
+const { ownerBoundary } = require('./auth/owner-guard');
 const runtimeSettings = require('./platform/runtime-settings');
 const operationsSettings = require('./platform/operations-settings');
 const adminNav = require('./platform/admin-nav');
@@ -284,6 +285,12 @@ function mountPlatform(app) {
   app.post('/login', publicAbuseProtection.middleware, loginSetupGate, controller.loginSubmit);
   app.get('/logout', controller.logout);
   app.use(controller.createAuthRouter());
+  // The owner-only boundary must see every /admin request before any router that serves
+  // /admin paths. It used to be mounted only inside mountAdminRoutes(), after the security,
+  // branding, claims and preview routers below, so a support administrator could reach
+  // owner-only routes served by those earlier routers (for example POST
+  // /admin/security/2fa-policy and POST /admin/settings/branding/*).
+  app.use('/admin', ownerBoundary);
   app.use(createAdminSecurityRouter());
 
   app.get('/', async (req, res, next) => {

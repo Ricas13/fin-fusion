@@ -200,6 +200,7 @@ module.exports = {
       "node scripts/multi-service-subscriptions-smoke.js",
       "node scripts/plan-zero-capacity-smoke.js",
       "node scripts/canonical-service-authority-db-smoke.js",
+      "node scripts/admin-owner-boundary-order-db-smoke.js",
       "node scripts/remaining-revenue-lifecycle-smoke.js",
       "node scripts/residual-temporal-invariants-smoke.js",
       "npm run check:post443-payment-fast",
