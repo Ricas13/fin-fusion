@@ -73,6 +73,8 @@
     .compactMovedAction{position:relative;margin:0}
     .compactMovedAction>summary{list-style:none;width:100%;cursor:pointer}
     .compactMovedAction>summary::-webkit-details-marker{display:none}
+    /* The moved plan-grant popover sits in a narrow card column; anchoring it to the button pushed it off the left edge. Centre it in the viewport instead. */
+    .compactMovedAction>.actionPopover{position:fixed!important;left:50%!important;right:auto!important;top:12vh!important;transform:translateX(-50%);width:min(440px,calc(100vw - 20px))!important;max-height:76vh;overflow-y:auto}
 
     /* True Jellyfin break-glass control: this is the existing server-side force
        workflow, moved into the Jellyfin card rather than the generic authority button. */
@@ -104,7 +106,7 @@
     @media(max-width:1450px){.customer360Core .opGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
     @media(max-width:1180px){.customerMockHero{grid-template-columns:1fr!important}.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
     @media(max-width:760px){.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
-    @media(max-width:620px){.customer360Core .opGrid,.customerMockMetrics,.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:1fr!important}.customerMockMoreMenu{right:auto;left:0}.compactForcePopover,.compactMovedAction .actionPopover,#customer-danger .actionPopover{position:fixed!important;left:10px!important;right:10px!important;top:20vh!important;width:auto!important}}
+    @media(max-width:620px){.customer360Core .opGrid,.customerMockMetrics,.customerMockMetrics.customerMockMetricsUnified{grid-template-columns:1fr!important}.customerMockMoreMenu{right:auto;left:0}.compactForcePopover,.compactMovedAction .actionPopover,#customer-danger .actionPopover{position:fixed!important;left:10px!important;right:10px!important;top:20vh!important;width:auto!important;transform:none!important}}
   `;
   document.head.appendChild(style);
 
