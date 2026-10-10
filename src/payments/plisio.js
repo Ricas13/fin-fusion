@@ -710,6 +710,21 @@ async function retryPaymentEvent(eventRow) {
     return reconcileStoredPaymentEvent(eventRow, payload);
 }
 
+// Plisio's operations API returns only the transaction id, status and crypto totals for an
+// invoice: no order number, fiat amount or currency. When no authenticated callback supplied
+// them, the invoice's own contract is the authority: we created this exact invoice with the
+// amount and currency in the intent's commercial snapshot and stored its txn_id on the intent.
+// Only used for a one-time checkout bound to this exact txn_id.
+function contractFieldsFromIntent(intent, providerTxnId) {
+    if (!intent || intent.provider !== 'plisio' || intent.checkout_mode !== 'payment') return null;
+    if (!intent.provider_checkout_id || String(intent.provider_checkout_id) !== String(providerTxnId)) return null;
+    const snapshot = intent.commercial_snapshot && typeof intent.commercial_snapshot === 'object' ? intent.commercial_snapshot : {};
+    const minor = Number(snapshot.discountedMinor ?? snapshot.priceMinor);
+    const currency = String(snapshot.currency || '').trim().toUpperCase();
+    if (!Number.isInteger(minor) || minor < 1 || !/^[A-Z]{3}$/.test(currency)) return null;
+    return { orderNumber: String(intent.id), sourceAmount: (minor / 100).toFixed(2), sourceCurrency: currency };
+}
+
 async function confirmCheckout(providerTxnId, intent) {
     const verified = await verifiedRemoteOperation(
         providerTxnId,
@@ -732,6 +747,21 @@ async function confirmCheckout(providerTxnId, intent) {
             } catch (_) {
                 // Evidence that does not match this intent is never used.
             }
+        }
+    }
+
+    if (
+        fields.status === 'completed' &&
+        (!fields.orderNumber || fields.sourceAmount == null || !fields.sourceCurrency)
+    ) {
+        const contract = contractFieldsFromIntent(intent, providerTxnId);
+        if (contract) {
+            fields = {
+                ...fields,
+                orderNumber: fields.orderNumber || contract.orderNumber,
+                sourceAmount: fields.sourceAmount ?? contract.sourceAmount,
+                sourceCurrency: fields.sourceCurrency || contract.sourceCurrency
+            };
         }
     }
 
@@ -778,6 +808,7 @@ module.exports = {
     recordRejectedCallback,
     retryPaymentEvent,
     confirmCheckout,
+    contractFieldsFromIntent,
     applyRemoteOperation,
     recordActivatedProviderLoss,
     authenticateCallback,

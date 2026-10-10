@@ -305,6 +305,51 @@ async function main() {
     assert(!(new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(plisioUnverifiable.id),
         'failed Plisio checkouts stop being re-polled after 48 hours');
 
+    // Production reality: Plisio's operations API returns only ids, status and crypto totals for an
+    // invoice (no order number, fiat amount or currency). A completed invoice bound to our intent
+    // must activate from the contract we created the invoice with, but nothing looser.
+    const realShape = txn => ({ txn_id: txn, invoice_url: `https://plisio.net/invoice/${txn}`, invoice_total_sum: '0.00060658', user_id: 12174, shop_id: 's1', type: 'invoice', status: 'completed', tx_url: 'https://blockchair.com/bitcoin/transaction/abc', id: txn });
+    const contractIntent = {
+        id: 'intent-1', provider: 'plisio', checkout_mode: 'payment', provider_checkout_id: 'TXN-1',
+        commercial_snapshot: { discountedMinor: 5000, priceMinor: 5000, currency: 'usd' }
+    };
+    assert.deepStrictEqual(plisio.contractFieldsFromIntent(contractIntent, 'TXN-1'), { orderNumber: 'intent-1', sourceAmount: '50.00', sourceCurrency: 'USD' });
+    assert.strictEqual(plisio.contractFieldsFromIntent(contractIntent, 'TXN-OTHER'), null, 'a different transaction id must not use this intent contract');
+    assert.strictEqual(plisio.contractFieldsFromIntent({ ...contractIntent, checkout_mode: 'subscription' }, 'TXN-1'), null);
+    assert.strictEqual(plisio.contractFieldsFromIntent({ ...contractIntent, provider: 'stripe' }, 'TXN-1'), null);
+    assert.strictEqual(plisio.contractFieldsFromIntent({ ...contractIntent, commercial_snapshot: { currency: 'USD' } }, 'TXN-1'), null);
+    assert.strictEqual(plisio.contractFieldsFromIntent({ ...contractIntent, commercial_snapshot: { priceMinor: 5000 } }, 'TXN-1'), null);
+
+    const realFetch = global.fetch;
+    const remote = new Map();
+    global.fetch = async (url, options) => {
+        const u = new URL(String(url));
+        if (u.hostname !== 'api.plisio.net') return realFetch(url, options);
+        const id = decodeURIComponent(u.pathname.split('/').pop());
+        return new Response(JSON.stringify({ status: 'success', data: remote.get(id) }), { status: 200 });
+    };
+    try {
+        const paid = await attachedIntent('recovery plisio real shape', 'plisio', `PLISIO-${unique('realshape')}`, null, 'payment', server);
+        remote.set(paid.providerCheckoutId, realShape(paid.providerCheckoutId));
+        const paidRow = await intents.findById(paid.id);
+        const confirmed = await plisio.confirmCheckout(paid.providerCheckoutId, paidRow);
+        assert.strictEqual(confirmed.completed, true, 'a completed Plisio invoice with no fiat fields must activate from its own contract');
+        assert.strictEqual((await stateOf(paid.id)).state, 'completed');
+
+        const underpaid = await attachedIntent('recovery plisio mismatch', 'plisio', `PLISIO-${unique('mismatchreal')}`, null, 'payment', server);
+        remote.set(underpaid.providerCheckoutId, { ...realShape(underpaid.providerCheckoutId), status: 'mismatch' });
+        const mismatchOutcome = await plisio.confirmCheckout(underpaid.providerCheckoutId, await intents.findById(underpaid.id));
+        assert.strictEqual(mismatchOutcome.completed, false, 'a mismatch (wrong amount paid) must never activate');
+
+        const pending = await attachedIntent('recovery plisio pending real', 'plisio', `PLISIO-${unique('pendingreal')}`, null, 'payment', server);
+        remote.set(pending.providerCheckoutId, { ...realShape(pending.providerCheckoutId), status: 'pending' });
+        const pendingOutcome = await plisio.confirmCheckout(pending.providerCheckoutId, await intents.findById(pending.id));
+        assert.strictEqual(pendingOutcome.completed, false);
+        assert.strictEqual(pendingOutcome.waiting, true);
+    } finally {
+        global.fetch = realFetch;
+    }
+
     // An old completed-but-unverifiable payment stops failing the critical job after 72 hours.
     const staleRow = { id: plisioUnverifiable.id, provider: 'plisio', provider_checkout_id: 'PLISIO-STALE', created_at: new Date(Date.now() - 96 * 3600000) };
     const staleOutcome = await recovery.recoverPlisio(staleRow, { plisio: async () => ({ status: 'completed', completed: false, waiting: true }) });
