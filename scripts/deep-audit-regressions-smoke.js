@@ -279,6 +279,24 @@ async function planCloneUsesNumberedPlaceholders() {
   }
 }
 
+async function smtpHeadersAreMimeEncoded() {
+  // Regression: non-ASCII subjects and sender names (umlauts, euro signs, en dashes) were sent as
+  // raw 8-bit header bytes, which some servers mangle and spam filters penalise.
+  const smtp = require('../src/integrations/smtp-client');
+  const subject = 'Your payment of \u20ac50 was received \u2013 thanks J\u00fcrgen, this subject is long enough to need folding across several encoded words';
+  const message = smtp.buildMessage({ fromName: 'CAPTAiNFiN M\u00fcller', fromEmail: 'noreply@example.test', to: 'a@example.test', subject, text: 'hi', html: '' });
+  const headerBlock = message.split('\r\n\r\n')[0];
+  assert(/^[\x00-\x7f]*$/.test(headerBlock), 'header block must be pure ASCII');
+  const decode = value => value.replace(/=\?UTF-8\?B\?([^?]+)\?=\r\n ?/g, (_m, b) => Buffer.from(b, 'base64').toString()).replace(/=\?UTF-8\?B\?([^?]+)\?=/g, (_m, b) => Buffer.from(b, 'base64').toString());
+  assert(decode(headerBlock).includes(`Subject: ${subject}`), 'the encoded subject must decode back to the original');
+  assert(decode(headerBlock).includes('From: CAPTAiNFiN M\u00fcller <noreply@example.test>'));
+  for (const line of headerBlock.split('\r\n')) assert(line.length <= 100, `header line too long: ${line.length}`);
+  const plain = smtp.buildMessage({ fromName: 'Plain Name', fromEmail: 'n@example.test', to: 'a@example.test', subject: 'Plain subject', text: 't', html: '' });
+  assert(plain.includes('Subject: Plain subject\r\n') && plain.includes('From: "Plain Name" <n@example.test>'), 'ASCII headers must be unchanged');
+  const injected = smtp.buildMessage({ fromName: 'x', fromEmail: 'n@example.test', to: 'a@example.test', subject: 'Hi\r\nBcc: attacker@example.test', text: 't', html: '' });
+  assert(!/^Bcc:/m.test(injected), 'CR/LF in a subject must never start a new header');
+}
+
 (async () => {
   await planLibrariesSaveReachesCommandOwner();
   await bulkPaymentsSyncUsesCanonicalBillingControl();
@@ -287,6 +305,7 @@ async function planCloneUsesNumberedPlaceholders() {
   await customerTwoFactorFailureCounterResetsAfterLockExpiry();
   await noRequireCycleHandsOutPartialExports();
   await planCloneUsesNumberedPlaceholders();
+  await smtpHeadersAreMimeEncoded();
   console.log('deep audit regressions smoke: ok');
   process.exit(0);
 })().catch(error => { console.error(error); process.exit(1); });

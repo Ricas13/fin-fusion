@@ -276,6 +276,68 @@ async function paymentReceiptEvents(since, until, summary) {
         });
     }
 
+    // One-time access extensions (the usual way a crypto customer renews) record their own audit
+    // action, so they never matched the subscription-activation scan above and sent no receipt.
+    const extensions = await query(`
+        SELECT a.id audit_id,a.created_at,a.metadata,s.id subscription_id,s.customer_id,s.source,s.provider_subscription_id,
+               s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_ends_at,
+               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name,
+               COALESCE(c.display_name,au.username,c.email,'Customer') customer_name
+        FROM audit_log a
+        JOIN subscriptions s ON s.id::text=a.entity_id
+        JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
+        WHERE a.action='payment.access_extension.activate' AND a.created_at>$1 AND a.created_at<=$2
+        ORDER BY a.created_at,a.id
+    `, [since, until]);
+    for (const row of extensions.rows) {
+        const plan = clean(row.plan_name, 200) || 'Subscription';
+        const provider = clean(row.metadata?.provider || row.source, 40) || 'the payment provider';
+        const endsAt = validDate(row.access_ends_at);
+        const endText = endsAt ? ` Your access now runs until ${endsAt.toISOString().slice(0, 10)}.` : '';
+        await emit(summary, {
+            eventType: 'payment.received',
+            customerId: row.customer_id,
+            subject: 'Payment received',
+            text: `Payment was confirmed for an extension of ${plan} via ${provider}.${endText}`,
+            adminText: `Payment confirmed for ${clean(row.customer_name, 200)} — ${plan} extension via ${provider}.`,
+            dedupeKey: `payment-received:extension:${row.audit_id}`
+        });
+    }
+
+    // Recurring PayPal renewals have no activation audit row; the completed sale event is the receipt.
+    const paypalSales = await query(`
+        SELECT id,provider_event_id,payload,processed_at
+        FROM payment_events
+        WHERE provider='paypal' AND event_type='PAYMENT.SALE.COMPLETED'
+          AND processed_at>$1 AND processed_at<=$2 AND processing_error IS NULL
+        ORDER BY processed_at,id
+    `, [since, until]);
+    for (const event of paypalSales.rows) {
+        const providerSubscriptionId = String(event.payload?.resource?.billing_agreement_id || '').trim();
+        if (!providerSubscriptionId) continue;
+        const subscription = await query(`
+            SELECT s.id subscription_id,s.customer_id,s.source,s.provider_subscription_id,s.current_period_end,
+                   COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name,
+                   COALESCE(c.display_name,au.username,c.email,'Customer') customer_name
+            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
+            WHERE s.source='paypal' AND s.provider_subscription_id=$1
+            ORDER BY s.created_at DESC LIMIT 1
+        `, [providerSubscriptionId]);
+        if (!subscription.rowCount) continue;
+        const row = subscription.rows[0];
+        const plan = clean(row.plan_name, 200) || 'Subscription';
+        await emit(summary, {
+            eventType: 'payment.received',
+            customerId: row.customer_id,
+            subject: 'Payment received',
+            text: `PayPal confirmed payment for ${plan}.`,
+            adminText: `PayPal confirmed payment for ${clean(row.customer_name, 200)} — ${plan}.`,
+            dedupeKey: paymentReceiptKey(row)
+        });
+    }
+
     const stripeInvoices = await query(`
         SELECT id,provider_event_id,payload,processed_at
         FROM payment_events
