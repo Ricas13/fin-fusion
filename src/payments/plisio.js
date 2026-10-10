@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { query } = require('../db');
 const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
 const intents = require('./checkout-intents');
@@ -568,6 +569,29 @@ async function processWebhook(rawBody, contentType = '') {
     };
 }
 
+// A callback that fails authentication is never persisted for retry, so without a record an
+// operator cannot tell why a paid invoice never synced. Only callbacks that reference a real
+// local Plisio checkout are recorded (never arbitrary internet noise), once per 10 minutes.
+async function recordRejectedCallback(rawBody, error) {
+    let payload = null;
+    try { payload = JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '')); } catch (_) { return false; }
+    const orderNumber = String(payload?.order_number || '').trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderNumber)) return false;
+    const intent = await intents.findById(orderNumber);
+    if (!intent || intent.provider !== 'plisio') return false;
+    const reason = String(error?.message || error || 'rejected').slice(0, 300);
+    const recent = await query(
+        `SELECT 1 FROM audit_log WHERE action='payment.plisio.callback_rejected' AND entity_type='checkout_intent' AND entity_id=$1 AND created_at>NOW()-INTERVAL '10 minutes' LIMIT 1`,
+        [intent.id]
+    );
+    if (recent.rowCount) return false;
+    await query(
+        `INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.plisio.callback_rejected','checkout_intent',$1,$2::jsonb)`,
+        [intent.id, JSON.stringify({ reason, txnId: String(payload?.txn_id || '').slice(0, 120), status: String(payload?.status || '').slice(0, 40) })]
+    );
+    return true;
+}
+
 function storedEventProviderId(eventRow, payload = null) {
     const payloadId = String(payload?.txn_id || '').trim();
     if (payloadId) return payloadId;
@@ -687,11 +711,29 @@ async function retryPaymentEvent(eventRow) {
 }
 
 async function confirmCheckout(providerTxnId, intent) {
-    const { remote, fields } = await verifiedRemoteOperation(
+    const verified = await verifiedRemoteOperation(
         providerTxnId,
         intent,
         { allowMissingOrderNumber: true }
     );
+    const { remote } = verified;
+    let fields = verified.fields;
+
+    // Plisio invoice operations can omit the fiat metadata. A previously authenticated and
+    // processed callback for the same transaction may supply only what the API left out.
+    if (
+        fields.status === 'completed' &&
+        (!fields.orderNumber || fields.sourceAmount == null || !fields.sourceCurrency)
+    ) {
+        const evidence = await financialState.latestPlisioCallbackEvidence(String(providerTxnId));
+        if (evidence) {
+            try {
+                fields = verifiedFieldsFromEvidence(remote, evidence, intent, String(providerTxnId));
+            } catch (_) {
+                // Evidence that does not match this intent is never used.
+            }
+        }
+    }
 
     // The browser may return before the signed callback has been reconciled.
     // If Plisio confirms completion but omits invoice metadata, report waiting
@@ -733,6 +775,7 @@ module.exports = {
     feeAccounting,
     syncFeeData,
     processWebhook,
+    recordRejectedCallback,
     retryPaymentEvent,
     confirmCheckout,
     applyRemoteOperation,
