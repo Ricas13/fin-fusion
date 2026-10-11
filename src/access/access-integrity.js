@@ -2,6 +2,10 @@
 
 const { query } = require('../db');
 
+// A subscription that just ended is not an integrity failure: the expiry job removes the
+// Jellyfin account shortly afterwards, so only flag accounts that outlive this window.
+const EXPIRY_GRACE_MINUTES = 30;
+
 function clean(value, max = 900) {
   return String(value == null ? '' : value)
     .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
@@ -250,6 +254,21 @@ async function scan({ limit = 100 } = {}) {
           JOIN plans p ON p.id=s.plan_id
           WHERE s.customer_id=ja.customer_id
             ${primaryLive}
+        )
+        -- A paid plan that ended minutes ago is routine expiry: the access automation removes
+        -- the account within a few minutes. Only raise this (urgent) finding if the account
+        -- is still there after the grace period, i.e. cleanup is genuinely not happening.
+        AND NOT EXISTS(
+          SELECT 1
+          FROM subscriptions s_recent
+          JOIN plans p_recent ON p_recent.id=s_recent.plan_id
+          WHERE s_recent.customer_id=ja.customer_id
+            AND COALESCE(p_recent.is_free_tier,FALSE)=FALSE
+            AND COALESCE(p_recent.is_addon,FALSE)=FALSE
+            AND COALESCE(NULLIF(s_recent.service_type_snapshot,''),p_recent.service_type,'jellyfin') IN('jellyfin','bundle')
+            AND s_recent.superseded_by IS NULL
+            AND s_recent.status IN('active','trialing','past_due','paused','cancelled','expired')
+            AND s_recent.current_period_end+((COALESCE(s_recent.service_extension_days,0))||' days')::interval>NOW()-make_interval(mins=>${EXPIRY_GRACE_MINUTES})
         )
       ORDER BY ja.created_at
       LIMIT $1

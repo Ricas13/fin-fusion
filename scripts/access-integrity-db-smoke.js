@@ -221,6 +221,14 @@ function kindsFor(findings, customerId) {
     const primaryOrphan = await makeCustomer('primary-orphan');
     await makeAccount(primaryOrphan, premiumServerId, 'primary', 'primary-orphan');
 
+    const justExpired = await makeCustomer('just-expired');
+    await makeSubscription(justExpired, paidPlanId, { status: 'expired', source: 'stripe', endSql: "NOW()-INTERVAL '10 minutes'" });
+    await makeAccount(justExpired, premiumServerId, 'primary', 'just-expired');
+
+    const longExpired = await makeCustomer('long-expired');
+    await makeSubscription(longExpired, paidPlanId, { status: 'expired', source: 'stripe', endSql: "NOW()-INTERVAL '3 hours'" });
+    await makeAccount(longExpired, premiumServerId, 'primary', 'long-expired');
+
     const paidMissing = await makeCustomer('paid-missing');
     await makeSubscription(paidMissing, paidPlanId, { source: 'stripe' });
     // Subscription lifecycle hooks may eagerly create retry state. This fixture
@@ -274,6 +282,10 @@ function kindsFor(findings, customerId) {
       'an unpaid trial account on the wrong server must not satisfy the persisted assignment');
     assert(kindsFor(findings, primaryOrphan).has('primary_server_without_plan'),
       'primary account without a live primary entitlement must be detected');
+    assert(!kindsFor(findings, justExpired).has('primary_server_without_plan'),
+      'an account whose plan expired minutes ago is awaiting routine cleanup, not an integrity failure');
+    assert(kindsFor(findings, longExpired).has('primary_server_without_plan'),
+      'an account that outlives its expired plan beyond the grace window must be detected');
     assert(kindsFor(findings, paidMissing).has('paid_plan_without_recovery_state'),
       'paid plan without a server must retain a durable provisioning recovery state');
     assert(kindsFor(findings, paidWrongServer).has('paid_plan_without_recovery_state'),
