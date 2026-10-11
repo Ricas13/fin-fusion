@@ -139,13 +139,35 @@ function cryptoToSourceMinor(cryptoAmount, sourceRate) {
     return moneyMinor(crypto / rate);
 }
 
+// Plisio quotes source_rate as crypto per 1 unit of fiat in callbacks, but the operations API has
+// been observed returning the inverse (fiat per 1 crypto). Dividing by the wrong one turns a
+// $3.00 payment into "fee $3.00, net $0.00". Use whichever orientation converts the settled
+// crypto total back to roughly the invoice amount; if neither does, refuse to guess.
+function orientedRate(rate, cryptoTotal, grossMinor) {
+    const grossFiat = Number(grossMinor) / 100;
+    if (!(grossFiat > 0) || !(cryptoTotal > 0)) return rate;
+    for (const candidate of [rate, 1 / rate]) {
+        const implied = cryptoTotal / candidate;
+        if (Number.isFinite(implied) && implied >= grossFiat * 0.5 && implied <= grossFiat * 2) return candidate;
+    }
+    return null;
+}
+
 function feeAccounting(fields, { grossMinor = null } = {}) {
     const gross = grossMinor == null ? moneyMinor(fields?.sourceAmount) : Number(grossMinor);
     if (!Number.isInteger(gross) || gross < 0) {
         return { feeDataAvailable: false, feeMinor: 0, netMinor: 0, source: null };
     }
-    const rate = finiteNonNegative(fields?.sourceRate);
-    if (rate == null || rate <= 0) {
+    const quotedRate = finiteNonNegative(fields?.sourceRate);
+    if (quotedRate == null || quotedRate <= 0) {
+        return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
+    }
+    const rate = orientedRate(
+        quotedRate,
+        finiteNonNegative(fields?.actualSum) ?? finiteNonNegative(fields?.actualInvoiceSum),
+        gross
+    );
+    if (rate == null) {
         return { feeDataAvailable: false, feeMinor: 0, netMinor: gross, source: null };
     }
 
@@ -803,6 +825,7 @@ module.exports = {
     operationFields,
     cryptoToSourceMinor,
     feeAccounting,
+    orientedRate,
     syncFeeData,
     processWebhook,
     recordRejectedCallback,

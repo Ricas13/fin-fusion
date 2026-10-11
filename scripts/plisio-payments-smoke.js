@@ -40,6 +40,16 @@ const quotedOnly=plisio.feeAccounting({
 });
 expect(!quotedOnly.feeDataAvailable&&quotedOnly.feeMinor===0,'Quoted Plisio invoice commission must not be treated as exact final fee because network settlement fees can still differ.');
 
+// Real production data: Plisio's callback rate is crypto per fiat (0.00001293 BTC per USD), but the
+// operations API reports the inverse (USD per BTC). Both must give the same exact answer; the
+// inverse used to produce "fee $3.00, net $0.00" on a $3.00 payment.
+const callbackRate=plisio.feeAccounting({sourceAmount:'3.00',sourceRate:'0.00001293',actualSum:'0.00003879',actualCommission:'0.00000019',actualFee:'0',actualInvoiceSum:'0.00003860'},{grossMinor:300});
+expect(callbackRate.feeDataAvailable&&callbackRate.feeMinor===1&&callbackRate.netMinor===299,'Callback-oriented rate must give a 1 cent fee on the real $3.00 payment.');
+const apiRate=plisio.feeAccounting({sourceAmount:'3.00',sourceRate:String(1/0.00001293),actualSum:'0.00003879',actualCommission:'0.00000019',actualFee:'0',actualInvoiceSum:'0.00003860'},{grossMinor:300});
+expect(apiRate.feeDataAvailable&&apiRate.feeMinor===1&&apiRate.netMinor===299,'An inverted (fiat per crypto) rate must be detected and give the same result, not net $0.00.');
+const implausibleRate=plisio.feeAccounting({sourceAmount:'3.00',sourceRate:'5',actualSum:'0.00003879',actualInvoiceSum:'0.00003860'},{grossMinor:300});
+expect(!implausibleRate.feeDataAvailable&&implausibleRate.netMinor===300,'A rate that matches neither orientation must not be guessed.');
+
 const unknownFee=plisio.feeAccounting({sourceAmount:'10.00'});
 expect(!unknownFee.feeDataAvailable&&unknownFee.feeMinor===0&&unknownFee.netMinor===1000,'Missing Plisio fee evidence must stay explicitly incomplete instead of guessing a fee.');
 
