@@ -251,6 +251,19 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     };
   });
 }
+// Free signup reserves capacity before verification, so alert the worker as
+// soon as that reservation commits. The notification is best-effort and never
+// belongs inside the customer's registration transaction. A forced wake-up
+// survives a concurrent digest run because runSingleton only clears the flag
+// when a new run starts.
+async function requestClaimRefresh(db=query){
+  const result=await db(`UPDATE automation_job_state
+    SET force_run_requested=TRUE,next_run_at=NOW(),updated_at=NOW()
+    WHERE job_key='free_places_digest' AND enabled=TRUE
+    RETURNING job_key`);
+  return Number(result.rowCount||0)>0;
+}
+
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
+module.exports={STATE_KEY,run,syncPersistent,requestClaimRefresh,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
