@@ -200,6 +200,29 @@ function harness(){
   assert.strictEqual(h.getStored().observedRemaining,5);
   assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-20T00:00');
 
+  // A claimed reservation bypasses a stale/long periodic schedule without
+  // posting a second availability advert. Disabled jobs are not re-enabled.
+  let wakeupSql='';
+  let wakeups=0;
+  assert.strictEqual(await freePlaces.requestClaimRefresh(async(sql)=>{
+    wakeupSql=sql;
+    wakeups++;
+    return{rowCount:1};
+  }),true);
+  assert.match(wakeupSql,/force_run_requested=TRUE/);
+  assert.match(wakeupSql,/next_run_at=NOW\(\)/);
+  assert.match(wakeupSql,/job_key='free_places_digest'/);
+  assert.match(wakeupSql,/enabled=TRUE/);
+  assert.strictEqual(wakeups,1);
+  assert.strictEqual(await freePlaces.requestClaimRefresh(async()=>({rowCount:0})),false);
+  assert.strictEqual(h.sends.length,sendCountBeforeLegacy,
+    'queuing a claim wake-up must not post to Discord itself');
+
+  const pendingRegistrationSource=require('fs').readFileSync(
+    require('path').join(__dirname,'..','src','security','pending-registration.js'),'utf8');
+  assert.match(pendingRegistrationSource,/if\(row\.freeReservation\)\{[\s\S]*?await require\('\.\.\/automation\/free-places-digest'\)\.requestClaimRefresh\(\)/,
+    'completed Free signup must persist a refresh wake-up after its capacity reservation commits');
+
   assert(h.lockCount()>=16,'every digest observation/mutation must remain serialized');
   console.log('free places Discord scheduled batching smoke: ok');
 })().catch(error=>{
