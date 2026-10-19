@@ -176,6 +176,7 @@ module.exports = {
       "node scripts/customer-portal-state-smoke.js",
       "node scripts/customer-dashboard-readonly-smoke.js",
       "node scripts/free-access-customer-portal-smoke.js",
+      "node scripts/free-places-discord-notification-smoke.js",
       "node scripts/admin-coherence-user-overrides-smoke.js",
       "node scripts/media-identity-reconciliation-smoke.js",
       "node scripts/admin-navigation-coherence-smoke.js",
