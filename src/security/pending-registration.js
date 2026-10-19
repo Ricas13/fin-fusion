@@ -29,13 +29,6 @@ function refreshFreePlacesStatus(reason='capacity_changed'){
     setImmediate(()=>{
         let digest;
         try{digest=require('../automation/free-places-digest');}catch(error){console.warn(`Free Server Discord refresh load failed (${reason}):`,error.message);return;}
-        // The direct best-effort refresh is fast, but can be lost on process
-        // restart or Discord/DB errors. Also wake the central worker durably
-        // after a successful reservation, without blocking signup or sending a
-        // duplicate availability announcement.
-        if(reason==='reservation_created'){
-            Promise.resolve(digest.requestClaimRefresh()).catch(error=>console.warn('Free Server Discord claim wake-up failed:',error.message));
-        }
         Promise.resolve(digest.syncPersistent()).catch(error=>console.warn(`Free Server Discord refresh failed (${reason}):`,error.message));
     });
 }
@@ -158,7 +151,13 @@ async function begin({email,username,password,referralCode=null,communicationPre
             return{...created.rows[0],freeReservation};
         });
     }catch(error){if(capacityError(error)||(freeAccess&&!freeMediaLocation&&error?.code==='MEDIA_LOCATION_UNAVAILABLE'))throw noFreePlacesError();throw error;}
-    if(row.freeReservation)refreshFreePlacesStatus('reservation_created');
+    if(row.freeReservation){
+        // Reserve/commit capacity first, then persist a worker wake-up before
+        // responding. Failure to wake Discord must never undo a valid signup.
+        try{await require('../automation/free-places-digest').requestClaimRefresh();}
+        catch(error){console.warn('Free Server Discord claim wake-up failed:',error.message);}
+        refreshFreePlacesStatus('reservation_created');
+    }
     return{...row,token:raw};
 }
 
