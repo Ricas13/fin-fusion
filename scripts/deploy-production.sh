@@ -171,7 +171,7 @@ log 'Preparing isolated runtime database credentials'
 if command -v node >/dev/null 2>&1; then
   node scripts/prepare-production-env.js --write
 else
-  docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT:/work" -w /work node:22-alpine node scripts/prepare-production-env.js --write
+  docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT:/work" -w /work node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 node scripts/prepare-production-env.js --write
 fi
 
 log 'Validating Compose configuration'
