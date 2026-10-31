@@ -147,8 +147,8 @@
     document.querySelectorAll('.opCard').forEach(card=>{
       const title=text(card.querySelector('.opCardHead h2'));
       const ids={
-        'Plans & Subscriptions':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Stremio':'customer-stremio',
-        'Overseerr':'customer-overseerr','Customer / Portal':'customer-portal','Discord':'customer-discord',
+        'Plans & Subscriptions':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Jellyfin':'customer-jellyfin','Stremio':'customer-stremio',
+        'Overseerr':'customer-overseerr','Request service':'customer-overseerr','Customer / Portal':'customer-portal','Discord':'customer-discord',
         'Access / Holds':'customer-holds','Danger Zone':'customer-danger'
       };
       if(ids[title])card.id=ids[title];
@@ -269,7 +269,7 @@
     actions.dataset.mockPolished='1';
     if(![...actions.querySelectorAll('button,a,summary')].some(node=>text(node)==='View billing history')){
       const billing=document.createElement('button');billing.type='button';billing.className='mockCardButton';billing.textContent='View billing history';
-      billing.addEventListener('click',()=>{const payments=[...document.querySelectorAll('.customer360Core > .opDisclosure')].find(node=>text(node.querySelector('summary > span'))==='Payments');if(payments){payments.open=true;payments.scrollIntoView({block:'center',behavior:'smooth'});}});
+      billing.addEventListener('click',()=>{const payments=document.getElementById('customer-payments');if(payments){payments.open=true;payments.scrollIntoView({block:'center',behavior:'smooth'});}});
       actions.appendChild(billing);
     }
   }
@@ -290,14 +290,26 @@
 
   function moveAdvancedIntoBottomStack(){
     const advanced=document.querySelector('.approvedAdvanced');
-    const core=document.querySelector('.customer360Core');
-    if(!advanced||!core||advanced.dataset.relocated==='1')return;
-    const disclosures=[...core.querySelectorAll(':scope > .opDisclosure')];
-    const activity=disclosures.find(node=>text(node.querySelector('summary > span'))==='Activity');
+    const tools=document.querySelector('[data-customer-admin-tools]');
+    if(!advanced||!tools||advanced.dataset.relocated==='1')return;
     advanced.dataset.relocated='1';
-    if(activity)core.insertBefore(advanced,activity);else core.appendChild(advanced);
+    tools.insertBefore(advanced,tools.firstChild);
   }
 
+  // Links across the app use ?tab=billing / ?tab=activity (and #hashes) to mean "open that
+  // part of the customer". Open and scroll to the matching section once the page is ready.
+  function openRequestedSection(){
+    if(document.body.dataset.customerSectionOpened==='1')return;
+    const tab=new URLSearchParams(location.search).get('tab');
+    const hash=decodeURIComponent((location.hash||'').replace(/^#/,''));
+    const byTab={billing:'customer-payments',payments:'customer-payments',activity:'customer-activity',services:'customer-services'};
+    const id=hash||byTab[tab]||'';
+    const target=id?document.getElementById(id):null;
+    if(!target)return;
+    document.body.dataset.customerSectionOpened='1';
+    if(target.tagName==='DETAILS')target.open=true;
+    setTimeout(()=>target.scrollIntoView({block:'start',behavior:'smooth'}),60);
+  }
 
   function consolidateSummaryMetrics(){
     const metrics=document.querySelector('.customerMockMetrics');
@@ -338,7 +350,17 @@
     });
   }
 
-  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();consolidateSummaryMetrics();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();wireManualGrantForms();}
+  // Popover forms close on Escape, on a click outside them, or on the dimmed backdrop (the
+  // <details> element itself, which is what a click on its ::before backdrop targets).
+  const POPOVERS='.customer360Core details.opInlineDetails[open],.customer360Core details.compactMovedAction[open],.customer360Core details.compactDangerAction[open],.customer360Core details.compactForceAction[open]';
+  function wirePopoverDismiss(){
+    if(document.body.dataset.customerPopoverDismiss==='1')return;
+    document.body.dataset.customerPopoverDismiss='1';
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')document.querySelectorAll(POPOVERS).forEach(node=>{node.open=false;});});
+    document.addEventListener('click',event=>{document.querySelectorAll(POPOVERS).forEach(node=>{if(event.target===node||!node.contains(event.target))node.open=false;});});
+  }
+
+  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();consolidateSummaryMetrics();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();openRequestedSection();wirePopoverDismiss();wireManualGrantForms();}
   enhance();
   requestAnimationFrame(enhance);
   setTimeout(enhance,250);

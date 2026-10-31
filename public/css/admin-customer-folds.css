@@ -1,0 +1,106 @@
+/* Customer page: one collapsible style, readable action buttons, popover forms.
+   Loaded after the legacy customer styles, so these rules intentionally win. */
+
+.customer360Core{gap:10px!important}
+
+/* One fold component: title, one-line summary, chevron on the right. */
+.customer360Core .opFold,
+.customer360Core .approvedAdvanced{
+  border:1px solid var(--border,#29333d)!important;
+  border-radius:9px!important;
+  background:rgba(255,255,255,.012)!important;
+  margin:0!important;
+  opacity:1!important;
+}
+.customer360Core .opFold>summary,
+.customer360Core .approvedAdvanced>summary{
+  display:grid!important;
+  grid-template-columns:minmax(120px,auto) minmax(0,1fr) 18px;
+  align-items:center;
+  gap:14px;
+  padding:11px 14px!important;
+  cursor:pointer;
+  list-style:none;
+  font-size:.8rem!important;
+  font-weight:700;
+}
+.customer360Core .opFold>summary::-webkit-details-marker,
+.customer360Core .approvedAdvanced>summary::-webkit-details-marker{display:none}
+.customer360Core .opFold>summary:hover,
+.customer360Core .approvedAdvanced>summary:hover{background:rgba(255,255,255,.025)}
+.customer360Core .opFold>summary:focus-visible,
+.customer360Core .approvedAdvanced>summary:focus-visible{outline:2px solid #4fb8f4;outline-offset:-2px;border-radius:9px}
+.customer360Core summary .opFoldTitle{font-weight:800!important;font-size:.82rem!important;color:inherit}
+.customer360Core .opFold>summary small,
+.customer360Core .approvedAdvanced>summary small{
+  color:var(--muted)!important;font-weight:500!important;font-size:.7rem!important;text-align:right;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.customer360Core .opFold>summary .opChevron,
+.customer360Core .approvedAdvanced>summary .opChevron{
+  width:7px;height:7px;justify-self:center;margin-top:-3px;
+  border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);
+  transform:rotate(45deg);transition:transform .15s ease;
+}
+.customer360Core .opFold[open]>summary .opChevron,
+.customer360Core .approvedAdvanced[open]>summary .opChevron{transform:rotate(-135deg);margin-top:3px}
+.customer360Core .opFold[open]>summary,
+.customer360Core .approvedAdvanced[open]>summary{border-bottom:1px solid var(--border,#29333d)}
+.customer360Core .opFold>.opDisclosureBody,
+.customer360Core .approvedAdvanced>div{padding:12px 14px 14px!important}
+.customer360Core .opFold--danger>summary .opFoldTitle{color:var(--danger,#e16c72)}
+.customer360Core .opFold--danger{border-color:color-mix(in srgb,var(--danger,#e16c72) 40%,var(--border,#29333d))!important}
+.customer360Core .approvedAdvanced summary .opFoldTitle{color:#e0b24a!important}
+@media(prefers-reduced-motion:reduce){.customer360Core .opChevron{transition:none!important}}
+@media(max-width:700px){
+  .customer360Core .opFold>summary,
+  .customer360Core .approvedAdvanced>summary{grid-template-columns:minmax(0,1fr) 18px}
+  .customer360Core .opFold>summary .opFoldTitle,
+  .customer360Core .approvedAdvanced>summary .opFoldTitle{grid-column:1;grid-row:1}
+  .customer360Core .opFold>summary .opChevron,
+  .customer360Core .approvedAdvanced>summary .opChevron{grid-column:2;grid-row:1}
+  .customer360Core .opFold>summary small,
+  .customer360Core .approvedAdvanced>summary small{grid-column:1/-1;grid-row:2;text-align:left!important;justify-self:start!important;margin:0!important;white-space:normal}
+}
+
+/* Section labels read as headings, not as something that can be opened. */
+.customer360SectionLabel{margin-top:6px}
+.customer360AdminLabel strong{color:#e0b24a}
+
+/* Billing tile that only appears when something needs attention. */
+.customer360GlanceWarn{border-color:#8a6a1f!important;background:rgba(224,178,74,.07)!important}
+.customer360GlanceWarn a{color:#e0b24a}
+
+/* Action buttons were ~9px; make them readable. */
+.customer360Core .opActions .button,
+.customer360Core .opActions .mockCardButton,
+.customer360Core .opActions .mockDangerButton,
+.customer360Core .opActions .mockForceButton,
+.customer360Core .mockCardButton,
+.customer360Core .mockDangerButton,
+.customer360Core .mockForceButton{
+  font-size:.74rem!important;
+  min-height:32px!important;
+  padding:6px 10px!important;
+  line-height:1.2;
+}
+.customer360Core .opState{font-size:.78rem!important}
+.customer360Core .opCardHead h2{font-size:.92rem!important}
+
+/* The invite-URL row starts hidden; the card's grid styling used to override [hidden]. */
+.customerClaimInviteQuickResult[hidden]{display:none!important}
+
+/* Every multi-field action opens as a centred popover instead of stretching its card. */
+.customer360Core .opInlineDetails{border-top:0!important;padding-top:0!important}
+.customer360Core .opInlineDetails>summary{
+  display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:6px 10px;
+  border:1px solid #315a78;border-radius:6px;font-size:.74rem;font-weight:600;cursor:pointer;
+}
+.customer360Core .opInlineDetails>summary:hover{border-color:#4fb8f4}
+.customer360Core .opInlineDetails[open]::before{content:'';position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:69}
+.customer360Core .opInlineDetails[open]>.opInlineForm{
+  position:fixed;left:50%;top:14vh;transform:translateX(-50%);z-index:70;
+  width:min(440px,92vw);max-height:76vh;overflow:auto;margin:0;padding:16px;
+  background:#101922;border:1px solid var(--border,#29333d);border-radius:10px;
+  box-shadow:0 18px 42px rgba(0,0,0,.55);
+}

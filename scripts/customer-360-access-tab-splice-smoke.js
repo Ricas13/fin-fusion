@@ -90,7 +90,9 @@ assert(failedHtml.includes('No eligible free server'),'failed provisioning detai
 assert(!failedHtml.includes('Customer control'),'the retired numbered Customer control grid must not remain alongside the action-first cards');
 const reconcileActions=(failedHtml.match(/\/admin\/users\/cust-1\/manage\/reconcile/g)||[]).length;
 assert(reconcileActions>=1,'the page must expose a visible reconcile entry point');
-assert(failedHtml.indexOf('>Activity<')<failedHtml.indexOf('>Payments<')&&failedHtml.indexOf('>Payments<')<failedHtml.indexOf('>Logs<'),'the bottom support disclosures must be Activity, Payments, then Logs');
+assert(failedHtml.indexOf('>Payments<')<failedHtml.indexOf('>Activity<')&&failedHtml.indexOf('>Activity<')<failedHtml.indexOf('>Logs<'),'Payments must sit with the essentials, ahead of the read-only Activity and Logs records');
+assert(failedHtml.includes('id="customer-payments"')&&failedHtml.includes('id="customer-activity"'),'payment and activity sections must expose stable anchors for ?tab= links');
+assert((failedHtml.match(/class="opDisclosure opFold/g)||[]).length>=5&&!failedHtml.includes('<details class="customer360Group'),'every collapsible section must use the single fold component');
 assert(!failedHtml.includes('<h2>Provisioning history</h2>'),'provisioning history must live in Logs instead of a fourth lower section');
 
 const blockedDetail=fixture({
