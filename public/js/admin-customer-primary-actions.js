@@ -128,8 +128,7 @@
     const details=document.createElement('details');details.className='customerMockMore';
     const summary=document.createElement('summary');summary.className='mockTopButton';summary.title='More customer actions';summary.textContent='•••';
     const menu=document.createElement('div');menu.className='customerMockMoreMenu';
-    const password=document.querySelector(`a[href="/admin/customer-jellyfin-password?customerId=${customerId}"]`);
-    if(password){const link=document.createElement('a');link.href=password.href;link.textContent='Reset Jellyfin password';menu.appendChild(link);}
+    // Reset Jellyfin password already lives on the Jellyfin card; a second copy here only duplicated it.
     const advanced=document.createElement('button');advanced.type='button';advanced.textContent='Advanced / Recovery tools';
     advanced.addEventListener('click',()=>{details.open=false;const panel=document.querySelector('.approvedAdvanced');if(panel){panel.open=true;panel.scrollIntoView({block:'center',behavior:'smooth'});}});
     menu.appendChild(advanced);
@@ -193,12 +192,15 @@
       const action=form.getAttribute('action')||'';
       return action.endsWith('/manage/make-permanent-user')||action.endsWith('/manage/normal-automation');
     });
-    if(automation&&portalActions){
+    // "Permanent" and "Return to automation" are access overrides, so they sit with the other
+    // Jellyfin access overrides rather than in the portal-account card.
+    const accessActions=document.querySelector('#customer-jellyfin .opActions')||portalActions;
+    if(automation&&accessActions){
       const returning=(automation.getAttribute('action')||'').endsWith('/manage/normal-automation');
       automation.className='plainForm';
       const button=automation.querySelector('button');
       if(button){button.className='mockCardButton';button.textContent=returning?'Return to automation':'Make customer permanent';}
-      portalActions.appendChild(automation);
+      accessActions.appendChild(automation);
     }
 
     const grant=primary.querySelector('.actionTileDetails.grant');

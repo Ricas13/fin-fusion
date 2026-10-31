@@ -3,7 +3,9 @@
 // High-impact customer operations requested by the operator-experience layer.
 // They are registered separately from the historical bulk handlers so each can
 // preserve its own idempotency and lifecycle safety rules.
-const {query}=require('../db');
+const {query,transaction}=require('../db');
+const bulkOperations=require('./bulk-operations');
+const planExpiry=require('../entitlements/plan-expiry');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const jellyfinAdminControl=require('../jellyfin/admin-control');
@@ -68,6 +70,32 @@ bulkWorker.registerHandler('cancel_plan',async item=>{
   const payload={...result,reason,jobItemId:item.id};
   await audit('admin.bulk.cancel_plan',item.customer_id,actor,payload);
   return payload;
+});
+
+bulkWorker.registerHandler('extend_days',async item=>{
+  const actor=await actorFor(item),days=Number(item.params?.days),reason=String(item.params?.reason||'Bulk service extension').trim().slice(0,500);
+  if(!Number.isInteger(days)||days<1||days>365)throw new Error('Days must be a whole number between 1 and 365');
+  if(reason.length<3)throw new Error('Reason must be at least 3 characters');
+  // Same selection rules as the individual extend action, including the refund/chargeback boundary.
+  const sub=await bulkOperations.currentSubscription(item.customer_id);
+  const subId=sub?.subscription_id||sub?.id;
+  if(!subId)throw new Error('Customer has no live plan to extend');
+  if(planExpiry.isFreeTier(sub))throw new Error('Free Access has no expiry to extend');
+  const reference=`bulk:${item.job_id}:${item.id}`;
+  // The unique (source, reference_id) event makes a retried item add the days exactly once.
+  const added=await transaction(async client=>{
+    const current=await client.query('SELECT service_extension_days FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subId,item.customer_id]);
+    if(!current.rowCount)throw new Error('Subscription is no longer available');
+    if(Number(current.rows[0].service_extension_days||0)+days>3650)throw new Error('Extension would exceed the 3,650-day safety limit');
+    const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,actor_user_id,metadata) VALUES($1,$2,'admin_bulk',$3,$4,$5,$6::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,item.customer_id,days,reference,actor,JSON.stringify({mode:'bulk',reason,jobItemId:item.id})]);
+    if(!inserted.rowCount)return 0;
+    await client.query('UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1 AND customer_id=$3',[subId,days,item.customer_id]);
+    return days;
+  });
+  if(added)await audit('admin.bulk.extend_days',item.customer_id,actor,{subscriptionId:subId,days:added,reason,jobItemId:item.id});
+  try{await provisioning.reconcileCustomer(item.customer_id);}
+  catch(error){throw new Error(`Days were added, but service reconciliation still failed: ${String(error?.message||error).slice(0,300)}`);}
+  return{subscriptionId:subId,addedDays:added,alreadyApplied:!added,reason,chargedProvider:false,jobItemId:item.id};
 });
 
 bulkWorker.registerHandler('force_server',async item=>{

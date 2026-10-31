@@ -30,9 +30,6 @@
   .planControlRoom.stremioPlanReference #product{
     grid-column:span 2!important;
   }
-  .planControlRoom.stremioPlanReference #product:has(details.planCardDetails[open]){
-    grid-column:1/-1!important;
-  }
 }
 
 @media(max-width:819px){

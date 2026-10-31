@@ -1,0 +1,92 @@
+'use strict';
+
+// Regression coverage for the admin usability pass: crypto (Plisio) payments must be
+// visible in Orders, unconfirmed crypto checkouts must be surfaced for follow-up, and the
+// bulk "Extend by days" action must apply its days exactly once per item.
+
+require('dotenv').config();
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('admin usability DB smoke')) process.exit(0);
+
+const assert = require('assert');
+const crypto = require('crypto');
+const { query, getPool } = require('../src/db');
+const orders = require('../src/platform/admin-orders');
+const bulkJobs = require('../src/platform/bulk-jobs');
+const bulkWorker = require('../src/jellyfin/bulk-worker');
+require('../src/customers/operator-bulk-operations'); // registers extend_days
+
+const suffix = crypto.randomBytes(4).toString('hex');
+const created = { customers: [], plans: [] };
+
+async function makePlan() {
+  const row = await query(`
+    INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,is_free_tier)
+    VALUES($1,$2,'jellyfin','direct','month',30,999,'GBP',1,'premium',TRUE,TRUE,FALSE) RETURNING id
+  `, [`usability-${suffix}`, `Usability ${suffix}`]);
+  created.plans.push(row.rows[0].id);
+  return row.rows[0].id;
+}
+
+async function makeCustomer(label) {
+  const row = await query('INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id',
+    [`Usability ${label} ${suffix}`, `usability-${label}-${suffix}@example.invalid`]);
+  created.customers.push(row.rows[0].id);
+  return row.rows[0].id;
+}
+
+async function makeIntent(customerId, planId, state, createdAgo, label) {
+  await query(`
+    INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,provider,checkout_mode,state,nonce_hash,provider_checkout_id,expires_at,created_at,commercial_snapshot)
+    VALUES('customer',$1,$2,'plisio','payment',$3,$4,$5,NOW()+INTERVAL '1 day',NOW()-$6::interval,$7::jsonb)
+  `, [customerId, planId, state, `nonce-${label}-${suffix}`, `plisio-${label}-${suffix}`, createdAgo, JSON.stringify({ priceMinor: 999, currency: 'GBP' })]);
+}
+
+(async () => {
+  const planId = await makePlan();
+
+  // Plisio purchases are listed and filterable.
+  const buyer = await makeCustomer('buyer');
+  await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','plisio',NOW(),NOW()+INTERVAL '30 days')`, [buyer, planId]);
+  const listed = await orders.purchases({ page: 1, provider: 'plisio', q: `Usability buyer ${suffix}` });
+  assert.strictEqual(listed.total, 1, 'Orders must list Plisio purchases');
+  assert.strictEqual(listed.rows[0].source, 'plisio');
+  assert.strictEqual(orders.providerLabel('plisio'), 'Plisio');
+  assert.strictEqual(orders.parsePurchaseFilters({ orderProvider: 'plisio' }, { from: '', to: '' }).provider, 'plisio', 'the provider filter must accept Plisio');
+
+  // Only stale, unsettled crypto checkouts need follow-up.
+  const stale = await makeCustomer('stale'), fresh = await makeCustomer('fresh'), done = await makeCustomer('done');
+  await makeIntent(stale, planId, 'open', '2 hours', 'stale');
+  await makeIntent(fresh, planId, 'open', '5 minutes', 'fresh');
+  await makeIntent(done, planId, 'completed', '2 hours', 'done');
+  const issues = (await orders.checkoutIssues()).filter(row => created.customers.includes(row.customer_id));
+  assert.deepStrictEqual(issues.map(row => row.customer_id), [stale], 'only the stale unsettled crypto checkout must be surfaced');
+  assert.strictEqual(issues[0].kind, 'checkout');
+  assert.strictEqual(Number(issues[0].amount_minor), 999);
+
+  // Bulk extend adds the days once, even if the item is processed again.
+  const extendee = await makeCustomer('extendee');
+  const sub = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '10 days') RETURNING id`, [extendee, planId])).rows[0];
+  const job = await bulkJobs.createJob('extend_days', { days: 7, reason: 'usability smoke' });
+  await bulkJobs.enqueueItems(job.job.id, [extendee]);
+  await bulkWorker.processBatch();
+  const item = (await query('SELECT id,status,last_error FROM background_job_items WHERE job_id=$1', [job.job.id])).rows[0];
+  assert.strictEqual(item.status, 'completed', `bulk extend must complete (${item.last_error})`);
+  const after = (await query('SELECT service_extension_days FROM subscriptions WHERE id=$1', [sub.id])).rows[0];
+  assert.strictEqual(Number(after.service_extension_days), 7, 'bulk extend must add the requested days');
+  const events = await query(`SELECT COUNT(*)::int n FROM subscription_service_extension_events WHERE subscription_id=$1 AND source='admin_bulk'`, [sub.id]);
+  assert.strictEqual(events.rows[0].n, 1, 'one extension event per item');
+  const audited = await query(`SELECT 1 FROM audit_log WHERE action='admin.bulk.extend_days' AND entity_id=$1::text`, [extendee]);
+  assert(audited.rowCount >= 1, 'bulk extend must be audited');
+})()
+  .then(() => console.log('admin usability DB smoke: ok'))
+  .catch(error => { console.error(error.stack || error); process.exitCode = 1; })
+  .finally(async () => {
+    await query(`DELETE FROM background_jobs WHERE job_type='extend_days' AND params->>'reason'='usability smoke'`).catch(() => {});
+    await query('DELETE FROM billing_checkout_intents WHERE customer_id=ANY($1::uuid[])', [created.customers]).catch(() => {});
+    await query('DELETE FROM subscriptions WHERE customer_id=ANY($1::uuid[])', [created.customers]).catch(() => {});
+    await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [created.customers]).catch(() => {});
+    await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [created.plans]).catch(() => {});
+    await getPool().end().catch(() => {});
+    process.exit(process.exitCode || 0);
+  });

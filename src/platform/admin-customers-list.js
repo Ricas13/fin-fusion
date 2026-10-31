@@ -172,14 +172,14 @@ function rowState(x){
         return{access:'Ready',tone:'good',reason:'All good',action:'Open'};
     }
     if(blocked){
-        if(jfCount>0)return{access:'Access removed',tone:'bad',reason:'Jellyfin access still present',action:'Remove access'};
+        if(jfCount>0)return{access:'Access removed',tone:'bad',reason:'Jellyfin access still present',action:'Review'};
         if(x.is_free_tier)return{access:'Inactive',tone:'',reason:'Free access is inactive',action:'Open'};
         if(x.subscription_status==='past_due')return{access:'Payment ended',tone:'warn',reason:'Access removed after payment issue',action:'Billing'};
         return{access:'Access removed',tone:'',reason:'Service access is blocked',action:'Open'};
     }
     if(x.plan_id){
         const stale=jfCount>0;
-        return{access:'Expired',tone:stale?'bad':'warn',reason:stale?'Jellyfin access still present':'No current entitlement',action:stale?'Remove access':'Open'};
+        return{access:'Expired',tone:stale?'bad':'warn',reason:stale?'Jellyfin access still present':'No current entitlement',action:stale?'Review':'Open'};
     }
     return{access:'No entitlement',tone:'',reason:'No active subscription',action:'Open'};
 }

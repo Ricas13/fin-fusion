@@ -219,6 +219,9 @@
       if(key==='_csrf')continue;
       entries.push([key,typeof value==='string'?value:`[file:${value.name}:${value.size}]`]);
     }
+    // Layout scripts move fields between a card's body and its Advanced section
+    // after the baseline is taken; field order is not a user edit.
+    entries.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:a[1]<b[1]?-1:a[1]>b[1]?1:0);
     return JSON.stringify(entries);
   }
 

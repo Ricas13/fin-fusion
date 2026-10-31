@@ -252,6 +252,7 @@ module.exports = {
       "node scripts/payment-event-replay-db-smoke.js",
       "node scripts/provider-checkout-recovery-db-smoke.js",
       "node scripts/notification-payment-receipts-db-smoke.js",
+      "node scripts/admin-usability-db-smoke.js",
       "node scripts/provider-operation-recovery-db-smoke.js"
     ],
     "check:db:concurrency": [
