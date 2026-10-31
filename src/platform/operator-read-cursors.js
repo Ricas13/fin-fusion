@@ -25,6 +25,19 @@ function exactSql(expression) {
 }
 const EXACT_WATERMARK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
+// Is a row newer than the saved "seen" watermark? Compares the database's exact microsecond text
+// when both sides have it (fixed-width UTC strings sort lexicographically), and falls back to
+// millisecond dates for older cursors. Rows must therefore select exactSql(created_at) too, so a
+// row created in the same millisecond as the watermark is not rounded away.
+function isAfterWatermark(createdExact, createdAt, seen) {
+    if (seen === undefined || seen === null || seen === '') return false;
+    const seenText = seen instanceof Date ? '' : String(seen);
+    if (createdExact && EXACT_WATERMARK.test(seenText)) return String(createdExact) > seenText;
+    const since = new Date(seen).getTime();
+    const created = new Date(createdAt).getTime();
+    return Number.isFinite(since) && Number.isFinite(created) && created > since;
+}
+
 function area(value) {
     const key = String(value || '').trim().toLowerCase();
     if (!AREAS.has(key)) throw new Error('Invalid operator read area.');
@@ -93,4 +106,4 @@ async function markSeen(adminUserId, value, seenThrough) {
     });
 }
 
-module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, EXACT_WATERMARK, exactSql, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };
+module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, EXACT_WATERMARK, exactSql, isAfterWatermark, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };

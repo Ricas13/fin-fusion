@@ -18,11 +18,16 @@ const bcrypt = require('bcryptjs');
 const { query, getPool } = require('../src/db');
 const readCursors = require('../src/platform/operator-read-cursors');
 const operatorState = require('../src/platform/admin-operator-state');
+const customerFilters = require('../src/platform/customer-filters');
+const customersList = require('../src/platform/admin-customers-list');
+const adminOrders = require('../src/platform/admin-orders');
 
 const suffix = crypto.randomBytes(5).toString('hex');
 let adminId = null;
 const customers = [];
 const tickets = [];
+const subscriptions = [];
+let planId = null;
 
 // Far enough in the future to be the newest row in any database, so other data cannot interfere.
 const FUTURE = "date_trunc('second',NOW())+INTERVAL '2 hours'";
@@ -97,6 +102,26 @@ async function exactOf(table, id) {
   await makeTicket(owner, 223900);
   assert.strictEqual((await operatorState.snapshot(adminId)).counts.tickets, 1, 'a ticket created in the same millisecond afterwards must stay unread');
 
+  // --- Per-row "New" labels must use the same exact comparison as the header counts.
+  // Two customers in the same millisecond; the watermark is the first one's exact time.
+  const rows = (await customerFilters.listCustomers(customersList.parseFilters({}), null, { page: 1, pageSize: 100, sort: 'registered', dir: 'desc' })).rows;
+  const rowFirst = rows.find(row => row.id === first), rowSecond = rows.find(row => row.id === second);
+  assert(rowFirst && rowSecond, 'both customers must be in the list');
+  assert.strictEqual(rowFirst.created_exact, firstExact, 'list rows must carry the exact creation time');
+  assert.strictEqual(readCursors.isAfterWatermark(rowFirst.created_exact, rowFirst.created_at, firstExact), false, 'the item the administrator already saw must not be labelled New');
+  assert.strictEqual(readCursors.isAfterWatermark(rowSecond.created_exact, rowSecond.created_at, firstExact), true, 'an item created in the same millisecond afterwards must be labelled New');
+
+  // Orders: the rendered table carries one New pill, for the later purchase only.
+  planId = (await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,is_free_tier) VALUES($1,$2,'jellyfin','direct','month',30,999,'GBP',1,'premium',TRUE,TRUE,FALSE) RETURNING id`, [`cursor-${suffix}`, `Cursor plan ${suffix}`])).rows[0].id;
+  const orderBuyerA = await makeCustomer(323456), orderBuyerB = await makeCustomer(323900);
+  const subA = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323456 microseconds') RETURNING id`, [orderBuyerA, planId])).rows[0].id;
+  const subB = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323900 microseconds') RETURNING id`, [orderBuyerB, planId])).rows[0].id;
+  subscriptions.push(subA, subB);
+  const orderRows = (await adminOrders.purchases({ page: 1, planId })).rows;
+  const orderSeen = await exactOf('subscriptions', subA);
+  const html = adminOrders.orderTable({ rows: orderRows, total: orderRows.length, page: 1, pages: 1 }, orderSeen);
+  assert.strictEqual((html.match(/>New</g) || []).length, 1, 'only the purchase created after the watermark is labelled New');
+
   // --- Legacy clients that still send a millisecond epoch keep working (rounded up so the newest item clears).
   await query('DELETE FROM admin_nav_read_state WHERE admin_user_id=$1', [adminId]);
   const legacy = await operatorState.snapshot(adminId);
@@ -108,6 +133,8 @@ async function exactOf(table, id) {
   .finally(async () => {
     await query('DELETE FROM admin_nav_read_state WHERE admin_user_id=$1', [adminId]).catch(() => {});
     await query('DELETE FROM support_tickets WHERE id=ANY($1::uuid[])', [tickets]).catch(() => {});
+    await query('DELETE FROM subscriptions WHERE id=ANY($1::uuid[])', [subscriptions]).catch(() => {});
+    if (planId) await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
     await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [customers]).catch(() => {});
     await query('DELETE FROM app_users WHERE id=$1', [adminId]).catch(() => {});
     await getPool().end().catch(() => {});
