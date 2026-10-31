@@ -17,6 +17,14 @@ const ACTIONABLE_PAYMENT_EVENT_SQL = `(processing_error IS NOT NULL OR processed
         )
     )`;
 
+// JavaScript dates and the epoch numbers the browser used to send only hold milliseconds, while
+// PostgreSQL timestamps hold microseconds. Watermarks therefore travel as lossless UTC text with
+// microseconds, produced by the database itself, and go back into SQL as timestamptz untouched.
+function exactSql(expression) {
+    return `to_char((${expression}) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+}
+const EXACT_WATERMARK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
 function area(value) {
     const key = String(value || '').trim().toLowerCase();
     if (!AREAS.has(key)) throw new Error('Invalid operator read area.');
@@ -39,7 +47,7 @@ async function list(adminUserId) {
     if (!adminUserId) return {};
     const keys = [...AREAS].map(key => `${NAV_PREFIX}${key}`);
     const result = await query(
-        `SELECT nav_key,last_seen_at FROM admin_nav_read_state WHERE admin_user_id=$1 AND nav_key=ANY($2::text[])`,
+        `SELECT nav_key,${exactSql('last_seen_at')} AS last_seen_at FROM admin_nav_read_state WHERE admin_user_id=$1 AND nav_key=ANY($2::text[])`,
         [adminUserId, keys]
     );
     return Object.fromEntries(result.rows.map(row => [row.nav_key.slice(NAV_PREFIX.length), row.last_seen_at]));
@@ -47,15 +55,15 @@ async function list(adminUserId) {
 
 async function latestFor(client, key) {
     if (key === 'customers') {
-        return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM customers WHERE created_at>NOW()-INTERVAL '7 days'`)).rows[0].seen_at;
+        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM customers WHERE created_at>NOW()-INTERVAL '7 days'`)).rows[0].seen_at;
     }
     if (key === 'orders') {
-        return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
+        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
     }
     if (key === 'payments') {
-        return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${ACTIONABLE_PAYMENT_EVENT_SQL}`)).rows[0].seen_at;
+        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${ACTIONABLE_PAYMENT_EVENT_SQL}`)).rows[0].seen_at;
     }
-    return (await client.query(`SELECT COALESCE(MAX(COALESCE(last_customer_reply_at,created_at)),NOW()) seen_at FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0].seen_at;
+    return (await client.query(`SELECT ${exactSql('COALESCE(MAX(COALESCE(last_customer_reply_at,created_at)),NOW())')} seen_at FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0].seen_at;
 }
 
 async function captureSeenThrough(value) {
@@ -68,11 +76,11 @@ async function markSeen(adminUserId, value, seenThrough) {
     const key = area(value);
     const keyName = navKey(key);
     const seenAt = readWatermark(seenThrough);
-    // JavaScript dates (and the epoch the browser sends) only carry milliseconds, while the
-    // database timestamps carry microseconds. Storing the truncated value leaves the newest
-    // item a fraction of a millisecond "newer" than the watermark, so it never cleared.
-    // Rounding up by one millisecond covers everything up to and including that item.
-    const storedSeenAt = new Date(seenAt.getTime() + 1);
+    // An exact microsecond watermark (what the snapshot and the page captures now carry) is stored
+    // untouched, so it covers the newest item shown and nothing created after it, even within the
+    // same millisecond. A legacy millisecond value is rounded up by one millisecond so the newest
+    // item still clears (at the cost of that one-millisecond window).
+    const storedSeenAt = typeof seenThrough === 'string' && EXACT_WATERMARK.test(seenThrough) ? seenThrough : new Date(seenAt.getTime() + 1);
     return transaction(async client => {
         const result = await client.query(`
             INSERT INTO admin_nav_read_state(admin_user_id,nav_key,last_seen_at)
@@ -85,4 +93,4 @@ async function markSeen(adminUserId, value, seenThrough) {
     });
 }
 
-module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };
+module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, EXACT_WATERMARK, exactSql, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };

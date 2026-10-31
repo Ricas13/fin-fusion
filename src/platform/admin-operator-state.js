@@ -46,18 +46,18 @@ async function headerMetrics(){
 async function snapshot(adminUserId=null){
   const seen=adminUserId?await readCursors.list(adminUserId):{};
   const [customers,orders,attentionSummary,servers,payments,ticketSummary,metrics]=await Promise.all([
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM customers WHERE created_at>NOW()-INTERVAL '7 days' AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.customers||null]),
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated,to_char(MAX(created_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') updated_exact FROM customers WHERE created_at>NOW()-INTERVAL '7 days' AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.customers||null]),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated,to_char(MAX(created_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') updated_exact FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
     attention.openSummary(),
     query(`SELECT COUNT(*)::int n,MAX(last_health_check) updated FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN ('degraded','offline')`),
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${readCursors.ACTIONABLE_PAYMENT_EVENT_SQL} AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.payments||null]),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated,to_char(MAX(created_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') updated_exact FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${readCursors.ACTIONABLE_PAYMENT_EVENT_SQL} AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.payments||null]),
     tickets.staffQueueSummary(seen.tickets||null),
     headerMetrics()
   ]);
   const rows={
     customers:customers.rows[0],
     orders:orders.rows[0],
-    tickets:{n:ticketSummary.count,updated:ticketSummary.updatedAt},
+    tickets:{n:ticketSummary.count,updated:ticketSummary.updatedAt,updated_exact:ticketSummary.updatedExact},
     attention:{n:attentionSummary.count,updated:attentionSummary.updatedAt},
     servers:servers.rows[0],
     payments:payments.rows[0]
@@ -65,6 +65,8 @@ async function snapshot(adminUserId=null){
   return {
     counts:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,Number(v?.n||0)])),
     updatedAt:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,epoch(v?.updated)])),
+    // Lossless microsecond watermarks the browser sends back unchanged when it acknowledges an area.
+    updatedExact:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,v?.updated_exact||null])),
     metrics
   };
 }
