@@ -137,9 +137,12 @@ async function paymentIssues(){
 // Plisio invoice would otherwise be invisible here. An open invoice is normal while the
 // customer can still pay it, so it only counts as a problem once its payment window (plus a
 // 30-minute grace for the worker to close it) has passed without the provider settling or
-// closing it. Failed checkouts count straight away. Invoices the provider has already reported
-// as expired or cancelled are abandoned, not problems, and drop out as soon as the worker
-// settles or closes them.
+// closing it. Failed checkouts count straight away. The states are the ones the recovery worker
+// itself still investigates (open, failed, and locally expired or cancelled while the provider
+// has not reported an outcome). Invoices the provider has already closed (provider_terminal_at)
+// are abandoned, not problems, and drop out as soon as the worker settles or closes them.
+// Beyond the worker's seven-day lookback nothing is retried, so such invoices also stop
+// appearing here; an unresolved invoice that old needs a separate exception queue.
 async function checkoutIssues(){
  const result=await query(`SELECT i.id checkout_id,i.customer_id,i.created_at,i.state,i.provider,
   COALESCE(NULLIF(c.display_name,''),NULLIF(u.username,''),NULLIF(c.email,''),NULLIF(u.email,''),'Customer') customer,
@@ -149,10 +152,10 @@ async function checkoutIssues(){
   LEFT JOIN customers c ON c.id=i.customer_id
   LEFT JOIN app_users u ON u.id=c.user_id
   LEFT JOIN plans p ON p.id=i.plan_id
-  WHERE i.provider='plisio' AND i.state IN('open','failed') AND i.provider_checkout_id IS NOT NULL
+  WHERE i.provider='plisio' AND i.state IN('open','failed','expired','cancelled') AND i.provider_checkout_id IS NOT NULL
     AND i.provider_terminal_at IS NULL
     AND (i.state='failed' OR i.created_at<NOW()-($1::int*INTERVAL '1 minute'))
-    AND i.created_at<NOW()-INTERVAL '30 minutes' AND i.created_at>NOW()-INTERVAL '7 days'
+    AND i.created_at>NOW()-INTERVAL '7 days'
   ORDER BY i.created_at DESC LIMIT 25`,[plisio.INVOICE_LIFETIME_MINUTES+30]);
  return result.rows.map(row=>({...row,kind:'checkout',source:row.provider,attempts:0,last_error:row.state==='failed'?'Crypto checkout failed':'Crypto invoice is past its payment window and Plisio has not settled or closed it',next_attempt_at:null}));
 }
