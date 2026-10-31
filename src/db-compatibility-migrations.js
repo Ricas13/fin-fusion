@@ -11,7 +11,8 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261007182500_stremio_install_token_aliases.sql',
   '20261007183000_stremio_retired_token_provider.sql',
   '20261007184500_restore_stremio_bounded_index_cadence.sql',
-  '20261007190000_stremio_external_index_shadow.sql'
+  '20261007190000_stremio_external_index_shadow.sql',
+  '20261031230000_checkout_operator_resolution.sql'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {
