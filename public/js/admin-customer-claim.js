@@ -13,7 +13,7 @@
 
   function compactPortalCard() {
     return [...document.querySelectorAll('.opCard')].find(card =>
-      card.querySelector('.opCardHead h2')?.textContent?.trim() === 'Customer / Portal'
+      card.querySelector('.opCardHead h2')?.textContent?.trim() === 'Customer portal'
     ) || null;
   }
 
