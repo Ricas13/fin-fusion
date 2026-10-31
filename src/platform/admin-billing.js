@@ -10,12 +10,18 @@ const manualLink = require('../payments/manual-subscription-link');
 const providerSettings = require('../payments/provider-settings');
 const runtimeSettings = require('./runtime-settings');
 const { query } = require('../db');
-const routeRateLimit = require('../security/route-rate-limit');
+const { rateLimit } = require('express-rate-limit');
 const providerCheckoutRecovery = require('../payments/provider-checkout-recovery');
 const ui = require('./admin-ui');
 const { esc, layout } = require('./admin-html');
 
-const checkoutRecheckLimit = routeRateLimit.middleware({ scope: 'admin-billing-checkout-recheck', max: 20, windowSeconds: 60, reason: 'admin_billing_checkout_recheck' });
+const checkoutRecheckLimit = rateLimit({
+    windowMs: 60_000,
+    limit: 20,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: 'Too many checkout re-checks. Please try again shortly.'
+});
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
