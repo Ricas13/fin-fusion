@@ -225,6 +225,12 @@ function kindsFor(findings, customerId) {
     await makeSubscription(justExpired, paidPlanId, { status: 'expired', source: 'stripe', endSql: "NOW()-INTERVAL '10 minutes'" });
     await makeAccount(justExpired, premiumServerId, 'primary', 'just-expired');
 
+    // A cancelled contract whose end date is still in the future did not "just expire": it is
+    // not live entitlement and must stay flagged rather than being excused by the grace period.
+    const cancelledFuture = await makeCustomer('cancelled-future');
+    await makeSubscription(cancelledFuture, paidPlanId, { status: 'cancelled', source: 'stripe', endSql: "NOW()+INTERVAL '30 days'" });
+    await makeAccount(cancelledFuture, premiumServerId, 'primary', 'cancelled-future');
+
     const longExpired = await makeCustomer('long-expired');
     await makeSubscription(longExpired, paidPlanId, { status: 'expired', source: 'stripe', endSql: "NOW()-INTERVAL '3 hours'" });
     await makeAccount(longExpired, premiumServerId, 'primary', 'long-expired');
@@ -284,6 +290,8 @@ function kindsFor(findings, customerId) {
       'primary account without a live primary entitlement must be detected');
     assert(!kindsFor(findings, justExpired).has('primary_server_without_plan'),
       'an account whose plan expired minutes ago is awaiting routine cleanup, not an integrity failure');
+    assert(kindsFor(findings, cancelledFuture).has('primary_server_without_plan'),
+      'a cancelled contract with a future end date must stay flagged; the grace period only covers a window that just ended');
     assert(kindsFor(findings, longExpired).has('primary_server_without_plan'),
       'an account that outlives its expired plan beyond the grace window must be detected');
     assert(kindsFor(findings, paidMissing).has('paid_plan_without_recovery_state'),
