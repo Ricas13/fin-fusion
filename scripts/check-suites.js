@@ -80,6 +80,7 @@ module.exports = {
       "node scripts/admin-direct-lifecycle-boundary-smoke.js",
       "node scripts/media-device-reset-serialization-smoke.js",
       "node scripts/customer-360-access-tab-splice-smoke.js",
+      "node scripts/customer-page-simplification-smoke.js",
       "node scripts/customer-household-overrides-smoke.js",
       "node scripts/customer-billing-tab-smoke.js",
       "node scripts/admin-manual-entitlement-smoke.js",
@@ -209,6 +210,7 @@ module.exports = {
       "npm run db:backup-smoke"
     ],
     "check:db:integrity": [
+      "node scripts/operator-read-cursor-precision-db-smoke.js",
       "node scripts/access-integrity-db-smoke.js",
       "node scripts/revenue-integrity-admin-pin-db-smoke.js",
       "node scripts/lifecycle-integrity-smoke.js",

@@ -56,9 +56,8 @@
     .customer360Core .opActions>*{min-width:0}
     .customer360Core .opActions .plainForm,.customer360Core .opActions .button{width:100%!important}
     .customer360Core .opActions .button,.mockCardButton,.mockDangerButton,.mockForceButton{box-sizing:border-box;min-height:27px!important;padding:4px 6px!important;border-radius:6px!important;font-size:.59rem!important}
-    .customer360Core .opActions form[action$="/manage/reconcile"]{display:none!important}
 
-    /* Keep card actions visible; only the duplicated generic reconcile is hidden above. */
+    /* Card actions stay visible, including Fix / reconcile access. */
     .opMoreActions{display:none!important}
 
     .approvedAdvanced,.customer360Core .opDisclosure{border:1px solid var(--border,#29333d)!important;border-radius:6px!important;margin:0!important;padding:0 9px!important;background:#0f1820!important}
@@ -147,9 +146,9 @@
     document.querySelectorAll('.opCard').forEach(card=>{
       const title=text(card.querySelector('.opCardHead h2'));
       const ids={
-        'Plans & Subscriptions':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Stremio':'customer-stremio',
-        'Overseerr':'customer-overseerr','Customer / Portal':'customer-portal','Discord':'customer-discord',
-        'Access / Holds':'customer-holds','Danger Zone':'customer-danger'
+        'Plans & Subscriptions':'customer-plans','Plans':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Jellyfin':'customer-jellyfin','Stremio':'customer-stremio',
+        'Overseerr':'customer-overseerr','Request service':'customer-overseerr','Customer portal':'customer-portal','Customer / Portal':'customer-portal','Discord':'customer-discord',
+        'Danger Zone':'customer-danger'
       };
       if(ids[title])card.id=ids[title];
     });
@@ -269,7 +268,7 @@
     actions.dataset.mockPolished='1';
     if(![...actions.querySelectorAll('button,a,summary')].some(node=>text(node)==='View billing history')){
       const billing=document.createElement('button');billing.type='button';billing.className='mockCardButton';billing.textContent='View billing history';
-      billing.addEventListener('click',()=>{const payments=[...document.querySelectorAll('.customer360Core > .opDisclosure')].find(node=>text(node.querySelector('summary > span'))==='Payments');if(payments){payments.open=true;payments.scrollIntoView({block:'center',behavior:'smooth'});}});
+      billing.addEventListener('click',()=>{const payments=document.getElementById('customer-payments');if(payments){payments.open=true;payments.scrollIntoView({block:'center',behavior:'smooth'});}});
       actions.appendChild(billing);
     }
   }
@@ -290,14 +289,27 @@
 
   function moveAdvancedIntoBottomStack(){
     const advanced=document.querySelector('.approvedAdvanced');
-    const core=document.querySelector('.customer360Core');
-    if(!advanced||!core||advanced.dataset.relocated==='1')return;
-    const disclosures=[...core.querySelectorAll(':scope > .opDisclosure')];
-    const activity=disclosures.find(node=>text(node.querySelector('summary > span'))==='Activity');
+    const tools=document.querySelector('[data-customer-admin-tools]');
+    if(!advanced||!tools||advanced.dataset.relocated==='1')return;
     advanced.dataset.relocated='1';
-    if(activity)core.insertBefore(advanced,activity);else core.appendChild(advanced);
+    tools.insertBefore(advanced,tools.firstChild);
   }
 
+  // Links across the app use ?tab=billing / ?tab=activity (and #hashes) to mean "open that
+  // part of the customer". Open and scroll to the matching section once the page is ready.
+  function openRequestedSection(){
+    if(document.body.dataset.customerSectionOpened==='1')return;
+    const tab=new URLSearchParams(location.search).get('tab');
+    const hash=decodeURIComponent((location.hash||'').replace(/^#/,''));
+    const byTab={billing:'customer-payments',payments:'customer-payments',activity:'customer-activity',services:'customer-stremio',stremio:'customer-stremio',requests:'customer-overseerr'};
+    const id=hash||byTab[tab]||'';
+    const target=id?document.getElementById(id):null;
+    if(!target)return;
+    document.body.dataset.customerSectionOpened='1';
+    if(target.tagName==='DETAILS')target.open=true;
+    const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setTimeout(()=>target.scrollIntoView({block:'start',behavior:reduce?'auto':'smooth'}),60);
+  }
 
   function consolidateSummaryMetrics(){
     const metrics=document.querySelector('.customerMockMetrics');
@@ -338,7 +350,18 @@
     });
   }
 
-  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();consolidateSummaryMetrics();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();wireManualGrantForms();}
+  // Popover forms close on Escape, on a click outside them, or on the dimmed backdrop (the
+  // <details> element itself, which is what a click on its ::before backdrop targets).
+  const POPOVERS='.customer360Core details.opInlineDetails[open],.customer360Core details.compactMovedAction[open],.customer360Core details.compactDangerAction[open],.customer360Core details.compactForceAction[open]';
+  function wirePopoverDismiss(){
+    if(document.body.dataset.customerPopoverDismiss==='1')return;
+    document.body.dataset.customerPopoverDismiss='1';
+    // Closing with the keyboard returns focus to the control that opened the popover.
+    document.addEventListener('keydown',event=>{if(event.key!=='Escape')return;document.querySelectorAll(POPOVERS).forEach(node=>{node.open=false;node.querySelector(':scope > summary')?.focus();});});
+    document.addEventListener('click',event=>{document.querySelectorAll(POPOVERS).forEach(node=>{if(event.target===node||!node.contains(event.target))node.open=false;});});
+  }
+
+  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();relocatePrimaryActions();consolidateSummaryMetrics();relocateTrueForceAccess();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();openRequestedSection();wirePopoverDismiss();wireManualGrantForms();}
   enhance();
   requestAnimationFrame(enhance);
   setTimeout(enhance,250);
