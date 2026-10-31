@@ -255,6 +255,7 @@ module.exports = {
       "node scripts/notification-payment-receipts-db-smoke.js",
       "node scripts/admin-usability-db-smoke.js",
       "node scripts/billing-recheck-route-db-smoke.js",
+      "node scripts/operator-refund-db-smoke.js",
       "node scripts/provider-operation-recovery-db-smoke.js"
     ],
     "check:db:concurrency": [
