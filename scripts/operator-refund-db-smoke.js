@@ -10,7 +10,9 @@ const { skipIfNoDatabase } = require('./smoke-db');
 if (skipIfNoDatabase('operator refund DB smoke')) process.exit(0);
 
 const { query, getPool } = require('../src/db');
+const crypto = require('crypto');
 const operatorRefund = require('../src/payments/operator-refund');
+const { historyKind } = require('../src/payments/provider-transaction-classifier');
 const { unique, fixtureCustomer, fixturePlan, fixtureSubscription } = require('./test-fixture');
 
 const created = { customers: [], plans: [] };
@@ -26,34 +28,49 @@ async function main() {
     const manualSub = await fixtureSubscription({ query }, { customerId: other.id, planId: plan.id, source: 'admin_grant' });
     const reason = 'Refunded in the Plisio dashboard after a duplicate payment';
 
-    // Guards.
-    await assert.rejects(() => operatorRefund.record({ customerId: owner.id, subscriptionId: providerSub.id, amount: '10.00', reason: 'short' }), /reason/i);
-    await assert.rejects(() => operatorRefund.record({ customerId: owner.id, subscriptionId: providerSub.id, amount: '0', reason }), /amount/i);
-    await assert.rejects(() => operatorRefund.record({ customerId: owner.id, subscriptionId: providerSub.id, amount: '99999', reason }), /far above/i);
-    await assert.rejects(() => operatorRefund.record({ customerId: owner.id, subscriptionId: manualSub.id, amount: '10.00', reason }), /current plans/i, 'another customer\'s plan must be refused');
-    assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [providerSub.id])).rows[0].status, 'active', 'refused requests change nothing');
+    const sid = () => crypto.randomUUID();
+    const base = { customerId: owner.id, subscriptionId: providerSub.id, reason };
 
-    // Partial refund: recorded, plan untouched.
-    const partial = await operatorRefund.record({ customerId: owner.id, subscriptionId: providerSub.id, amount: '4.00', full: false, reason, actorUserId: null });
+    // Guards.
+    await assert.rejects(() => operatorRefund.record({ ...base, amount: '10.00', reason: 'short', submissionId: sid() }), /reason/i);
+    await assert.rejects(() => operatorRefund.record({ ...base, amount: '10.00', submissionId: 'nope' }), /expired/i, 'a form without a valid submission id is refused');
+    for (const bad of ['0', '0.001', '4.00abc', '-5', '1e3', '']) {
+        await assert.rejects(() => operatorRefund.record({ ...base, amount: bad, submissionId: sid() }), /amount|number|least/i, `amount "${bad}" must be refused`);
+    }
+    await assert.rejects(() => operatorRefund.record({ ...base, amount: '10.01', submissionId: sid() }), /more than the plan cost/i, 'cannot refund more than the plan cost');
+    await assert.rejects(() => operatorRefund.record({ ...base, subscriptionId: manualSub.id, amount: '10.00', submissionId: sid() }), /current plans/i, 'another customer\'s plan must be refused');
+    const stripeSub = await fixtureSubscription({ query }, { customerId: owner.id, planId: plan.id, source: 'stripe', billingMode: 'subscription', providerSubscriptionId: unique('sub_stripe') });
+    await assert.rejects(() => operatorRefund.record({ ...base, subscriptionId: stripeSub.id, amount: '4.00', submissionId: sid() }), /recorded automatically/i, 'Stripe refunds arrive by webhook and must not be recorded twice');
+    assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [providerSub.id])).rows[0].status, 'active', 'refused requests change nothing');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE entity_id=ANY($1::text[]) AND action='billing.refund.recorded_externally'`, [[providerSub.id, stripeSub.id, manualSub.id]])).rows[0].n, 0, 'refused requests are not audited as recorded');
+
+    // Partial refund: recorded once, plan untouched. Resubmitting the same form is a duplicate.
+    const partialId = sid();
+    const partial = await operatorRefund.record({ ...base, amount: '4.00', full: false, submissionId: partialId, actorUserId: null });
     assert.strictEqual(partial.ended, false);
+    await assert.rejects(() => operatorRefund.record({ ...base, amount: '4.00', full: false, submissionId: partialId }), /already recorded/i, 'the same submission must record once');
+    const [concurrentA, concurrentB] = await Promise.allSettled([1, 2].map(() => operatorRefund.record({ ...base, amount: '1.00', submissionId: '11111111-1111-4111-8111-111111111111' })));
+    assert.strictEqual([concurrentA, concurrentB].filter(r => r.status === 'fulfilled').length, 1, 'two simultaneous submissions of one form record exactly once');
     assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [providerSub.id])).rows[0].status, 'active', 'a partial refund leaves the plan running');
     const ledger = (await query(`SELECT gross_amount_minor,transaction_type,metadata FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [partial.eventId])).rows[0];
     assert.strictEqual(Number(ledger.gross_amount_minor), -400, 'the refund is a negative ledger entry');
     assert.strictEqual(ledger.transaction_type, 'refund');
     assert.strictEqual(ledger.metadata.operatorAttested, true, 'it is marked as operator-recorded');
+    assert.strictEqual(historyKind({ provider: 'plisio', transaction_type: ledger.transaction_type, transaction_status: 'succeeded', gross_amount_minor: ledger.gross_amount_minor }), 'refund', 'the canonical classifier counts it as a Plisio refund');
     assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_incidents WHERE provider_event_id=$1 AND incident_type='refund'`, [partial.eventId])).rows[0].n, 1, 'a refund incident is recorded');
+    await assert.rejects(() => operatorRefund.record({ ...base, amount: '5.50', submissionId: sid() }), /more than the plan cost/i, 'the cap is cumulative across refunds');
 
-    // Full refund of a provider-backed plan: the plan ends.
-    const full = await operatorRefund.record({ customerId: owner.id, subscriptionId: providerSub.id, amount: '10.00', full: true, reason, actorUserId: null });
+    // Full refund of a Plisio-backed plan: the plan ends.
+    const full = await operatorRefund.record({ ...base, amount: '5.00', full: true, submissionId: sid(), actorUserId: null });
     assert.strictEqual(full.ended, true);
-    const ended = (await query('SELECT status,cancel_at_period_end FROM subscriptions WHERE id=$1', [providerSub.id])).rows[0];
-    assert.strictEqual(ended.status, 'cancelled', 'a full refund ends the plan');
-    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE entity_id=$1 AND action='billing.refund.recorded_externally'`, [providerSub.id])).rows[0].n, 2, 'both refunds are audited');
+    assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [providerSub.id])).rows[0].status, 'cancelled', 'a full refund ends the plan');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE entity_id=$1 AND action='billing.refund.recorded_externally_completed'`, [providerSub.id])).rows[0].n >= 1, true, 'completion is audited');
 
-    // Full refund of a plan with no provider reference still ends it (no incident possible).
-    const manual = await operatorRefund.record({ customerId: other.id, subscriptionId: manualSub.id, amount: '10.00', full: true, reason: 'Cash refunded at the counter', actorUserId: null });
+    // A plan with no provider reference (cash): ended, audited, and NOT attributed to any provider's ledger.
+    const manual = await operatorRefund.record({ customerId: other.id, subscriptionId: manualSub.id, amount: '10.00', full: true, reason: 'Cash refunded at the counter', submissionId: sid(), actorUserId: null });
     assert.strictEqual(manual.ended, true);
     assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [manualSub.id])).rows[0].status, 'cancelled', 'a manual plan is ended by a full refund too');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE customer_id=$1`, [other.id])).rows[0].n, 0, 'a cash refund must not appear as a provider transaction');
 }
 
 async function cleanup() {

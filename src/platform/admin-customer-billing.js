@@ -66,6 +66,7 @@ function createAdminCustomerBillingRouter() {
             const result = await operatorRefund.record({
                 customerId: req.params.customerId,
                 subscriptionId: req.body.subscriptionId,
+                submissionId: req.body.submissionId,
                 amount: req.body.amount,
                 full,
                 reason: req.body.reason,
