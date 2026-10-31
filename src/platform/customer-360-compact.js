@@ -37,12 +37,21 @@ async function supplementary(customerId){
 }
 
 function portalEnrolForm(c,token){return `<details class="opInlineDetails"><summary>Enrol portal account…</summary><form class="opInlineForm" method="post" action="/admin/users/${encodeURIComponent(c.id)}/manage/portal/enrol" data-native-submit="true">${csrfHidden(token)}<label>Username<input class="input" name="username" minlength="3" maxlength="40" required value="${esc(c.display_name||'')}"></label><label>Email<input class="input" type="email" name="email" maxlength="254" required value="${esc(c.email||'')}"></label><small>Creates a disabled portal login and a recoverable onboarding link. The customer chooses the password.</small><button class="button primary sm">Enrol & create onboarding link</button></form></details>`;}
+function holdsBlock(detail,token){
+  const id=detail.customer.id,holds=detail.activeHolds||[];
+  const rows=holds.length?holds.map(hold=>`<div class="opHold"><div><strong>${esc(String(hold.hold_type||'hold').replaceAll('_',' '))}</strong><span>${esc(hold.reason||'Access restricted')}</span></div>${String(hold.hold_type)==='payment_risk'?pill('Payment workflow','warn'):`<details class="miniMenu"><summary>Release…</summary><form method="post" action="/admin/users/${encodeURIComponent(id)}/access-holds/${encodeURIComponent(hold.id)}/release">${csrfHidden(token)}<input class="input" name="reason" minlength="5" maxlength="500" placeholder="Release reason" required><input class="input" name="confirmation" placeholder="Type RELEASE" required><button class="button secondary sm">Release hold</button></form></details>`}</div>`).join(''):'<div class="opEmpty">No active holds or suspensions.</div>';
+  const guide='<div class="opHint"><strong>Pause</strong> = suspend or remove access (reversible). <strong>End</strong> = revoke, ban or delete.</div>';
+  return `<div class="opSubhead"><strong>Access holds</strong>${pill(holds.length?`${holds.length} active`:'Clear',holds.length?'warn':'good')}</div>${rows}${guide}`;
+}
+
+// One card for the customer's own identity and restrictions: portal login, Discord link
+// (edited from the Edit button in the header) and access holds / suspensions.
 function portalCard(detail,token){
-  const c=detail.customer,id=c.id,enrolled=Boolean(c.app_user_id),active=Boolean(c.login_active),verified=Boolean(c.email_verified_at);
-  const body=`${stateRow('Username',esc(c.login_username||'Not enrolled'))}${stateRow('Email',esc(c.login_email||c.email||'—'))}${stateRow('Account',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):pill('Not enrolled','warn'))}${stateRow('Verification',pill(verified?'Verified':'Not verified',verified?'good':'warn'))}${enrolled?'':portalEnrolForm(c,token)}`;
-  const actions=[`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/edit-profile">Edit account</a>`];
+  const c=detail.customer,id=c.id,enrolled=Boolean(c.app_user_id),active=Boolean(c.login_active),verified=Boolean(c.email_verified_at),discordLinked=Boolean(c.discord_user_id);
+  const body=`${stateRow('Username',esc(c.login_username||'Not enrolled'))}${stateRow('Email',esc(c.login_email||c.email||'—'))}${stateRow('Account',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):pill('Not enrolled','warn'))}${stateRow('Verification',pill(verified?'Verified':'Not verified',verified?'good':'warn'))}${stateRow('Discord',discordLinked?pill('Linked','good'):pill('Not linked',''))}${enrolled?'':portalEnrolForm(c,token)}${holdsBlock(detail,token)}`;
+  const actions=[`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/edit-profile">Edit account</a>`,actionLink(id,'suspend','Add suspension')];
   if(enrolled){actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/activation/rotate`,'Reset / onboarding link'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/email/${verified?'unverify':'verify'}`,verified?'Mark unverified':'Mark verified'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/portal/status`,active?'Disable portal':'Enable portal',{tone:active?'secondary':'primary',fields:{active:active?'0':'1'}}));}
-  return card('Customer / Portal',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):pill('Not enrolled','warn'),body,actions.join(''));
+  return card('Customer portal',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):'',body,actions.join(''));
 }
 
 function plansCard(detail,token,plans,pendingChange=null){
@@ -73,7 +82,7 @@ function plansCard(detail,token,plans,pendingChange=null){
     if(pendingChange)actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/plan-change/cancel`,'Cancel pending change'));
     actions.push(customerLink(id,'subscriptions/revoke','Revoke a plan',{tone:'danger'}));
   }
-  return card('Plans & Subscriptions',pill(`${current.length} active`,current.length?'good':''),body,actions.join(''));
+  return card('Plans',pill(`${current.length} active`,current.length?'good':''),body,actions.join(''));
 }
 
 function authorityRows(authority){
@@ -116,22 +125,7 @@ function overseerrCard(detail,token,request,authority){
   const actions=authorityActions(id,token,'overseerr',authority);
   actions.push(buttonForm(token,`/admin/request-users/${encodeURIComponent(id)}/sync`,linked?'Re-provision / resync':'Create / provision'));
   if(linked)actions.push(`<a class="button secondary sm" href="/admin/request-users">Open request-service manager</a>`);
-  return card('Request service',pill(status,status==='synced'?'good':status==='failed'?'bad':'warn'),body,actions.join(''));
-}
-
-function discordCard(detail,token,discord){
-  const id=detail.customer.id,linked=Boolean(discord?.discord_user_id||detail.customer.discord_user_id),name=discord?.discord_username||detail.customer.discord_username;
-  const body=`${stateRow('Link',pill(linked?'Linked':'Not linked',linked?'good':'warn'))}${stateRow('Member',esc(name||'—'))}${stateRow('Role source','Current active plans')}`;
-  const actions=[`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/edit-profile">${linked?'Edit Discord link':'Link Discord'}</a>`,buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Sync roles / reconcile')];
-  return card('Discord',pill(linked?'Linked':'Not linked',linked?'good':'warn'),body,actions.join(''));
-}
-
-function holdsCard(detail,token){
-  const id=detail.customer.id,holds=detail.activeHolds||[];
-  const body=holds.length?holds.map(hold=>`<div class="opHold"><div><strong>${esc(String(hold.hold_type||'hold').replaceAll('_',' '))}</strong><span>${esc(hold.reason||'Access restricted')}</span></div>${String(hold.hold_type)==='payment_risk'?pill('Payment workflow','warn'):`<details class="miniMenu"><summary>Release…</summary><form method="post" action="/admin/users/${encodeURIComponent(id)}/access-holds/${encodeURIComponent(hold.id)}/release">${csrfHidden(token)}<input class="input" name="reason" minlength="5" maxlength="500" placeholder="Release reason" required><input class="input" name="confirmation" placeholder="Type RELEASE" required><button class="button secondary sm">Release hold</button></form></details>`}</div>`).join(''):'<div class="opEmpty">No active holds or suspensions.</div>';
-  const actions=[actionLink(id,'suspend','Add suspension'),buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile access')];
-  const guide='<div class="opHint"><strong>Pause</strong> (reversible): Add suspension here, or Remove access on a service card. <strong>End</strong> (permanent): Revoke a plan, Ban customer, or the delete actions at the bottom of the page.</div>';
-  return card('Access / Holds',pill(holds.length?`${holds.length} active`:'Clear',holds.length?'warn':'good'),body+guide,actions.join(''));
+  return card('Request service',pill(status==='not provisioned'?'Not set up':status,status==='synced'?'good':status==='failed'?'bad':'warn'),body,actions.join(''));
 }
 
 function dangerCard(detail,token,media,state){
@@ -197,17 +191,13 @@ async function render(detail,token,options={}){
   // playback, Free activity, and a billing tile when something needs attention.
   const billingIssue=openPaymentIncidents?`<div class="customer360GlanceWarn"><span>Billing</span><strong>${esc(openPaymentIncidents)} issue${openPaymentIncidents===1?'':'s'}</strong><small><a href="#customer-payments">Review payment incidents</a></small></div>`:'';
   const glance=`<section class="customer360Glance"><div><span>Last playback</span><strong>${esc(dt(detail.activitySummary?.last_playback_at))}</strong><small>${esc(detail.activitySummary?.sessions_30d||0)} sessions / 30d</small></div>${freeActivity}${billingIssue}</section>`;
-  const essentialCards=[plansCard(detail,token,extra.plans,options.pendingChange),mediaCard(detail,token,extra.media,jellyfinAuthority),portalCard(detail,token),holdsCard(detail,token)];
-  const serviceCards=[stremioCard(detail,token,options.stremioInfo,stremioAuthority),overseerrCard(detail,token,extra.request,overseerrAuthority),discordCard(detail,token,extra.discord)];
-  const stremioState=options.stremioInfo?.row?String(options.stremioInfo.row.status||'').replaceAll('_',' '):'not provisioned';
-  const requestState=extra.request?.external_user_id?(extra.request.status||'linked'):'not provisioned';
-  const discordState=(extra.discord?.discord_user_id||detail.customer.discord_user_id)?'linked':'not linked';
-  const services=disclosure('Other services',`Stremio ${stremioState} · Request service ${requestState} · Discord ${discordState}`,`<div class="opGrid customer360GroupBody">${serviceCards.join('')}</div>`,{id:'customer-services'});
+  // One row, in the order an operator works: the customer, what they bought, then each service.
+  const essentialCards=[portalCard(detail,token),plansCard(detail,token,extra.plans,options.pendingChange),mediaCard(detail,token,extra.media,jellyfinAuthority),stremioCard(detail,token,options.stremioInfo,stremioAuthority),overseerrCard(detail,token,extra.request,overseerrAuthority)];
   const advanced=showAccessSettings?disclosure('Advanced access settings','Libraries, Jellyfin policy and request permissions',`<div class="customer360GroupBody">${accessHtml}</div>`,{id:'customer-access-settings'}):'';
   const danger=disclosure('Destructive corrections','Delete accounts or permanently delete this customer',`<div class="customer360GroupBody">${dangerCard(detail,token,extra.media,options.stremioInfo)}</div>`,{id:'customer-destructive',tone:'danger'});
   const payments=paymentsDisclosure(extra.payments,extra.paymentIncidents,extra.paymentIdentities,extra.unlinkedPaymentCount);
-  const core=`<div class="customer360Core" data-customer360-core>${glance}<div class="customer360SectionLabel"><strong>Customer essentials</strong><span>Plan, media access, portal identity and holds</span></div><div class="opGrid customer360Essentials">${essentialCards.join('')}</div>${payments}${services}${advanced}<div class="customer360SectionLabel"><strong>History & diagnostics</strong><span>Read-only records</span></div>${activityDisclosure(detail)}${playbackPolicyDisclosure(detail)}${logsDisclosure(detail)}<div class="customer360SectionLabel customer360AdminLabel"><strong>Admin tools</strong><span>Recovery and destructive actions</span></div><div data-customer-admin-tools>${danger}</div></div>`;
+  const core=`<div class="customer360Core" data-customer360-core>${glance}<div class="opGrid customer360Essentials">${essentialCards.join('')}</div>${payments}${advanced}<div class="customer360SectionLabel"><strong>History & diagnostics</strong><span>Read-only records</span></div>${activityDisclosure(detail)}${playbackPolicyDisclosure(detail)}${logsDisclosure(detail)}<div class="customer360SectionLabel customer360AdminLabel"><strong>Admin tools</strong><span>Recovery and destructive actions</span></div><div data-customer-admin-tools>${danger}</div></div>`;
   return `${accessCards.styles()}${styles()}<link rel="stylesheet" href="/css/admin-customer-folds.css">${core}`;
 }
 
-module.exports={render,supplementary,portalCard,plansCard,mediaCard,stremioCard,overseerrCard,discordCard,holdsCard,dangerCard,activityDisclosure,playbackPolicyDisclosure,paymentsDisclosure,logsDisclosure,styles,watchDuration,providerReferences,bytes};
+module.exports={render,supplementary,portalCard,plansCard,mediaCard,stremioCard,overseerrCard,dangerCard,activityDisclosure,playbackPolicyDisclosure,paymentsDisclosure,logsDisclosure,styles,watchDuration,providerReferences,bytes};

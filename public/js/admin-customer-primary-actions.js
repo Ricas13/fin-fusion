@@ -147,8 +147,8 @@
     document.querySelectorAll('.opCard').forEach(card=>{
       const title=text(card.querySelector('.opCardHead h2'));
       const ids={
-        'Plans & Subscriptions':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Jellyfin':'customer-jellyfin','Stremio':'customer-stremio',
-        'Overseerr':'customer-overseerr','Request service':'customer-overseerr','Customer / Portal':'customer-portal','Discord':'customer-discord',
+        'Plans & Subscriptions':'customer-plans','Plans':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Jellyfin':'customer-jellyfin','Stremio':'customer-stremio',
+        'Overseerr':'customer-overseerr','Request service':'customer-overseerr','Customer portal':'customer-portal','Customer / Portal':'customer-portal','Discord':'customer-discord',
         'Access / Holds':'customer-holds','Danger Zone':'customer-danger'
       };
       if(ids[title])card.id=ids[title];
@@ -302,7 +302,7 @@
     if(document.body.dataset.customerSectionOpened==='1')return;
     const tab=new URLSearchParams(location.search).get('tab');
     const hash=decodeURIComponent((location.hash||'').replace(/^#/,''));
-    const byTab={billing:'customer-payments',payments:'customer-payments',activity:'customer-activity',services:'customer-services'};
+    const byTab={billing:'customer-payments',payments:'customer-payments',activity:'customer-activity',services:'customer-stremio',stremio:'customer-stremio',requests:'customer-overseerr'};
     const id=hash||byTab[tab]||'';
     const target=id?document.getElementById(id):null;
     if(!target)return;

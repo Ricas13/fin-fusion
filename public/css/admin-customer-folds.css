@@ -104,3 +104,26 @@
   background:#101922;border:1px solid var(--border,#29333d);border-radius:10px;
   box-shadow:0 18px 42px rgba(0,0,0,.55);
 }
+
+/* Essentials: one row, in working order: Portal (with holds), Plans, Jellyfin, Stremio, Request service. */
+.customer360Core .opGrid.customer360Essentials{align-items:stretch!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+@media(min-width:820px){.customer360Core .opGrid.customer360Essentials{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+@media(min-width:1180px){.customer360Core .opGrid.customer360Essentials{grid-template-columns:repeat(5,minmax(0,1fr))!important}}
+@media(max-width:620px){.customer360Core .opGrid.customer360Essentials{grid-template-columns:1fr!important}}
+.customer360Essentials .opCard{padding:12px!important}
+.customer360Essentials .opState{flex-wrap:wrap;row-gap:2px}
+.customer360Essentials .opState strong{min-width:0}
+.opSubhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding-top:9px;border-top:1px solid var(--border,#29333d);font-size:.78rem}
+.opSubhead strong{font-weight:800}
+
+/* Equal-height cards: bodies keep their natural spacing, the action buttons sit at the bottom. */
+.customer360Core .customer360Essentials .opCardBody{flex:0 0 auto!important;align-content:start;gap:2px}
+.customer360Core .customer360Essentials .opActions{margin-top:auto!important;padding-top:10px}
+.customer360Essentials .opCardHead{flex-wrap:wrap;row-gap:4px;min-height:30px}
+.customer360Essentials .opCardHead h2{font-size:.9rem!important;white-space:nowrap}
+.customer360Essentials .pill{white-space:nowrap}
+.customer360Essentials .opState{padding:3px 0!important}
+.customer360Essentials .opItem{padding:8px 0}
+.customer360Core .customer360Essentials .opActions{grid-template-columns:1fr!important}
+.customer360Essentials .opActions>form,.customer360Essentials .opActions>a,.customer360Essentials .opActions>details{width:100%}
+.customer360Essentials .opActions .button,.customer360Essentials .opActions .mockCardButton,.customer360Essentials .opActions .mockDangerButton,.customer360Essentials .opActions .mockForceButton{width:100%}

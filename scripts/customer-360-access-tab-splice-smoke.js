@@ -31,7 +31,7 @@ assert(wrapperSource.includes("compact=require('./customer-360-compact')"),'Cust
 assert(wrapperSource.includes('async function body(detail,token,options={})'),'the unified page body must no longer take a tab/accessDetail argument');
 assert(!adminSource.includes('Preview customer portal'),'The redundant Preview customer portal action must be removed');
 
-for(const title of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone'])assert(compactSource.includes(title),`action-first Customer 360 missing ${title}`);
+for(const title of ['Customer portal','Plans','Jellyfin','Stremio','Request service','Access holds','Danger Zone'])assert(compactSource.includes(title),`action-first Customer 360 missing ${title}`);
 assert(compactSource.includes('accessCards.accessLibrariesRequests(detail,token,options)'),'canonical lane-aware access controls must remain reachable from the media-service card');
 assert(compactSource.includes('Permissions, libraries & requests…'),'access/library/request settings must be secondary, collapsed controls rather than main-page clutter');
 assert(compactSource.includes("disclosure('Activity'")&&compactSource.includes("disclosure('Payments'")&&compactSource.includes("disclosure('Logs'"),'lower Customer 360 must contain only Activity, Payments and Logs disclosures');
@@ -85,7 +85,7 @@ assert(disabledHtml.includes('Re-enable Jellyfin access'),'a disabled existing a
 
 const failedDetail=fixture({provisioningState:{status:'failed',last_error:'No eligible free server'},subscriptions:[{status:'active',current_period_end:new Date(Date.now()+86400000),plan_name:'Free Server',streams:1,is_free_tier:true,service_type:'jellyfin',server_class:'free'}]});
 const failedHtml=await view.body(failedDetail,'token',{});
-assert(failedHtml.includes('Access / Holds')&&failedHtml.includes('No active holds or suspensions.'),'the main page must summarize current access restrictions without a separate diagnostics panel');
+assert(failedHtml.includes('Access holds')&&failedHtml.includes('No active holds or suspensions.'),'the main page must summarize current access restrictions without a separate diagnostics panel');
 assert(failedHtml.includes('No eligible free server'),'failed provisioning detail must be retained inside the collapsed Logs disclosure');
 assert(!failedHtml.includes('Customer control'),'the retired numbered Customer control grid must not remain alongside the action-first cards');
 const reconcileActions=(failedHtml.match(/\/admin\/users\/cust-1\/manage\/reconcile/g)||[]).length;
