@@ -12,6 +12,8 @@ const runtimeSettings = require('./runtime-settings');
 const { query } = require('../db');
 const { rateLimit } = require('express-rate-limit');
 const providerCheckoutRecovery = require('../payments/provider-checkout-recovery');
+const plisio = require('../payments/plisio');
+const checkoutIntents = require('../payments/checkout-intents');
 const ui = require('./admin-ui');
 const { esc, layout } = require('./admin-html');
 
@@ -262,6 +264,57 @@ function createAdminBillingRouter() {
                 : 'Plisio has not confirmed a payment for this checkout yet.';
             return res.redirect('/admin/commerce/orders?' + (summary.failed ? 'error=' : 'message=') + encodeURIComponent(message));
         } catch (error) { return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent(error.message || 'Checkout could not be re-checked.')); }
+    });
+    // Close a crypto checkout automation could not settle. Both actions need a written reason, are
+    // claimed atomically (so a double click cannot act twice) and are audited. Recording a payment
+    // grants access through the normal Plisio activation path for the amount stored on the checkout;
+    // the ledger entry is marked operator-confirmed, never provider-verified.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    async function claimCheckout(id, resolution, actor, reason) {
+        const claimed = await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW(),operator_resolved_by=$2,operator_resolution=$3,operator_resolution_note=$4,updated_at=NOW()
+            WHERE id=$1 AND provider='plisio' AND operator_resolved_at IS NULL AND state IN('open','failed','expired','cancelled') AND provider_terminal_at IS NULL RETURNING id`, [id, actor, resolution, reason]);
+        return claimed.rowCount === 1;
+    }
+    function resolutionInput(req) {
+        const id = String(req.params.id || ''), reason = String(req.body?.reason || '').trim();
+        return { id, reason };
+    }
+    router.post('/admin/billing/checkouts/:id/dismiss', checkoutRecheckLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const { id, reason } = resolutionInput(req), back = '/admin/commerce/orders';
+        if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
+        if (reason.length < 5 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 5 to 500 characters.'));
+        try {
+            const actor = req.session?.authUserId || null;
+            if (!await claimCheckout(id, 'dismissed', actor, reason)) return res.redirect(back + '?error=' + encodeURIComponent('That checkout is already settled, closed by the provider or dismissed.'));
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.dismissed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ reason })]);
+            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted.'));
+        } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Checkout could not be dismissed.')); }
+    });
+    router.post('/admin/billing/checkouts/:id/mark-paid', checkoutRecheckLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const { id, reason } = resolutionInput(req), back = '/admin/commerce/orders';
+        if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
+        if (reason.length < 10 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 10 to 500 characters.'));
+        if (String(req.body?.confirm || '').trim() !== 'PAID') return res.redirect(back + '?error=' + encodeURIComponent('Type PAID to confirm you verified the payment in Plisio.'));
+        const actor = req.session?.authUserId || null;
+        let claimed = false;
+        try {
+            const intent = await checkoutIntents.findById(id);
+            if (!intent) return res.redirect(back + '?error=' + encodeURIComponent('That checkout no longer exists.'));
+            if (intent.provider !== 'plisio') return res.redirect(back + '?error=' + encodeURIComponent('Only Plisio crypto checkouts can be recorded as paid here.'));
+            claimed = await claimCheckout(id, 'marked_paid', actor, reason);
+            if (!claimed) return res.redirect(back + '?error=' + encodeURIComponent('That checkout is already settled, closed by the provider or resolved.'));
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ reason, customerId: intent.customer_id, planId: intent.plan_id })]);
+            await plisio.settleAttested(intent, { actorUserId: actor, reason });
+            return res.redirect(back + '?message=' + encodeURIComponent('Payment recorded as operator-confirmed and access activated.'));
+        } catch (error) {
+            if (claimed) {
+                await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid' AND state<>'completed'`, [id]).catch(() => {});
+                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_failed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ error: String(error.message || error).slice(0, 300) })]).catch(() => {});
+            }
+            return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Payment could not be recorded.'));
+        }
     });
     router.post('/admin/billing/sync-due', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');

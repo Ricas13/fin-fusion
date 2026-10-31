@@ -526,6 +526,7 @@ async function backfillPlisioTransactions() {
         metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)||EXCLUDED.metadata,
         updated_at=NOW()
       WHERE (payment_history_transactions.customer_id IS NULL OR payment_history_transactions.customer_id=EXCLUDED.customer_id)
+        AND COALESCE(payment_history_transactions.metadata->>'operatorAttested','false')<>'true'
         AND (
           (payment_history_transactions.customer_id IS NULL AND EXCLUDED.customer_id IS NOT NULL)
           OR (payment_history_transactions.provider_reference_id IS NULL AND EXCLUDED.provider_reference_id IS NOT NULL)

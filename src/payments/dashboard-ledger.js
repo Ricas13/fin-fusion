@@ -117,7 +117,7 @@ function authoritativePlisio(row) {
     if (String(row?.provider || '').toLowerCase() !== 'plisio') return false;
     const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
     return metadata.providerAuthoritative === true
-        && metadata.providerVerified === true
+        && (metadata.providerVerified === true || metadata.operatorAttested === true)
         && Boolean(classifier.historyKind(row));
 }
 

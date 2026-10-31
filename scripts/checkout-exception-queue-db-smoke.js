@@ -1,0 +1,158 @@
+'use strict';
+
+// Crypto checkouts that automation could not settle stay in the exception queue past the
+// seven-day retry window until an administrator dismisses them or records them as paid. Both
+// actions need a reason, are audited, cannot run twice, and recording a payment grants access
+// through the normal Plisio activation path with an operator-confirmed (not provider-verified) ledger entry.
+
+require('dotenv').config();
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('checkout exception queue DB smoke')) process.exit(0);
+
+process.env.DATA_ENCRYPTION_KEY ||= '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+process.env.JELLYFIN_ENCRYPTION_KEY ||= '1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+process.env.SESSION_SECRET ||= 'recheck-route-smoke-session-secret-0123456789';
+process.env.NODE_ENV ||= 'test';
+process.env.PLISIO_SECRET_KEY ||= 'queue-smoke-key';
+process.env.PLISIO_ENABLED = 'true';
+
+const assert = require('assert');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const { query, getPool } = require('../src/db');
+const runtimeSettings = require('../src/platform/runtime-settings');
+const { createApplication } = require('../src/application');
+const adminOrders = require('../src/platform/admin-orders');
+const intents = require('../src/payments/checkout-intents');
+const recovery = require('../src/payments/provider-checkout-recovery');
+const { fixtureCustomer, fixturePlan } = require('./test-fixture');
+
+
+const suffix = crypto.randomBytes(5).toString('hex');
+const PASSWORD = `Queue-${suffix}-Pw!9`;
+let adminId = null, previousPlatform = null, serverId = null;
+const customers = [], intentIds = [], plans = [];
+
+function jar() {
+  let cookie = '';
+  return { get: () => cookie, set(res) { for (const header of res.headers.getSetCookie?.() || []) { const pair = header.split(';')[0]; const name = pair.split('=')[0]; cookie = cookie.split('; ').filter(part => part && !part.startsWith(`${name}=`)).concat(pair).join('; '); } } };
+}
+
+async function makeIntent(label, { ageDays = 10, provider = 'plisio' } = {}) {
+  const owner = await fixtureCustomer({ query }, { displayName: `Queue ${label} ${suffix}`, email: `queue-${label}-${suffix}@example.invalid` });
+  customers.push(owner.id);
+  const plan = await fixturePlan({ query }, { code: `queue-${label}-${suffix}`, name: `Queue plan ${label}`, serviceType: 'jellyfin', audience: 'direct', billingInterval: 'month', durationDays: 30, priceMinor: 1000, currency: 'GBP', capacityLimit: 100, streams: 1, serverClass: 'premium' });
+  plans.push(plan.id);
+  await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)', [plan.id, serverId]);
+  const snapshot = { kind: 'direct_plan', planId: plan.id, planPriceId: null, planCode: plan.code, planName: plan.name, priceMinor: 1000, discountedMinor: 1000, currency: 'GBP', billingInterval: 'month', durationDays: 30, streams: 1, stremioHouseholdNetworkLimit: 1, provider, checkoutMode: 'payment', providerMappingId: null, providerMappingRecordId: null, mediaLocation: 'Queue' };
+  const created = await intents.createIntent({ scope: 'customer', customerId: owner.id, planId: plan.id, provider, checkoutMode: 'payment', commercialSnapshot: snapshot });
+  await intents.attachProviderCheckout(created.id, `QUEUE-${label}-${suffix}`);
+  await query(`UPDATE billing_checkout_intents SET created_at=NOW()-($2||' days')::interval WHERE id=$1`, [created.id, String(ageDays)]);
+  intentIds.push(created.id);
+  return { id: created.id, customerId: owner.id, planId: plan.id };
+}
+const audits = async (id, action) => (await query('SELECT COUNT(*)::int n FROM audit_log WHERE entity_id=$1 AND action=$2', [id, action])).rows[0].n;
+const inQueue = async id => (await adminOrders.checkoutIssues()).some(row => row.checkout_id === id);
+
+async function main() {
+  previousPlatform = (await query(`SELECT setting_value FROM platform_settings WHERE setting_key='platform'`)).rows[0]?.setting_value ?? null;
+  await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_at) VALUES('platform',jsonb_build_object('requireAdminTwoFactor',false),NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=COALESCE(platform_settings.setting_value,'{}'::jsonb)||jsonb_build_object('requireAdminTwoFactor',false)`);
+  await runtimeSettings.reload();
+  serverId = (await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,location,api_key_encrypted,enabled,allow_new_users,paid_enabled,priority,max_users,health_status,last_health_check) VALUES($1,$2,'premium','https://queue.example.invalid','https://queue.example.invalid','Queue','key',TRUE,TRUE,TRUE,10,1000,'healthy',NOW()) RETURNING id`, [`Queue ${suffix}`, `queue-${suffix}`])).rows[0].id;
+  adminId = (await query(`INSERT INTO app_users(username,email,password_hash,role,active,legacy_numeric_id,is_owner,password_changed_at,email_verified_at) VALUES($1,$2,$3,'admin',TRUE,$4,TRUE,NOW(),NOW()) RETURNING id`, [`queue-${suffix}`, `queue-${suffix}@example.invalid`, await bcrypt.hash(PASSWORD, 10), 700000 + Math.floor(Math.random() * 90000)])).rows[0].id;
+
+  const old = await makeIntent('old', { ageDays: 10 });
+  const fresh = await makeIntent('fresh', { ageDays: 0 });
+  const dismissable = await makeIntent('dismiss', { ageDays: 12 });
+  const stripe = await makeIntent('stripe', { ageDays: 10, provider: 'stripe' });
+
+  // Queue: no age limit; an old unresolved Plisio checkout is listed and labelled as past retries.
+  const queue = await adminOrders.checkoutIssues();
+  const oldRow = queue.find(row => row.checkout_id === old.id);
+  assert(oldRow, 'a Plisio checkout older than the retry window must stay in the exception queue');
+  assert(/Past automatic retries/.test(oldRow.last_error), 'an aged checkout must say automatic retries are over');
+  assert(!queue.some(row => row.checkout_id === stripe.id), 'only Plisio checkouts appear in this queue');
+  assert(!queue.some(row => row.checkout_id === fresh.id), 'a checkout still inside its payment window is not an exception');
+
+  const app = createApplication();
+  const server = await new Promise(resolve => { const listening = app.listen(0, '127.0.0.1', () => resolve(listening)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const j = jar();
+    let res = await fetch(`${base}/login`, { redirect: 'manual' });
+    j.set(res);
+    const loginCsrf = (await res.text()).match(/name="_csrf" value="([^"]+)"/)?.[1];
+    res = await fetch(`${base}/login`, { method: 'POST', redirect: 'manual', headers: { cookie: j.get(), 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ _csrf: loginCsrf, username: `queue-${suffix}`, password: PASSWORD }).toString() });
+    j.set(res);
+    assert.strictEqual(res.status, 302, 'the administrator must be able to sign in');
+    const page = await fetch(`${base}/admin/discounts`, { redirect: 'manual', headers: { cookie: j.get() } });
+    const token = (await page.text()).match(/name="_csrf" value="([^"]+)"/)?.[1];
+    assert(token, 'the administrator must receive a CSRF token');
+    const post = async (id, action, fields = {}, withToken = true) => {
+      const r = await fetch(`${base}/admin/billing/checkouts/${id}/${action}`, { method: 'POST', redirect: 'manual', headers: { cookie: j.get(), 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...(withToken ? { _csrf: token } : {}), ...fields }).toString() });
+      return { status: r.status, location: decodeURIComponent(r.headers.get('location') || '') };
+    };
+
+    // The page offers both actions on the row.
+    const html = await (await fetch(`${base}/admin/commerce/orders`, { headers: { cookie: j.get() } })).text();
+    assert(html.includes(`/admin/billing/checkouts/${old.id}/mark-paid`) && html.includes(`/admin/billing/checkouts/${old.id}/dismiss`), 'the orders page must offer Record as paid and Dismiss for the aged checkout');
+
+    // Guards.
+    assert.strictEqual((await post(old.id, 'dismiss', { reason: 'abandoned invoice' }, false)).status, 403, 'CSRF is enforced');
+    assert(/reason/i.test((await post(old.id, 'dismiss', { reason: 'no' })).location), 'dismissal needs a real reason');
+    assert(/reason/i.test((await post(old.id, 'mark-paid', { reason: 'short', confirm: 'PAID' })).location), 'recording a payment needs a real reason');
+    assert(/Type PAID/.test((await post(old.id, 'mark-paid', { reason: 'Plisio dashboard shows completed', confirm: 'yes' })).location), 'recording a payment needs the typed confirmation');
+    assert(/Only Plisio/.test((await post(stripe.id, 'mark-paid', { reason: 'Plisio dashboard shows completed', confirm: 'PAID' })).location), 'non-Plisio checkouts are refused');
+    assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [old.customerId])).rows[0].n, 0, 'refused requests grant nothing');
+    assert(await inQueue(old.id), 'refused requests leave the checkout in the queue');
+
+    // Dismiss: removes it, audits it, grants nothing, cannot repeat.
+    const dismissed = await post(dismissable.id, 'dismiss', { reason: 'customer never paid, invoice long expired' });
+    assert(dismissed.location.includes('message='), `dismissal must succeed (${dismissed.location})`);
+    assert(!await inQueue(dismissable.id), 'a dismissed checkout leaves the queue');
+    assert.strictEqual(await audits(dismissable.id, 'billing.checkout.dismissed'), 1, 'dismissal is audited');
+    assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [dismissable.customerId])).rows[0].n, 0, 'dismissal grants no access');
+    assert(/already/.test((await post(dismissable.id, 'dismiss', { reason: 'second attempt again' })).location), 'a dismissed checkout cannot be acted on twice');
+    assert(!(await recovery.candidates({ limit: 200, checkoutIntentIds: [dismissable.id] })).length, 'the recovery worker leaves resolved checkouts alone');
+
+    // Record as paid: grants access, completes the checkout, writes an operator-attested ledger row.
+    const paid = await post(old.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
+    assert(paid.location.includes('message='), `recording a payment must succeed (${paid.location})`);
+    const intent = (await query('SELECT state,operator_resolution,operator_resolved_by FROM billing_checkout_intents WHERE id=$1', [old.id])).rows[0];
+    assert.strictEqual(intent.state, 'completed', 'the checkout completes');
+    assert.strictEqual(intent.operator_resolution, 'marked_paid');
+    assert.strictEqual(intent.operator_resolved_by, adminId);
+    assert((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2`, [old.customerId, old.planId])).rows[0].n >= 1, 'access is granted through the normal activation path');
+    const ledger = (await query(`SELECT gross_amount_minor,metadata FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [`QUEUE-old-${suffix}`])).rows[0];
+    assert(ledger, 'a ledger entry is written');
+    assert.strictEqual(Number(ledger.gross_amount_minor), 1000, 'it records exactly the stored checkout amount');
+    assert.strictEqual(ledger.metadata.operatorAttested, true, 'it is marked operator-confirmed');
+    assert.notStrictEqual(ledger.metadata.providerVerified, true, 'it is never presented as provider-verified');
+    assert.strictEqual(await audits(old.id, 'billing.checkout.mark_paid'), 1, 'the decision is audited');
+    assert(!await inQueue(old.id), 'a settled checkout leaves the queue');
+    assert(/already/.test((await post(old.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' })).location), 'it cannot be recorded twice');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [`QUEUE-old-${suffix}`])).rows[0].n, 1, 'exactly one ledger entry exists');
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
+}
+
+async function cleanup() {
+  await query(`DELETE FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id LIKE $1`, [`QUEUE-%-${suffix}`]).catch(() => {});
+  await query('DELETE FROM subscriptions WHERE customer_id=ANY($1::uuid[])', [customers]).catch(() => {});
+  await query('DELETE FROM billing_checkout_intents WHERE id=ANY($1::uuid[])', [intentIds]).catch(() => {});
+  await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [plans]).catch(() => {});
+  await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [customers]).catch(() => {});
+  await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
+  await query('DELETE FROM auth_sessions WHERE user_id=$1', [adminId]).catch(() => {});
+  await query('DELETE FROM app_users WHERE id=$1', [adminId]).catch(() => {});
+  if (previousPlatform) await query(`UPDATE platform_settings SET setting_value=$1::jsonb,updated_at=NOW() WHERE setting_key='platform'`, [JSON.stringify(previousPlatform)]).catch(() => {});
+  else await query(`DELETE FROM platform_settings WHERE setting_key='platform'`).catch(() => {});
+  await runtimeSettings.reload().catch(() => {});
+}
+
+main()
+  .then(() => console.log('checkout exception queue DB smoke: ok'))
+  .catch(error => { console.error(error.stack || error); process.exitCode = 1; })
+  .finally(async () => { await cleanup(); await getPool().end().catch(() => {}); process.exit(process.exitCode || 0); });
