@@ -14,6 +14,7 @@ const { rateLimit } = require('express-rate-limit');
 const providerCheckoutRecovery = require('../payments/provider-checkout-recovery');
 const plisio = require('../payments/plisio');
 const checkoutIntents = require('../payments/checkout-intents');
+const financialState = require('../payments/provider-financial-state');
 const ui = require('./admin-ui');
 const { esc, layout } = require('./admin-html');
 
@@ -336,9 +337,9 @@ function createAdminBillingRouter() {
         if (!intent) return true;
         const effects = await query(`SELECT
             (SELECT COUNT(*) FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND provider_subscription_id=$3)::int AS subs,
-            (SELECT COUNT(*) FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$3)::int AS ledger,
             (SELECT state FROM billing_checkout_intents WHERE id=$4) AS state`, [intent.customer_id, intent.plan_id, String(intent.provider_checkout_id || ''), intent.id]);
         const row = effects.rows[0] || {};
+        row.ledger = (await financialState.transactionExists('plisio', intent.provider_checkout_id)) ? 1 : 0;
         return Number(row.subs) > 0 || Number(row.ledger) > 0 || row.state === 'completed';
     }
     router.post('/admin/billing/sync-due', async (req, res) => {

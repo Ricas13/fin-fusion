@@ -384,6 +384,11 @@ async function paypalSubscriptionReferences() {
     return new Set(result.rows.map(row=>String(row.provider_reference_id||'').trim()).filter(id=>/^I-/i.test(id)));
 }
 
+// True when a ledger row already exists for this provider transaction id.
+async function transactionExists(provider,providerTransactionId) {
+    const result=await query(`SELECT 1 FROM payment_history_transactions WHERE provider=$1 AND provider_transaction_id=$2 LIMIT 1`,[providerName(provider),text(providerTransactionId)]);
+    return result.rowCount>0;
+}
 async function recordTransaction(input) {
     const provider=providerName(input.provider);
     const providerTransactionId=text(input.providerTransactionId);
@@ -706,7 +711,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
+    missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,transactionExists,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
