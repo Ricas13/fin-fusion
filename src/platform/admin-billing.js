@@ -10,9 +10,12 @@ const manualLink = require('../payments/manual-subscription-link');
 const providerSettings = require('../payments/provider-settings');
 const runtimeSettings = require('./runtime-settings');
 const { query } = require('../db');
+const routeRateLimit = require('../security/route-rate-limit');
 const providerCheckoutRecovery = require('../payments/provider-checkout-recovery');
 const ui = require('./admin-ui');
 const { esc, layout } = require('./admin-html');
+
+const checkoutRecheckLimit = routeRateLimit.middleware({ scope: 'admin-billing-checkout-recheck', max: 20, windowSeconds: 60, reason: 'admin_billing_checkout_recheck' });
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -226,7 +229,7 @@ function createAdminBillingRouter() {
     // Re-check one crypto checkout with its provider through the same recovery path the
     // worker uses. It never grants access on its own: a paid invoice is activated only
     // after the provider amount verifies, exactly as for the automatic job.
-    router.post('/admin/billing/checkouts/:id/recheck', async (req, res) => {
+    router.post('/admin/billing/checkouts/:id/recheck', checkoutRecheckLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         const id = String(req.params.id || '');
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent('Choose a valid checkout to re-check.'));
