@@ -223,6 +223,7 @@ module.exports = {
     ],
     "check:db:access": [
       "node scripts/request-user-sync-smoke.js",
+      "node scripts/playback-history-accuracy-db-smoke.js",
       "node scripts/admin-jellyfin-reenable-db-smoke.js",
       "node scripts/access-entitlement-matrix-db-smoke.js",
       "node scripts/customer-entitlements-admin-authority-db-smoke.js",
