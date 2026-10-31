@@ -149,7 +149,7 @@
       const ids={
         'Plans & Subscriptions':'customer-plans','Plans':'customer-plans','Jellyfin / Emby':'customer-jellyfin','Jellyfin':'customer-jellyfin','Stremio':'customer-stremio',
         'Overseerr':'customer-overseerr','Request service':'customer-overseerr','Customer portal':'customer-portal','Customer / Portal':'customer-portal','Discord':'customer-discord',
-        'Access / Holds':'customer-holds','Danger Zone':'customer-danger'
+        'Danger Zone':'customer-danger'
       };
       if(ids[title])card.id=ids[title];
     });

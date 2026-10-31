@@ -64,7 +64,7 @@ async function main(){
     assert.equal(new URL(admin.url()).pathname,`/admin/users/${dbCustomer.id}`,'Customer link did not land on the Customer 360 record');
     const customer360Text=await admin.locator('body').innerText();
     assert(/Browser Portal Customer/.test(customer360Text),'Customer 360 did not render the selected customer identity');
-    assert(/Customer \/ Portal/.test(customer360Text)&&/Plans & Subscriptions/.test(customer360Text),'Action-first Customer 360 cards did not render');
+    assert(/Customer portal/.test(customer360Text)&&/Plans/.test(customer360Text)&&/Stremio/.test(customer360Text)&&/Request service/.test(customer360Text),'Action-first Customer 360 cards did not render (Customer portal, Plans, Jellyfin, Stremio, Request service)');
     assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
 
     // The oversized Customer actions strip is intentionally retired. The hero
