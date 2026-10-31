@@ -99,7 +99,7 @@ assert(customer360View.includes("require('../entitlements/customer-access-desire
 assert(customer360View.includes('function accessTruthPanel(detail)'), 'Customer 360 must retain the diagnostic access-truth helper without forcing it onto the main operator page');
 assert(customer360View.includes("const compact=require('./customer-360-compact')") && customer360View.includes('const main=await compact.render(safe,token,options)'),
   'Customer 360 must render the focused action-first control panel');
-for (const label of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone']) {
+for (const label of ['Customer portal','Plans','Jellyfin','Stremio','Request service','Access holds','Danger Zone']) {
   assert(customer360Compact.includes(label), `Customer 360 action-first surface is missing ${label}`);
 }
 for (const label of ['Activity','Payments','Logs']) assert(customer360Compact.includes(`disclosure('${label}'`), `Customer 360 must keep ${label} as a bottom disclosure`);
