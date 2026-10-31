@@ -209,6 +209,7 @@ module.exports = {
       "npm run db:backup-smoke"
     ],
     "check:db:integrity": [
+      "node scripts/operator-read-cursor-precision-db-smoke.js",
       "node scripts/access-integrity-db-smoke.js",
       "node scripts/revenue-integrity-admin-pin-db-smoke.js",
       "node scripts/lifecycle-integrity-smoke.js",

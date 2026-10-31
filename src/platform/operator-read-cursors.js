@@ -68,6 +68,11 @@ async function markSeen(adminUserId, value, seenThrough) {
     const key = area(value);
     const keyName = navKey(key);
     const seenAt = readWatermark(seenThrough);
+    // JavaScript dates (and the epoch the browser sends) only carry milliseconds, while the
+    // database timestamps carry microseconds. Storing the truncated value leaves the newest
+    // item a fraction of a millisecond "newer" than the watermark, so it never cleared.
+    // Rounding up by one millisecond covers everything up to and including that item.
+    const storedSeenAt = new Date(seenAt.getTime() + 1);
     return transaction(async client => {
         const result = await client.query(`
             INSERT INTO admin_nav_read_state(admin_user_id,nav_key,last_seen_at)
@@ -75,7 +80,7 @@ async function markSeen(adminUserId, value, seenThrough) {
             ON CONFLICT(admin_user_id,nav_key) DO UPDATE
             SET last_seen_at=GREATEST(admin_nav_read_state.last_seen_at,EXCLUDED.last_seen_at)
             RETURNING last_seen_at
-        `, [adminUserId, keyName, seenAt]);
+        `, [adminUserId, keyName, storedSeenAt]);
         return { area:key, seen_at:result.rows[0].last_seen_at };
     });
 }
