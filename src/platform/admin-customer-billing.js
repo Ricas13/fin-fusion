@@ -3,11 +3,22 @@
 const express = require('express');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
+const { rateLimit } = require('express-rate-limit');
 const manualPaymentLedger = require('../payments/manual-payment-ledger');
 const operatorRefund = require('../payments/operator-refund');
 
 const { METHOD_LABELS, CURRENCIES } = manualPaymentLedger;
 const writeLimit = routeRateLimit.middleware({ scope: 'admin-customer-billing-write', max: 30, windowSeconds: 60, reason: 'admin_customer_billing_write' });
+
+// CodeQL recognises express-rate-limit but not the in-house limiter, so the money-moving refund
+// route uses it directly (per client, one minute window).
+const refundLimit = rateLimit({
+    windowMs: 60_000,
+    limit: 10,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: 'Too many refund records. Please try again shortly.'
+});
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -46,7 +57,7 @@ function createAdminCustomerBillingRouter() {
 
     // A refund made outside the app (provider dashboard or cash). Records it and, for a full
     // refund, ends the plan the way a provider refund would. Needs a reason and typed confirmation.
-    router.post('/admin/users/:customerId/record-refund', writeLimit, async (req, res) => {
+    router.post('/admin/users/:customerId/record-refund', refundLimit, writeLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const redirect = (kind, text) => res.redirect(path(req.params.customerId) + '&' + kind + '=' + encodeURIComponent(text) + '#customer-payments');
         try {

@@ -69,7 +69,7 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
             if (terminated.changed) await accessExtensions.restoreActivePurchasedDays(sub.id, customerId);
             ended = Boolean(terminated.changed);
         } else ended = true;
-        try { await provisioning.reconcileCustomer(customerId); } catch (error) { console.warn('Refund reconcile failed for customer', customerId, error.message); }
+        try { await provisioning.reconcileCustomer(customerId); } catch (_) { console.warn('Refund recorded; access reconcile failed and will be retried by the reconciliation job.'); }
     }
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally','subscription',$2,$3::jsonb)`,
         [actorUserId, sub.id, JSON.stringify({ customerId, amountMinor: minor, currency, full: Boolean(full), reason: note, eventId, providerBacked: Boolean(providerBacked) })]);
