@@ -5,14 +5,8 @@
   .content.planReferencePage .planControlGrid>#product{
     grid-column:span 2!important;
   }
-  .content.planReferencePage .planControlGrid>#product:has(details[open]){
-    grid-column:1/-1!important;
-  }
   .content.planReferencePage #product>.planConfigBody{
     grid-template-columns:repeat(2,minmax(0,1fr))!important;
-  }
-  .content.planReferencePage #product:has(details[open])>.planConfigBody{
-    grid-template-columns:repeat(3,minmax(0,1fr))!important;
   }
 }
 

@@ -109,8 +109,8 @@
    Selectors are qualified with .content.planReferencePage to match (and win
    the cascade over) the existing per-card layout rules at equal specificity
    plus later source order. */
-.content.planReferencePage .planControlGrid{align-items:stretch!important}
-.content.planReferencePage .planControlGrid>.planConfigCard{display:flex!important;flex-direction:column!important;align-self:stretch!important}
+.content.planReferencePage .planControlGrid{align-items:start!important}
+.content.planReferencePage .planControlGrid>.planConfigCard{display:flex!important;flex-direction:column!important;align-self:start!important}
 .content.planReferencePage .planConfigCard>form.planConfigBody{flex:1 1 auto!important;display:flex!important;flex-direction:column!important}
 .content.planReferencePage .planConfigBody>.buttonRow,
 .content.planReferencePage .planConfigBody>button.button{margin-top:auto!important}

@@ -122,6 +122,11 @@ function pageShell(req,c,title,description,content){
   return layout({siteName:runtimeSettings.siteName(),active:'users',title,subtitle:c.name,body});
 }
 
+function longDate(value){const d=value?new Date(value):null;return d&&!Number.isNaN(d.getTime())?d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}):'';}
+function effectiveEnd(sub){const base=sub?.current_period_end?new Date(sub.current_period_end):null;if(!base||Number.isNaN(base.getTime()))return null;return new Date(base.getTime()+Math.max(0,Number(sub.service_extension_days||0))*86400000);}
+function planLabel(sub){return sub?.plan_name_snapshot||sub?.plan_name||sub?.plan_code_snapshot||'this plan';}
+function currentEndNote(sub){const end=effectiveEnd(sub);if(!end)return'';const lapsed=end.getTime()<=Date.now();return `<div class="notice ${lapsed?'warn':''}"><strong>${esc(planLabel(sub))}</strong> ${lapsed?'ended':'currently ends'} <strong>${esc(longDate(end))}</strong>${lapsed?' — the customer has no live access from this plan.':'.'}</div>`;}
+
 async function extendPage(req,c){
   const sub=await subscriptionForCustomer(c.id,req.query?.subscriptionId);
   if(planExpiry.isFreeTier(sub))return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">Free Access has no expiry to extend.</div>');
@@ -130,7 +135,7 @@ async function extendPage(req,c){
   const remainingAllowance=Math.max(0,3650-existing);
   if(remainingAllowance<durationDays)return pageShell(req,c,'Extend plan','Individual customer action','<div class="notice error">This subscription has reached the 3,650-day manual extension safety limit.</div>');
   const maxUnits=Math.floor(remainingAllowance/durationDays),subId=sub.id||sub.subscription_id;
-  const form=`<div class="notice"><strong>Individual action.</strong> This adds service time to the selected subscription only. It does not create a new provider charge.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'extend'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><input type="hidden" name="operationId" value="${esc(crypto.randomUUID())}"><div class="formGroup"><label>Plan periods to add</label><input class="input" type="number" name="units" min="1" max="${esc(maxUnits)}" value="1" required><div class="inlineHelp">Subscription ${esc(subId)} · one period is ${esc(durationDays)} day${durationDays===1?'':'s'}. Existing manual extension: ${esc(existing)} day${existing===1?'':'s'}. Maximum combined manual extension: 3,650 days.</div></div><div class="formGroup"><label>Type EXTEND to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Extend this subscription</button></form>`;
+  const end=effectiveEnd(sub),afterOne=end?new Date(end.getTime()+durationDays*86400000):null;const form=`${currentEndNote(sub)}<div class="notice"><strong>Individual action.</strong> This adds service time to the selected subscription only. It does not create a new provider charge.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'extend'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><input type="hidden" name="operationId" value="${esc(crypto.randomUUID())}"><div class="formGroup"><label>Plan periods to add</label><input class="input" type="number" name="units" min="1" max="${esc(maxUnits)}" value="1" required><div class="inlineHelp">One period is ${esc(durationDays)} day${durationDays===1?'':'s'}${afterOne?`, so one period moves the end date to ${esc(longDate(afterOne))}`:''}. Existing manual extension: ${esc(existing)} day${existing===1?'':'s'}; maximum combined: 3,650 days. For an exact date, use Edit expiry instead.</div></div><button class="button" type="submit">Extend this subscription</button></form>`;
   return pageShell(req,c,'Extend plan','Individual customer action',form);
 }
 
@@ -139,7 +144,7 @@ async function expiryPage(req,c){
   if(planExpiry.isFreeTier(sub))return pageShell(req,c,'Edit expiry','Individual customer action','<div class="notice error">Free Access does not use an expiry date.</div>');
   if(subscriptionState.recurringProvider(sub))return pageShell(req,c,'Edit expiry','Provider-controlled recurring plan','<div class="notice error"><strong>This expiry is controlled by the payment provider.</strong> Fin-Fusion will not rewrite the local end date for an active Stripe/PayPal recurring agreement because that would make billing and access disagree. Use renewal/cancellation or the plan-change workflow instead.</div>');
   const current=dateOnly(sub.current_period_end)||new Date().toISOString().slice(0,10),subId=sub.id||sub.subscription_id;
-  const form=`<div class="notice"><strong>Individual action.</strong> This changes the selected subscription only and clears its previously-added service-extension days.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'expiry'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><div class="formGroup"><label>New expiry date</label><input class="input" type="date" name="expiryDate" value="${esc(current)}" required><div class="inlineHelp">Subscription ${esc(subId)}</div></div><div class="formGroup"><label>Type EXPIRY to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Set expiry for this subscription</button></form>`;
+  const form=`${currentEndNote(sub)}<div class="notice"><strong>Individual action.</strong> This changes the selected subscription only and clears its previously-added service-extension days.</div><form class="formPanel" method="post" action="${esc(actionPath(c.id,'expiry'))}" data-native-submit="true">${csrfHidden(csrf.token(req))}<input type="hidden" name="subscriptionId" value="${esc(subId)}"><div class="formGroup"><label>New expiry date</label><input class="input" type="date" name="expiryDate" value="${esc(current)}" required><div class="inlineHelp">Pick a future date to restore access, or an earlier date to end it sooner.</div></div><div class="formGroup"><label>Type EXPIRY to confirm</label><input class="input" name="confirmWord" autocomplete="off" required></div><button class="button" type="submit">Set expiry for this subscription</button></form>`;
   return pageShell(req,c,'Edit expiry','Individual customer action',form);
 }
 async function resetTrialPage(req,c){
@@ -176,11 +181,14 @@ async function renderAction(req,res,next){
     if(action==='reset-trial')return res.send(await resetTrialPage(req,c));
     if(action==='suspend')return res.send(suspendPage(req,c));
     return res.send(await deleteJellyfinPage(req,c));
-  }catch(error){return next(error);}
+  }catch(error){
+    const message=String(error?.message||'');
+    if(/^(Choose the subscription|That (trial )?subscription is not available|The selected subscription is not a current trial)/.test(message)&&UUID.test(String(req.params.customerId||'')))return res.redirect(customerPath(req.params.customerId,'error',message));
+    return next(error);
+  }
 }
 
 async function performExtend(req){
-  if(!exactConfirmation(req,'EXTEND'))throw new Error('Type EXTEND exactly to confirm.');
   const op=operationId(req.body?.operationId),units=Number(req.body?.units);
   if(!Number.isInteger(units)||units<1)throw new Error('Choose at least one plan period to add.');
   return individualActionService.extend({

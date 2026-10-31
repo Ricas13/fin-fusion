@@ -47,4 +47,4 @@ assert(indicator.includes("path==='/admin/commerce/orders'||path==='/admin/order
 assert(admin.includes('captureTicketsSeenThrough')&&admin.includes('markTicketsSeen(req,seenThrough)'),'top-right business indicators must clear after the operator views the relevant area, via a pre-render snapshot bound to the rendered tickets page');
 assert(orders.includes("router.get('/admin/commerce/orders'"),'Orders router must own the canonical Commerce route');
 assert(orders.includes("router.get('/admin/orders'")&&orders.includes('res.redirect(308,ORDERS_PATH)'),'legacy Orders route must remain a compatibility redirect');
-assert(orders.includes("source IN ('stripe','paypal')"),'orders view must be provider-backed');
+assert(orders.includes("source IN ('stripe','paypal','plisio')"),'orders view must be provider-backed (Stripe, PayPal and Plisio)');

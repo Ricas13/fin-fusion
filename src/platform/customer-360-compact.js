@@ -53,6 +53,15 @@ function plansCard(detail,token,plans,pendingChange=null){
   const pending= pendingChange ? `<div class="opItem pendingPlanChange"><div><strong>Pending plan change → ${esc(pendingChange.target_plan_name||pendingChange.target_plan_code||'Plan')}</strong><span>${pendingChange.effective_at?`Effective ${esc(dt(pendingChange.effective_at))}`:'Pending provider/customer action'} · ${esc(String(pendingChange.provider||'provider'))}</span></div>${pill(String(pendingChange.state||'pending').replaceAll('_',' '),'warn')}</div>` : '';
   const body=`${subs.length?subs.slice(0,6).map(sub=>`<div class="opItem"><div><strong>${esc(sub.plan_name||sub.plan_code||'Plan')}</strong><span>${esc(sub.source||'local')}${sub.current_period_end?` · ${esc(dt(sub.current_period_end))}`:''}</span></div>${pill(String(sub.status||'unknown').replaceAll('_',' '),['active','trialing'].includes(sub.status)?'good':sub.status==='past_due'?'warn':'')}</div>`).join(''):'<div class="opEmpty">No subscription records.</div>'}${pending}${current.length?'':manualGrantForm(detail,token,plans)}`;
   const actions=[];
+  if(!current.length){
+    // A lapsed customer still needs the quick fixes (e.g. "give them 7 more days") without
+    // inventing a new paid plan, so keep Extend / Edit expiry on their latest Jellyfin plan.
+    const lapsed=subs.find(sub=>!sub.superseded_by&&jellyfinPlan(sub));
+    if(lapsed){
+      actions.push(actionLink(id,'extend','Extend',{params:{subscriptionId:lapsed.id}}));
+      actions.push(actionLink(id,'expiry','Edit expiry',{params:{subscriptionId:lapsed.id}}));
+    }
+  }
   if(current.length){
     const primary=current.find(s=>String(s.id)===String(detail.primaryEntitlement?.subscription_id))||current[0];
     const jellyfinPrimary=(jellyfinPlan(primary)?primary:null)||current.find(jellyfinPlan)||null;
@@ -124,7 +133,8 @@ function holdsCard(detail,token){
   const id=detail.customer.id,holds=detail.activeHolds||[];
   const body=holds.length?holds.map(hold=>`<div class="opHold"><div><strong>${esc(String(hold.hold_type||'hold').replaceAll('_',' '))}</strong><span>${esc(hold.reason||'Access restricted')}</span></div>${String(hold.hold_type)==='payment_risk'?pill('Payment workflow','warn'):`<details class="miniMenu"><summary>Release…</summary><form method="post" action="/admin/users/${encodeURIComponent(id)}/access-holds/${encodeURIComponent(hold.id)}/release">${csrfHidden(token)}<input class="input" name="reason" minlength="5" maxlength="500" placeholder="Release reason" required><input class="input" name="confirmation" placeholder="Type RELEASE" required><button class="button secondary sm">Release hold</button></form></details>`}</div>`).join(''):'<div class="opEmpty">No active holds or suspensions.</div>';
   const actions=[actionLink(id,'suspend','Add suspension'),buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile access')];
-  return card('Access / Holds',pill(holds.length?`${holds.length} active`:'Clear',holds.length?'warn':'good'),body,actions.join(''));
+  const guide='<div class="opHint"><strong>Pause</strong> (reversible): Add suspension here, or Remove access on a service card. <strong>End</strong> (permanent): Revoke a plan, Ban customer, or the delete actions at the bottom of the page.</div>';
+  return card('Access / Holds',pill(holds.length?`${holds.length} active`:'Clear',holds.length?'warn':'good'),body+guide,actions.join(''));
 }
 
 function dangerCard(detail,token,media,state){
