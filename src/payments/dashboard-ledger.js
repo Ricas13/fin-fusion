@@ -235,7 +235,7 @@ async function scanAccountingRecords(range, visit, { queryFn = query } = {}) {
         const kind = classifier.historyKind(row);
         if (!kind) return;
         if (verifiedPlisio && row?.metadata?.feeDataAvailable !== true) {
-            addWarning(warnings, 'Plisio provider payments are included from verified settlement data, but exact provider fee data is unavailable; profit/net figures may overstate Plisio proceeds until fee accounting is supplied.');
+            addWarning(warnings, 'Plisio payments are included from verified settlement data or administrator-confirmed records, but exact provider fee data is unavailable; profit/net figures may overstate Plisio proceeds until fee accounting is supplied.');
         }
         await visit(historyRecord(row, kind));
     }, queryFn);

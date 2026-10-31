@@ -9,7 +9,7 @@ const discovery = require('../payments/subscription-discovery');
 const manualLink = require('../payments/manual-subscription-link');
 const providerSettings = require('../payments/provider-settings');
 const runtimeSettings = require('./runtime-settings');
-const { query } = require('../db');
+const { query, transaction } = require('../db');
 const { rateLimit } = require('express-rate-limit');
 const providerCheckoutRecovery = require('../payments/provider-checkout-recovery');
 const plisio = require('../payments/plisio');
@@ -270,10 +270,22 @@ function createAdminBillingRouter() {
     // grants access through the normal Plisio activation path for the amount stored on the checkout;
     // the ledger entry is marked operator-confirmed, never provider-verified.
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    async function claimCheckout(id, resolution, actor, reason) {
-        const claimed = await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW(),operator_resolved_by=$2,operator_resolution=$3,operator_resolution_note=$4,updated_at=NOW()
-            WHERE id=$1 AND provider='plisio' AND operator_resolved_at IS NULL AND state IN('open','failed','expired','cancelled') AND provider_terminal_at IS NULL RETURNING id`, [id, actor, resolution, reason]);
-        return claimed.rowCount === 1;
+    // Claim the checkout and write the audit row in ONE transaction: if the audit cannot be written the
+    // claim rolls back, so a checkout never leaves the queue without a trail. A checkout that is still
+    // inside its payment window (the customer may still be paying) cannot be dismissed.
+    async function claimCheckout(id, resolution, actor, reason, auditAction, auditMeta = {}) {
+        return transaction(async client => {
+            const windowSql = resolution === 'dismissed'
+                ? `AND (state='failed' OR created_at < NOW()-($5::int*INTERVAL '1 minute'))`
+                : '';
+            const params = [id, actor, resolution, reason];
+            if (resolution === 'dismissed') params.push(plisio.INVOICE_LIFETIME_MINUTES + 30);
+            const claimed = await client.query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW(),operator_resolved_by=$2,operator_resolution=$3,operator_resolution_note=$4,updated_at=NOW()
+                WHERE id=$1 AND provider='plisio' AND operator_resolved_at IS NULL AND state IN('open','failed','expired','cancelled') AND provider_terminal_at IS NULL ${windowSql} RETURNING id`, params);
+            if (claimed.rowCount !== 1) return false;
+            await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'billing_checkout_intent',$3,$4::jsonb)`, [actor, auditAction, id, JSON.stringify({ reason, ...auditMeta })]);
+            return true;
+        });
     }
     function resolutionInput(req) {
         const id = String(req.params.id || ''), reason = String(req.body?.reason || '').trim();
@@ -286,9 +298,8 @@ function createAdminBillingRouter() {
         if (reason.length < 5 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 5 to 500 characters.'));
         try {
             const actor = req.session?.authUserId || null;
-            if (!await claimCheckout(id, 'dismissed', actor, reason)) return res.redirect(back + '?error=' + encodeURIComponent('That checkout is already settled, closed by the provider or dismissed.'));
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.dismissed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ reason })]);
-            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted.'));
+            if (!await claimCheckout(id, 'dismissed', actor, reason, 'billing.checkout.dismissed')) return res.redirect(back + '?error=' + encodeURIComponent('That checkout cannot be dismissed: it is still inside its payment window, already settled, closed by the provider or already dismissed.'));
+            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If the customer pays it later, the payment is still detected and activates access.'));
         } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Checkout could not be dismissed.')); }
     });
     router.post('/admin/billing/checkouts/:id/mark-paid', checkoutRecheckLimit, async (req, res) => {
@@ -298,24 +309,38 @@ function createAdminBillingRouter() {
         if (reason.length < 10 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 10 to 500 characters.'));
         if (String(req.body?.confirm || '').trim() !== 'PAID') return res.redirect(back + '?error=' + encodeURIComponent('Type PAID to confirm you verified the payment in Plisio.'));
         const actor = req.session?.authUserId || null;
-        let claimed = false;
+        let claimed = false, intent = null;
         try {
-            const intent = await checkoutIntents.findById(id);
+            intent = await checkoutIntents.findById(id);
             if (!intent) return res.redirect(back + '?error=' + encodeURIComponent('That checkout no longer exists.'));
             if (intent.provider !== 'plisio') return res.redirect(back + '?error=' + encodeURIComponent('Only Plisio crypto checkouts can be recorded as paid here.'));
-            claimed = await claimCheckout(id, 'marked_paid', actor, reason);
+            claimed = await claimCheckout(id, 'marked_paid', actor, reason, 'billing.checkout.mark_paid', { customerId: intent.customer_id, planId: intent.plan_id });
             if (!claimed) return res.redirect(back + '?error=' + encodeURIComponent('That checkout is already settled, closed by the provider or resolved.'));
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ reason, customerId: intent.customer_id, planId: intent.plan_id })]);
             await plisio.settleAttested(intent, { actorUserId: actor, reason });
             return res.redirect(back + '?message=' + encodeURIComponent('Payment recorded as operator-confirmed and access activated.'));
         } catch (error) {
             if (claimed) {
-                await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid' AND state<>'completed'`, [id]).catch(() => {});
-                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_failed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ error: String(error.message || error).slice(0, 300) })]).catch(() => {});
+                // Activation, the ledger entry and completing the checkout are separate steps. If any of them
+                // already happened the attempt was only partly applied: keep the claim so the checkout does not
+                // reappear as unpaid, and tell the administrator to verify. Only a failure before any effect
+                // releases the claim so the action can be retried.
+                const partial = await checkoutPartlyApplied(intent).catch(() => true);
+                if (!partial) await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid' AND state<>'completed'`, [id]).catch(() => {});
+                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_failed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ partiallyApplied: partial, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
+                if (partial) return res.redirect(back + '?error=' + encodeURIComponent('The payment was only partly recorded. Open the customer and confirm their access and the payment history before doing anything else; this checkout stays closed so it is not recorded twice.'));
             }
             return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Payment could not be recorded.'));
         }
     });
+    async function checkoutPartlyApplied(intent) {
+        if (!intent) return true;
+        const effects = await query(`SELECT
+            (SELECT COUNT(*) FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND provider_subscription_id=$3)::int AS subs,
+            (SELECT COUNT(*) FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$3)::int AS ledger,
+            (SELECT state FROM billing_checkout_intents WHERE id=$4) AS state`, [intent.customer_id, intent.plan_id, String(intent.provider_checkout_id || ''), intent.id]);
+        const row = effects.rows[0] || {};
+        return Number(row.subs) > 0 || Number(row.ledger) > 0 || row.state === 'completed';
+    }
     router.post('/admin/billing/sync-due', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try { const result = await billing.syncDue({ all: false, limit: 100 }); return res.redirect(`/admin/billing?message=${encodeURIComponent(`Provider sync complete: ${result.succeeded} succeeded, ${result.failed} failed.`)}`); }

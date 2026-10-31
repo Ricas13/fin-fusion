@@ -25,6 +25,7 @@ const { createApplication } = require('../src/application');
 const adminOrders = require('../src/platform/admin-orders');
 const intents = require('../src/payments/checkout-intents');
 const recovery = require('../src/payments/provider-checkout-recovery');
+const plisioModule = require('../src/payments/plisio');
 const { fixtureCustomer, fixturePlan } = require('./test-fixture');
 
 
@@ -63,7 +64,7 @@ async function main() {
 
   const old = await makeIntent('old', { ageDays: 10 });
   const fresh = await makeIntent('fresh', { ageDays: 0 });
-  const dismissable = await makeIntent('dismiss', { ageDays: 12 });
+  const dismissable = await makeIntent('dismiss', { ageDays: 6 });
   const stripe = await makeIntent('stripe', { ageDays: 10, provider: 'stripe' });
 
   // Queue: no age limit; an old unresolved Plisio checkout is listed and labelled as past retries.
@@ -113,7 +114,75 @@ async function main() {
     assert.strictEqual(await audits(dismissable.id, 'billing.checkout.dismissed'), 1, 'dismissal is audited');
     assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [dismissable.customerId])).rows[0].n, 0, 'dismissal grants no access');
     assert(/already/.test((await post(dismissable.id, 'dismiss', { reason: 'second attempt again' })).location), 'a dismissed checkout cannot be acted on twice');
-    assert(!(await recovery.candidates({ limit: 200, checkoutIntentIds: [dismissable.id] })).length, 'the recovery worker leaves resolved checkouts alone');
+
+    // A checkout still inside its payment window can be neither dismissed nor looks like an exception.
+    assert(/cannot be dismissed/.test((await post(fresh.id, 'dismiss', { reason: 'customer might still be paying' })).location), 'a still-payable invoice cannot be dismissed');
+    assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [fresh.id])).rows[0].operator_resolution, null, 'and it is left untouched');
+
+    // Dismissal and its audit row are one transaction: if the audit cannot be written, nothing is dismissed.
+    const atomic = await makeIntent('atomic', { ageDays: 9 });
+    await query(`CREATE OR REPLACE FUNCTION zz_block_dismiss_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='billing.checkout.dismissed' THEN RAISE EXCEPTION 'audit blocked for test'; END IF; RETURN NEW; END $$`);
+    await query(`CREATE TRIGGER zz_block_dismiss_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION zz_block_dismiss_audit()`);
+    try {
+      const blocked = await post(atomic.id, 'dismiss', { reason: 'audit write will fail here' });
+      assert(blocked.location.includes('error='), 'the failure is reported');
+      assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [atomic.id])).rows[0].operator_resolution, null, 'a dismissal whose audit failed must not take effect');
+      assert(await inQueue(atomic.id), 'and the checkout stays in the queue');
+    } finally {
+      await query('DROP TRIGGER IF EXISTS zz_block_dismiss_audit ON audit_log');
+      await query('DROP FUNCTION IF EXISTS zz_block_dismiss_audit()');
+    }
+
+    // A dismissed checkout that the customer later pays is still detected by the recovery worker and,
+    // when Plisio confirms it, activates access and annotates the dismissal.
+    assert.strictEqual((await recovery.candidates({ limit: 200, checkoutIntentIds: [dismissable.id] })).length, 1, 'the recovery worker keeps polling a dismissed checkout inside its lookback');
+    const realFetch = global.fetch;
+    global.fetch = async (url, options) => {
+      const u = new URL(String(url));
+      if (u.hostname !== 'api.plisio.net') return realFetch(url, options);
+      const id = decodeURIComponent(u.pathname.split('/').pop());
+      return new Response(JSON.stringify({ status: 'success', data: { txn_id: id, id, type: 'invoice', status: 'completed', invoice_total_sum: '0.0006' } }), { status: 200 });
+    };
+    try {
+      const dismissedIntent = await intents.findById(dismissable.id);
+      const late = await plisioModule.confirmCheckout(dismissedIntent.provider_checkout_id, dismissedIntent);
+      assert.strictEqual(late.completed, true, 'a payment confirmed after dismissal still activates access');
+    } finally { global.fetch = realFetch; }
+    const lateRow = (await query('SELECT state,operator_resolution,operator_resolution_note FROM billing_checkout_intents WHERE id=$1', [dismissable.id])).rows[0];
+    assert.strictEqual(lateRow.state, 'completed');
+    assert(/later confirmed payment/.test(lateRow.operator_resolution_note), 'the dismissal is annotated so the record is not contradictory');
+    assert.strictEqual(await audits(dismissable.id, 'billing.checkout.dismissed_then_paid'), 1, 'the late payment is audited');
+    assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1', [dismissable.customerId])).rows[0].n >= 1, true, 'the late payment granted access');
+
+    // Failure while recording a payment: before any effect the claim is released (retry possible);
+    // after an effect it is kept so the checkout is never recorded twice.
+    const early = await makeIntent('early', { ageDays: 9 });
+    const partial = await makeIntent('partial', { ageDays: 9 });
+    const realSettle = plisioModule.settleAttested;
+    try {
+      plisioModule.settleAttested = async () => { throw new Error('simulated failure before any effect'); };
+      const r1 = await post(early.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
+      assert(r1.location.includes('error=') && /simulated failure/.test(r1.location), 'the failure is reported');
+      assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [early.id])).rows[0].operator_resolution, null, 'a failure before any effect releases the claim so it can be retried');
+      assert(await inQueue(early.id), 'and the checkout is still in the queue');
+      plisioModule.settleAttested = async intent => {
+        await query(`INSERT INTO payment_history_transactions(provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,net_amount_minor,customer_id,metadata) VALUES('plisio',$1,'payment','completed',NOW(),'GBP',1000,0,1000,$2,'{}'::jsonb)`, [intent.provider_checkout_id, intent.customer_id]);
+        throw new Error('simulated failure after the ledger entry');
+      };
+      const r2 = await post(partial.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
+      assert(/only partly recorded/.test(r2.location), `a partial failure must be explained (${r2.location})`);
+      assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [partial.id])).rows[0].operator_resolution, 'marked_paid', 'a partly applied payment keeps its claim');
+      assert(!await inQueue(partial.id), 'so it does not reappear as unpaid');
+      assert.strictEqual(await audits(partial.id, 'billing.checkout.mark_paid_failed'), 1, 'the failure is audited');
+    } finally { plisioModule.settleAttested = realSettle; }
+
+    // More than the first page: the panel can show everything.
+    const many = [];
+    for (let i = 0; i < 12; i += 1) many.push(await makeIntent(`many${i}`, { ageDays: 8 }));
+    const pageHtml = await (await fetch(`${base}/admin/commerce/orders`, { headers: { cookie: j.get() } })).text();
+    assert(pageHtml.includes('issues=all'), 'a backlog beyond the first page offers Show all');
+    const allHtml = await (await fetch(`${base}/admin/commerce/orders?issues=all`, { headers: { cookie: j.get() } })).text();
+    for (const item of many) assert(allHtml.includes(`/admin/billing/checkouts/${item.id}/mark-paid`), 'Show all reaches every unresolved checkout');
 
     // Record as paid: grants access, completes the checkout, writes an operator-attested ledger row.
     const paid = await post(old.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });

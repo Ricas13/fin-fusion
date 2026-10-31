@@ -372,6 +372,14 @@ async function activateCompleted(remote, fields, intent, { attestation = null } 
         }
     });
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
+    // An administrator may have dismissed this checkout as abandoned before the customer paid it.
+    // The payment is honoured; the dismissal is annotated so the record is not contradictory.
+    const late = await query(`UPDATE billing_checkout_intents SET operator_resolution_note=LEFT(COALESCE(operator_resolution_note,'')||' [Provider later confirmed payment; access activated.]',700)
+        WHERE id=$1 AND operator_resolution='dismissed' RETURNING id`, [intent.id]);
+    if (late.rowCount) {
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'billing.checkout.dismissed_then_paid','billing_checkout_intent',$1,$2::jsonb)`,
+            [String(intent.id), JSON.stringify({ providerTransactionId: fields.id })]);
+    }
     return { status: 'completed', completed: true, feeDataAvailable: accounting.feeDataAvailable };
 }
 
