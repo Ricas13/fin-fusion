@@ -56,9 +56,8 @@
     .customer360Core .opActions>*{min-width:0}
     .customer360Core .opActions .plainForm,.customer360Core .opActions .button{width:100%!important}
     .customer360Core .opActions .button,.mockCardButton,.mockDangerButton,.mockForceButton{box-sizing:border-box;min-height:27px!important;padding:4px 6px!important;border-radius:6px!important;font-size:.59rem!important}
-    .customer360Core .opActions form[action$="/manage/reconcile"]{display:none!important}
 
-    /* Keep card actions visible; only the duplicated generic reconcile is hidden above. */
+    /* Card actions stay visible, including Fix / reconcile access. */
     .opMoreActions{display:none!important}
 
     .approvedAdvanced,.customer360Core .opDisclosure{border:1px solid var(--border,#29333d)!important;border-radius:6px!important;margin:0!important;padding:0 9px!important;background:#0f1820!important}
@@ -308,7 +307,8 @@
     if(!target)return;
     document.body.dataset.customerSectionOpened='1';
     if(target.tagName==='DETAILS')target.open=true;
-    setTimeout(()=>target.scrollIntoView({block:'start',behavior:'smooth'}),60);
+    const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setTimeout(()=>target.scrollIntoView({block:'start',behavior:reduce?'auto':'smooth'}),60);
   }
 
   function consolidateSummaryMetrics(){
@@ -356,7 +356,8 @@
   function wirePopoverDismiss(){
     if(document.body.dataset.customerPopoverDismiss==='1')return;
     document.body.dataset.customerPopoverDismiss='1';
-    document.addEventListener('keydown',event=>{if(event.key==='Escape')document.querySelectorAll(POPOVERS).forEach(node=>{node.open=false;});});
+    // Closing with the keyboard returns focus to the control that opened the popover.
+    document.addEventListener('keydown',event=>{if(event.key!=='Escape')return;document.querySelectorAll(POPOVERS).forEach(node=>{node.open=false;node.querySelector(':scope > summary')?.focus();});});
     document.addEventListener('click',event=>{document.querySelectorAll(POPOVERS).forEach(node=>{if(event.target===node||!node.contains(event.target))node.open=false;});});
   }
 

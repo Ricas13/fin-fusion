@@ -48,6 +48,11 @@ function fixture(overrides = {}) {
   assert(html.includes('<small>Billing</small>') && !html.includes('<small>Total renewal</small>') && !html.includes('<small>Next renewal</small>'), 'the hero must carry one Billing tile');
   assert(!html.includes('<span>Media access</span>') && !html.includes('<span>Access holds</span>'), 'tiles that duplicate the cards below must be gone');
 
+  // A one-click "Fix / reconcile access" is visible in the cards and nothing hides it.
+  const cardsHtml = html.slice(html.indexOf('customer360Essentials'), html.indexOf('id="customer-payments"'));
+  assert((cardsHtml.match(/\/manage\/reconcile"/g) || []).length === 1 && cardsHtml.includes('Fix / reconcile access'), 'exactly one visible Fix / reconcile access control must be in the cards');
+  assert(!/manage\/reconcile"\]\{display:none/.test(read('public/js/admin-customer-primary-actions.js') + read('src/platform/admin-customer-primary-actions.js')), 'no stylesheet may hide the reconcile control');
+
   // One entry point for adding a plan; no second inline form in the Plans card.
   assert(!html.includes('<summary>Add plan manually…</summary>'), 'the Plans card must not carry a second inline "Add plan manually" form');
 
@@ -67,7 +72,8 @@ function fixture(overrides = {}) {
   assert(js.includes("billing:'customer-payments'") && js.includes('openRequestedSection'), '?tab=billing must open and scroll to Payments');
   assert(!js.includes("'customer-services'"), 'the Other services section no longer exists');
   assert(!js.includes("access:'customer-jellyfin'"), '?tab=access must not scroll away from the notice banner');
-  assert(js.includes("event.key==='Escape'") && js.includes('wirePopoverDismiss'), 'popover forms must close on Escape and outside click');
+  assert(js.includes("event.key!=='Escape'") && js.includes('wirePopoverDismiss') && js.includes('?.focus()'), 'popover forms must close on Escape and outside click, returning focus to the opener');
+  assert(js.includes('prefers-reduced-motion'), 'scripted scrolling must respect reduced motion');
   assert(js.includes('[data-customer-admin-tools]') && html.includes('data-customer-admin-tools'), 'recovery tools must sit with the destructive actions');
   assert(js.includes("document.querySelector('#customer-jellyfin .opActions')"), 'Make permanent / Return to automation must live in the Jellyfin card');
 })()

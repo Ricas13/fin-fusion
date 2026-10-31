@@ -103,7 +103,9 @@ function mediaCard(detail,token,media,authority){
   const body=`${authorityRows(authority)}${media.length?media.map(account=>`<div class="opItem"><div><strong>${esc(account.media_server_type==='emby'?'Emby':'Jellyfin')} · ${esc(account.jellyfin_username)}</strong><span>${esc(account.server_name||'Server')} · ${esc(account.disabled?'disabled':account.health_status||'active')}</span></div>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'warn':'good')}</div>`).join(''):'<div class="opEmpty">No Jellyfin / Emby account (present or deleted - never left disabled indefinitely).</div>'}`;
   const actions=authorityActions(id,token,'jellyfin',authority);
   if(media.length){if(jellyfin.length)actions.push(`<a class="button secondary sm" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(id)}">Reset Jellyfin password</a>`);if(jellyfin.length)actions.push(customerLink(id,'move-server','Move Jellyfin server'));}
-  actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));
+  // The everyday way to re-sync a customer's plan, Jellyfin account and services. The one in the
+  // recovery tools is the break-glass version that also clears blockers.
+  actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Fix / reconcile access'));
   if(emby.length&&!jellyfin.length)actions.push('<span class="opActionNote">Emby-specific destructive/credential actions are not exposed unless backed by a safe service lifecycle route.</span>');
   return card(emby.length?'Jellyfin / Emby':'Jellyfin',pill(`${media.filter(a=>!a.disabled).length}/${media.length} enabled`,media.some(a=>!a.disabled)?'good':''),body,actions.join(''));
 }
@@ -115,7 +117,6 @@ function stremioCard(detail,token,state,authority){
   actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/stremio/install`,state?.recovered?'Rotate credentials':'Provision / re-provision'));
   if(row&&row.status!=='revoked')actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/stremio/revoke`,'Revoke install'));
   if(row)actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/stremio-household/reset`,'Reset household/IP'));
-  actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));
   return card('Stremio',row?pill(status,row.status==='active'?'good':'warn'):pill('Not provisioned','warn'),body,actions.join(''));
 }
 

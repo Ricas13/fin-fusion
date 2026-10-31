@@ -67,6 +67,29 @@ async function main(){
     assert(/Customer portal/.test(customer360Text)&&/Plans/.test(customer360Text)&&/Stremio/.test(customer360Text)&&/Request service/.test(customer360Text),'Action-first Customer 360 cards did not render (Customer portal, Plans, Jellyfin, Stremio, Request service)');
     assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
 
+    // The final page after client-side enhancement (not just the server HTML): five working cards in
+    // order, a visible one-click reconcile, working deep links and dismissible popovers, and a
+    // single-column layout on a phone.
+    await admin.waitForSelector('.customer360Essentials .opCard',{timeout:10000});
+    const cardTitles=(await admin.locator('.customer360Essentials .opCard .opCardHead h2').allInnerTexts()).map(text=>text.trim());
+    assert.deepEqual(cardTitles,['Customer portal','Plans','Jellyfin','Stremio','Request service'],`Customer 360 cards are not the expected row: ${cardTitles.join(' | ')}`);
+    const reconcile=admin.locator(`.customer360Essentials form[action="/admin/users/${dbCustomer.id}/manage/reconcile"] button`);
+    assert.equal(await reconcile.count(),1,'Fix / reconcile access must be present exactly once in the cards');
+    assert(await reconcile.first().isVisible(),'Fix / reconcile access must be visible to the administrator after the page scripts run');
+    const popoverSummary=admin.locator('.customer360Core details.compactMovedAction > summary, .customer360Core details.opInlineDetails > summary, .customer360Core details.compactForceAction > summary').first();
+    if(await popoverSummary.count()){
+      await popoverSummary.click();
+      assert.equal(await popoverSummary.evaluate(node=>node.parentElement.open),true,'popover form did not open');
+      await admin.keyboard.press('Escape');
+      assert.equal(await popoverSummary.evaluate(node=>node.parentElement.open),false,'popover form did not close on Escape');
+    }
+    await admin.setViewportSize({width:390,height:844});
+    const phoneColumns=await admin.locator('.customer360Essentials').evaluate(node=>getComputedStyle(node).gridTemplateColumns.split(' ').length);
+    assert.equal(phoneColumns,1,'the card row must collapse to one column on a phone');
+    await admin.setViewportSize({width:1280,height:900});
+    await gotoPage(admin,`${BASE}/admin/users/${dbCustomer.id}?tab=billing`);
+    await admin.waitForFunction(()=>document.getElementById('customer-payments')?.open===true,null,{timeout:8000});
+
     // The oversized Customer actions strip is intentionally retired. The hero
     // now owns the one canonical portal-view action, while account recovery is
     // colocated with the Customer / Portal card.
