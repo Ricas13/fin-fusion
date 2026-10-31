@@ -26,6 +26,9 @@ function config() {
         acknowledged,
         activeWindowSeconds: intEnv('STREAM_POLICY_ACTIVE_WINDOW_SECONDS', 120, 30, 600),
         graceSeconds: intEnv('STREAM_POLICY_GRACE_SECONDS', 45, 10, 900),
+        // A session Jellyfin still lists but that has shown no activity and no movement for this long
+        // is treated as abandoned: it stops accruing watch time and is closed.
+        staleSessionSeconds: intEnv('STREAM_POLICY_STALE_SESSION_HOURS', 6, 1, 48) * 3600,
         confirmationsRequired: intEnv('STREAM_POLICY_CONFIRMATIONS', 2, 2, 10),
         countPaused: process.env.STREAM_POLICY_COUNT_PAUSED === 'true',
         historyRetentionDays: intEnv('ACTIVITY_RETENTION_DAYS', 90, 7, 3650),
@@ -154,24 +157,25 @@ async function managedAccountsByServer() {
     return byServer;
 }
 
-async function upsertHistorySession(s, seenAt = new Date()) {
+async function upsertHistorySession(s, seenAt = new Date(), progressReported = false) {
     const observedAt = seenAt instanceof Date && Number.isFinite(seenAt.getTime()) ? seenAt : new Date();
     await query(`
         INSERT INTO playback_history(
             server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,access_lane_snapshot
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13,$14)
+            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,access_lane_snapshot,progress_reported
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13,$14,$15)
         ON CONFLICT(server_id,playback_key) DO UPDATE SET
             customer_id=EXCLUDED.customer_id,
             jellyfin_account_id=EXCLUDED.jellyfin_account_id,
             last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
             playback_method=EXCLUDED.playback_method,
             transcode_reasons=EXCLUDED.transcode_reasons,
+            progress_reported=COALESCE(playback_history.progress_reported,FALSE) OR EXCLUDED.progress_reported,
             ended_at=NULL,
             ended_reason=NULL
     `, [
         s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
-        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null
+        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null,Boolean(progressReported)
     ]);
 }
 
@@ -230,7 +234,7 @@ async function upsertObservedSession(s) {
         s.lastActivityAt,s.streamLimit
     ]);
 
-    await upsertHistorySession(s, new Date());
+    await upsertHistorySession(s, new Date(), s.positionMoved === true);
 
     s.firstSeenAt = resetFirstSeen ? new Date() : new Date(active.rows[0].first_seen_at);
     s.confirmations = Number(active.rows[0].over_limit_confirmations || 0);
@@ -270,6 +274,20 @@ async function closeMissingSessions(serverId, accountIds, seenPlaybackKeys, seen
     }
 }
 
+function isAbandoned(session, cfg) {
+    const last = session.lastActivityAt instanceof Date && Number.isFinite(session.lastActivityAt.getTime()) ? session.lastActivityAt.getTime() : null;
+    return last !== null && Date.now() - last > cfg.staleSessionSeconds * 1000;
+}
+
+async function closeStaleSession(session) {
+    await query(`
+        UPDATE playback_history
+        SET ended_at=COALESCE(ended_at,last_seen_at),ended_reason=COALESCE(ended_reason,'stale_session')
+        WHERE server_id=$1 AND playback_key=$2 AND ended_at IS NULL
+    `, [session.serverId, session.playbackKey]);
+    await query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND jellyfin_session_id=$2`, [session.serverId, session.sessionId]);
+}
+
 async function pollServer(serverId, accounts, entitlements, cfg) {
     const activeEndpoint = `/Sessions?activeWithinSeconds=${encodeURIComponent(cfg.activeWindowSeconds)}`;
     const [sessions, activeSessions] = await Promise.all([
@@ -300,16 +318,21 @@ async function pollServer(serverId, accounts, entitlements, cfg) {
         const moved = positionMoved(serverId, session);
         const policyFresh = activeIds.has(normalized.sessionId) || moved;
         if (moved) normalized.lastActivityAt = new Date();
+        normalized.positionMoved = moved;
         seenPlaybackKeys.push(normalized.playbackKey);
 
         if (policyFresh) {
             seenActive.add(normalized.sessionId);
             managed.push(await upsertObservedSession(normalized));
+        } else if (isAbandoned(normalized, cfg)) {
+            // Listed by Jellyfin but silent and not moving for hours: stop accruing watch time. The
+            // row keeps the last time it was genuinely active and is closed as stale.
+            await closeStaleSession(normalized);
         } else {
             const pausedAt = normalized.isPaused && normalized.lastActivityAt instanceof Date && Number.isFinite(normalized.lastActivityAt.getTime())
                 ? normalized.lastActivityAt
                 : new Date();
-            await upsertHistorySession(normalized, pausedAt);
+            await upsertHistorySession(normalized, pausedAt, moved);
         }
     }
 
