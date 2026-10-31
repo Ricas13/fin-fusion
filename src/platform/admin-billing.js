@@ -252,11 +252,14 @@ function createAdminBillingRouter() {
             const summary = await providerCheckoutRecovery.run({ limit: 1, checkoutIntentIds: [id] });
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.recheck_result','billing_checkout_intent',$2,$3::jsonb)`,
                 [actor, id, JSON.stringify({ total: summary.total, recovered: summary.recovered, waiting: summary.waiting, terminal: summary.terminal, failed: summary.failed })]);
+            // "failed" covers any error in the recovery run (provider unreachable, a timeout, or a completed
+            // invoice whose amount could not be verified), so the wording must not claim Plisio reported a payment.
+            const detail = String(summary.failures?.[0]?.error || '').slice(0, 200);
             const message = !summary.total ? 'This checkout is outside the recovery window or already settled; nothing to re-check.'
                 : summary.recovered ? 'Payment confirmed with the provider and access activated.'
-                : summary.failed ? 'The provider reports a payment that could not be verified automatically. Confirm the payment in the Plisio dashboard (transaction ID and amount) before granting access manually; Grant plan manually on the customer page records who granted it and why.'
-                : summary.terminal ? 'The provider reports this checkout as expired or cancelled; no payment was received.'
-                : 'The provider has not confirmed a payment for this checkout yet.';
+                : summary.failed ? `The re-check could not confirm this checkout${detail ? ` (${detail})` : ''}. Confirm its status directly in the Plisio dashboard (transaction ID and amount) before making any manual change; Grant plan manually on the customer page records who granted it and why.`
+                : summary.terminal ? 'Plisio reports this invoice as expired or cancelled; access was not activated.'
+                : 'Plisio has not confirmed a payment for this checkout yet.';
             return res.redirect('/admin/commerce/orders?' + (summary.failed ? 'error=' : 'message=') + encodeURIComponent(message));
         } catch (error) { return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent(error.message || 'Checkout could not be re-checked.')); }
     });

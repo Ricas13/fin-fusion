@@ -56,15 +56,20 @@ async function makeIntent(customerId, planId, state, createdAgo, label, { termin
   assert.strictEqual(orders.parsePurchaseFilters({ orderProvider: 'plisio' }, { from: '', to: '' }).provider, 'plisio', 'the provider filter must accept Plisio');
 
   // Only stale, unsettled crypto checkouts need follow-up.
-  const stale = await makeCustomer('stale'), fresh = await makeCustomer('fresh'), done = await makeCustomer('done'), abandoned = await makeCustomer('abandoned'), inWindow = await makeCustomer('inwindow'), failed = await makeCustomer('failed');
+  const stale = await makeCustomer('stale'), fresh = await makeCustomer('fresh'), done = await makeCustomer('done'), abandoned = await makeCustomer('abandoned'), inWindow = await makeCustomer('inwindow'), failed = await makeCustomer('failed'), failedNow = await makeCustomer('failednow'), localExpired = await makeCustomer('localexpired'), expiredClosed = await makeCustomer('expiredclosed');
   await makeIntent(stale, planId, 'open', '5 hours', 'stale');
   await makeIntent(inWindow, planId, 'open', '2 hours', 'inwindow');
   await makeIntent(failed, planId, 'failed', '1 hour', 'failed');
+  // A failure is actionable immediately, not only after 30 minutes.
+  await makeIntent(failedNow, planId, 'failed', '5 minutes', 'failednow');
+  // The worker still investigates locally expired checkouts the provider has not closed; those must not vanish.
+  await makeIntent(localExpired, planId, 'expired', '5 hours', 'localexpired');
+  await makeIntent(expiredClosed, planId, 'expired', '5 hours', 'expiredclosed', { terminal: true });
   await makeIntent(fresh, planId, 'open', '5 minutes', 'fresh');
   await makeIntent(done, planId, 'completed', '2 hours', 'done');
   await makeIntent(abandoned, planId, 'open', '2 hours', 'abandoned', { terminal: true });
   const issues = (await orders.checkoutIssues()).filter(row => created.customers.includes(row.customer_id));
-  assert.deepStrictEqual(issues.map(row => row.customer_id).sort(), [stale, failed].sort(), 'only a failed checkout, or an open one past its payment window that Plisio has not closed, must be surfaced (not fresh, still-payable, completed or provider-expired ones)');
+  assert.deepStrictEqual(issues.map(row => row.customer_id).sort(), [stale, failed, failedNow, localExpired].sort(), 'only failed checkouts, and open / locally expired / cancelled ones past their payment window that Plisio has not closed, must be surfaced (not fresh, still-payable, completed or provider-closed ones)');
   assert.strictEqual(issues[0].kind, 'checkout');
   assert.strictEqual(Number(issues.find(row => row.customer_id === stale).amount_minor), 999);
   assert.strictEqual(require('../src/payments/plisio').INVOICE_LIFETIME_MINUTES, 180, 'the Orders window follows the invoice lifetime used when invoices are created');
