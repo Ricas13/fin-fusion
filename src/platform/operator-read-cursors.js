@@ -41,6 +41,19 @@ function isAfterWatermark(createdExact, createdAt, seen) {
     return Number.isFinite(since) && Number.isFinite(created) && created > since;
 }
 
+// What counts as an unread order. One definition feeds the header count, the acknowledgement
+// watermark and the per-row New label, so they can never disagree about which purchases qualify:
+// a purchase from one of these providers, in one of these live statuses, created in the last 7 days.
+const ORDER_UNREAD_SOURCES = Object.freeze(['stripe', 'paypal', 'plisio']);
+const ORDER_UNREAD_STATUSES = Object.freeze(['active', 'trialing', 'past_due', 'paused']);
+const ORDER_UNREAD_DAYS = 7;
+const ORDER_UNREAD_SQL = `created_at>NOW()-INTERVAL '${ORDER_UNREAD_DAYS} days' AND source IN (${ORDER_UNREAD_SOURCES.map(value => `'${value}'`).join(',')}) AND status IN (${ORDER_UNREAD_STATUSES.map(value => `'${value}'`).join(',')})`;
+function isUnreadOrder(row) {
+    const created = new Date(row?.created_at).getTime();
+    return ORDER_UNREAD_SOURCES.includes(row?.source) && ORDER_UNREAD_STATUSES.includes(row?.status)
+        && Number.isFinite(created) && created > Date.now() - ORDER_UNREAD_DAYS * 86400000;
+}
+
 function area(value) {
     const key = String(value || '').trim().toLowerCase();
     if (!AREAS.has(key)) throw new Error('Invalid operator read area.');
@@ -74,7 +87,7 @@ async function latestFor(client, key) {
         return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM customers WHERE created_at>NOW()-INTERVAL '7 days'`)).rows[0].seen_at;
     }
     if (key === 'orders') {
-        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal','plisio') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
+        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM subscriptions WHERE ${ORDER_UNREAD_SQL}`)).rows[0].seen_at;
     }
     if (key === 'payments') {
         return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${ACTIONABLE_PAYMENT_EVENT_SQL}`)).rows[0].seen_at;
@@ -109,4 +122,4 @@ async function markSeen(adminUserId, value, seenThrough) {
     });
 }
 
-module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, EXACT_WATERMARK, exactSql, isAfterWatermark, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };
+module.exports = { AREAS, NAV_PREFIX, ACTIONABLE_PAYMENT_EVENT_SQL, ORDER_UNREAD_SQL, isUnreadOrder, EXACT_WATERMARK, exactSql, isAfterWatermark, area, navKey, readWatermark, list, markSeen, latestFor, captureSeenThrough };

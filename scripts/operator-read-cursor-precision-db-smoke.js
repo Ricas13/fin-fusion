@@ -116,11 +116,16 @@ async function exactOf(table, id) {
   const orderBuyerA = await makeCustomer(323456), orderBuyerB = await makeCustomer(323900);
   const subA = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323456 microseconds') RETURNING id`, [orderBuyerA, planId])).rows[0].id;
   const subB = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','plisio',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323900 microseconds') RETURNING id`, [orderBuyerB, planId])).rows[0].id;
-  subscriptions.push(subA, subB);
+  // A recent but cancelled purchase is not an unread order: it must neither count in the header
+  // nor be labelled New in the table, even though the table lists it.
+  const orderBuyerC = await makeCustomer(323950);
+  const subC = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'cancelled','plisio',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323950 microseconds') RETURNING id`, [orderBuyerC, planId])).rows[0].id;
+  subscriptions.push(subA, subB, subC);
   const orderRows = (await adminOrders.purchases({ page: 1, planId })).rows;
   const orderSeen = await exactOf('subscriptions', subA);
   const html = adminOrders.orderTable({ rows: orderRows, total: orderRows.length, page: 1, pages: 1 }, orderSeen);
-  assert.strictEqual((html.match(/>New</g) || []).length, 1, 'only the purchase created after the watermark is labelled New');
+  assert(orderRows.some(row => row.id === subC), 'the table lists the cancelled purchase');
+  assert.strictEqual((html.match(/>New</g) || []).length, 1, 'only the eligible purchase created after the watermark is labelled New (not the cancelled one)');
   assert(html.includes('Plisio'), 'the Orders table lists the crypto purchase with its provider name');
 
   // The Orders header count uses the same eligible set as the table: a Plisio purchase counts, and
