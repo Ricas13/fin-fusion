@@ -240,12 +240,16 @@ function createAdminBillingRouter() {
         const id = String(req.params.id || '');
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent('Choose a valid checkout to re-check.'));
         try {
+            const actor = req.session?.authUserId || null;
+            // The attempt is recorded before the provider is contacted. If the audit row cannot be
+            // written nothing runs, so a payment recovery never happens without a trail.
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.recheck','billing_checkout_intent',$2,'{}'::jsonb)`, [actor, id]);
             const summary = await providerCheckoutRecovery.run({ limit: 1, checkoutIntentIds: [id] });
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.recheck','billing_checkout_intent',$2,$3::jsonb)`,
-                [req.session?.authUserId || null, id, JSON.stringify({ recovered: summary.recovered, waiting: summary.waiting, terminal: summary.terminal, failed: summary.failed })]).catch(() => {});
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.recheck_result','billing_checkout_intent',$2,$3::jsonb)`,
+                [actor, id, JSON.stringify({ total: summary.total, recovered: summary.recovered, waiting: summary.waiting, terminal: summary.terminal, failed: summary.failed })]);
             const message = !summary.total ? 'This checkout is outside the recovery window or already settled; nothing to re-check.'
                 : summary.recovered ? 'Payment confirmed with the provider and access activated.'
-                : summary.failed ? 'The provider reports a payment that could not be verified automatically. Use Grant plan manually on the customer page if you have confirmed it.'
+                : summary.failed ? 'The provider reports a payment that could not be verified automatically. Confirm the payment in the Plisio dashboard (transaction ID and amount) before granting access manually; Grant plan manually on the customer page records who granted it and why.'
                 : summary.terminal ? 'The provider reports this checkout as expired or cancelled; no payment was received.'
                 : 'The provider has not confirmed a payment for this checkout yet.';
             return res.redirect('/admin/commerce/orders?' + (summary.failed ? 'error=' : 'message=') + encodeURIComponent(message));

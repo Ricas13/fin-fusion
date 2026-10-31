@@ -258,6 +258,8 @@ async function scan({ limit = 100 } = {}) {
         -- A paid plan that ended minutes ago is routine expiry: the access automation removes
         -- the account within a few minutes. Only raise this (urgent) finding if the account
         -- is still there after the grace period, i.e. cleanup is genuinely not happening.
+        -- The window is bounded on both sides: a cancelled or revoked contract whose end date
+        -- is still in the future did not "just expire" and stays flagged.
         AND NOT EXISTS(
           SELECT 1
           FROM subscriptions s_recent
@@ -269,6 +271,7 @@ async function scan({ limit = 100 } = {}) {
             AND s_recent.superseded_by IS NULL
             AND s_recent.status IN('active','trialing','past_due','paused','cancelled','expired')
             AND s_recent.current_period_end+((COALESCE(s_recent.service_extension_days,0))||' days')::interval>NOW()-make_interval(mins=>${EXPIRY_GRACE_MINUTES})
+            AND s_recent.current_period_end+((COALESCE(s_recent.service_extension_days,0))||' days')::interval<=NOW()
         )
       ORDER BY ja.created_at
       LIMIT $1
