@@ -115,12 +115,22 @@ async function exactOf(table, id) {
   planId = (await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,is_free_tier) VALUES($1,$2,'jellyfin','direct','month',30,999,'GBP',1,'premium',TRUE,TRUE,FALSE) RETURNING id`, [`cursor-${suffix}`, `Cursor plan ${suffix}`])).rows[0].id;
   const orderBuyerA = await makeCustomer(323456), orderBuyerB = await makeCustomer(323900);
   const subA = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323456 microseconds') RETURNING id`, [orderBuyerA, planId])).rows[0].id;
-  const subB = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323900 microseconds') RETURNING id`, [orderBuyerB, planId])).rows[0].id;
+  const subB = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,created_at) VALUES($1,$2,'active','plisio',NOW(),NOW()+INTERVAL '30 days',${FUTURE}+INTERVAL '323900 microseconds') RETURNING id`, [orderBuyerB, planId])).rows[0].id;
   subscriptions.push(subA, subB);
   const orderRows = (await adminOrders.purchases({ page: 1, planId })).rows;
   const orderSeen = await exactOf('subscriptions', subA);
   const html = adminOrders.orderTable({ rows: orderRows, total: orderRows.length, page: 1, pages: 1 }, orderSeen);
   assert.strictEqual((html.match(/>New</g) || []).length, 1, 'only the purchase created after the watermark is labelled New');
+  assert(html.includes('Plisio'), 'the Orders table lists the crypto purchase with its provider name');
+
+  // The Orders header count uses the same eligible set as the table: a Plisio purchase counts, and
+  // clears once acknowledged, while the same-millisecond purchase after the watermark stays unread.
+  await readCursors.markSeen(adminId, 'orders', orderSeen);
+  const ordersSnapshot = await operatorState.snapshot(adminId);
+  assert.strictEqual(ordersSnapshot.counts.orders, 1, 'the later Plisio purchase counts toward the Orders badge');
+  assert.strictEqual(ordersSnapshot.updatedExact.orders, await exactOf('subscriptions', subB), 'the Orders watermark follows the Plisio purchase');
+  await readCursors.markSeen(adminId, 'orders', ordersSnapshot.updatedExact.orders);
+  assert.strictEqual((await operatorState.snapshot(adminId)).counts.orders, 0, 'and clears once seen');
 
   // --- Legacy clients that still send a millisecond epoch keep working (rounded up so the newest item clears).
   await query('DELETE FROM admin_nav_read_state WHERE admin_user_id=$1', [adminId]);

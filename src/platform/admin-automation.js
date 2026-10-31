@@ -101,7 +101,23 @@ function automationHero(jobs,worker,workerAlive){
     ],actionsHtml:first?`<a class="button" href="#automation-problems">Fix unhealthy jobs</a><a class="button secondary" href="#all-automation-jobs">All schedules</a>`:'<a class="button secondary" href="#all-automation-jobs">Review schedules</a>'});
 }
 
-function accessIntegritySection(req, findings) {
+const INTEGRITY_GUIDANCE = Object.freeze({
+    primary_server_without_plan: 'The customer has a Jellyfin account but no live paid plan. Usual cause: the plan just expired and the expiry job has not removed the account yet. If they should still have access, give them time; otherwise remove access.',
+    paid_plan_without_recovery_state: 'A paid plan has no server or recovery record, so provisioning will not retry on its own. Open the customer and use Fix / Reconcile access.',
+    free_plan_without_ready_server: 'A Free plan is waiting for a server with free capacity. It repairs itself once a Free server is available.',
+    free_server_without_plan: 'A Free-server account has no Free plan behind it. Safe repair will remove or re-attach it.',
+    unpaid_trial_without_ready_server: 'A trial has no ready server. Safe repair re-checks current authority before changing anything.',
+    free_restore_reprovision_failed: 'Restoring Free access failed. Open the customer and use Fix / Reconcile access.'
+});
+
+async function integrityCustomerNames(findings) {
+    const ids = [...new Set(findings.map(item => String(item?.customerId || '')).filter(id => /^[0-9a-f-]{36}$/i.test(id)))];
+    if (!ids.length) return new Map();
+    const result = await query(`SELECT c.id,COALESCE(NULLIF(c.display_name,''),NULLIF(c.email,''),'Customer') AS name,c.email FROM customers c WHERE c.id=ANY($1::uuid[])`, [ids]).catch(() => ({ rows: [] }));
+    return new Map(result.rows.map(row => [String(row.id), row]));
+}
+
+function accessIntegritySection(req, findings, names = new Map()) {
     if (!findings.length) {
         return `<section class="section" id="access-integrity">${ui.sectionHeader({title:'Access integrity',description:'Independent plan ↔ server invariant scan.'})}<div class="notice good"><strong>No access invariant failures detected.</strong> Free, trial and paid recovery states are internally consistent.</div></section>`;
     }
@@ -110,8 +126,12 @@ function accessIntegritySection(req, findings) {
         const label=accessIntegrityOperator.label(finding.kind);
         const action=repairable
             ?`<form method="post" action="/admin/automation/access-integrity/repair">${token(req)}<input type="hidden" name="kind" value="${esc(finding.kind)}"><input type="hidden" name="findingId" value="${esc(finding.id)}"><input type="hidden" name="customerId" value="${esc(finding.customerId||'')}"><button class="button btn-sm">Repair safely</button></form>`
-            :'<span class="pill warn">Manual review required</span>';
-        return `<article class="serverCard"><div class="serverTop"><div><strong>${esc(label)}</strong><div class="subText">Customer ${esc(finding.customerId||'unknown')} · ${esc(finding.id)}</div></div><span class="pill bad">Invariant failed</span></div><div class="notice error">${esc(finding.detail)}</div><div class="buttonRow">${action}</div></article>`;
+            :'<span class="pill warn">Needs your review</span>';
+        const customer=names.get(String(finding.customerId||''));
+        const who=customer?`<a href="/admin/users/${encodeURIComponent(finding.customerId)}">${esc(customer.name)}</a>${customer.email&&customer.email!==customer.name?` · ${esc(customer.email)}`:''}`:`Customer ${esc(finding.customerId||'unknown')}`;
+        const open=customer?`<a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(finding.customerId)}">Open customer</a>`:'';
+        const guidance=INTEGRITY_GUIDANCE[finding.kind]?`<p class="subText">${esc(INTEGRITY_GUIDANCE[finding.kind])}</p>`:'';
+        return `<article class="serverCard"><div class="serverTop"><div><strong>${esc(label)}</strong><div class="subText">${who}</div></div><span class="pill bad">Invariant failed</span></div><div class="notice error">${esc(finding.detail)}</div>${guidance}<div class="buttonRow">${open}${action}</div></article>`;
     }).join('');
     return `<section class="section" id="access-integrity">${ui.sectionHeader({title:`Access integrity (${findings.length})`,description:'Independent scanner results. Automatic repair is offered only for unpaid/orphan states whose repair layer re-checks current authority before changing anything.'})}<div class="serverGrid">${cards}</div></section>`;
 }
@@ -123,11 +143,12 @@ async function page(req) {
         workerState(),
         accessIntegrityOperator.list({limit:100})
     ]);
+    const integrityNames=await integrityCustomerNames(accessFindings);
     const workerAlive=Boolean(worker&&Number(worker.heartbeat_age_seconds)<=Math.max(60,Math.ceil(Number(worker?.metadata?.pollMs||15000)/1000)*4));
     const problemJobs=jobs.filter(job=>['degraded','failed','stale','missing'].includes(jobHealth.healthState(job)));
     const problems=problemJobs.length?`<section class="section" id="automation-problems">${ui.sectionHeader({title:'Fix these jobs first',description:'These jobs are degraded, failed, stale or missing. Run them for catch-up/diagnosis or correct the underlying worker/integration problem.'})}<div class="serverGrid">${problemJobs.map(job=>jobCard(req,job)).join('')}</div></section>`:'';
     const routine=ui.detailDisclosure({title:`All automation schedules (${jobs.length})`,summary:'Routine controls · open only when changing schedules or running a job manually',bodyHtml:`<div id="all-automation-jobs">${groupedJobs(req,jobs)}</div>`});
-    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${accessIntegritySection(req,accessFindings)}${problems}${routine}`,pageClass:'page-automation'});
+    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${accessIntegritySection(req,accessFindings,integrityNames)}${problems}${routine}`,pageClass:'page-automation'});
 }
 
 function createAdminAutomationRouter(){

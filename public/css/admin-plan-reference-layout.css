@@ -180,29 +180,17 @@
 .content.planReferencePage .planControlGrid>#lifecycle{order:6}
 .content.planReferencePage .planControlGrid>#requests{order:7}
 
-@media(min-width:1180px){
-  .content.planReferencePage .planControlGrid>#access:has(details[open]),
-  .content.planReferencePage .planControlGrid>#delivery:has(details[open]),
-  .content.planReferencePage .planControlGrid>#libraries:has(details[open]),
-  .content.planReferencePage .planControlGrid>#commerce:has(details[open]),
-  .content.planReferencePage .planControlGrid>#requests:has(details[open]){
-    grid-column:1/-1!important;
-  }
-  .content.planReferencePage .planControlGrid>#access:has(details[open]) .planPermissionGrid,
-  .content.planReferencePage .planControlGrid>#requests:has(details[open]) .planPermissionGrid{
-    grid-template-columns:repeat(5,minmax(0,1fr))!important;
-  }
-  .content.planReferencePage .planControlGrid>#libraries:has(details[open]) .planLibraryChoices{
-    grid-template-columns:repeat(4,minmax(0,1fr))!important;
-    max-height:330px;
-  }
-  .content.planReferencePage .planControlGrid>#delivery:has(details[open]) .planServerChoices{
-    grid-template-columns:repeat(2,minmax(0,1fr));
-  }
-  .content.planReferencePage .planControlGrid>#commerce:has(details[open]) .planPaymentOptions{
-    grid-template-columns:repeat(4,minmax(0,1fr))!important;
-  }
+/* Opening an Advanced section must grow only its own card. It used to span every
+   column, which pushed the other cards onto new rows and reflowed the whole page,
+   so the expanded content now stays inside the card's own column width. */
+.content.planReferencePage .planControlGrid>#access:has(details[open]) .planPermissionGrid,
+.content.planReferencePage .planControlGrid>#requests:has(details[open]) .planPermissionGrid,
+.content.planReferencePage .planControlGrid>#libraries:has(details[open]) .planLibraryChoices,
+.content.planReferencePage .planControlGrid>#delivery:has(details[open]) .planServerChoices,
+.content.planReferencePage .planControlGrid>#commerce:has(details[open]) .planPaymentOptions{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
 }
+.content.planReferencePage .planControlGrid>#libraries:has(details[open]) .planLibraryChoices{max-height:330px}
 
 /* Card heads ----------------------------------------------------------- */
 .content.planReferencePage .planConfigHead,

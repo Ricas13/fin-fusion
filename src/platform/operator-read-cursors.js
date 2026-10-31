@@ -29,6 +29,9 @@ const EXACT_WATERMARK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 // when both sides have it (fixed-width UTC strings sort lexicographically), and falls back to
 // millisecond dates for older cursors. Rows must therefore select exactSql(created_at) too, so a
 // row created in the same millisecond as the watermark is not rounded away.
+// With no saved cursor (an administrator's first visit) nothing is labelled New, even though the header
+// may count recent records; and the header counts the whole area while a table is paginated and
+// filtered, so the two agree on what is new but not always on how many rows are visible.
 function isAfterWatermark(createdExact, createdAt, seen) {
     if (seen === undefined || seen === null || seen === '') return false;
     const seenText = seen instanceof Date ? '' : String(seen);
@@ -71,7 +74,7 @@ async function latestFor(client, key) {
         return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM customers WHERE created_at>NOW()-INTERVAL '7 days'`)).rows[0].seen_at;
     }
     if (key === 'orders') {
-        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
+        return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal','plisio') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
     }
     if (key === 'payments') {
         return (await client.query(`SELECT ${exactSql('COALESCE(MAX(created_at),NOW())')} seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND ${ACTIONABLE_PAYMENT_EVENT_SQL}`)).rows[0].seen_at;

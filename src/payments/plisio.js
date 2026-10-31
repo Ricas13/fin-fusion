@@ -13,6 +13,10 @@ const API_BASE = 'https://api.plisio.net';
 const WAITING_STATUSES = providerLifecycleState.PLISIO_WAITING;
 const TERMINAL_UNPAID_STATUSES = providerLifecycleState.PLISIO_TERMINAL_UNPAID;
 
+// How long a Plisio invoice stays payable. Used when creating invoices and when deciding whether an
+// unconfirmed invoice is still simply waiting for the customer to pay.
+const INVOICE_LIFETIME_MINUTES = 180;
+
 function enabled() {
     const cfg = providerSettings.peek('plisio');
     return Boolean(cfg?.secretKey);
@@ -105,7 +109,7 @@ async function createCheckout({ intentId, resolvedPlan, finalAmountMinor = null,
         fail_callback_url: cancelUrl,
         success_invoice_url: successUrl,
         fail_invoice_url: cancelUrl,
-        expire_min: 180
+        expire_min: INVOICE_LIFETIME_MINUTES
     });
     if (!invoice?.txn_id || !invoice?.invoice_url) throw new Error('Plisio did not return a checkout URL.');
     return { id: String(invoice.txn_id), url: String(invoice.invoice_url), mode: 'payment' };
@@ -812,6 +816,7 @@ async function confirmCheckout(providerTxnId, intent) {
 }
 
 module.exports = {
+    INVOICE_LIFETIME_MINUTES,
     API_BASE,
     WAITING_STATUSES,
     TERMINAL_UNPAID_STATUSES,
