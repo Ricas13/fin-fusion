@@ -253,7 +253,7 @@ function buildWhere(filters, scope) {
 }
 
 const SELECT_COLUMNS = `
-    c.id,c.display_name,c.email,c.created_at,
+    c.id,c.display_name,c.email,c.created_at,to_char(c.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_exact,
     au.username AS login_username,au.active AS login_active,
     (SELECT ja_identity.jellyfin_username
        FROM jellyfin_accounts ja_identity
