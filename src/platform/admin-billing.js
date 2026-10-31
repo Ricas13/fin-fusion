@@ -232,14 +232,19 @@ function createAdminBillingRouter() {
             return res.redirect('/admin/billing?message=' + encodeURIComponent('Verified provider subscription linked. Provider state now controls future renewal and paid-through updates.') + '#missing-provider-links');
         } catch (error) { return res.redirect('/admin/billing?error=' + encodeURIComponent(error.message || 'Provider subscription could not be linked.') + '#missing-provider-links'); }
     });
-    // Re-check one crypto checkout with its provider through the same recovery path the
-    // worker uses. It never grants access on its own: a paid invoice is activated only
-    // after the provider amount verifies, exactly as for the automatic job.
+    // Re-check one Plisio crypto checkout through the same recovery path the background worker
+    // uses; it adds no new way to grant access. Plisio is asked for the invoice, and access is
+    // activated only if Plisio reports it as completed, using the same contract checks as the
+    // worker (when Plisio omits the fiat amount, the amount stored on the checkout is used).
+    // Only Plisio checkouts can be re-checked here.
     router.post('/admin/billing/checkouts/:id/recheck', checkoutRecheckLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         const id = String(req.params.id || '');
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent('Choose a valid checkout to re-check.'));
         try {
+            const target = (await query(`SELECT provider FROM billing_checkout_intents WHERE id=$1`, [id])).rows[0];
+            if (!target) return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent('That checkout no longer exists.'));
+            if (target.provider !== 'plisio') return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent('Only Plisio crypto checkouts can be re-checked from here.'));
             const actor = req.session?.authUserId || null;
             // The attempt is recorded before the provider is contacted. If the audit row cannot be
             // written nothing runs, so a payment recovery never happens without a trail.

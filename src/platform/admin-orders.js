@@ -4,6 +4,7 @@ const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
+const plisio=require('../payments/plisio');
 const readCursors=require('./operator-read-cursors');
 const {esc,layout}=require('./admin-html');
 const moneyFormat=require('./money-format');
@@ -133,10 +134,12 @@ async function paymentIssues(){
  return result.rows;
 }
 // One-time crypto checkouts have no provider subscription row, so a paid-but-unconfirmed
-// Plisio invoice would otherwise be invisible here. Surface invoices that were created
-// at least 30 minutes ago and never reached a confirmed state within the recovery window.
-// Invoices the provider has already reported as expired or cancelled are abandoned, not
-// problems, so they are excluded; the rest drop out as soon as the worker settles them.
+// Plisio invoice would otherwise be invisible here. An open invoice is normal while the
+// customer can still pay it, so it only counts as a problem once its payment window (plus a
+// 30-minute grace for the worker to close it) has passed without the provider settling or
+// closing it. Failed checkouts count straight away. Invoices the provider has already reported
+// as expired or cancelled are abandoned, not problems, and drop out as soon as the worker
+// settles or closes them.
 async function checkoutIssues(){
  const result=await query(`SELECT i.id checkout_id,i.customer_id,i.created_at,i.state,i.provider,
   COALESCE(NULLIF(c.display_name,''),NULLIF(u.username,''),NULLIF(c.email,''),NULLIF(u.email,''),'Customer') customer,
@@ -148,9 +151,10 @@ async function checkoutIssues(){
   LEFT JOIN plans p ON p.id=i.plan_id
   WHERE i.provider='plisio' AND i.state IN('open','failed') AND i.provider_checkout_id IS NOT NULL
     AND i.provider_terminal_at IS NULL
+    AND (i.state='failed' OR i.created_at<NOW()-($1::int*INTERVAL '1 minute'))
     AND i.created_at<NOW()-INTERVAL '30 minutes' AND i.created_at>NOW()-INTERVAL '7 days'
-  ORDER BY i.created_at DESC LIMIT 25`);
- return result.rows.map(row=>({...row,kind:'checkout',source:row.provider,attempts:0,last_error:row.state==='failed'?'Crypto checkout failed':'Crypto invoice created, no confirmation received',next_attempt_at:null}));
+  ORDER BY i.created_at DESC LIMIT 25`,[plisio.INVOICE_LIFETIME_MINUTES+30]);
+ return result.rows.map(row=>({...row,kind:'checkout',source:row.provider,attempts:0,last_error:row.state==='failed'?'Crypto checkout failed':'Crypto invoice is past its payment window and Plisio has not settled or closed it',next_attempt_at:null}));
 }
 async function renewalRows(){return(await query(`SELECT s.customer_id,s.current_period_end,s.price_minor_snapshot,s.currency_snapshot,COALESCE(NULLIF(s.plan_name_snapshot,''),p.name) plan_name,COALESCE(NULLIF(c.display_name,''),NULLIF(u.username,''),NULLIF(c.email,''),NULLIF(u.email,''),'Customer') customer FROM subscriptions s JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN plans p ON p.id=s.plan_id WHERE s.source IN('stripe','paypal') AND s.status IN('active','trialing') AND COALESCE(s.cancel_at_period_end,FALSE)=FALSE AND s.provider_subscription_id IS NOT NULL AND s.current_period_end>NOW() AND s.current_period_end<=NOW()+INTERVAL '7 days' ORDER BY s.current_period_end LIMIT 12`)).rows;}
 async function expiryRows(){return(await query(`SELECT s.customer_id,s.current_period_end,s.status,COALESCE(NULLIF(s.plan_name_snapshot,''),p.name) plan_name,COALESCE(NULLIF(c.display_name,''),NULLIF(u.username,''),NULLIF(c.email,''),NULLIF(u.email,''),'Customer') customer FROM subscriptions s JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN plans p ON p.id=s.plan_id WHERE s.superseded_by IS NULL AND s.current_period_end>NOW() AND s.current_period_end<=NOW()+INTERVAL '30 days' AND (COALESCE(s.cancel_at_period_end,FALSE)=TRUE OR s.status='trialing' OR s.source NOT IN('stripe','paypal') OR s.provider_subscription_id IS NULL) ORDER BY s.current_period_end LIMIT 100`)).rows;}

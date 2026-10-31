@@ -56,15 +56,18 @@ async function makeIntent(customerId, planId, state, createdAgo, label, { termin
   assert.strictEqual(orders.parsePurchaseFilters({ orderProvider: 'plisio' }, { from: '', to: '' }).provider, 'plisio', 'the provider filter must accept Plisio');
 
   // Only stale, unsettled crypto checkouts need follow-up.
-  const stale = await makeCustomer('stale'), fresh = await makeCustomer('fresh'), done = await makeCustomer('done'), abandoned = await makeCustomer('abandoned');
-  await makeIntent(stale, planId, 'open', '2 hours', 'stale');
+  const stale = await makeCustomer('stale'), fresh = await makeCustomer('fresh'), done = await makeCustomer('done'), abandoned = await makeCustomer('abandoned'), inWindow = await makeCustomer('inwindow'), failed = await makeCustomer('failed');
+  await makeIntent(stale, planId, 'open', '5 hours', 'stale');
+  await makeIntent(inWindow, planId, 'open', '2 hours', 'inwindow');
+  await makeIntent(failed, planId, 'failed', '1 hour', 'failed');
   await makeIntent(fresh, planId, 'open', '5 minutes', 'fresh');
   await makeIntent(done, planId, 'completed', '2 hours', 'done');
   await makeIntent(abandoned, planId, 'open', '2 hours', 'abandoned', { terminal: true });
   const issues = (await orders.checkoutIssues()).filter(row => created.customers.includes(row.customer_id));
-  assert.deepStrictEqual(issues.map(row => row.customer_id), [stale], 'only a stale, unsettled crypto checkout the provider has not closed must be surfaced (not fresh, completed, or provider-expired ones)');
+  assert.deepStrictEqual(issues.map(row => row.customer_id).sort(), [stale, failed].sort(), 'only a failed checkout, or an open one past its payment window that Plisio has not closed, must be surfaced (not fresh, still-payable, completed or provider-expired ones)');
   assert.strictEqual(issues[0].kind, 'checkout');
-  assert.strictEqual(Number(issues[0].amount_minor), 999);
+  assert.strictEqual(Number(issues.find(row => row.customer_id === stale).amount_minor), 999);
+  assert.strictEqual(require('../src/payments/plisio').INVOICE_LIFETIME_MINUTES, 180, 'the Orders window follows the invoice lifetime used when invoices are created');
 
   // Bulk extend adds the days once, even if the item is processed again.
   const extendee = await makeCustomer('extendee');
@@ -119,6 +122,7 @@ async function makeIntent(customerId, planId, state, createdAgo, label, { termin
   const route = billingSource.slice(routeStart, billingSource.indexOf("router.post('/admin/billing/sync-due'"));
   assert(route.indexOf("'billing.checkout.recheck'") > 0 && route.indexOf("'billing.checkout.recheck'") < route.indexOf('providerCheckoutRecovery.run'), 'the attempt must be audited before the provider is contacted');
   assert(!/audit_log[^;]*\)\.catch\(/.test(route), 'a failed audit write must not be swallowed');
+  assert(route.indexOf("target.provider !== 'plisio'") > 0 && route.indexOf("target.provider !== 'plisio'") < route.indexOf("'billing.checkout.recheck'"), 'only Plisio checkouts may be re-checked, decided before anything is audited or contacted');
 })()
   .then(() => console.log('admin usability DB smoke: ok'))
   .catch(error => { console.error(error.stack || error); process.exitCode = 1; })
