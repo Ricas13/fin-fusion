@@ -101,14 +101,8 @@ function automationHero(jobs,worker,workerAlive){
     ],actionsHtml:first?`<a class="button" href="#automation-problems">Fix unhealthy jobs</a><a class="button secondary" href="#all-automation-jobs">All schedules</a>`:'<a class="button secondary" href="#all-automation-jobs">Review schedules</a>'});
 }
 
-const INTEGRITY_GUIDANCE = Object.freeze({
-    primary_server_without_plan: 'The customer has a Jellyfin account but no live paid plan. Usual cause: the plan just expired and the expiry job has not removed the account yet. If they should still have access, give them time; otherwise remove access.',
-    paid_plan_without_recovery_state: 'A paid plan has no server or recovery record, so provisioning will not retry on its own. Open the customer and use Fix / Reconcile access.',
-    free_plan_without_ready_server: 'A Free plan is waiting for a server with free capacity. It repairs itself once a Free server is available.',
-    free_server_without_plan: 'A Free-server account has no Free plan behind it. Safe repair will remove or re-attach it.',
-    unpaid_trial_without_ready_server: 'A trial has no ready server. Safe repair re-checks current authority before changing anything.',
-    free_restore_reprovision_failed: 'Restoring Free access failed. Open the customer and use Fix / Reconcile access.'
-});
+// Plain-language meaning and next step for every finding kind lives in one place, shared with the alerts.
+const integrityGuidance=require('../automation/integrity-guidance');
 
 async function integrityCustomerNames(findings) {
     const ids = [...new Set(findings.map(item => String(item?.customerId || '')).filter(id => /^[0-9a-f-]{36}$/i.test(id)))];
@@ -128,10 +122,11 @@ function accessIntegritySection(req, findings, names = new Map()) {
             ?`<form method="post" action="/admin/automation/access-integrity/repair">${token(req)}<input type="hidden" name="kind" value="${esc(finding.kind)}"><input type="hidden" name="findingId" value="${esc(finding.id)}"><input type="hidden" name="customerId" value="${esc(finding.customerId||'')}"><button class="button btn-sm">Repair safely</button></form>`
             :'<span class="pill warn">Needs your review</span>';
         const customer=names.get(String(finding.customerId||''));
-        const who=customer?`<a href="/admin/users/${encodeURIComponent(finding.customerId)}">${esc(customer.name)}</a>${customer.email&&customer.email!==customer.name?` · ${esc(customer.email)}`:''}`:`Customer ${esc(finding.customerId||'unknown')}`;
+        const who=customer?`<a href="/admin/users/${encodeURIComponent(finding.customerId)}">${esc(customer.name)}</a>${customer.email&&customer.email!==customer.name?` · ${esc(customer.email)}`:''}`:`Customer ${esc(finding.customerId?String(finding.customerId).slice(0,8)+'…':'unknown')}`;
         const open=customer?`<a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(finding.customerId)}">Open customer</a>`:'';
-        const guidance=INTEGRITY_GUIDANCE[finding.kind]?`<p class="subText">${esc(INTEGRITY_GUIDANCE[finding.kind])}</p>`:'';
-        return `<article class="serverCard"><div class="serverTop"><div><strong>${esc(label)}</strong><div class="subText">${who}</div></div><span class="pill bad">Invariant failed</span></div><div class="notice error">${esc(finding.detail)}</div>${guidance}<div class="buttonRow">${open}${action}</div></article>`;
+        const info=integrityGuidance.guidanceFor(finding.kind);
+        const guidance=`${info.meaning?`<p class="subText"><strong>What it means:</strong> ${esc(info.meaning)}</p>`:''}<p class="subText"><strong>What to do:</strong> ${esc(info.action)}</p>`;
+        return `<article class="serverCard"><div class="serverTop"><div><strong>${esc(label)}</strong><div class="subText">${who}</div></div><span class="pill bad">Invariant failed</span></div><div class="notice error">${esc(info.title)}</div>${guidance}<details class="subText"><summary>Technical details</summary>${esc(finding.detail)}</details><div class="buttonRow">${open}${action}</div></article>`;
     }).join('');
     return `<section class="section" id="access-integrity">${ui.sectionHeader({title:`Access integrity (${findings.length})`,description:'Independent scanner results. Automatic repair is offered only for unpaid/orphan states whose repair layer re-checks current authority before changing anything.'})}<div class="serverGrid">${cards}</div></section>`;
 }

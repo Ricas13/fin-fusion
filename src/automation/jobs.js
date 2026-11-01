@@ -16,6 +16,7 @@ const discordRoleReconciliation=require('../integrations/discord-role-reconcilia
 const billingControl=require('../payments/billing-control');
 const providerOperationRecovery=require('../payments/provider-operation-recovery');
 const providerCheckoutRecovery=require('../payments/provider-checkout-recovery');
+const integrityGuidance=require('./integrity-guidance');
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
 const providerPaymentReconciliation=require('../payments/provider-payment-reconciliation');
@@ -116,7 +117,7 @@ async function revenueIntegritySafeRun(){
   catch(error){notification={errors:[revenueIntegrity.clean(error,900)]};}
  }
  const warning=findings.length
-  ?`${findings.length} customer/revenue integrity failure${findings.length===1?'':'s'}: ${findings.slice(0,5).map(item=>`${item.kind} (${item.detail})`).join('; ')}`.slice(0,1000)
+  ?integrityGuidance.warningLine(findings)
   :null;
  return{
   total:findings.length,

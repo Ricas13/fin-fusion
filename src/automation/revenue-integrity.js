@@ -5,6 +5,8 @@ const { query } = require('../db');
 const notifications = require('../integrations/notification-dispatch');
 const moneyFormat = require('../platform/money-format');
 const accessIntegrity = require('../access/access-integrity');
+const integrityGuidance = require('./integrity-guidance');
+const operations = require('../platform/operations-settings');
 
 const ALERT_BUCKET_MS = 6 * 60 * 60 * 1000;
 const ADMIN_ACTOR_ENFORCED_AT = '2026-09-12T08:32:17.000Z';
@@ -105,6 +107,7 @@ function finding(kind, row, detail) {
         kind,
         id: String(row.id || row.customer_id || row.subscription_id || 'unknown'),
         customerId: row.customer_id || row.owner_id || null,
+        ...(Array.isArray(row.customer_ids) && row.customer_ids.length ? { customerIds: row.customer_ids.map(String).slice(0, 10) } : {}),
         detail: clean(detail, 900)
     };
 }
@@ -401,19 +404,30 @@ function fingerprint(findings) {
         .slice(0, 24);
 }
 
+async function customerNames(findings) {
+    const isUuid = id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const ids = [...new Set(findings.slice(0, 40).flatMap(item => [item.customerId, ...(item.customerIds || [])]).map(id => String(id || '')).filter(isUuid))];
+    if (!ids.length) return new Map();
+    const rows = await query(`SELECT c.id,COALESCE(NULLIF(c.display_name,''),NULLIF(u.username,'')) AS display_name,COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) AS email FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE c.id=ANY($1::uuid[])`, [ids]).then(r => r.rows).catch(() => []);
+    return new Map(rows.map(row => [String(row.id), row]));
+}
+
 async function notify(findings) {
     if (!findings.length) return null;
     const bucket = Math.floor(Date.now() / ALERT_BUCKET_MS);
-    const top = findings.slice(0, 8).map(item => `• ${item.kind}: ${item.detail}`).join('\n');
-    const extra = findings.length > 8 ? `\n• +${findings.length - 8} more integrity failure(s)` : '';
+    // Plain language: which customer, what it means and what to check, with a link, instead of raw database ids.
+    const [customers, settings] = await Promise.all([customerNames(findings), operations.get().catch(() => operations.DEFAULTS)]);
+    const baseUrl = settings?.publicBaseUrl || '';
+    const alert = integrityGuidance.buildAlert(findings, { customers, baseUrl });
+    const adminUrl = alert.singleCustomerId ? integrityGuidance.customerUrl(baseUrl, alert.singleCustomerId) : '';
     return notifications.dispatch({
         eventType: 'automation.integrity.failed',
-        subject: 'Customer/revenue integrity failure',
-        text: `${findings.length} customer/revenue integrity condition${findings.length === 1 ? '' : 's'} require attention.\n\n${top}${extra}`,
-        adminSubject: `URGENT: ${findings.length} customer/revenue integrity failure${findings.length === 1 ? '' : 's'}`,
-        adminText: `${findings.length} customer/revenue integrity condition${findings.length === 1 ? '' : 's'} require attention.\n\n${top}${extra}`,
+        subject: alert.subject,
+        text: alert.text,
+        adminSubject: alert.subject,
+        adminText: alert.text,
         dedupeKey: `automation-integrity:${fingerprint(findings)}:${bucket}`,
-        templatePayload: { count: findings.length, findings: findings.slice(0, 12) }
+        templatePayload: { count: findings.length, findings: findings.slice(0, 12), ...(adminUrl ? { adminUrl } : {}) }
     });
 }
 
@@ -425,7 +439,7 @@ async function run() {
         catch (error) { notification = { errors: [clean(error, 900)] }; }
     }
     const warning = findings.length
-        ? `${findings.length} customer/revenue integrity failure${findings.length === 1 ? '' : 's'}: ${findings.slice(0, 5).map(item => `${item.kind} (${item.detail})`).join('; ')}`.slice(0, 1000)
+        ? integrityGuidance.warningLine(findings)
         : null;
     return {
         total: findings.length,
