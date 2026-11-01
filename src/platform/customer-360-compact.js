@@ -18,7 +18,7 @@ function buttonForm(token,action,label,{tone='secondary',fields={}}={}){return `
 function actionLink(customerId,action,label,{tone='secondary',params={}}={}){const queryString=new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined&&value!==null&&String(value)!=='').map(([key,value])=>[key,String(value)])).toString();const href=`/admin/users/${encodeURIComponent(customerId)}/actions/${encodeURIComponent(action)}${queryString?`?${queryString}`:''}`;return `<a class="button ${esc(tone)} sm" href="${esc(href)}">${esc(label)}</a>`;}
 function customerLink(customerId,path,label,{tone='secondary',params={}}={}){const queryString=new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined&&value!==null&&String(value)!=='').map(([key,value])=>[key,String(value)])).toString();const href=`/admin/users/${encodeURIComponent(customerId)}/${path}${queryString?`?${queryString}`:''}`;return `<a class="button ${esc(tone)} sm" href="${esc(href)}">${esc(label)}</a>`;}
 function stateRow(label,value){return `<div class="opState"><span>${esc(label)}</span><strong>${value}</strong></div>`;}
-function card(title,status,body,actions='',extraClass=''){return `<section class="opCard ${esc(extraClass)}"><div class="opCardHead"><h2>${esc(title)}</h2>${status||''}</div><div class="opCardBody">${body}</div>${actions?`<div class="opActions">${actions}</div>`:''}</section>`;}
+function card(title,status,body,actions='',extraClass='',id=''){return `<section${id?` id="${esc(id)}"`:''} class="opCard ${esc(extraClass)}"><div class="opCardHead"><h2>${esc(title)}</h2>${status||''}</div><div class="opCardBody">${body}</div>${actions?`<div class="opActions">${actions}</div>`:''}</section>`;}
 // Every collapsible section on the customer page uses this one component: title, a one-line
 // summary of what is inside (so you rarely need to open it), and a chevron on the right.
 function disclosure(title,summary,body,{id='',open=false,tone=''}={}){return `<details class="opDisclosure opFold${tone?` opFold--${esc(tone)}`:''}"${id?` id="${esc(id)}"`:''}${open?' open':''}><summary><span class="opFoldTitle">${esc(title)}</span><small>${esc(summary||'')}</small><span class="opChevron" aria-hidden="true"></span></summary><div class="opDisclosureBody">${body}</div></details>`;}
@@ -26,16 +26,28 @@ function currentSubscriptions(detail){return (detail.subscriptions||[]).filter(s
 function recurring(sub){const ref=String(sub?.provider_subscription_id||'');return (sub?.source==='stripe'&&/^sub_/i.test(ref))||(sub?.source==='paypal'&&/^I-/i.test(ref));}
 function jellyfinPlan(sub){return ['jellyfin','bundle'].includes(String(sub?.service_type_snapshot||sub?.service_type||'jellyfin').toLowerCase());}
 
+// The current one-time onboarding link (recoverable: the token is stored encrypted), so the operator can copy it right after creating it.
+async function onboardingLink(customerId){
+  const user=await query(`SELECT user_id FROM customers WHERE id=$1`,[customerId]);
+  const userId=user.rows[0]?.user_id;
+  if(!userId)return null;
+  const row=await require('../auth/account-activation').activeForUser(userId,'customer_activation');
+  if(!row)return null;
+  const base=(await require('./operations-settings').get().catch(()=>null))?.publicBaseUrl||'';
+  return{url:base?require('../auth/account-activation').activationUrl(base,row.raw):null,path:`/activate/${encodeURIComponent(row.raw)}`,expiresAt:row.expires_at};
+}
+
 async function supplementary(customerId){
-  const [media,request,financial,discord,plans,timelineData]=await Promise.all([
+  const [media,request,financial,discord,plans,timelineData,onboarding]=await Promise.all([
     query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.is_primary,ja.password_setup_required,ja.password_reset_required,js.id server_id,js.name server_name,js.health_status,COALESCE(js.media_server_type,'jellyfin') media_server_type FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose<>'stremio_internal' ORDER BY CASE COALESCE(js.media_server_type,'jellyfin') WHEN 'jellyfin' THEN 0 ELSE 1 END,ja.is_primary DESC,ja.created_at`,[customerId]).catch(()=>({rows:[]})),
     requestUsers.requestAccessForCustomer(customerId).catch(()=>null),
     financialState.customerSnapshot(customerId).catch(()=>({identities:[],transactions:[],incidents:[],unlinkedCount:0})),
     query(`SELECT COALESCE(cp.discord_user_id,c.discord_user_id) discord_user_id,c.discord_username FROM customers c LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id WHERE c.id=$1`,[customerId]).catch(()=>({rows:[]})),
     query(`SELECT id,name,duration_days,price_minor,currency,billing_interval FROM plans WHERE active=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN('direct','both') AND COALESCE(is_addon,FALSE)=FALSE AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') ORDER BY sort_order,price_minor,name`).catch(()=>({rows:[]})),
-    timeline.load(customerId).catch(()=>({auth:[],audit:[]}))
+    timeline.load(customerId).catch(()=>({auth:[],audit:[]})),
+    onboardingLink(customerId).catch(()=>null)
   ]);
-  return{media:media.rows,timelineData,request,payments:financial.transactions,paymentIncidents:financial.incidents,paymentIdentities:financial.identities,unlinkedPaymentCount:financial.unlinkedCount,discord:discord.rows[0]||null,plans:plans.rows};
+  return{media:media.rows,timelineData,request,payments:financial.transactions,paymentIncidents:financial.incidents,paymentIdentities:financial.identities,unlinkedPaymentCount:financial.unlinkedCount,discord:discord.rows[0]||null,plans:plans.rows,onboarding};
 }
 
 function portalEnrolForm(c,token){return `<details class="opInlineDetails"><summary>Enrol portal account…</summary><form class="opInlineForm" method="post" action="/admin/users/${encodeURIComponent(c.id)}/manage/portal/enrol" data-native-submit="true">${csrfHidden(token)}<label>Username<input class="input" name="username" minlength="3" maxlength="40" required value="${esc(c.display_name||'')}"></label><label>Email<input class="input" type="email" name="email" maxlength="254" required value="${esc(c.email||'')}"></label><small>Creates a disabled portal login and a recoverable onboarding link. The customer chooses the password.</small><button class="button primary sm">Enrol & create onboarding link</button></form></details>`;}
@@ -48,12 +60,18 @@ function holdsBlock(detail,token){
 
 // One card for the customer's own identity and restrictions: portal login, Discord link
 // (edited from the Edit button in the header) and access holds / suspensions.
-function portalCard(detail,token){
+function onboardingBlock(onboarding){
+  if(!onboarding)return'';
+  const link=onboarding.url||onboarding.path;
+  const until=onboarding.expiresAt?new Date(onboarding.expiresAt).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'}):'';
+  return `<div class="opOnboarding"><div class="opState"><span>Onboarding link</span><strong>${until?`valid until ${esc(until)}`:'active'}</strong></div><input class="input" type="text" readonly value="${esc(link)}" aria-label="Onboarding link"><div class="opActions"><button class="button primary sm" type="button" data-copy-value="${esc(link)}">Copy link</button><a class="button secondary sm" href="${esc(onboarding.path)}" target="_blank" rel="noopener noreferrer">Open</a></div></div>`;
+}
+function portalCard(detail,token,onboarding=null){
   const c=detail.customer,id=c.id,enrolled=Boolean(c.app_user_id),active=Boolean(c.login_active),verified=Boolean(c.email_verified_at),discordLinked=Boolean(c.discord_user_id);
-  const body=`${stateRow('Username',esc(c.login_username||'Not enrolled'))}${stateRow('Email',esc(c.login_email||c.email||'—'))}${stateRow('Account',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):pill('Not enrolled','warn'))}${stateRow('Verification',pill(verified?'Verified':'Not verified',verified?'good':'warn'))}${stateRow('Discord',discordLinked?pill('Linked','good'):pill('Not linked',''))}${enrolled?'':portalEnrolForm(c,token)}${holdsBlock(detail,token)}`;
+  const body=`${stateRow('Username',esc(c.login_username||'Not enrolled'))}${stateRow('Email',esc(c.login_email||c.email||'—'))}${stateRow('Account',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):pill('Not enrolled','warn'))}${stateRow('Verification',pill(verified?'Verified':'Not verified',verified?'good':'warn'))}${stateRow('Discord',discordLinked?pill('Linked','good'):pill('Not linked',''))}${enrolled?'':portalEnrolForm(c,token)}${enrolled?onboardingBlock(onboarding):''}${holdsBlock(detail,token)}`;
   const actions=[`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/edit-profile">Edit account</a>`,actionLink(id,'suspend','Add suspension')];
-  if(enrolled){actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/activation/rotate`,'Reset / onboarding link'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/email/${verified?'unverify':'verify'}`,verified?'Mark unverified':'Mark verified'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/portal/status`,active?'Disable portal':'Enable portal',{tone:active?'secondary':'primary',fields:{active:active?'0':'1'}}));}
-  return card('Customer portal',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):'',body,actions.join(''));
+  if(enrolled){actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/activation/rotate`,onboarding?'New onboarding link':'Create onboarding link'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/email/${verified?'unverify':'verify'}`,verified?'Mark unverified':'Mark verified'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/portal/status`,active?'Disable portal':'Enable portal',{tone:active?'secondary':'primary',fields:{active:active?'0':'1'}}));}
+  return card('Customer portal',enrolled?pill(active?'Active':'Disabled',active?'good':'warn'):'',body,actions.join(''),'','customer-portal');
 }
 
 function plansCard(detail,token,plans,pendingChange=null){
@@ -207,7 +225,7 @@ async function render(detail,token,options={}){
   const billingIssue=openPaymentIncidents?`<div class="customer360GlanceWarn"><span>Billing</span><strong>${esc(openPaymentIncidents)} issue${openPaymentIncidents===1?'':'s'}</strong><small><a href="#customer-payments">Review payment incidents</a></small></div>`:'';
   const glance=`<section class="customer360Glance"><div><span>Last playback</span><strong>${esc(dt(detail.activitySummary?.last_playback_at))}</strong><small>${esc(detail.activitySummary?.sessions_30d||0)} sessions / 30d</small></div>${freeActivity}${billingIssue}</section>`;
   // One row, in the order an operator works: the customer, what they bought, then each service.
-  const essentialCards=[portalCard(detail,token),plansCard(detail,token,extra.plans,options.pendingChange),mediaCard(detail,token,extra.media,jellyfinAuthority),stremioCard(detail,token,options.stremioInfo,stremioAuthority),overseerrCard(detail,token,extra.request,overseerrAuthority)];
+  const essentialCards=[portalCard(detail,token,extra.onboarding),plansCard(detail,token,extra.plans,options.pendingChange),mediaCard(detail,token,extra.media,jellyfinAuthority),stremioCard(detail,token,options.stremioInfo,stremioAuthority),overseerrCard(detail,token,extra.request,overseerrAuthority)];
   const advanced=showAccessSettings?disclosure('Advanced access settings','Libraries, Jellyfin policy and request permissions',`<div class="customer360GroupBody">${accessHtml}</div>`,{id:'customer-access-settings'}):'';
   const danger=disclosure('Destructive corrections','Delete accounts or permanently delete this customer',`<div class="customer360GroupBody">${dangerCard(detail,token,extra.media,options.stremioInfo)}</div>`,{id:'customer-destructive',tone:'danger'});
   const payments=paymentsDisclosure(extra.payments,extra.paymentIncidents,extra.paymentIdentities,extra.unlinkedPaymentCount,refundRecorder(detail,token));
