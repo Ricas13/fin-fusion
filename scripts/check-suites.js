@@ -5,6 +5,7 @@ module.exports = {
     "check:fast:foundation": [
       "npm run syntax",
       "node scripts/customer-access-state-smoke.js",
+      "node scripts/customer-playback-view-smoke.js",
       "node scripts/customer-timeline-smoke.js",
       "node scripts/plisio-list-shape-smoke.js",
       "node scripts/unpaid-access-activation-smoke.js",
@@ -228,6 +229,7 @@ module.exports = {
       "node scripts/request-user-sync-smoke.js",
       "node scripts/admin-plan-capacity-override-db-smoke.js",
       "node scripts/admin-plan-full-confirm-db-smoke.js",
+      "node scripts/customer-playback-view-db-smoke.js",
       "node scripts/customer-timeline-db-smoke.js",
       "node scripts/recurring-expiry-live-subscriptions-db-smoke.js",
       "node scripts/playback-history-accuracy-db-smoke.js",

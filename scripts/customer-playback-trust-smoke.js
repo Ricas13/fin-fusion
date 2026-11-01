@@ -93,7 +93,9 @@ expect(activityView.includes('this Free Server has a trustworthy recent playback
 expect(activityView.includes('freeUsage.observed_streams')===false,'Customer Activity must not read observed streams from the wrong object.');
 expect(activityView.includes('e.observed_streams'),'Stream-limit actions must render the canonical observed stream count.');
 expect(!activityView.includes('a.max_height')&&!activityView.includes('a.container'),'Customer Activity must not render playback fields that are absent from playback_history.');
-expect(activityView.includes("case'transcode':return'Server transcoding'")&&activityView.includes('playbackLabel(a.playback_method)'),'Playback method must use neutral human-readable copy.');
+const playbackViewSource=source('src/platform/customer-playback-view.js');
+expect(playbackViewSource.includes("label: 'Server transcoding'")&&playbackViewSource.includes("label: 'Direct play'")&&activityView.includes('item.methodLabel'),'Playback method must use neutral human-readable copy.');
+expect(!/playbackMethod--/.test(activityView)&&!/playbackMethod--/.test(source('public/css/customer-activity.css')),'Playback method must stay neutral text: no per-method colour or badge that ranks one method above another.');
 expect(!activityView.includes('<span class="pill"><%= a.playback_method'),'Playback method must not be rendered as a quality-style pill.');
 expect(!activityView.includes("a.playback_method === 'transcode'")&&!activityView.includes("a.playback_method === 'Transcode'"),'Playback method must not be rendered as a transcode quality score.');
 

@@ -44,3 +44,28 @@
   font-size:10px;
   line-height:1.35;
 }
+
+/* Recent playback: grouped by day, with watch time and a small bar scaled to the longest play in the list. */
+.playbackHead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.playbackSummary{display:flex;align-items:baseline;gap:8px;color:var(--muted,#9aa7b3);font-size:.78rem}
+.playbackSummary strong{font-size:1.25rem;color:var(--text,#e8eef4)}
+.playbackTable{width:100%;border-collapse:collapse}
+.playbackTable thead th{text-align:left;font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#9aa7b3);padding:6px 10px;border-bottom:1px solid var(--border,#29333d)}
+.playbackDay th{text-align:left;padding:16px 10px 6px;font-size:.78rem;font-weight:800;color:var(--text,#e8eef4);border-bottom:1px solid var(--border,#29333d)}
+.playbackDay th span{margin-left:10px;font-weight:600;font-size:.7rem;color:var(--muted,#9aa7b3)}
+.playbackRow td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top}
+.playbackRow:hover td{background:rgba(255,255,255,.025)}
+.playbackMedia strong{font-size:.86rem}
+.playbackType{margin-left:8px;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#9aa7b3)}
+.playbackMeta{margin-top:2px;font-size:.72rem;color:var(--muted,#9aa7b3)}
+.playbackWatched{min-width:120px;white-space:nowrap}
+.playbackDuration{font-weight:800;font-size:.84rem;font-variant-numeric:tabular-nums}
+.playbackEst{margin-left:6px;padding:1px 6px;border:1px solid var(--border,#29333d);border-radius:999px;font-size:.6rem;color:var(--muted,#9aa7b3);cursor:help}
+.playbackBar{margin-top:6px;height:4px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden}
+.playbackBar span{display:block;height:100%;border-radius:999px;background:var(--accent,#3198f6)}
+.playbackStarted{white-space:nowrap;font-size:.8rem;font-variant-numeric:tabular-nums}
+.playbackLive{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;background:rgba(69,212,163,.16);color:#45d4a3;font-size:.62rem;font-weight:800}
+.playbackMethod{font-size:.74rem;white-space:nowrap;color:var(--muted,#9aa7b3)}
+.playbackBar .pb-0{width:0%}.playbackBar .pb-5{width:5%}.playbackBar .pb-10{width:10%}.playbackBar .pb-15{width:15%}.playbackBar .pb-20{width:20%}.playbackBar .pb-25{width:25%}.playbackBar .pb-30{width:30%}.playbackBar .pb-35{width:35%}.playbackBar .pb-40{width:40%}.playbackBar .pb-45{width:45%}.playbackBar .pb-50{width:50%}.playbackBar .pb-55{width:55%}.playbackBar .pb-60{width:60%}.playbackBar .pb-65{width:65%}.playbackBar .pb-70{width:70%}.playbackBar .pb-75{width:75%}.playbackBar .pb-80{width:80%}.playbackBar .pb-85{width:85%}.playbackBar .pb-90{width:90%}.playbackBar .pb-95{width:95%}.playbackBar .pb-100{width:100%}
+@media(max-width:760px){.playbackTable thead{display:none}.playbackRow{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,.05)}.playbackRow td{display:block;padding:0;border:0}.playbackMedia{grid-column:1/-1}.playbackWatched{min-width:0}.playbackHow{grid-column:2;grid-row:2;text-align:right}.playbackStarted{grid-column:1}}
+.playbackTable .srOnly{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
