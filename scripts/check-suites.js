@@ -10,6 +10,7 @@ module.exports = {
       "node scripts/customer-timeline-smoke.js",
       "node scripts/plisio-list-shape-smoke.js",
       "node scripts/plisio-sweep-smoke.js",
+      "node scripts/customer-onboarding-link-smoke.js",
       "node scripts/unpaid-access-activation-smoke.js",
       "node scripts/access-repair-behavior-smoke.js",
       "node scripts/access-repair-ownership-smoke.js",
