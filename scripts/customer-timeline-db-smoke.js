@@ -84,6 +84,21 @@ runDbSmoke('customer timeline DB smoke', async () => {
         const forB = await timeline.load(b.customerId);
         assert.deepStrictEqual(forB.audit.map(row => row.action).sort(), ['admin.customer.manual_grant', 'admin.customer.unban'], 'customer B sees only their own grant, never A\'s grant or refund');
 
+        // A refund's completion row that falls OUTSIDE the newest-rows window must not cause a false "not finished".
+        const sid = `sub-${unique('r')}`;
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata,created_at) VALUES
+            ($1,'billing.refund.recorded_externally_completed','subscription',$2,$3::jsonb, NOW()-INTERVAL '30 days'),
+            ($1,'billing.refund.recorded_externally','subscription',$2,$3::jsonb, NOW()-INTERVAL '1 day')`, [admin.id, grantedToA.id, JSON.stringify({ submissionId: sid })]);
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata,created_at)
+            SELECT $1,'admin.customer.service.reconcile','subscription',$2,'{}'::jsonb, NOW()-INTERVAL '2 days'+(g||' seconds')::interval FROM generate_series(1,130) g`, [admin.id, grantedToA.id]);
+        const wide = await timeline.load(a.customerId);
+        assert(wide.audit.some(row => row.action === 'billing.refund.recorded_externally_completed' && row.metadata.submissionId === sid), 'the completion row outside the 120-row window was fetched directly');
+        assert(!timeline.build(wide).some(entry => entry.title === 'Refund made outside the app is not finished'), 'so a finished refund is never shown as unfinished');
+        // A genuinely unfinished one still is.
+        const lost = `sub-${unique('lost')}`;
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally','subscription',$2,$3::jsonb)`, [admin.id, grantedToA.id, JSON.stringify({ submissionId: lost })]);
+        assert.strictEqual(timeline.build(await timeline.load(a.customerId)).filter(entry => entry.title === 'Refund made outside the app is not finished').length, 1, 'a refund with no completion anywhere is still shown as not finished');
+
         const entries = timeline.build({ ...dataA });
         assert.deepStrictEqual(entries.map(entry => entry.title).sort(), ['Customer banned', 'Failed sign-in (wrong password)', 'Signed in to the portal'].sort());
         assert(entries.every(entry => entry.at), 'every entry has a time');
