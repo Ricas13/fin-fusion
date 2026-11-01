@@ -148,11 +148,20 @@
   </section>
   <% } %>
 
-  <section class="panel activityDetailsPanel" id="recent-playback"><div class="sectionHead"><div><h2>Recent playback</h2><p>Up to your latest 100 recorded Jellyfin playbacks in the selected period and server scope.</p></div></div>
-    <% if (!activity.length) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
-    <div class="tableWrap"><table class="activityTable"><thead><tr><th>Started</th><th>Media</th><th>Playback</th><th>Device</th><th>Server</th><th>Ended</th></tr></thead><tbody>
-      <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong><% if(a.item_type){ %><span class="activityRecentType"><%= a.item_type %></span><% } %></td><td><%= playbackLabel(a.playback_method) %></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
-    </tbody></table></div><% } %>
+  <section class="panel activityDetailsPanel playbackPanel" id="recent-playback"><div class="sectionHead playbackHead"><div><h2>Recent playback</h2><p>Your latest recorded Jellyfin plays in the selected period and server scope, newest first.</p></div>
+    <% if (playback && playback.count) { %><div class="playbackSummary"><strong><%= playback.totalLabel %></strong><span>watched across <%= playback.count %> play<%= playback.count===1?'':'s' %><%= playback.estimated ? ' (some are estimates)' : '' %></span></div><% } %></div>
+    <% if (!playback || !playback.count) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
+    <div class="tableWrap"><table class="playbackTable"><caption class="srOnly">Your recent playback, grouped by day</caption><thead><tr><th scope="col">Media</th><th scope="col">Watched</th><th scope="col">Started</th><th scope="col">Playback</th></tr></thead>
+      <% playback.groups.forEach(function(group){ %><tbody>
+        <tr class="playbackDay"><th scope="colgroup" colspan="4"><%= group.label %><span><%= group.total %> watched</span></th></tr>
+        <% group.rows.forEach(function(item){ %><tr class="playbackRow">
+          <td class="playbackMedia"><strong><%= item.title %></strong><% if(item.type){ %><span class="playbackType"><%= item.type %></span><% } %><div class="playbackMeta"><%= item.device %><% if(item.client){ %> · <%= item.client %><% } %><% if(item.server){ %> · <%= item.server %><% } %></div></td>
+          <td class="playbackWatched"><span class="playbackDuration"><%= item.estimate && item.seconds>0 ? '≈ ' : '' %><%= item.watched %></span><% if(item.estimate){ %><span class="playbackEst" title="This app only reports that playback started, so the time shown is an estimate rather than a measured watch time.">est.</span><% } %><div class="playbackBar" aria-hidden="true"><span class="pb-<%= Math.round(item.barPercent/5)*5 %>"></span></div></td>
+          <td class="playbackStarted"><%= item.time %><% if(item.playingNow){ %><span class="playbackLive">Playing now</span><% } %></td>
+          <td class="playbackHow"><span class="playbackMethod" title="<%= item.methodHint %>"><%= item.methodLabel %></span></td>
+        </tr><% }) %>
+      </tbody><% }) %>
+    </table></div><% } %>
   </section>
 
   <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams in the selected period and access scope appear here. The scope follows the session involved in the action; an observed stream count can include concurrent sessions from your other access. Normal playback does not create an action.</p></div></div>

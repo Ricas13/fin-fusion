@@ -6,6 +6,7 @@ const inactivityStatus=require('../automation/customer-inactivity-status');
 const customers=require('../customers');
 const customerNav=require('./customer-nav-html');
 const registry=require('../jellyfin/registry');
+const customerPlayback=require('./customer-playback-view');
 
 const RANGE_OPTIONS=Object.freeze([
   {key:'7d',label:'7 days',days:7,bucket:'day'},
@@ -282,7 +283,7 @@ async function insightData(customerId,rawRange,rawScope='all'){
 async function data(customerId,rawRange,rawScope='all'){
   const scope=scopeOption(rawScope),range=rangeOption(rawRange),startAt=rangeStart(range,new Date()),playbackScopeClause=scopePredicate(scope,'ph'),eventScopeClause=scopePredicate(scope,'stream_policy_events','created_at');
   const [activityRows,eventRows,freeUsage,portal,insights]=await Promise.all([
-    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
+    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,ph.progress_reported,${safeDurationSql('ph')} AS duration_seconds,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 AND ($2::timestamptz IS NULL OR created_at>=$2::timestamptz)${eventScopeClause} ORDER BY created_at DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
     customers.getCurrentCustomerPortal(customerId),
@@ -292,7 +293,7 @@ async function data(customerId,rawRange,rawScope='all'){
     })
   ]);
   const customer=portal?.customer||{};
-  return{activity:activityRows.rows,events:eventRows.rows,freeUsage,insights,scope,scopeOptions:ACTIVITY_SCOPE_OPTIONS,displayName:customer.display_name||customer.login_username||customer.username||null,navOptions:customerNav.optionsFromPortal(portal)};
+  return{activity:activityRows.rows,playback:customerPlayback.prepare(activityRows.rows),events:eventRows.rows,freeUsage,insights,scope,scopeOptions:ACTIVITY_SCOPE_OPTIONS,displayName:customer.display_name||customer.login_username||customer.username||null,navOptions:customerNav.optionsFromPortal(portal)};
 }
 function createCustomerActivityRouter(){
   const r=express.Router();
