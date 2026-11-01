@@ -1,7 +1,52 @@
-# Design v3 (v2 + review amendments): record an external Stripe/PayPal payment, and the automatic Plisio sweep
+# Design v4 (v2 + v3 + v4 review amendments): record an external Stripe/PayPal payment, and the automatic Plisio sweep
 
 Status: DESIGN ONLY, nothing built. v2 incorporates the first design review (BUILD AFTER CHANGES). Target: Ricas13/fin-fusion main (ca0308fb).
 This file lives on branch `claude/full-analysis-hpmuwq`.
+
+## v4 amendments (these SUPERSEDE v2 and v3 wherever they conflict)
+
+**B1. Protect the payment reference.** An externally fulfilled one-off subscription (and any subscription whose `provider_subscription_id` is a
+canonical payment id) can NEVER be the target of the manual recurring-link workflow (`manual-subscription-link` / `lifecycle.attachDiscoveredProviderSubscription`),
+nor any other writer that replaces `provider_subscription_id`/`source`/`billing_mode`. The guard is in the shared write path (not only the UI) and has a test.
+
+**B2. Payment-identity lock and loss tombstone.** One lock hierarchy for every writer, always in this order:
+(1) customer row → (2) canonical payment identity (advisory lock on hash of provider+canonical id, plus the fulfilment / loss row) → (3) parent subscription →
+(4) extension rows → (5) ledger / audit / outbox writes. Existing writers that take locks in another order (`incidents.record`, extension revoke) are adapted
+and covered by two-direction lock-order tests (confirm vs refund, refund vs confirm).
+A refund/dispute/chargeback fact is first written to a durable `payment_loss_facts` row keyed by canonical id (a tombstone), EVEN IF no fulfilment exists yet.
+Confirmation re-reads the tombstone under lock (2) immediately before commit and refuses; a fulfilment that commits after a tombstone is impossible.
+Stripe history sync and the scheduled re-poll write the same tombstone through the same function, with a durable cursor so a missed webhook cannot leave a
+refunded fulfilment active.
+
+**B3. Commercial refund rule (replaces the "proportional days" idea; `refund-policy.js` only validates cash and has no day rule).**
+- Partial refund: financial record + admin incident only. NO automatic reduction of paid time.
+- Full refund, or lost dispute / chargeback: reverse that purchase and recompute access.
+- Open dispute: access kept (existing policy), admin incident raised.
+- Base purchase reversed while later paid extensions remain: new deterministic timeline. Each purchase stores an immutable contribution (days, purchase time,
+  order). Access end = start of the term + sum of surviving contributions, evaluated in purchase order; the existing `terminateForRefund` (which zeroes
+  `service_extension_days`) is NOT used for this case. Fully covered by tests, including calendar boundaries and multiple extensions.
+If partial-refund day reduction is ever wanted it is a separate, separately reviewed commercial policy.
+
+**B4. Ownership: strict-only in the first release.** Allowed evidence: provider customer/payer already linked to THIS customer, or server-authored metadata
+naming THIS customer. No attested mode in the first release. A later, separately reviewed attested mode would need ALL of: owner-only capability + re-authentication,
+independent evidence beyond a billing email, no conflicting owner anywhere locally, exact price/currency, ≤ 90 days, no existing fulfilment, no refund/dispute,
+immutable audit of the evidence examined, a persistent "attested" marker in the incident feed; and it may never override a payment/identity positively linked to a
+different customer. Direct payers are handled meanwhile by a separate reviewed step that links the provider customer to the customer account.
+
+**B5. One lease per operation.** Checkout recovery and the Plisio sweep share a per-operation claim (`claimed_until`, owner, attempt count) taken BEFORE any provider call, with
+expiry and retry rules, so the same invoice is never verified twice concurrently. Both still end in the idempotent per-ID path under the checkout row lock.
+
+**B6. Attempt audit.** Previews, refusals and failed provider lookups go to a bounded, redacted `external_payment_attempts` log (reason code, operator, provider, canonical
+id hash/last 4, no payloads, retention-limited), separate from the committed fulfilment audit.
+
+**Build order (each its own PR, each separately reviewed):**
+1. Report-only Plisio sweep: page-zero fix, structural pagination checks, per-operation progress table, deduped incident for unmatched receipt / contract change. No ledger, access or checkout mutations.
+2. Strict per-ID Plisio verification mode + shared operation lease + fail-closed activation.
+3. External-payment read-only preview + ownership checks (no writes besides attempt log).
+4. Canonical fulfilment / transaction-aware ledger + apply primitives (+ outbox), behaviour-pinned against current checkout paths.
+5. Money-loss tombstones + reconciliation (webhook, history sync, re-poll).
+6. External-payment confirm behind a disabled-by-default setting.
+7. (Optional, later) attested ownership.
 
 ## v3 amendments (these SUPERSEDE v2 wherever they conflict)
 
