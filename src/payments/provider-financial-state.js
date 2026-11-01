@@ -467,8 +467,10 @@ async function recordTransaction(input) {
               THEN '{"providerVerified":true}'::jsonb ELSE '{}'::jsonb
             END
         ) - CASE
-              WHEN COALESCE(payment_history_transactions.metadata->>'providerVerified','false')='true'
-               AND COALESCE(EXCLUDED.metadata->>'operatorAttested','false')='true'
+              -- Whichever order the two writes arrive in, a transaction that is provider-verified carries no operator-attestation markers.
+              WHEN (COALESCE(payment_history_transactions.metadata->>'providerVerified','false')='true'
+                    AND COALESCE(EXCLUDED.metadata->>'operatorAttested','false')='true')
+                OR COALESCE(EXCLUDED.metadata->>'providerVerified','false')='true'
               THEN ARRAY['operatorAttested','attestedBy','attestationReason']::text[] ELSE ARRAY[]::text[]
             END,
         updated_at=NOW()

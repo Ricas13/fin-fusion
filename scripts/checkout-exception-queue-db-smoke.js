@@ -15,6 +15,7 @@ process.env.SESSION_SECRET ||= 'recheck-route-smoke-session-secret-0123456789';
 process.env.NODE_ENV ||= 'test';
 process.env.PLISIO_SECRET_KEY ||= 'queue-smoke-key';
 process.env.PLISIO_ENABLED = 'true';
+process.env.CHECKOUT_ACTION_RATE_LIMIT = '1000'; // the route limit is 20/min in production; this test makes far more requests
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -224,6 +225,38 @@ async function main() {
     const both = await Promise.all([post(dual.id, 'finish-recording', {}), post(dual.id, 'finish-recording', {})]);
     assert.strictEqual(both.filter(r => r.location.includes('message=')).length, 1, 'exactly one concurrent finish succeeds');
     assert.strictEqual(await audits(dual.id, 'billing.checkout.mark_paid_finished'), 1, 'and the completion is audited exactly once');
+
+    // The other write order: an operator-attested row first, genuine provider verification afterwards.
+    const reverse = await makeIntent('reverse', { ageDays: 9 });
+    const reverseIntent = await intents.findById(reverse.id);
+    await financialState.recordTransaction({ provider: 'plisio', providerTransactionId: reverseIntent.provider_checkout_id, transactionType: 'payment', transactionStatus: 'completed', occurredAt: new Date(), currency: 'GBP', grossMinor: 1000, feeMinor: 0, netMinor: 1000, providerReferenceId: String(reverse.id), customerId: reverse.customerId, metadata: { providerAuthoritative: true, operatorAttested: true, attestedBy: 'x', attestationReason: 'y' } });
+    await financialState.recordTransaction({ provider: 'plisio', providerTransactionId: reverseIntent.provider_checkout_id, transactionType: 'payment', transactionStatus: 'completed', occurredAt: new Date(), currency: 'GBP', grossMinor: 1000, feeMinor: 0, netMinor: 1000, providerReferenceId: String(reverse.id), customerId: reverse.customerId, metadata: { providerAuthoritative: true, providerVerified: true } });
+    const reverseMeta = (await query(`SELECT metadata FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [reverseIntent.provider_checkout_id])).rows[0].metadata;
+    assert.strictEqual(reverseMeta.providerVerified, true);
+    assert(!('operatorAttested' in reverseMeta) && !('attestedBy' in reverseMeta), 'a later genuine verification removes the earlier operator-attestation markers');
+
+    // Finish recording is audited BEFORE it changes anything: if that audit cannot be written, nothing is settled.
+    const audited = await makeIntent('finishaudit', { ageDays: 9 });
+    try {
+      plisioModule.settleAttested = async intent => {
+        await financialState.recordTransaction({ provider: 'plisio', providerTransactionId: intent.provider_checkout_id, transactionType: 'payment', transactionStatus: 'completed', occurredAt: new Date(), currency: 'GBP', grossMinor: 1000, feeMinor: 0, netMinor: 1000, providerReferenceId: String(intent.id), customerId: intent.customer_id, metadata: { providerAuthoritative: true, operatorAttested: true } });
+        throw new Error('simulated failure after the ledger entry');
+      };
+      await post(audited.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
+    } finally { plisioModule.settleAttested = realSettle; }
+    await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW()-INTERVAL '5 minutes' WHERE id=$1`, [audited.id]);
+    await query(`CREATE OR REPLACE FUNCTION zz_block_finish_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='billing.checkout.mark_paid_finish_started' THEN RAISE EXCEPTION 'finish audit blocked for test'; END IF; RETURN NEW; END $$`);
+    await query(`CREATE TRIGGER zz_block_finish_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION zz_block_finish_audit()`);
+    try {
+      const blockedFinish = await post(audited.id, 'finish-recording', {});
+      assert(blockedFinish.location.includes('error='), 'finishing fails when its audit cannot be written');
+      const stillOpen = (await query('SELECT state,operator_resolution FROM billing_checkout_intents WHERE id=$1', [audited.id])).rows[0];
+      assert.strictEqual(stillOpen.state, 'open', 'and the checkout was not settled without a record');
+      assert.strictEqual(stillOpen.operator_resolution, 'marked_paid_review', 'it stays visible for another attempt');
+    } finally {
+      await query('DROP TRIGGER IF EXISTS zz_block_finish_audit ON audit_log');
+      await query('DROP FUNCTION IF EXISTS zz_block_finish_audit()');
+    }
 
     // A review flag is resolved by whatever completes the checkout (here a provider confirmation), so it can never
     // linger on a completed checkout.

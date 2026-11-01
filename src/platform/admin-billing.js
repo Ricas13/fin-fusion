@@ -20,7 +20,7 @@ const { esc, layout } = require('./admin-html');
 
 const checkoutRecheckLimit = rateLimit({
     windowMs: 60_000,
-    limit: 20,
+    limit: Math.max(1, Number.parseInt(process.env.CHECKOUT_ACTION_RATE_LIMIT, 10) || 20),
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     message: 'Too many checkout re-checks. Please try again shortly.'
@@ -317,10 +317,16 @@ function createAdminBillingRouter() {
             // One administrator at a time per checkout: the lock is held for the whole finish, and the state is
             // re-read under it, so a second concurrent request finds nothing left to do and writes no second audit row.
             const outcome = await transaction(async client => {
-                await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`finish-checkout:${id}`]);
+                // Non-blocking: a second administrator is told straight away instead of queueing behind the first,
+                // so concurrent requests can never pile up on the connection pool.
+                const got = (await client.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS ok', [`finish-checkout:${id}`])).rows[0].ok;
+                if (!got) return { done: false, reason: 'Another administrator is already finishing this payment.' };
                 const row = (await client.query(`SELECT operator_resolution,operator_resolution_note,(operator_resolved_at < NOW()-INTERVAL '2 minutes') AS settled_wait FROM billing_checkout_intents WHERE id=$1`, [id])).rows[0];
                 if (!intent || !row || row.operator_resolution !== 'marked_paid_review') return { done: false, reason: 'That checkout is not waiting to be finished.' };
                 if (!row.settled_wait) return { done: false, reason: 'The original attempt may still be running. Wait two minutes and try again.' };
+                // Audit FIRST, on its own connection and committed immediately: the settlement below commits through its
+                // own operations, so an audit written only at the end could be lost while the money movement is not.
+                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_finish_started','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ customerId: intent.customer_id })]);
                 await plisio.settleAttested(intent, { actorUserId: actor, reason: String(row.operator_resolution_note || 'Finishing a partly recorded payment').slice(0, 500) });
                 await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',updated_at=NOW() WHERE id=$1`, [id]);
                 await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_finished','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ customerId: intent.customer_id })]);
