@@ -16,9 +16,10 @@ const { getPool } = require('../src/db');
 // Values are printed only for these names AND only when they look like a short enumeration code (letters, digits, space, _ or -),
 // never free text: anything else prints as string:unrecognised.
 const SAFE_VALUE_KEYS = new Set(['status', 'type', 'source_currency', 'currency_code']);
-const ENUM_CODE = /^[A-Za-z][A-Za-z0-9 _-]{0,31}$/;
+// No digits: real status/type/currency codes never contain them, and digits are how amounts would leak.
+const ENUM_CODE = /^[A-Za-z][A-Za-z _-]{0,31}$/;
 // Numeric top-level fields are printed only when their name is plainly a paging counter.
-const PAGING_COUNTER = /^(page|pages|page_size|per_page|current_page|last_page|total_pages)$/i; // unambiguous only: 'total'/'count'/'from'/'to' could be money
+const PAGING_COUNTER = /^(page|pages|page_size|per_page|perPage|current_page|currentPage|last_page|total_pages|totalCount|pageCount)$/i; // unambiguous only: 'total'/'count'/'from'/'to' could be money
 const DATE_KEYS = ['created_at', 'updated_at', 'created_at_utc', 'created', 'date', 'expire_utc', 'expire_at', 'tx_created_at'];
 
 function describe(value, depth = 0) {
@@ -43,6 +44,24 @@ function arrayOf(data) {
     return { where: null, items: [] };
 }
 
+// Counts of the enumerated codes seen across the items (status/type/currency), e.g. "status: completed=3,new=2". Only short codes
+// that look like enumerations are counted; anything else is counted as 'unrecognised'.
+function enumSummary(items) {
+    const lines = [];
+    for (const key of SAFE_VALUE_KEYS) {
+        const counts = {};
+        for (const item of items) {
+            const value = item && typeof item[key] === 'string' ? item[key] : null;
+            if (value == null) continue;
+            const label = ENUM_CODE.test(value) && !/@/.test(value) ? value : 'unrecognised';
+            counts[label] = (counts[label] || 0) + 1;
+        }
+        const text = Object.entries(counts).map(([label, n]) => `${label}=${n}`).join(',');
+        if (text) lines.push(`${key} values: ${text}`);
+    }
+    return lines;
+}
+
 // Pure: turns a list response into the lines that are printed. Exported so a test can feed it hostile data.
 function reportLines(data, params) {
     const lines = [];
@@ -62,6 +81,7 @@ function reportLines(data, params) {
     lines.push(`list located at: ${where} items returned: ${items.length}`);
     items.slice(0, 2).forEach((item, index) => lines.push(`item ${index} shape: ${JSON.stringify(shapeOf(item))}`));
     const present = key => items.filter(item => item && (item[key] != null || item.params?.[key] != null)).length;
+    lines.push(...enumSummary(items));
     lines.push('items having txn_id/id/order_number/source_amount/source_currency/status: '
         + ['txn_id', 'id', 'order_number', 'source_amount', 'source_currency', 'status'].map(key => `${key}=${present(key)}`).join(' '));
     for (const key of DATE_KEYS) {
@@ -74,21 +94,30 @@ function reportLines(data, params) {
     return lines;
 }
 
+// Plisio answered the first request with an empty list, so try the other documented/likely ways to ask for transactions. Every request is
+// a read-only GET; the output of each is shape-only (see reportLines).
+const ATTEMPTS = [
+    { page: 1, page_size: 5 },
+    { page: 1, 'per-page': 5 },
+    { page: 1, limit: 5 },
+    { page: 1, 'per-page': 5, type: 'invoice' },
+    { page: 1, 'per-page': 5, type: 'cash_in' },
+    { page: 1, 'per-page': 5, status: 'completed' },
+    { page: 1, 'per-page': 5, status: 'expired' },
+    { page: 1, 'per-page': 5, status: 'new' }
+];
+
 async function main() {
-    const attempts = [
-        { page: 1, page_size: 5 },
-        { page: 1, limit: 5 }
-    ];
-    for (const params of attempts) {
+    for (const params of ATTEMPTS) {
         let data;
         try {
             data = await plisio.api('/api/v1/operations', params, { quiet: true });
         } catch (error) {
-            console.log(`request with ${JSON.stringify(params)} failed (httpStatus=${error?.providerStatus ?? 'n/a'})`);
+            console.log(`request ${JSON.stringify(params)} failed (httpStatus=${error?.providerStatus ?? 'n/a'})`);
             continue;
         }
         reportLines(data, params).forEach(line => console.log(line));
-        break;
+        console.log('---');
     }
 }
 
