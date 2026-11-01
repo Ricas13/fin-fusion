@@ -267,7 +267,7 @@ async function laneBlock(lane,entitlementRow,token,customerId,options={}){
   const pureJellyfin=String(entitlementRow.service_type_snapshot||entitlementRow.service_type||'jellyfin').toLowerCase()==='jellyfin';
   const householdRows=pureJellyfin&&entitlementRow.jellyfin_access_model==='household_network'
     ?[['jellyfin','Jellyfin household networks',entitlementRow.jellyfin_household_network_limit,options.householdOverrides?.jellyfin?.network_limit??null]]:[];
-  return `<div class="laneWrap"><div class="laneHead"><span class="pill accent">${esc(LANE_LABEL[lane]||lane)}</span><h4>${esc(entitlementRow.contract_plan_name||entitlementRow.name||'Active plan')}</h4></div><div class="twoCol"><div class="colStack">${accessControlsPanel(lane,token,customerId,effective.technicalRows)}${requestsPanel(token,customerId,effective.requestEffective)}${householdPanel(token,customerId,householdRows)}</div>${librariesPanel(lane,token,customerId,effective.entitlementRows,effective.failedServers)}</div></div>`;
+  return `<div class="laneWrap"><div class="laneHead"><span class="pill accent">${esc(LANE_LABEL[lane]||lane)}</span><h4>${esc(entitlementRow.contract_plan_name||entitlementRow.name||'Active plan')}</h4></div><div class="threeCol">${accessControlsPanel(lane,token,customerId,effective.technicalRows)}${librariesPanel(lane,token,customerId,effective.entitlementRows,effective.failedServers)}<div class="colStack">${requestsPanel(token,customerId,effective.requestEffective)}${householdPanel(token,customerId,householdRows)}</div></div></div>`;
 }
 
 async function stremioLaneBlock(detail,token,options){
@@ -285,22 +285,34 @@ async function stremioLaneBlock(detail,token,options){
   return `<div class="laneWrap"><div class="laneHead"><span class="pill accent">Stremio</span><h4>Stremio delivery</h4></div><div class="twoCol"><div class="colStack">${requestsPanel(token,customerId,requestEffective)}${householdBlock}</div><details class="panel" open><summary><span>Installation</span><span class="chev">▸</span><span class="cnt">Manifest &amp; IP lease</span></summary><div class="panelBody">${installBlock}<div class="denseSaveRow">${leaseForm}</div></div></details></div></div>`;
 }
 
+// One tab per service lane (each lane is its own server), pure CSS (radio inputs) so no script is needed. A single lane shows no tabs.
+const MAX_LANE_TABS=6;
+function laneTabs(blocks){
+  const lanes=blocks.slice(0,MAX_LANE_TABS);
+  if(lanes.length<2)return lanes.map(lane=>lane.html).join('');
+  const radios=lanes.map((lane,index)=>`<input class="laneRadio" type="radio" name="laneTab" id="laneTab-${index}" ${index===0?'checked':''}>`).join('');
+  const labels=lanes.map((lane,index)=>`<label class="laneTabLabel" for="laneTab-${index}">${esc(lane.label)}</label>`).join('');
+  const panels=lanes.map(lane=>`<div class="laneTabPanel">${lane.html}</div>`).join('');
+  return `<div class="laneTabs">${radios}<div class="laneTabBar">${labels}</div><div class="laneTabPanels">${panels}</div></div>`;
+}
+
 async function accessLibrariesRequests(detail,token,options={}){
   const customerId=detail.customer.id;
   const entitlements=await laneEntitlements(customerId);
   const blocks=[];
-  if(entitlements.primary)blocks.push(await laneBlock('primary',entitlements.primary,token,customerId,options));
-  if(entitlements.free)blocks.push(await laneBlock('free',entitlements.free,token,customerId,options));
+  const laneLabel=(lane,row)=>`${LANE_LABEL[lane]||lane}${row?.contract_plan_name||row?.name?` · ${row.contract_plan_name||row.name}`:''}`;
+  if(entitlements.primary)blocks.push({label:laneLabel('primary',entitlements.primary),html:await laneBlock('primary',entitlements.primary,token,customerId,options)});
+  if(entitlements.free)blocks.push({label:laneLabel('free',entitlements.free),html:await laneBlock('free',entitlements.free,token,customerId,options)});
   const bundleRow=[entitlements.primary,entitlements.free].find(row=>row&&String(row.service_type_snapshot||row.service_type||'').toLowerCase()==='bundle')||null;
   let stremioOnly=null;
   if(!entitlements.primary&&!entitlements.free){
     stremioOnly=await stremioEntitlementsSvc.entitledSubscription(customerId).catch(()=>null);
   }
   if(bundleRow||stremioOnly){
-    blocks.push(await stremioLaneBlock(detail,token,{...options,currentPlan:options.currentPlan||bundleRow||stremioOnly}));
+    blocks.push({label:'Stremio delivery',html:await stremioLaneBlock(detail,token,{...options,currentPlan:options.currentPlan||bundleRow||stremioOnly})});
   }
   if(!blocks.length)return'';
-  return `<section class="section"><div class="sectionHead"><div><h2>Access, libraries &amp; requests</h2><div class="muted">Plan defaults stay intact unless overridden — every row below is a live override, right here. Repeats per server this customer belongs to.</div></div></div><div class="sectionBody">${blocks.join('')}</div></section>`;
+  return `<section class="section"><div class="sectionHead"><div><h2>Access, libraries &amp; requests</h2><div class="muted">Plan defaults stay intact unless overridden — every row below is a live override, right here. Repeats per server this customer belongs to.</div></div></div><div class="sectionBody">${laneTabs(blocks)}</div></section>`;
 }
 
 /* ==================================================================
@@ -363,6 +375,14 @@ function styles(){return `<style>
 .laneHead{display:flex;align-items:center;gap:9px;margin-bottom:10px}
 .laneHead h4{margin:0;font-size:.85rem;font-weight:800}
 .twoCol{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.threeCol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}
+.laneTabs .laneRadio{position:absolute;opacity:0;pointer-events:none}
+.laneTabBar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.laneTabLabel{cursor:pointer;border:1px solid var(--border,#29333d);border-radius:9px;padding:7px 14px;font-size:.78rem;font-weight:700;color:var(--muted,#9aa7b3)}
+.laneTabPanel{display:none}
+.laneTabs .laneRadio:focus-visible~.laneTabBar{outline:2px solid var(--accent,#5db7ff);outline-offset:2px}
+.laneTabs #laneTab-0:checked~.laneTabPanels .laneTabPanel:nth-child(1),.laneTabs #laneTab-1:checked~.laneTabPanels .laneTabPanel:nth-child(2),.laneTabs #laneTab-2:checked~.laneTabPanels .laneTabPanel:nth-child(3),.laneTabs #laneTab-3:checked~.laneTabPanels .laneTabPanel:nth-child(4),.laneTabs #laneTab-4:checked~.laneTabPanels .laneTabPanel:nth-child(5),.laneTabs #laneTab-5:checked~.laneTabPanels .laneTabPanel:nth-child(6){display:block}
+.laneTabs #laneTab-0:checked~.laneTabBar label[for=laneTab-0],.laneTabs #laneTab-1:checked~.laneTabBar label[for=laneTab-1],.laneTabs #laneTab-2:checked~.laneTabBar label[for=laneTab-2],.laneTabs #laneTab-3:checked~.laneTabBar label[for=laneTab-3],.laneTabs #laneTab-4:checked~.laneTabBar label[for=laneTab-4],.laneTabs #laneTab-5:checked~.laneTabBar label[for=laneTab-5]{background:rgba(110,190,255,.16);border-color:var(--accent,#5db7ff);color:var(--text,#e8eef4)}
 .colStack{display:flex;flex-direction:column;gap:12px}
 details.panel{border:1px solid var(--border,#29333d);border-radius:10px;overflow:hidden;background:rgba(255,255,255,.012)}
 details.panel summary{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;list-style:none;font-size:.8rem;font-weight:800}
@@ -403,7 +423,9 @@ details.panel summary .cnt{margin-left:auto;color:var(--muted,#9aa7b5);font-weig
 .accessControlCard{border:1px solid var(--border,#29333d);background:rgba(255,255,255,.018);border-radius:10px;padding:12px}
 .accessControlHead{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .accessEyebrow{display:block;font-size:.72rem;letter-spacing:.055em;text-transform:uppercase;color:var(--muted,#9aa7b5);font-weight:700}
+@media(max-width:1400px){.threeCol{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:1150px){.ctlGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.twoCol{grid-template-columns:1fr}}
+@media(max-width:900px){.threeCol{grid-template-columns:1fr}}
 @media(max-width:760px){.ctlGrid{grid-template-columns:1fr}.denseRow{grid-template-columns:minmax(0,1fr) 140px}.denseRow .val{display:none}.billingGrid,.formRow{grid-template-columns:1fr}}
 </style>`;}
 
@@ -417,4 +439,4 @@ async function render(detail,token,options={}){
   return `${styles()}${controlGrid(detail,token,ctx,options.permanent)}${accessStatusSection(detail,token)}${laneBlocks}${billingSection(withManual,token)}${accountDetails(detail)}${provisioningHistory(detail)}${activitySection(detail)}`;
 }
 
-module.exports={render,controlGrid,accessLibrariesRequests,billingSection,accountDetails,provisioningHistory,activitySection,styles};
+module.exports={render,controlGrid,accessLibrariesRequests,laneTabs,billingSection,accountDetails,provisioningHistory,activitySection,styles};
