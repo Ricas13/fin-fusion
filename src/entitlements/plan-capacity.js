@@ -511,9 +511,10 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
   return{...state,...scarcity(state)};
 }
 
-async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
+async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null,allowSoldOut=false}={}){
   const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
-  if(state.soldOut){const error=new Error(`${label} is currently sold out.`);error.code='PLAN_CAPACITY_EXHAUSTED';error.planId=String(planId);throw error;}
+  // allowSoldOut is only passed by deliberate administrator actions; customers and automation never set it.
+  if(state.soldOut&&!allowSoldOut){const error=new Error(`${label} is currently sold out.`);error.code='PLAN_CAPACITY_EXHAUSTED';error.planId=String(planId);throw error;}
   return state;
 }
 
@@ -532,13 +533,13 @@ async function lockAndAssertLogicalMedia(client,planId,label='This plan'){
   return state;
 }
 
-async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null}={}){
+async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,excludeSubscriptionId=null,households=null,allowSoldOut=false}={}){
   const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?'fleet-users':`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
   // During a rolling deployment the previous release still takes the class
   // lock. Retain it after the global pool lock so both generations serialize.
   if(model==='fleet_users')await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[`fleet-users:${serverClass(plan)||'unclassified'}`]);
-  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households});
+  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,excludeSubscriptionId,households,allowSoldOut});
 }
 
 function legacyAcquisitionSql(alias='p'){
