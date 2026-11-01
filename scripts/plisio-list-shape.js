@@ -13,9 +13,12 @@ require('dotenv').config();
 const plisio = require('../src/payments/plisio');
 const { getPool } = require('../src/db');
 
+// Values are printed only for these names AND only when they look like a short enumeration code (letters, digits, space, _ or -),
+// never free text: anything else prints as string:unrecognised.
 const SAFE_VALUE_KEYS = new Set(['status', 'type', 'source_currency', 'currency_code']);
+const ENUM_CODE = /^[A-Za-z][A-Za-z0-9 _-]{0,31}$/;
 // Numeric top-level fields are printed only when their name is plainly a paging counter.
-const PAGING_COUNTER = /^(page|pages|page_size|per_page|limit|offset|total|total_pages|total_count|count|current_page|last_page|from|to)$/i;
+const PAGING_COUNTER = /^(page|pages|page_size|per_page|current_page|last_page|total_pages)$/i; // unambiguous only: 'total'/'count'/'from'/'to' could be money
 const DATE_KEYS = ['created_at', 'updated_at', 'created_at_utc', 'created', 'date', 'expire_utc', 'expire_at', 'tx_created_at'];
 
 function describe(value, depth = 0) {
@@ -28,7 +31,7 @@ function describe(value, depth = 0) {
 function shapeOf(item) {
     const out = {};
     for (const [key, value] of Object.entries(item || {})) {
-        out[key] = SAFE_VALUE_KEYS.has(key) && typeof value === 'string' ? `${describe(value)}:${value}` : describe(value, 1);
+        out[key] = SAFE_VALUE_KEYS.has(key) && typeof value === 'string' ? `string:${ENUM_CODE.test(value) && !/@/.test(value) ? value : 'unrecognised'}` : describe(value, 1);
         if (key === 'params' && value && typeof value === 'object') out.params = `object{${Object.keys(value).join(',')}}`;
     }
     return out;
@@ -79,7 +82,7 @@ async function main() {
     for (const params of attempts) {
         let data;
         try {
-            data = await plisio.api('/api/v1/operations', params);
+            data = await plisio.api('/api/v1/operations', params, { quiet: true });
         } catch (error) {
             console.log(`request with ${JSON.stringify(params)} failed (httpStatus=${error?.providerStatus ?? 'n/a'})`);
             continue;

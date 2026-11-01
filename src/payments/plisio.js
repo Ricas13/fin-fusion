@@ -57,7 +57,7 @@ function callbackDigest(secretKey, payload) {
     return crypto.createHmac('sha1', key).update(JSON.stringify(ordered)).digest('hex');
 }
 
-async function api(path, params = {}, { timeoutMs = 15000 } = {}) {
+async function api(path, params = {}, { timeoutMs = 15000, quiet = false } = {}) {
     const cfg = await providerSettings.get('plisio');
     if (!cfg.secretKey) throw new Error('Plisio secret key is not configured.');
     if (typeof path !== 'string' || !path.startsWith('/api/v1/') || path.startsWith('//')) throw new Error('Invalid Plisio API path.');
@@ -77,7 +77,8 @@ async function api(path, params = {}, { timeoutMs = 15000 } = {}) {
         }
         if (!response.ok || payload?.status === 'error') {
             const detail = payload?.data?.message || payload?.message || payload?.error || `HTTP ${response.status}`;
-            console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
+            // quiet: the read-only diagnostic must never echo provider-supplied text (it can carry links or payment details).
+            if (!quiet) console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
             throw new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
         }
         return payload?.status === 'success' && payload?.data !== undefined ? payload.data : payload;
