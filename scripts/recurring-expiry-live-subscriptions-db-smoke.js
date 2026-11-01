@@ -73,10 +73,15 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
     const originalQuery = db.query;
     const originalTransaction = db.transaction;
     let started = false;
+    let snapshotBefore = null;
     try {
         const identity = (await client.query('SELECT current_database() AS name, current_user AS role')).rows[0];
         assert.strictEqual(identity.name, decodeURIComponent(url.pathname.slice(1)), 'Database identity must match the disposable URL');
         if (ci) assert.strictEqual(identity.role, 'steamfusion', 'CI must use its disposable database owner');
+        // Snapshot every subscription BEFORE the transaction. Earlier suites in the same database leave overdue subscriptions
+        // behind, and the global sweep may legitimately touch them INSIDE our transaction, so the guarantee we check is that
+        // after the ROLLBACK nothing at all has changed.
+        snapshotBefore = (await client.query('SELECT id,status,current_period_end,service_extension_days,updated_at FROM subscriptions ORDER BY id')).rows;
         await client.query('BEGIN');
         started = true;
         query = (sql, params) => client.query(sql, params);
@@ -105,10 +110,6 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         const advanced = new Set([renewed, renewedPaypal]);
         const unreachable = new Set([outageShort, outageLong]);
         const recorded = [];
-        const unrelatedBefore = (await query(`
-            SELECT id,status,current_period_end,service_extension_days FROM subscriptions
-            WHERE id <> ALL($1::uuid[]) ORDER BY id
-        `, [created.subs])).rows;
         const syncRecurring = async id => {
             if (unreachable.has(id)) return { ok: false, error: 'provider unreachable' };
             if (advanced.has(id)) {
@@ -142,11 +143,6 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         assert.strictEqual(recorded[0][0].kind, 'failed_renewal');
         assert.strictEqual(recorded[0][0].metadata.reason, 'expiry_provider_verification_exhausted');
         assert.strictEqual(await statusOf(paygOver), 'expired', 'a pay-as-you-go term that ran out ends as before');
-        const unrelatedAfter = (await query(`
-            SELECT id,status,current_period_end,service_extension_days FROM subscriptions
-            WHERE id <> ALL($1::uuid[]) ORDER BY id
-        `, [created.subs])).rows;
-        assert.deepStrictEqual(unrelatedAfter, unrelatedBefore, 'global expiry must not change unrelated test-suite subscriptions');
     } finally {
         try {
             if (started) await client.query('ROLLBACK');
@@ -158,6 +154,8 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         }
     }
     // Rollback, not best-effort DELETE, is the sole cleanup mechanism. Any failure here fails CI.
+    const snapshotAfter = (await db.query('SELECT id,status,current_period_end,service_extension_days,updated_at FROM subscriptions ORDER BY id')).rows;
+    assert.deepStrictEqual(snapshotAfter, snapshotBefore, 'the rollback-only smoke must leave EVERY subscription exactly as it found it');
     const survivors = await db.query('SELECT COUNT(*)::int AS n FROM subscriptions WHERE id=ANY($1::uuid[])', [created.subs]);
     assert.strictEqual(survivors.rows[0].n, 0, 'the expiry smoke must leave zero fixture subscriptions behind');
 });
