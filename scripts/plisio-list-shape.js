@@ -16,8 +16,21 @@ const { getPool } = require('../src/db');
 // Values are printed only for these names AND only when they look like a short enumeration code (letters, digits, space, _ or -),
 // never free text: anything else prints as string:unrecognised.
 const SAFE_VALUE_KEYS = new Set(['status', 'type', 'source_currency', 'currency_code']);
-// No digits: real status/type/currency codes never contain them, and digits are how amounts would leak.
-const ENUM_CODE = /^[A-Za-z][A-Za-z _-]{0,31}$/;
+// Exact allowlists, never a pattern: a value is printed only if it is one of these known codes, so free text (a name, an email,
+// an amount) can never pass however short or plain it looks. Anything else prints as 'unrecognised'.
+const KNOWN_VALUES = Object.freeze({
+    status: new Set(['new', 'pending', 'pending internal', 'expired', 'completed', 'cancelled', 'cancelled duplicate', 'error', 'mismatch']),
+    type: new Set(['invoice', 'cash_in', 'cash_out', 'mass_cash_out', 'withdraw', 'withdrawal']),
+    source_currency: new Set(['GBP', 'USD', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'TRY']),
+    currency_code: new Set(['BTC', 'ETH', 'LTC', 'BCH', 'DOGE', 'XMR', 'ZEC', 'DASH', 'TRX', 'BNB', 'SOL', 'XRP', 'TON', 'USDT', 'USDC', 'USDT_TRX', 'USDT_BSC', 'USDT_ETH', 'USDC_ETH'])
+});
+function enumLabel(key, value) {
+    return KNOWN_VALUES[key]?.has(value) ? value : 'unrecognised';
+}
+// Field NAMES come from the provider too: only plain identifier-style names are printed.
+function safeKey(key) {
+    return /^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(String(key)) ? String(key) : '(other)';
+}
 // Numeric top-level fields are printed only when their name is plainly a paging counter.
 const PAGING_COUNTER = /^(page|pages|page_size|per_page|perPage|current_page|currentPage|last_page|total_pages|totalCount|pageCount)$/i; // unambiguous only: 'total'/'count'/'from'/'to' could be money
 const DATE_KEYS = ['created_at', 'updated_at', 'created_at_utc', 'created', 'date', 'expire_utc', 'expire_at', 'tx_created_at'];
@@ -25,22 +38,23 @@ const DATE_KEYS = ['created_at', 'updated_at', 'created_at_utc', 'created', 'dat
 function describe(value, depth = 0) {
     if (value === null) return 'null';
     if (Array.isArray(value)) return `array(${value.length})`;
-    if (typeof value === 'object') return depth > 0 ? 'object' : 'object{' + Object.keys(value).join(',') + '}';
+    if (typeof value === 'object') return depth > 0 ? 'object' : 'object{' + Object.keys(value).map(safeKey).join(',') + '}';
     return typeof value;
 }
 
 function shapeOf(item) {
     const out = {};
     for (const [key, value] of Object.entries(item || {})) {
-        out[key] = SAFE_VALUE_KEYS.has(key) && typeof value === 'string' ? `string:${ENUM_CODE.test(value) && !/@/.test(value) ? value : 'unrecognised'}` : describe(value, 1);
-        if (key === 'params' && value && typeof value === 'object') out.params = `object{${Object.keys(value).join(',')}}`;
+        const name = safeKey(key);
+        out[name] = SAFE_VALUE_KEYS.has(key) && typeof value === 'string' ? `string:${enumLabel(key, value)}` : describe(value, 1);
+        if (key === 'params' && value && typeof value === 'object') out.params = `object{${Object.keys(value).map(safeKey).join(',')}}`;
     }
     return out;
 }
 
 function arrayOf(data) {
     if (Array.isArray(data)) return { where: '(data itself)', items: data };
-    for (const [key, value] of Object.entries(data || {})) if (Array.isArray(value)) return { where: `data.${key}`, items: value };
+    for (const [key, value] of Object.entries(data || {})) if (Array.isArray(value)) return { where: `data.${safeKey(key)}`, items: value };
     return { where: null, items: [] };
 }
 
@@ -53,7 +67,7 @@ function enumSummary(items) {
         for (const item of items) {
             const value = item && typeof item[key] === 'string' ? item[key] : null;
             if (value == null) continue;
-            const label = ENUM_CODE.test(value) && !/@/.test(value) ? value : 'unrecognised';
+            const label = enumLabel(key, value);
             counts[label] = (counts[label] || 0) + 1;
         }
         const text = Object.entries(counts).map(([label, n]) => `${label}=${n}`).join(',');
@@ -67,14 +81,14 @@ function reportLines(data, params) {
     const lines = [];
     const { where, items } = arrayOf(data);
     lines.push(`request ${JSON.stringify(params)} ok`);
-    lines.push(`top-level keys: ${data && typeof data === 'object' ? Object.keys(data).join(',') : describe(data)}`);
+    lines.push(`top-level keys: ${data && typeof data === 'object' ? Object.keys(data).map(safeKey).join(',') : describe(data)}`);
     if (data && typeof data === 'object' && !Array.isArray(data)) {
         const meta = {};
         for (const [key, value] of Object.entries(data)) {
             if (Array.isArray(value)) continue;
-            meta[key] = describe(value, 1) + (typeof value === 'number' && PAGING_COUNTER.test(key) ? `=${value}` : '');
+            meta[safeKey(key)] = describe(value, 1) + (typeof value === 'number' && PAGING_COUNTER.test(key) ? `=${value}` : '');
             // Nested containers (for example a pagination object) are listed by key name and type only.
-            if (value && typeof value === 'object') meta[key] = `object{${Object.entries(value).map(([k, v]) => `${k}:${describe(v, 1)}${typeof v === 'number' && PAGING_COUNTER.test(k) ? `=${v}` : ''}`).join(',')}}`;
+            if (value && typeof value === 'object') meta[safeKey(key)] = `object{${Object.entries(value).map(([k, v]) => `${safeKey(k)}:${describe(v, 1)}${typeof v === 'number' && PAGING_COUNTER.test(k) ? `=${v}` : ''}`).join(',')}}`;
         }
         lines.push(`non-list fields (paging etc): ${JSON.stringify(meta)}`);
     }

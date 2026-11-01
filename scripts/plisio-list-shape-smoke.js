@@ -22,6 +22,7 @@ const hostile = {
           wallet_hash: 'bc1qSENSITIVEADDRESS', tx_url: 'https://blockchair.com/tx/SENSITIVEHASH', email: 'customer@example.com',
           created_at: '2026-10-01T10:00:00Z', params: { source_amount: '999.99', email: 'customer@example.com' } },
         { txn_id: 'TXN-SENSITIVE-4', status: 'paid 123 GBP', type: 'invoice', source_currency: 'GBP' },
+        { txn_id: 'TXN-SENSITIVE-5', status: 'Alice Smith', type: 'Private customer', source_currency: 'Bob', currency_code: 'Carol Jones', 'Dave Brown': 'x', 'a@b.c': 1 },
         { txn_id: 'TXN-SENSITIVE-3', status: 'customer@example.com', type: 'Alice Smith paid GBP 50 from wallet', source_currency: 'GBP 123.45 total', currency_code: 'x'.repeat(64) },
         { txn_id: 'TXN-SENSITIVE-2', order_number: 'ORDER-SENSITIVE-2', status: 'new', type: 'invoice', source_amount: '5.00', source_currency: 'GBP',
           created_at: '2026-09-30T10:00:00Z' }
@@ -33,7 +34,7 @@ const out = reportLines(hostile, { page: 1, page_size: 5 }).join('\n');
 for (const forbidden of [SECRET, 'api_key=', 'customer@example.com', 'SENSITIVE', '123.45', '999.99', '5.00', '987654321', '555', '424242', 'blockchair', 'bc1q', '2026-10-01', '2026-09-30', 'next_url=http', 'https://']) {
     assert(!out.includes(forbidden), `diagnostic output must not contain ${forbidden}`);
 }
-for (const forbidden of ['paid 123', '=42', '=7', '=3"', 'Alice', 'paid GBP', 'from wallet']) {
+for (const forbidden of ['paid 123', '=42', '=7', '=3"', 'Alice', 'Private customer', 'Bob', 'Carol', 'Dave', 'a@b.c', 'paid GBP', 'from wallet']) {
     assert(!out.includes(forbidden), `ambiguous numbers and free-text enum values must not print (${forbidden})`);
 }
 assert(out.includes('string:unrecognised'), 'a free-text value in an enum-named field prints as unrecognised');
