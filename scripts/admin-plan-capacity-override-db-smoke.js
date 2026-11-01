@@ -167,10 +167,13 @@ async function main() {
 }
 
 async function cleanup() {
+  // Rows created by Move (an administrator server pin and its service control) reference the servers restrictively.
+  await query('DELETE FROM customer_jellyfin_admin_control WHERE customer_id=ANY($1::uuid[])', [created.customers]).catch(() => {});
+  await query('DELETE FROM customer_service_admin_control WHERE customer_id=ANY($1::uuid[])', [created.customers]).catch(() => {});
   await query('DELETE FROM jellyfin_accounts WHERE customer_id=ANY($1::uuid[])', [created.customers]).catch(() => {});
   await query('DELETE FROM subscriptions WHERE customer_id=ANY($1::uuid[])', [created.customers]).catch(() => {});
   await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [created.plans]).catch(() => {});
-  await query('DELETE FROM jellyfin_servers WHERE id=ANY($1::uuid[])', [created.servers]).catch(() => {});
+  await query('DELETE FROM jellyfin_servers WHERE id=ANY($1::uuid[])', [created.servers]).catch(error => console.warn('cleanup of test servers failed:', error.message));
   await query('DELETE FROM customers WHERE id=ANY($1::uuid[])', [created.customers]).catch(() => {});
 }
 
