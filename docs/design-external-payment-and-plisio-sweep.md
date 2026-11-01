@@ -1,7 +1,75 @@
-# Design v2: record an external Stripe/PayPal payment, and the automatic Plisio sweep
+# Design v3 (v2 + review amendments): record an external Stripe/PayPal payment, and the automatic Plisio sweep
 
 Status: DESIGN ONLY, nothing built. v2 incorporates the first design review (BUILD AFTER CHANGES). Target: Ricas13/fin-fusion main (ca0308fb).
 This file lives on branch `claude/full-analysis-hpmuwq`.
+
+## v3 amendments (these SUPERSEDE v2 wherever they conflict)
+
+**A1. Price invariant (Blocker).** The provider-verified gross amount and currency must EQUAL the immutable payable price of the selected plan,
+service lane and allowance (the same price contract a portal checkout would have snapshotted, taken at preview time and stored in the token).
+No operator-entered amount, no implicit discount, no tolerance, no currency conversion. A genuine £5 payment can never buy a £50 plan.
+(The v2 "below price with a reason" idea is removed.) Section 2.2's amount/override rules are void.
+
+**A2. Canonical identity and base-purchase representation.**
+- Stripe canonical = PaymentIntent, which must resolve to exactly one succeeded charge; the charge id and balance-transaction id are one-to-one aliases.
+  Invoice / order ids are PARENT references, used for discovery only, never unique aliases and never interchangeable with a payment.
+- PayPal canonical = capture id. An order may hold several captures, so the order id is a parent reference (non-unique); an order id alone is refused.
+- The base one-off subscription stores the canonical payment id in `subscriptions.provider_subscription_id` with `billing_mode='payment'`
+  (a payment reference, not a recurring agreement; the existing unique (source, provider_subscription_id) index then also guards it, and the
+  existing incident / refund handlers find it). Extension purchases use `subscription_access_extensions.provider_payment_id`.
+  The fulfilment row references the base subscription OR the extension row; this link is mandatory.
+- Duplicate handling: a claim collision is "already applied" ONLY if customer, merchant account/environment, plan and entitlement are all identical
+  to the stored row; any difference is an identity CONFLICT (refused, one deduped incident), never a silent success.
+- A payment already in the financial ledger but with no access effect (history sync attributed it, nobody fulfilled it) is ELIGIBLE: reuse the ledger
+  row after re-verifying identity, ownership and money state. "Recorded" and "fulfilled" are different states.
+
+**A3. Atomic boundary.** Provider fetch and all provider-state checks happen BEFORE the DB transaction. The transaction then only does local work:
+lock customer → re-validate locally → claim fulfilment row → ledger row → access effect → audit → outbox row. This needs:
+(a) an extracted transaction-aware activation/apply primitive (current `lifecycle.activatePurchase` opens its own transaction and locks the same
+customer; it must not be called from inside another transaction; it also does post-commit reconcile work),
+(b) a transaction-aware ledger writer used by this path and made to coexist with the PayPal live-capture writer that upserts the ledger directly,
+(c) a durable post-commit outbox for provisioning/reconcile, customer notification and anything touching external servers, retried until done.
+No external call happens while the customer lock is held.
+
+**A4. Money-loss convergence (replaces 2.7).** Webhook, history sync and a scheduled provider re-poll all converge on the fulfilment record:
+- Add fulfilment-aware resolution to `incidents.record`/reversal so a refund or dispute on the canonical id finds the purchase even when only the
+  history sync saw it (today the Stripe history sync writes refund ledger rows but never terminates access).
+- Cases to specify and test: partial refund (reduce purchased days proportionally using the existing refund policy, not all-or-nothing), full refund,
+  OPEN dispute, lost dispute / chargeback, dispute won, refund arriving before / during / after confirm, missed webhook.
+- Open dispute policy for externally recorded purchases: existing code deliberately keeps access while a dispute is open. v3 keeps that default
+  (consistency, no surprise cut-offs) and only flags an admin incident; reversal happens on lost dispute/chargeback. (Owner may choose a stricter
+  hold; this is one of the open questions.)
+- Base purchase refunded while later extensions remain: specify recompute from remaining purchases — paid-through is recomputed from the surviving
+  purchases' days starting at the term start, never left anchored to the refunded base period.
+
+**A5. Ownership (replaces 2.3).** Email alone is NOT proof (a payer can type anyone's email). Allowed evidence for automatic recording:
+(a) the Stripe customer / PayPal payer id is already linked to THIS customer (existing provider identity, not linked to anyone else), or
+(b) the payment carries server-authored metadata naming THIS customer (customerId we wrote), or
+(c) an attested mode — OFF by default, owner-capability only — where the operator confirms "this payer is this customer", and the payer email also
+equals the customer's account email exactly with no other customer holding it, the price invariant (A1) holds, the payment is ≤ 90 days old, and a
+typed confirmation is required. Every attested record is audited as `attested_ownership` and shown in the admin incident feed.
+*Tension to resolve:* a customer who paid you directly usually has NO linked identity or metadata, so with (a)+(b) only the feature would refuse the
+main use case. The owner must choose: ship (c), or ship (a)+(b) only and handle direct payments by first linking the provider customer to the customer
+account via a separate reviewed step.
+
+**A6. Plisio verifier and cursor.**
+- New strict verification mode used only by the sweep: requires the per-ID provider response to contain status, amount AND currency; does not fall
+  back to callback / intent values for monetary evidence; missing facts → defer + deduped incident, never a grant.
+- Contract violations are split: STRUCTURAL (wrong schema, `currentPage != requestedPage+1`, items missing when totalCount>0 on a first sweep) → one deduped
+  "provider contract changed" incident; TRANSIENT (counts differ because the list changed between pages) → mark the sweep incomplete and rescan
+  with an overlap window; never an incident by itself.
+- Durable progress per operation: table of seen operation ids with first/last seen, last verified, attempts, cool-down; cursor = last fully
+  completed sweep time plus an overlap window; every eligible operation is eventually revisited even while newer ones arrive.
+- Bounded provider calls per run, bounded concurrency, provider-wide backoff after 429/5xx, incidents deduped by (operation id, failure category) and
+  updated in place. Shares claims with the checkout-recovery worker through the existing row locks.
+
+**Extra tests for v3:** £5 payment vs £50 plan; several PayPal captures under one order; ledger-attributed-but-unfulfilled payment; missed Stripe refund
+webhook caught by history sync; open dispute; refund of a base prepaid term with later paid extensions; identity-conflict replay; outbox retry after
+crash; attested-mode audit and gating.
+
+**Decisions on v2 open questions (from review):** no hidden override (see A5(c) for the only gated one); refuse payments older than 90 days by the
+provider's capture date; keep refusing a live recurring agreement for the same lane; existing refund/dispute handling does NOT find these purchases
+today, so A2/A4 are mandatory before enabling.
 
 ## 0. Rule of the system
 Payments are fully automatic. The only manual money action is: a customer paid outside the portal directly in Stripe or PayPal, and the
