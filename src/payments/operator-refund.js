@@ -60,19 +60,19 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
     // the lock, so only one request can run the effects of a failed or abandoned attempt.
     const LATEST_EVENT_SQL = `
         SELECT DISTINCT ON (sid) sid, action, created_at FROM (
-            SELECT metadata->>'submissionId' AS sid, action, created_at
+            SELECT metadata->>'submissionId' AS sid, action, created_at, id
             FROM audit_log
             WHERE entity_id=$1 AND action IN ('billing.refund.recorded_externally','billing.refund.recorded_externally_resumed','billing.refund.recorded_externally_failed','billing.refund.recorded_externally_completed')
-        ) e ORDER BY sid, created_at DESC`;
+        ) e ORDER BY sid, created_at DESC, id DESC`;
     const decision = await transaction(async client => {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`operator-refund-sub:${sub.id}`]);
         const own = await client.query(`
             SELECT
               EXISTS(SELECT 1 FROM audit_log WHERE action='billing.refund.recorded_externally_completed' AND metadata->>'submissionId'=$1) AS completed,
-              (SELECT metadata->>'fingerprint' FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at LIMIT 1) AS fingerprint,
-              (SELECT metadata->>'eventId' FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at LIMIT 1) AS event_id,
-              (SELECT action FROM audit_log WHERE metadata->>'submissionId'=$1 AND action IN ('billing.refund.recorded_externally','billing.refund.recorded_externally_resumed','billing.refund.recorded_externally_failed') ORDER BY created_at DESC LIMIT 1) AS latest_action,
-              (SELECT created_at FROM audit_log WHERE metadata->>'submissionId'=$1 AND action IN ('billing.refund.recorded_externally','billing.refund.recorded_externally_resumed','billing.refund.recorded_externally_failed') ORDER BY created_at DESC LIMIT 1) AS latest_at`, [sid]);
+              (SELECT metadata->>'fingerprint' FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at, id LIMIT 1) AS fingerprint,
+              (SELECT metadata->>'eventId' FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at, id LIMIT 1) AS event_id,
+              (SELECT action FROM audit_log WHERE metadata->>'submissionId'=$1 AND action IN ('billing.refund.recorded_externally','billing.refund.recorded_externally_resumed','billing.refund.recorded_externally_failed') ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_action,
+              (SELECT created_at FROM audit_log WHERE metadata->>'submissionId'=$1 AND action IN ('billing.refund.recorded_externally','billing.refund.recorded_externally_resumed','billing.refund.recorded_externally_failed') ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_at`, [sid]);
         const row = own.rows[0];
         if (row.completed) throw new Error('This refund was already recorded.');
 
@@ -81,7 +81,7 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
             const latest = (await client.query(LATEST_EVENT_SQL, [String(sub.id)])).rows.filter(e => e.sid !== excludeSid);
             let total = 0;
             for (const event of latest) {
-                const attempt = (await client.query(`SELECT metadata->>'eventId' AS event_id,(metadata->>'amountMinor')::bigint AS amount FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at LIMIT 1`, [event.sid])).rows[0];
+                const attempt = (await client.query(`SELECT metadata->>'eventId' AS event_id,(metadata->>'amountMinor')::bigint AS amount FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at, id LIMIT 1`, [event.sid])).rows[0];
                 if (!attempt) continue;
                 if (event.action !== 'billing.refund.recorded_externally_failed') { total += Number(attempt.amount || 0); continue; }
                 // Failed: counts only if it left a durable effect (the refund incident, written before the ledger entry,
@@ -118,7 +118,7 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
         const earlier = (await client.query(LATEST_EVENT_SQL, [String(sub.id)])).rows;
         for (const event of earlier) {
             if (event.sid === sid) continue;
-            const first = (await client.query(`SELECT metadata->>'fingerprint' AS fp,metadata->>'eventId' AS event_id FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at LIMIT 1`, [event.sid])).rows[0];
+            const first = (await client.query(`SELECT metadata->>'fingerprint' AS fp,metadata->>'eventId' AS event_id FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at, id LIMIT 1`, [event.sid])).rows[0];
             if (!first || first.fp !== fingerprint) continue;
             const done = (await client.query(`SELECT 1 FROM audit_log WHERE action='billing.refund.recorded_externally_completed' AND metadata->>'submissionId'=$1 LIMIT 1`, [event.sid])).rowCount > 0;
             if (done) continue;
@@ -161,13 +161,16 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
 
         let ended = false;
         if (full) {
+            // The effect marker is written BEFORE the plan is touched. If the marker cannot be written nothing has
+            // happened; if termination then fails, the refund keeps its share of the cap until it is resumed, which
+            // is the safe direction (a marker without an effect never allows an extra refund; an effect without a
+            // marker could).
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally_effect','subscription',$2,$3::jsonb)`, [actorUserId, sub.id, JSON.stringify({ submissionId: submission, eventId, effect: 'plan_end' })]);
             const current = (await query(`SELECT status,service_extension_days FROM subscriptions WHERE id=$1`, [sub.id])).rows[0];
             if (current && !(current.status === 'cancelled' && Number(current.service_extension_days || 0) === 0)) {
                 const terminated = await subscriptionTermination.terminateForRefund(sub.id, customerId, { actorUserId, reason: `Refund recorded by administrator: ${note}`, reference: eventId });
                 if (terminated.changed) await accessExtensions.restoreActivePurchasedDays(sub.id, customerId);
                 ended = Boolean(terminated.changed);
-                // Recorded so that, if a later step fails, this refund still counts toward the cap (the plan is already ended).
-                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally_effect','subscription',$2,$3::jsonb)`, [actorUserId, sub.id, JSON.stringify({ submissionId: submission, eventId, effect: 'plan_ended' })]);
             } else ended = true;
             try { await provisioning.reconcileCustomer(customerId); } catch (_) { console.warn('Refund recorded; access reconcile failed and will be retried by the reconciliation job.'); }
         }
@@ -175,8 +178,8 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
             [actorUserId, sub.id, JSON.stringify({ submissionId: submission, eventId, ended })]);
         return { eventId, ended, amountMinor: minor, currency, resumed: decision.resume };
     } catch (error) {
-        // Mark the attempt failed so it no longer counts toward the cap and can be resumed with the
-        // same amount and reason. The administrator is told exactly that.
+        // Mark the attempt failed. It keeps counting toward the cap if it left a durable effect, and can be
+        // resumed with the same amount and reason. The administrator is told exactly that.
         await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally_failed','subscription',$2,$3::jsonb)`,
             [actorUserId, sub.id, JSON.stringify({ submissionId: submission, eventId, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
         const failure = new Error(`The refund was only partly recorded (${String(error.message || 'unexpected error').slice(0, 150)}). Submit the same amount and reason again to finish it; steps that already completed are not repeated.`);

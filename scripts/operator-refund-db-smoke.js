@@ -188,6 +188,33 @@ async function main() {
     assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [cashSub.id])).rows[0].status, 'cancelled', 'the plan was already ended');
     await assert.rejects(() => operatorRefund.record({ customerId: cashCustomer.id, subscriptionId: cashSub.id, amount: '8.00', full: true, reason: 'A second cash refund for the same plan', submissionId: sid() }), /more than the plan cost/i, 'the ended-plan refund still holds its share of the cap even though it never completed');
 
+    // The effect marker is written BEFORE the plan is touched: if the marker cannot be written, the plan is NOT ended
+    // (nothing happened), so there is no unrecorded effect that could let a second refund slip past the cap.
+    const markCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Marker', email: `${unique('refund-marker')}@example.invalid` });
+    created.customers.push(markCustomer.id);
+    const markSub = await fixtureSubscription({ query }, { customerId: markCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual' });
+    await query(`CREATE OR REPLACE FUNCTION zz_block_refund_effect() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='billing.refund.recorded_externally_effect' THEN RAISE EXCEPTION 'effect marker blocked for test'; END IF; RETURN NEW; END $$`);
+    await query(`CREATE TRIGGER zz_block_refund_effect BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION zz_block_refund_effect()`);
+    try {
+      await assert.rejects(() => operatorRefund.record({ customerId: markCustomer.id, subscriptionId: markSub.id, amount: '8.00', full: true, reason: 'Cash refunded at the counter in full', submissionId: sid() }), /only partly recorded/i);
+      assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [markSub.id])).rows[0].status, 'active', 'no marker means the plan was not ended');
+    } finally {
+      await query('DROP TRIGGER IF EXISTS zz_block_refund_effect ON audit_log');
+      await query('DROP FUNCTION IF EXISTS zz_block_refund_effect()');
+    }
+    const afterMarker = await operatorRefund.record({ customerId: markCustomer.id, subscriptionId: markSub.id, amount: '8.00', full: true, reason: 'Cash refunded at the counter in full', submissionId: sid() });
+    assert.strictEqual(afterMarker.ended, true, 'the same refund resumes and finishes once the marker can be written');
+    assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [markSub.id])).rows[0].status, 'cancelled');
+
+    // A resumed full refund on a plan that is already ended still leaves an effect marker (so a later completion failure keeps its cap share).
+    const endedCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Ended', email: `${unique('refund-ended')}@example.invalid` });
+    created.customers.push(endedCustomer.id);
+    const endedSub = await fixtureSubscription({ query }, { customerId: endedCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual', status: 'cancelled' });
+    await query(`UPDATE subscriptions SET service_extension_days=0 WHERE id=$1`, [endedSub.id]);
+    const alreadyEnded = await operatorRefund.record({ customerId: endedCustomer.id, subscriptionId: endedSub.id, amount: '3.00', full: true, reason: 'Cash refund of an already ended plan', submissionId: sid() });
+    assert.strictEqual(alreadyEnded.ended, true);
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE entity_id=$1 AND action='billing.refund.recorded_externally_effect'`, [String(endedSub.id)])).rows[0].n, 1, 'the effect marker is written even when the plan was already ended');
+
     // Only the two supported shapes are accepted.
     const odd = await fixtureSubscription({ query }, { customerId: raceCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual', providerSubscriptionId: unique('some-provider-ref') });
     await assert.rejects(() => operatorRefund.record({ customerId: raceCustomer.id, subscriptionId: odd.id, amount: '1.00', reason: 'Odd source with a provider reference', submissionId: sid() }), /reports its own refunds/i, 'a plan with a foreign provider reference is refused');
