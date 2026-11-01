@@ -144,6 +144,8 @@ function problemCards(d) {
     return `<section class="section" id="migration-problems">${ui.sectionHeader({eyebrow:'Recent exceptions',title:'Review these move problems first',description:'Recent failed moves and failed rollbacks are separated from routine history.'})}<div style="display:grid;gap:12px">${problems.slice(0,8).map(row => ui.resolutionCard({tone:row.status==='rollback_failed'?'bad':'warn',badge:row.status==='rollback_failed'?'Rollback failed':'Move failed',title:`${row.customer_name}: ${row.source_server_name} → ${row.target_server_name}`,body:row.last_error||'The customer move did not complete successfully.',reason:row.status==='rollback_failed'?'The automatic return to the source server did not complete. Verify this customer’s Jellyfin access before another migration.':'The cutover stopped before a successful move was recorded; review the failure stage and server health before retrying.',actionHtml:`<a class="button" href="/admin/users/${esc(row.customer_id)}">Open customer</a>`,secondaryHtml:'<a class="button secondary" href="/admin/servers/dashboard">Fleet health</a>'})).join('')}</div></section>`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function page(req, d, preview = null, error = null, overrideOfferHtml = '') {
     const historyDisclosure = ui.detailDisclosure({title:'Customer move history',summary:`${d.history.length} recorded moves · rollback is available only with typed confirmation`,bodyHtml:`<div id="migration-history"></div>${history(req,d.history)}`});
     const body = `${notice(req.query.message, 'success')}${notice(error || req.query.error, 'error')}${overrideOfferHtml}
@@ -206,7 +208,7 @@ function createAdminServerMigrationsRouter() {
             // administrator choice. Offer the same move again with the capacity override already on;
             // every other check, the typed MOVE confirmation and the audit still apply.
             const atCapacity = error?.code === 'TARGET_AT_CAPACITY' && String(req.body.allowOverCapacity || '') !== '1';
-            const offer = atCapacity && /^[0-9a-f-]{36}$/i.test(String(req.body.customerId || '')) && /^[0-9a-f-]{36}$/i.test(String(req.body.targetServerId || ''))
+            const offer = atCapacity && UUID_RE.test(String(req.body.customerId || '')) && UUID_RE.test(String(req.body.targetServerId || ''))
                 ? `<div class="notice warn" data-capacity-override-offer><strong>The target server is at its configured user limit.</strong> You can still place this customer there deliberately. This only bypasses the capacity limit; health, library and username checks still apply and the move is audited as a capacity override.<form method="post" action="/admin/provisioning/migrations/preview" style="margin-top:10px">${csrfInput(req)}<input type="hidden" name="customerId" value="${esc(req.body.customerId)}"><input type="hidden" name="targetServerId" value="${esc(req.body.targetServerId)}"><input type="hidden" name="allowOverCapacity" value="1"><button class="button" type="submit">Preview anyway (admin override)</button></form></div>`
                 : '';
             return res.status(400).send(page(req, d, null, error.message, offer));
