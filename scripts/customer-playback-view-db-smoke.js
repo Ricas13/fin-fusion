@@ -38,11 +38,12 @@ runDbSmoke('customer playback view DB smoke', async () => {
         await play(customer.id, 'runaway', 'Runaway stale session', 60 * 24 * 3, 0, true);
         await play(customer.id, 'legacy', 'Legacy row', 90, 60, null);
         await play(customer.id, 'open', 'Open play', 10, null, true);
+        await play(customer.id, 'unreported-five-hours', 'Unreporting app, five hours', 6 * 60, 60, false);
         await play(other.id, 'other', 'Not mine', 30, 10, true);
 
         const data = await activity.data(customer.id, '30d', 'all');
         assert(Array.isArray(data.activity) && data.playback, 'data() returns the raw rows and the page model');
-        assert.strictEqual(data.activity.length, 5, 'only this customer\'s plays');
+        assert.strictEqual(data.activity.length, 6, 'only this customer\'s plays');
         assert(data.activity.every(row => 'progress_reported' in row && 'duration_seconds' in row), 'the query returns the new columns');
         assert(!data.activity.some(row => row.item_name === 'Not mine'), 'another customer\'s plays are never included');
         const byTitle = Object.fromEntries(data.playback.groups.flatMap(group => group.rows).map(item => [item.title, item]));
@@ -53,11 +54,19 @@ runDbSmoke('customer playback view DB smoke', async () => {
         assert.strictEqual(byTitle['Runaway stale session'].seconds, 12 * 3600, 'a 3-day stale session is capped at 12 hours');
         assert.strictEqual(byTitle['Legacy row'].estimate, true, 'rows recorded before progress tracking are estimates');
         assert.strictEqual(byTitle['Open play'].playingNow, true, 'an open, recently seen play is "playing now"');
-        assert.strictEqual(data.playback.count, 5);
+        assert.strictEqual(byTitle['Unreporting app, five hours'].seconds, 2 * 3600, 'a 5-hour interval from an unreporting app is credited 2 hours');
+        assert.strictEqual(data.playback.count, 6);
         assert(data.playback.totalSeconds > 0 && data.playback.estimated === true);
+        // The page's analytics use the SAME credited-duration rule as the table, so their totals agree.
+        const analyticsSeconds = Number(data.insights.summary?.watchSeconds ?? NaN);
+        assert(Number.isFinite(analyticsSeconds), 'the analytics summary is available');
+        assert(Math.abs(analyticsSeconds - data.playback.totalSeconds) <= 5, `analytics total (${analyticsSeconds}s) matches the table total (${data.playback.totalSeconds}s)`);
     } finally {
-        await query(`DELETE FROM playback_history WHERE server_id=ANY($1::uuid[])`, [created.servers]).catch(() => {});
-        await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [created.customers]).catch(() => {});
-        await query(`DELETE FROM jellyfin_servers WHERE id=ANY($1::uuid[])`, [created.servers]).catch(error => console.warn('cleanup failed:', error.message));
+        // Cleanup is part of the contract: it must succeed and leave nothing behind, or the suite fails.
+        await query(`DELETE FROM playback_history WHERE server_id=ANY($1::uuid[])`, [created.servers]);
+        await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [created.customers]);
+        await query(`DELETE FROM jellyfin_servers WHERE id=ANY($1::uuid[])`, [created.servers]);
+        const left = (await query(`SELECT (SELECT COUNT(*) FROM playback_history WHERE server_id=ANY($1::uuid[])) + (SELECT COUNT(*) FROM customers WHERE id=ANY($2::uuid[])) + (SELECT COUNT(*) FROM jellyfin_servers WHERE id=ANY($1::uuid[])) AS n`, [created.servers, created.customers])).rows[0].n;
+        assert.strictEqual(Number(left), 0, 'the smoke left fixtures behind');
     }
 });

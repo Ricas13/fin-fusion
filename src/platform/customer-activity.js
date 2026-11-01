@@ -73,7 +73,10 @@ function previousRange(startAt,now=new Date()){
   const span=Math.max(86400000,now.getTime()-startAt.getTime());
   return{start:new Date(startAt.getTime()-span),end:startAt};
 }
-function safeDurationSql(alias='ph'){return `LEAST(43200,GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(${alias}.ended_at,${alias}.last_seen_at)-${alias}.started_at))))`;}
+// Credited watch time per play. A play whose app reports progress counts its measured interval (max 12h). A play whose app only reports
+// "started" (progress_reported false) or that predates progress tracking (null) is capped at the same allowance the activity worker credits,
+// so the table, the totals and every KPI on this page agree and an old stale session never inflates them.
+function safeDurationSql(alias='ph'){const raw=`GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(${alias}.ended_at,${alias}.last_seen_at)-${alias}.started_at)))`;return `LEAST(CASE WHEN ${alias}.progress_reported IS TRUE THEN 43200 ELSE ${Math.trunc(customerPlayback.unreportedCapSeconds())} END,${raw})`;}
 function number(value){const parsed=Number(value);return Number.isFinite(parsed)?parsed:0;}
 function percentChange(current,previous){const a=number(current),b=number(previous);if(b<=0)return a>0?100:0;return Math.round(((a-b)/b)*100);}
 function publicItemImage(publicUrl,itemId){

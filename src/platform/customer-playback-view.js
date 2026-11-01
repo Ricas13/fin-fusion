@@ -31,6 +31,13 @@ function methodOf(value) {
     return METHODS[String(value || '').toLowerCase()] || { key: 'unknown', label: 'Unknown', hint: '' };
 }
 
+// "2 hours" / "90 minutes" for explanatory text.
+function capWords(seconds) {
+    const minutes = Math.round(seconds / 60);
+    if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
+    return `${minutes} minutes`;
+}
+
 function durationLabel(seconds) {
     const total = Math.max(0, Math.round(Number(seconds) || 0));
     const hours = Math.floor(total / 3600);
@@ -51,11 +58,19 @@ function dayKey(date, timeZone) {
     return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
+// The calendar day before a YYYY-MM-DD key, by calendar arithmetic (never "minus 24 hours", which is wrong across clock changes).
+function previousDayKey(key) {
+    const [year, month, day] = key.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+}
+
 function dayLabel(date, now, timeZone) {
     const key = dayKey(date, timeZone);
-    if (key === dayKey(now, timeZone)) return 'Today';
-    if (key === dayKey(new Date(now.getTime() - 86400000), timeZone)) return 'Yesterday';
-    const sameYear = date.getFullYear() === now.getFullYear();
+    const today = dayKey(now, timeZone);
+    if (key === today) return 'Today';
+    if (key === previousDayKey(today)) return 'Yesterday';
+    // The year comes from the same time zone as the label (not the host's).
+    const sameYear = key.slice(0, 4) === today.slice(0, 4);
     return new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'long', day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) }).format(date);
 }
 
@@ -70,7 +85,12 @@ function serverTimeZone() {
 
 // The page's other timestamps already use the server's time zone, so the day groups and times do too.
 function prepare(rows, { now = new Date(), timeZone = serverTimeZone(), env = process.env } = {}) {
-    const list = (Array.isArray(rows) ? rows : []).filter(row => row && !Number.isNaN(new Date(row.started_at).getTime()));
+    // The query selects the most recently ACTIVE plays; the list is shown by START time, newest first, so day groups are always
+    // contiguous and in order (a film started yesterday that ended after today's episode must not split or reorder the days).
+    const list = (Array.isArray(rows) ? rows : [])
+        .filter(row => row && !Number.isNaN(new Date(row.started_at).getTime()))
+        .slice()
+        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
     const prepared = list.map(row => {
         const started = new Date(row.started_at);
         const watched = watchTime(row, { env });
@@ -110,8 +130,10 @@ function prepare(rows, { now = new Date(), timeZone = serverTimeZone(), env = pr
         group.total = durationLabel(group.seconds);
     }
     const totalSeconds = prepared.reduce((sum, item) => sum + item.seconds, 0);
+    const capSeconds = unreportedCapSeconds(env);
     return {
         groups,
+        capLabel: capWords(capSeconds),
         count: prepared.length,
         totalSeconds,
         totalLabel: durationLabel(totalSeconds),

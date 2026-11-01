@@ -54,8 +54,32 @@ assert.strictEqual(model.groups[1].rows[0].methodLabel, 'Server transcoding', 'n
 assert.strictEqual(model.groups[2].rows[0].methodKey, 'stream');
 assert.strictEqual(Math.max(...model.groups.flatMap(group => group.rows.map(item => item.barPercent))), 100, 'the longest play fills its bar');
 assert(model.groups.flatMap(group => group.rows).every(item => item.barPercent >= 0 && item.barPercent <= 100));
-assert.deepStrictEqual(view.prepare([], opts), { groups: [], count: 0, totalSeconds: 0, totalLabel: '0m', estimated: false }, 'empty is safe');
+assert.deepStrictEqual(view.prepare([], opts), { groups: [], capLabel: '2 hours', count: 0, totalSeconds: 0, totalLabel: '0m', estimated: false }, 'empty is safe');
+assert.strictEqual(view.prepare([], { env: { STREAM_POLICY_UNREPORTED_CREDIT_MINUTES: '90' } }).capLabel, '90 minutes', 'the explanation follows the configured cap');
 assert.strictEqual(view.prepare(null, opts).count, 0, 'null is safe');
+
+// Ordering: the query returns the most recently ACTIVE plays; groups must still be by START time, contiguous and newest first.
+const interleaved = view.prepare([
+    row({ item_name: 'Film started yesterday, ended after the episode', started_at: at(1, 1), last_seen_at: at(0, 0, 5), ended_at: at(0, 0, 5), duration_seconds: 9000 }),
+    row({ item_name: 'Episode today', started_at: at(0, 2), last_seen_at: at(0, 1), ended_at: at(0, 1), duration_seconds: 1500 }),
+    row({ item_name: 'Another yesterday', started_at: at(1, 6), last_seen_at: at(1, 5), ended_at: at(1, 5), duration_seconds: 900 }),
+    row({ item_name: 'Later today', started_at: at(0, 0, 30), last_seen_at: at(0, 0, 10), ended_at: at(0, 0, 10), duration_seconds: 600 })
+], opts);
+assert.deepStrictEqual(interleaved.groups.map(group => group.label), ['Today', 'Yesterday'], 'one Today group and one Yesterday group, in order (no split or reordered days)');
+assert.deepStrictEqual(interleaved.groups[0].rows.map(item => item.title), ['Later today', 'Episode today'], 'newest start first within a day');
+assert.deepStrictEqual(interleaved.groups[1].rows.map(item => item.title), ['Film started yesterday, ended after the episode', 'Another yesterday']);
+
+// Calendar days in a time zone: "Yesterday" across a clock change, and the year from the same zone.
+const london = (iso, zone = 'Europe/London') => view.prepare([row({ started_at: iso })], { now: new Date(view.__nowForTest || iso), timeZone: zone, env: {} });
+const dst = view.prepare([row({ item_name: 'before the clock change', started_at: '2026-10-24T12:00:00Z' })], { now: new Date('2026-10-25T23:30:00Z'), timeZone: 'Europe/London', env: {} });
+assert.strictEqual(dst.groups[0].label, 'Yesterday', 'the day before is "Yesterday" across the end of British Summer Time (25 Oct 2026, 23:30 UTC is still 25 Oct in London)');
+const springForward = view.prepare([row({ started_at: '2026-03-28T12:00:00Z' })], { now: new Date('2026-03-29T12:00:00Z'), timeZone: 'Europe/London', env: {} });
+assert.strictEqual(springForward.groups[0].label, 'Yesterday', 'and across the spring clock change');
+const newYear = view.prepare([row({ started_at: '2025-12-31T10:00:00Z' })], { now: new Date('2026-01-01T09:00:00Z'), timeZone: 'Pacific/Auckland', env: {} });
+assert(!/2025|2026/.test(newYear.groups[0].label) || newYear.groups[0].label === 'Yesterday' || newYear.groups[0].label === 'Today', 'year labels use the target time zone, not the host');
+const lastYear = view.prepare([row({ started_at: '2025-06-01T10:00:00Z' })], { now: new Date('2026-01-01T09:00:00Z'), timeZone: 'UTC', env: {} });
+assert(lastYear.groups[0].label.includes('2025'), 'a different year includes the year');
+assert.strictEqual(model.capLabel, '2 hours', 'the model exposes the credited cap for the explanation');
 
 // Rendering through the real template section.
 const template = fs.readFileSync(path.join(__dirname, '..', 'views/customer/activity.ejs'), 'utf8');
@@ -69,6 +93,9 @@ assert(html.includes('&lt;script&gt;'), 'the hostile text is shown as text');
 assert(!/<[^>]*\son[a-z]+=/i.test(html.replace(/&lt;.*?&gt;/g, '')), 'no event-handler attributes');
 assert(!/style=/i.test(html), 'no inline styles (the bar width uses a CSS class)');
 assert(html.includes('≈ 10m') && html.includes('playbackEst'), 'an estimated play shows ≈ and an "est." pill');
+assert(html.includes('Up to 2 hours is credited per play; you may have watched longer.'), 'the cap is explained next to estimates');
+assert(html.includes('estimated plays are credited up to 2 hours each'), 'and in the header total');
+assert(html.includes('scope="rowgroup"') && !html.includes('scope="colgroup"'), 'day headings describe row groups');
 const exact = render(view.prepare([row({ duration_seconds: 2700 })], opts));
 assert(exact.includes('45m') && !exact.includes('playbackEst') && !exact.includes('≈'), 'a measured play shows its real time with no estimate marker');
 assert(render(view.prepare([], opts)).includes('No playback activity has been recorded yet.'), 'empty state');
