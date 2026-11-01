@@ -9,15 +9,18 @@ const discovery = require('../payments/subscription-discovery');
 const manualLink = require('../payments/manual-subscription-link');
 const providerSettings = require('../payments/provider-settings');
 const runtimeSettings = require('./runtime-settings');
-const { query } = require('../db');
+const { query, transaction } = require('../db');
 const { rateLimit } = require('express-rate-limit');
 const providerCheckoutRecovery = require('../payments/provider-checkout-recovery');
+const plisio = require('../payments/plisio');
+const checkoutIntents = require('../payments/checkout-intents');
+const financialState = require('../payments/provider-financial-state');
 const ui = require('./admin-ui');
 const { esc, layout } = require('./admin-html');
 
 const checkoutRecheckLimit = rateLimit({
     windowMs: 60_000,
-    limit: 20,
+    limit: Math.max(1, Number.parseInt(process.env.CHECKOUT_ACTION_RATE_LIMIT, 10) || 20),
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     message: 'Too many checkout re-checks. Please try again shortly.'
@@ -263,6 +266,117 @@ function createAdminBillingRouter() {
             return res.redirect('/admin/commerce/orders?' + (summary.failed ? 'error=' : 'message=') + encodeURIComponent(message));
         } catch (error) { return res.redirect('/admin/commerce/orders?error=' + encodeURIComponent(error.message || 'Checkout could not be re-checked.')); }
     });
+    // Close a crypto checkout automation could not settle. Both actions need a written reason, are
+    // claimed atomically (so a double click cannot act twice) and are audited. Recording a payment
+    // grants access through the normal Plisio activation path for the amount stored on the checkout;
+    // the ledger entry is marked operator-confirmed, never provider-verified.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // Claim the checkout and write the audit row in ONE transaction: if the audit cannot be written the
+    // claim rolls back, so a checkout never leaves the queue without a trail. A checkout that is still
+    // inside its payment window (the customer may still be paying) cannot be dismissed.
+    async function claimCheckout(id, resolution, actor, reason, auditAction, auditMeta = {}) {
+        return transaction(async client => {
+            const windowSql = resolution === 'dismissed'
+                ? `AND (state='failed' OR created_at < NOW()-($5::int*INTERVAL '1 minute'))`
+                : '';
+            const params = [id, actor, resolution, reason];
+            if (resolution === 'dismissed') params.push(plisio.INVOICE_LIFETIME_MINUTES + 30);
+            const claimed = await client.query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW(),operator_resolved_by=$2,operator_resolution=$3,operator_resolution_note=$4,updated_at=NOW()
+                WHERE id=$1 AND provider='plisio' AND operator_resolved_at IS NULL AND state IN('open','failed','expired','cancelled') AND provider_terminal_at IS NULL ${windowSql} RETURNING id`, params);
+            if (claimed.rowCount !== 1) return false;
+            await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'billing_checkout_intent',$3,$4::jsonb)`, [actor, auditAction, id, JSON.stringify({ reason, ...auditMeta })]);
+            return true;
+        });
+    }
+    function resolutionInput(req) {
+        const id = String(req.params.id || ''), reason = String(req.body?.reason || '').trim();
+        return { id, reason };
+    }
+    router.post('/admin/billing/checkouts/:id/dismiss', checkoutRecheckLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const { id, reason } = resolutionInput(req), back = '/admin/commerce/orders';
+        if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
+        if (reason.length < 5 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 5 to 500 characters.'));
+        try {
+            const actor = req.session?.authUserId || null;
+            if (!await claimCheckout(id, 'dismissed', actor, reason, 'billing.checkout.dismissed')) return res.redirect(back + '?error=' + encodeURIComponent('That checkout cannot be dismissed: it is still inside its payment window, already settled, closed by the provider or already dismissed.'));
+            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If a Plisio payment callback or the customer confirmation arrives later, access still activates. Automatic re-checking only continues for 7 days after the checkout was created.'));
+        } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Checkout could not be dismissed.')); }
+    });
+    // Finish a payment that was only partly recorded (or whose request died part-way). It re-runs the same
+    // idempotent settlement for the same stored amount, so the entitlement, ledger entry and checkout state are
+    // all brought to completion; it cannot just be waved through. It waits two minutes after the original
+    // attempt so it never races a request that is still running.
+    router.post('/admin/billing/checkouts/:id/finish-recording', checkoutRecheckLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const id = String(req.params.id || ''), back = '/admin/commerce/orders';
+        if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
+        const actor = req.session?.authUserId || null;
+        try {
+            const intent = await checkoutIntents.findById(id);
+            // One administrator at a time per checkout: the lock is held for the whole finish, and the state is
+            // re-read under it, so a second concurrent request finds nothing left to do and writes no second audit row.
+            const outcome = await transaction(async client => {
+                // Non-blocking: a second administrator is told straight away instead of queueing behind the first,
+                // so concurrent requests can never pile up on the connection pool.
+                const got = (await client.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS ok', [`finish-checkout:${id}`])).rows[0].ok;
+                if (!got) return { done: false, reason: 'Another administrator is already finishing this payment.' };
+                const row = (await client.query(`SELECT operator_resolution,operator_resolution_note,(operator_resolved_at < NOW()-INTERVAL '2 minutes') AS settled_wait FROM billing_checkout_intents WHERE id=$1`, [id])).rows[0];
+                if (!intent || !row || row.operator_resolution !== 'marked_paid_review') return { done: false, reason: 'That checkout is not waiting to be finished.' };
+                if (!row.settled_wait) return { done: false, reason: 'The original attempt may still be running. Wait two minutes and try again.' };
+                // Audit FIRST, on its own connection and committed immediately: the settlement below commits through its
+                // own operations, so an audit written only at the end could be lost while the money movement is not.
+                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_finish_started','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ customerId: intent.customer_id })]);
+                await plisio.settleAttested(intent, { actorUserId: actor, reason: String(row.operator_resolution_note || 'Finishing a partly recorded payment').slice(0, 500) });
+                await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',updated_at=NOW() WHERE id=$1`, [id]);
+                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_finished','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ customerId: intent.customer_id })]);
+                return { done: true };
+            });
+            return res.redirect(back + '?' + (outcome.done ? 'message=' : 'error=') + encodeURIComponent(outcome.done ? 'Payment fully recorded and access activated.' : outcome.reason));
+        } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(`Could not finish recording: ${String(error.message || 'try again').slice(0, 200)}`)); }
+    });
+    router.post('/admin/billing/checkouts/:id/mark-paid', checkoutRecheckLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const { id, reason } = resolutionInput(req), back = '/admin/commerce/orders';
+        if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
+        if (reason.length < 10 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 10 to 500 characters.'));
+        if (String(req.body?.confirm || '').trim() !== 'PAID') return res.redirect(back + '?error=' + encodeURIComponent('Type PAID to confirm you verified the payment in Plisio.'));
+        const actor = req.session?.authUserId || null;
+        let claimed = false, intent = null;
+        try {
+            intent = await checkoutIntents.findById(id);
+            if (!intent) return res.redirect(back + '?error=' + encodeURIComponent('That checkout no longer exists.'));
+            if (intent.provider !== 'plisio') return res.redirect(back + '?error=' + encodeURIComponent('Only Plisio crypto checkouts can be recorded as paid here.'));
+            // The claim is made in the review state so that a crash before the payment is fully recorded can never
+            // hide the checkout: it stays visible in the queue until recording finishes (then it becomes marked_paid).
+            claimed = await claimCheckout(id, 'marked_paid_review', actor, reason, 'billing.checkout.mark_paid', { customerId: intent.customer_id, planId: intent.plan_id });
+            if (!claimed) return res.redirect(back + '?error=' + encodeURIComponent('That checkout is already settled, closed by the provider or resolved.'));
+            await plisio.settleAttested(intent, { actorUserId: actor, reason });
+            await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid' WHERE id=$1 AND operator_resolution='marked_paid_review'`, [id]);
+            return res.redirect(back + '?message=' + encodeURIComponent('Payment recorded as operator-confirmed and access activated.'));
+        } catch (error) {
+            if (claimed) {
+                // Activation, the ledger entry and completing the checkout are separate steps. If any of them
+                // already happened the attempt was only partly applied: keep the claim so the checkout does not
+                // reappear as unpaid, and tell the administrator to verify. Only a failure before any effect
+                // releases the claim so the action can be retried.
+                const partial = await checkoutPartlyApplied(intent).catch(() => true);
+                if (!partial) await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid_review' AND state<>'completed'`, [id]).catch(() => {});
+                await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_failed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ partiallyApplied: partial, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
+                if (partial) return res.redirect(back + '?error=' + encodeURIComponent('The payment was only partly recorded. Open the customer and confirm their access and the payment history before doing anything else; it stays in the Orders list as unfinished (and cannot be recorded twice) until you use Finish recording on it.'));
+            }
+            return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Payment could not be recorded.'));
+        }
+    });
+    async function checkoutPartlyApplied(intent) {
+        if (!intent) return true;
+        const effects = await query(`SELECT
+            (SELECT COUNT(*) FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND provider_subscription_id=$3)::int AS subs,
+            (SELECT state FROM billing_checkout_intents WHERE id=$4) AS state`, [intent.customer_id, intent.plan_id, String(intent.provider_checkout_id || ''), intent.id]);
+        const row = effects.rows[0] || {};
+        row.ledger = (await financialState.transactionExists('plisio', intent.provider_checkout_id)) ? 1 : 0;
+        return Number(row.subs) > 0 || Number(row.ledger) > 0 || row.state === 'completed';
+    }
     router.post('/admin/billing/sync-due', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try { const result = await billing.syncDue({ all: false, limit: 100 }); return res.redirect(`/admin/billing?message=${encodeURIComponent(`Provider sync complete: ${result.succeeded} succeeded, ${result.failed} failed.`)}`); }

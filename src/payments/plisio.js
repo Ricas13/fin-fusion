@@ -332,7 +332,7 @@ async function verifiedRemoteOperation(
     return { remote, fields };
 }
 
-async function activateCompleted(remote, fields, intent) {
+async function activateCompleted(remote, fields, intent, { attestation = null } = {}) {
     const amountMinor = moneyMinor(fields.sourceAmount);
     if (amountMinor == null || !fields.sourceCurrency) throw new Error('Plisio completed transaction is missing fiat verification data.');
     const contract = await intents.verifiedProviderContract({
@@ -362,15 +362,27 @@ async function activateCompleted(remote, fields, intent) {
         customerId:intent.customer_id,
         metadata:{
             providerAuthoritative:true,
-            providerVerified:true,
+            providerVerified:!attestation,
+            ...(attestation ? { operatorAttested:true, attestedBy:String(attestation.actorUserId || ''), attestationReason:String(attestation.reason || '').slice(0, 500) } : {}),
             feeDataAvailable:accounting.feeDataAvailable,
             feeAccountingSource:accounting.source,
             checkoutIntentId:String(intent.id),
             planId:String(intent.plan_id),
-            source:'verified_operation'
+            source:attestation ? 'operator_attested' : 'verified_operation'
         }
     });
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
+    // An administrator may have dismissed this checkout as abandoned before the customer paid it.
+    // The payment is honoured; the dismissal is annotated so the record is not contradictory.
+    // Whatever completed this checkout (callback, customer confirmation, recovery or the operator), a pending
+    // "needs attention" flag from a partly recorded manual payment is now resolved.
+    await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid' WHERE id=$1 AND operator_resolution='marked_paid_review'`, [intent.id]);
+    const late = await query(`UPDATE billing_checkout_intents SET operator_resolution_note=LEFT(COALESCE(operator_resolution_note,'')||' [Provider later confirmed payment; access activated.]',700)
+        WHERE id=$1 AND operator_resolution='dismissed' RETURNING id`, [intent.id]);
+    if (late.rowCount) {
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'billing.checkout.dismissed_then_paid','billing_checkout_intent',$1,$2::jsonb)`,
+            [String(intent.id), JSON.stringify({ providerTransactionId: fields.id })]);
+    }
     return { status: 'completed', completed: true, feeDataAvailable: accounting.feeDataAvailable };
 }
 
@@ -751,6 +763,25 @@ function contractFieldsFromIntent(intent, providerTxnId) {
     return { orderNumber: String(intent.id), sourceAmount: (minor / 100).toFixed(2), sourceCurrency: currency };
 }
 
+// An administrator vouches that Plisio received this payment (checked in the Plisio dashboard)
+// when the API cannot confirm it. Access is granted through the same activation path, for exactly
+// the amount stored on the checkout, and the ledger entry is marked operator-attested rather than
+// provider-verified. Only unsettled Plisio payment checkouts that already have an invoice qualify.
+async function settleAttested(intent, { actorUserId, reason }) {
+    if (!intent || intent.provider !== 'plisio') throw new Error('Only Plisio checkouts can be recorded as paid.');
+    if (!['open', 'failed', 'expired', 'cancelled'].includes(intent.state)) throw new Error('This checkout is already settled.');
+    const contract = contractFieldsFromIntent(intent, intent.provider_checkout_id);
+    if (!contract) throw new Error('This checkout has no invoice or stored amount to record a payment against.');
+    const fields = {
+        id: String(intent.provider_checkout_id),
+        status: 'completed',
+        orderNumber: contract.orderNumber,
+        sourceAmount: contract.sourceAmount,
+        sourceCurrency: contract.sourceCurrency
+    };
+    return activateCompleted({ updated_at: new Date() }, fields, intent, { attestation: { actorUserId, reason } });
+}
+
 async function confirmCheckout(providerTxnId, intent) {
     const verified = await verifiedRemoteOperation(
         providerTxnId,
@@ -836,6 +867,7 @@ module.exports = {
     recordRejectedCallback,
     retryPaymentEvent,
     confirmCheckout,
+    settleAttested,
     contractFieldsFromIntent,
     applyRemoteOperation,
     recordActivatedProviderLoss,

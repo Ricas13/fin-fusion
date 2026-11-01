@@ -384,6 +384,11 @@ async function paypalSubscriptionReferences() {
     return new Set(result.rows.map(row=>String(row.provider_reference_id||'').trim()).filter(id=>/^I-/i.test(id)));
 }
 
+// True when a ledger row already exists for this provider transaction id.
+async function transactionExists(provider,providerTransactionId) {
+    const result=await query(`SELECT 1 FROM payment_history_transactions WHERE provider=$1 AND provider_transaction_id=$2 LIMIT 1`,[providerName(provider),text(providerTransactionId)]);
+    return result.rowCount>0;
+}
 async function recordTransaction(input) {
     const provider=providerName(input.provider);
     const providerTransactionId=text(input.providerTransactionId);
@@ -448,12 +453,25 @@ async function recordTransaction(input) {
           ELSE COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id)
         END,
         customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-        metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
+        metadata=(
+          COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
           ||COALESCE(EXCLUDED.metadata,'{}'::jsonb)
           ||CASE
               WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
                AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
               THEN '{"feeDataAvailable":true}'::jsonb ELSE '{}'::jsonb
+            END
+          -- Genuine provider verification is never downgraded by a later operator-attested write of the same transaction.
+          ||CASE
+              WHEN COALESCE(payment_history_transactions.metadata->>'providerVerified','false')='true'
+              THEN '{"providerVerified":true}'::jsonb ELSE '{}'::jsonb
+            END
+        ) - CASE
+              -- Whichever order the two writes arrive in, a transaction that is provider-verified carries no operator-attestation markers.
+              WHEN (COALESCE(payment_history_transactions.metadata->>'providerVerified','false')='true'
+                    AND COALESCE(EXCLUDED.metadata->>'operatorAttested','false')='true')
+                OR COALESCE(EXCLUDED.metadata->>'providerVerified','false')='true'
+              THEN ARRAY['operatorAttested','attestedBy','attestationReason']::text[] ELSE ARRAY[]::text[]
             END,
         updated_at=NOW()
       WHERE payment_history_transactions.customer_id IS NULL
@@ -526,6 +544,7 @@ async function backfillPlisioTransactions() {
         metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)||EXCLUDED.metadata,
         updated_at=NOW()
       WHERE (payment_history_transactions.customer_id IS NULL OR payment_history_transactions.customer_id=EXCLUDED.customer_id)
+        AND COALESCE(payment_history_transactions.metadata->>'operatorAttested','false')<>'true'
         AND (
           (payment_history_transactions.customer_id IS NULL AND EXCLUDED.customer_id IS NOT NULL)
           OR (payment_history_transactions.provider_reference_id IS NULL AND EXCLUDED.provider_reference_id IS NOT NULL)
@@ -705,7 +724,7 @@ async function customerSnapshot(customerId) {
 
 module.exports={
     PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
-    missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,backfillProviderCustomers,
+    missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,transactionExists,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
     unlinkedCountForCustomer,customerSnapshot
 };
