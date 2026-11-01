@@ -173,14 +173,32 @@ async function main() {
       assert(/only partly recorded/.test(r2.location), `a partial failure must be explained (${r2.location})`);
       assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [partial.id])).rows[0].operator_resolution, 'marked_paid_review', 'a partly applied payment keeps its claim and is flagged for review');
       const reviewRow = (await adminOrders.checkoutIssues({ page: 0 })).find(row => row.checkout_id === partial.id);
-      assert(reviewRow && reviewRow.needs_review, 'it stays visible in the exception queue for any administrator, marked as needing review');
+      assert(reviewRow && reviewRow.needs_review, 'it stays visible in the exception queue for any administrator, marked as needing attention');
       assert(/partly recorded/.test(reviewRow.last_error), 'with an explanation');
-      assert(/Mark reviewed/.test(await (await fetch(`${base}/admin/commerce/orders`, { headers: { cookie: j.get() } })).text()), 'and offers Mark reviewed instead of Record as paid or Dismiss');
-      assert(/not waiting for review/.test((await post(early.id, 'review-done', { reason: 'Verified the access and payment history' })).location), 'only a checkout waiting for review can be marked reviewed');
-      assert((await post(partial.id, 'review-done', { reason: 'Verified the access and payment history' })).location.includes('message='), 'marking it reviewed succeeds');
-      assert(!await inQueue(partial.id), 'and it then leaves the queue');
-      assert.strictEqual(await audits(partial.id, 'billing.checkout.mark_paid_reviewed'), 1, 'the review is audited');
-      assert.strictEqual(await audits(partial.id, 'billing.checkout.mark_paid_failed'), 1, 'the failure is audited');
+      const reviewHtml = await (await fetch(`${base}/admin/commerce/orders`, { headers: { cookie: j.get() } })).text();
+      assert(/Finish recording/.test(reviewHtml) && !new RegExp(`checkouts/${partial.id}/mark-paid`).test(reviewHtml), 'it offers Finish recording instead of Record as paid or Dismiss');
+      assert(!/review-done/.test(reviewHtml), 'there is no way to simply wave it through');
+      assert(/not waiting to be finished/.test((await post(early.id, 'finish-recording', {})).location), 'only a checkout waiting to be finished can be finished');
+      assert(/Wait two minutes/.test((await post(partial.id, 'finish-recording', {})).location), 'it does not race the original attempt');
+      await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW()-INTERVAL '5 minutes' WHERE id=$1`, [partial.id]);
+      // The real settlement is idempotent: finishing completes the entitlement and checkout, and the earlier ledger entry is not duplicated.
+      plisioModule.settleAttested = realSettle;
+      const finished = await post(partial.id, 'finish-recording', {});
+      assert(finished.location.includes('message='), `finishing a partial recording succeeds (${finished.location})`);
+      const done = (await query('SELECT state,operator_resolution FROM billing_checkout_intents WHERE id=$1', [partial.id])).rows[0];
+      assert.strictEqual(done.state, 'completed', 'the checkout is completed');
+      assert.strictEqual(done.operator_resolution, 'marked_paid');
+      assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [partial.provider_checkout_id || `QUEUE-partial-${suffix}`])).rows[0].n, 1, 'still exactly one ledger entry');
+      assert(!await inQueue(partial.id), 'and it leaves the queue');
+      assert.strictEqual(await audits(partial.id, 'billing.checkout.mark_paid_finished'), 1, 'finishing is audited');
+
+      // A request that dies after the claim (process crash) leaves the checkout visible, not hidden.
+      const crashed = await makeIntent('crashed', { ageDays: 9 });
+      plisioModule.settleAttested = async () => new Promise(() => {});
+      const hanging = post(crashed.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' }).catch(() => {});
+      await Promise.race([hanging, new Promise(resolve => setTimeout(resolve, 800))]);
+      const crashedRow = (await adminOrders.checkoutIssues({ page: 0 })).find(row => row.checkout_id === crashed.id);
+      assert(crashedRow && crashedRow.needs_review, 'a claim whose request never finished is still visible in the queue');
     } finally { plisioModule.settleAttested = realSettle; }
 
     // A backlog of any size is reachable: the queue is paged, each page is complete and the total is shown.
@@ -197,6 +215,10 @@ async function main() {
       for (const item of many) if (html.includes(`/admin/billing/checkouts/${item.id}/mark-paid`)) reached.add(item.id);
     }
     assert.strictEqual(reached.size, many.length, 'walking the pages reaches every unresolved checkout, including the oldest');
+    for (const bad of ['99999999999999999999', '-1', 'abc', '1.5', '2junk']) {
+      const r = await fetch(`${base}/admin/commerce/orders?issues_page=${encodeURIComponent(bad)}`, { headers: { cookie: j.get() } });
+      assert.strictEqual(r.status, 200, `issues_page=${bad} must be handled safely`);
+    }
 
     // Record as paid: grants access, completes the checkout, writes an operator-attested ledger row.
     const paid = await post(old.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });

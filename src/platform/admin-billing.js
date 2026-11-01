@@ -303,21 +303,27 @@ function createAdminBillingRouter() {
             return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If a Plisio payment callback or the customer confirmation arrives later, access still activates. Automatic re-checking only continues for 7 days after the checkout was created.'));
         } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Checkout could not be dismissed.')); }
     });
-    router.post('/admin/billing/checkouts/:id/review-done', checkoutRecheckLimit, async (req, res) => {
+    // Finish a payment that was only partly recorded (or whose request died part-way). It re-runs the same
+    // idempotent settlement for the same stored amount, so the entitlement, ledger entry and checkout state are
+    // all brought to completion; it cannot just be waved through. It waits two minutes after the original
+    // attempt so it never races a request that is still running.
+    router.post('/admin/billing/checkouts/:id/finish-recording', checkoutRecheckLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
-        const { id, reason } = resolutionInput(req), back = '/admin/commerce/orders';
+        const id = String(req.params.id || ''), back = '/admin/commerce/orders';
         if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
-        if (reason.length < 10 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 10 to 500 characters.'));
+        const actor = req.session?.authUserId || null;
         try {
-            const actor = req.session?.authUserId || null;
-            const done = await transaction(async client => {
-                const updated = await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',operator_resolution_note=LEFT(COALESCE(operator_resolution_note,'')||' [Reviewed: '||$2||']',700),updated_at=NOW() WHERE id=$1 AND operator_resolution='marked_paid_review' RETURNING id`, [id, reason]);
-                if (updated.rowCount !== 1) return false;
-                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_reviewed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ reason })]);
-                return true;
+            const intent = await checkoutIntents.findById(id);
+            const row = (await query(`SELECT operator_resolution,operator_resolution_note,(operator_resolved_at < NOW()-INTERVAL '2 minutes') AS settled_wait FROM billing_checkout_intents WHERE id=$1`, [id])).rows[0];
+            if (!intent || !row || row.operator_resolution !== 'marked_paid_review') return res.redirect(back + '?error=' + encodeURIComponent('That checkout is not waiting to be finished.'));
+            if (!row.settled_wait) return res.redirect(back + '?error=' + encodeURIComponent('The original attempt may still be running. Wait two minutes and try again.'));
+            await plisio.settleAttested(intent, { actorUserId: actor, reason: String(row.operator_resolution_note || 'Finishing a partly recorded payment').slice(0, 500) });
+            await transaction(async client => {
+                await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',updated_at=NOW() WHERE id=$1 AND operator_resolution='marked_paid_review'`, [id]);
+                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_finished','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ customerId: intent.customer_id })]);
             });
-            return res.redirect(back + '?' + (done ? 'message=' : 'error=') + encodeURIComponent(done ? 'Marked as reviewed.' : 'That checkout is not waiting for review.'));
-        } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Could not mark it reviewed.')); }
+            return res.redirect(back + '?message=' + encodeURIComponent('Payment fully recorded and access activated.'));
+        } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(`Could not finish recording: ${String(error.message || 'try again').slice(0, 200)}`)); }
     });
     router.post('/admin/billing/checkouts/:id/mark-paid', checkoutRecheckLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
@@ -331,9 +337,12 @@ function createAdminBillingRouter() {
             intent = await checkoutIntents.findById(id);
             if (!intent) return res.redirect(back + '?error=' + encodeURIComponent('That checkout no longer exists.'));
             if (intent.provider !== 'plisio') return res.redirect(back + '?error=' + encodeURIComponent('Only Plisio crypto checkouts can be recorded as paid here.'));
-            claimed = await claimCheckout(id, 'marked_paid', actor, reason, 'billing.checkout.mark_paid', { customerId: intent.customer_id, planId: intent.plan_id });
+            // The claim is made in the review state so that a crash before the payment is fully recorded can never
+            // hide the checkout: it stays visible in the queue until recording finishes (then it becomes marked_paid).
+            claimed = await claimCheckout(id, 'marked_paid_review', actor, reason, 'billing.checkout.mark_paid', { customerId: intent.customer_id, planId: intent.plan_id });
             if (!claimed) return res.redirect(back + '?error=' + encodeURIComponent('That checkout is already settled, closed by the provider or resolved.'));
             await plisio.settleAttested(intent, { actorUserId: actor, reason });
+            await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid' WHERE id=$1 AND operator_resolution='marked_paid_review'`, [id]);
             return res.redirect(back + '?message=' + encodeURIComponent('Payment recorded as operator-confirmed and access activated.'));
         } catch (error) {
             if (claimed) {
@@ -342,10 +351,9 @@ function createAdminBillingRouter() {
                 // reappear as unpaid, and tell the administrator to verify. Only a failure before any effect
                 // releases the claim so the action can be retried.
                 const partial = await checkoutPartlyApplied(intent).catch(() => true);
-                if (partial) await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid_review' WHERE id=$1 AND operator_resolution='marked_paid'`, [id]).catch(() => {});
-                if (!partial) await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid' AND state<>'completed'`, [id]).catch(() => {});
+                if (!partial) await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid_review' AND state<>'completed'`, [id]).catch(() => {});
                 await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_failed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ partiallyApplied: partial, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
-                if (partial) return res.redirect(back + '?error=' + encodeURIComponent('The payment was only partly recorded. Open the customer and confirm their access and the payment history before doing anything else; it now stays in the Orders list marked for review (and cannot be recorded twice) until you mark it reviewed.'));
+                if (partial) return res.redirect(back + '?error=' + encodeURIComponent('The payment was only partly recorded. Open the customer and confirm their access and the payment history before doing anything else; it stays in the Orders list as unfinished (and cannot be recorded twice) until you use Finish recording on it.'));
             }
             return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Payment could not be recorded.'));
         }
