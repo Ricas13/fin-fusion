@@ -406,7 +406,9 @@ async function main() {
         const u = new URL(String(url));
         if (u.hostname !== 'api.plisio.net') return realFetch(url, options);
         const id = decodeURIComponent(u.pathname.split('/').pop());
-        return new Response(JSON.stringify({ status: 'success', data: remote.get(id) }), { status: 200 });
+        const entry = remote.get(id);
+        if (entry && entry.__http) return new Response(entry.body, { status: entry.__http });
+        return new Response(JSON.stringify({ status: 'success', data: entry }), { status: 200 });
     };
     try {
         const paid = await attachedIntent('recovery plisio real shape', 'plisio', `PLISIO-${unique('realshape')}`, null, 'payment', server);
@@ -440,6 +442,39 @@ async function main() {
         assert(agedExpiredRow.provider_terminal_at, 'the expired invoice is marked closed by the provider, so it leaves the exception queue');
         assert.strictEqual(agedPaidRow.state, 'completed', 'the paid old invoice is completed and access is activated');
 
+        // Only Plisio's documented operation-not-found error (HTTP 404, status 'error', data.code 111) counts as "not found".
+        const notFoundProbe = async (id, entry) => { remote.set(id, entry); try { await plisio.getOperation(id); return null; } catch (error) { return error; } };
+        assert.strictEqual((await notFoundProbe('PROBE-NF-1', { __http: 404, body: JSON.stringify({ status: 'error', data: { name: 'Not Found', message: 'x', code: 111 } }) })).providerNotFound, true, 'the documented not-found error is recognised');
+        assert.strictEqual((await notFoundProbe('PROBE-NF-2', { __http: 404, body: JSON.stringify({ status: 'error', data: { name: 'Other', code: 5 } }) })).providerNotFound, false, 'an unrelated structured 404 is not "not found"');
+        assert.strictEqual((await notFoundProbe('PROBE-NF-3', { __http: 404, body: '<html>Not Found</html>' })).providerNotFound, false, 'a proxy/gateway 404 page is not "not found"');
+        assert.strictEqual((await notFoundProbe('PROBE-NF-4', { __http: 503, body: JSON.stringify({ status: 'error', data: { code: 111 } }) })).providerNotFound, false, 'a 5xx is never "not found"');
+
+        // A payment an operator recorded that is only partly applied (access already live) must survive ANY non-completed
+        // provider answer: not closed, not provider-terminal, access not retired, no money-loss incident.
+        const partly = await attachedIntent('recovery plisio partly recorded', 'plisio', `PLISIO-${unique('partly')}`, null, 'payment', server);
+        const partlyRow = await intents.findById(partly.id);
+        await require('../src/payments/lifecycle').activatePurchase({
+            customerId: partly.owner.id, planId: partly.plan.id, provider: 'plisio', providerSubscriptionId: partly.providerCheckoutId,
+            providerStatus: 'completed', commercialSnapshot: { ...partlyRow.commercial_snapshot, checkoutIntentId: partly.id }
+        });
+        await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid_review',operator_resolved_at=NOW() WHERE id=$1`, [partly.id]);
+        const incidentsBefore = Number((await query(`SELECT COUNT(*)::int n FROM payment_incidents`)).rows[0].n);
+        for (const status of ['expired', 'cancelled', 'cancelled duplicate', 'mismatch', 'error']) {
+            remote.set(partly.providerCheckoutId, { ...realShape(partly.providerCheckoutId), status });
+            const outcome = await plisio.confirmCheckout(partly.providerCheckoutId, await intents.findById(partly.id));
+            assert.strictEqual(outcome.completed, false, `${status} never completes`);
+            assert.notStrictEqual(outcome.terminal, true, `${status} must not be treated as a terminal unpaid result for a partly recorded payment`);
+        }
+        const partlyAfter = (await query(`SELECT state,provider_terminal_at,operator_resolution FROM billing_checkout_intents WHERE id=$1`, [partly.id])).rows[0];
+        assert.strictEqual(partlyAfter.provider_terminal_at, null, 'still not provider-terminal');
+        assert.strictEqual(partlyAfter.operator_resolution, 'marked_paid_review', 'still waiting in the review queue');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND status='active'`, [partly.owner.id, partly.plan.id])).rows[0].n, 1, 'the access that was already granted survives');
+        assert.strictEqual(Number((await query(`SELECT COUNT(*)::int n FROM payment_incidents`)).rows[0].n), incidentsBefore, 'and no money-loss incident was raised');
+        // A genuine completion still finishes it.
+        remote.set(partly.providerCheckoutId, realShape(partly.providerCheckoutId));
+        assert.strictEqual((await plisio.confirmCheckout(partly.providerCheckoutId, await intents.findById(partly.id))).completed, true);
+        assert.strictEqual((await query(`SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1`, [partly.id])).rows[0].operator_resolution, 'marked_paid', 'completion resolves the review flag');
+
         // End to end: the auto-closed invoice is paid late and no callback ever arrives. The worker finds it by itself,
         // activates the plan once, and the intent ends completed.
         remote.set(giveUp.providerCheckoutId, realShape(giveUp.providerCheckoutId));
@@ -448,6 +483,12 @@ async function main() {
         assert.strictEqual((await stateOf(giveUp.id)).state, 'completed');
         assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND status='active'`, [giveUp.owner.id, giveUp.plan.id])).rows[0].n, 1, 'and the customer holds exactly one active subscription');
         await recovery.run({ limit: 100, checkoutIntentIds: [giveUp.id], ignoreLookback: true });
+        // Replaying the activation itself (not just the candidate scan) is idempotent too.
+        const giveUpIntent = await intents.findById(giveUp.id);
+        assert.strictEqual((await plisio.confirmCheckout(giveUp.providerCheckoutId, giveUpIntent)).completed, true);
+        assert.strictEqual((await plisio.confirmCheckout(giveUp.providerCheckoutId, giveUpIntent)).completed, true);
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [giveUp.providerCheckoutId])).rows[0].n, 1, 'one ledger row however many times it is confirmed');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE action='billing.checkout.dismissed_then_paid' AND entity_id=$1`, [String(giveUp.id)])).rows[0].n, 1, 'the dismissed-then-paid audit is written once');
         assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2`, [giveUp.owner.id, giveUp.plan.id])).rows[0].n, 1, 'replaying the recovery never duplicates it');
     } finally {
         global.fetch = realFetch;
