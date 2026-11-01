@@ -13,6 +13,8 @@ const { query, getPool } = require('../src/db');
 const crypto = require('crypto');
 const operatorRefund = require('../src/payments/operator-refund');
 const { historyKind } = require('../src/payments/provider-transaction-classifier');
+const financialState = require('../src/payments/provider-financial-state');
+const referrals = require('../src/referrals');
 const { unique, fixtureCustomer, fixturePlan, fixtureSubscription } = require('./test-fixture');
 
 const created = { customers: [], plans: [] };
@@ -65,6 +67,42 @@ async function main() {
     assert.strictEqual(full.ended, true);
     assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [providerSub.id])).rows[0].status, 'cancelled', 'a full refund ends the plan');
     assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE entity_id=$1 AND action='billing.refund.recorded_externally_completed'`, [providerSub.id])).rows[0].n >= 1, true, 'completion is audited');
+
+    // Two administrators refunding the SAME plan at once with different submission ids: the cumulative
+    // cap is enforced under a subscription lock, so the total can never exceed what the plan cost.
+    const raceCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Race', email: `${unique('refund-race')}@example.invalid` });
+    created.customers.push(raceCustomer.id);
+    const raceSub = await fixtureSubscription({ query }, { customerId: raceCustomer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-race') });
+    const raceBase = { customerId: raceCustomer.id, subscriptionId: raceSub.id, reason: 'Refunded in the Plisio dashboard after a duplicate payment' };
+    const race = await Promise.allSettled([sid(), sid()].map(id => operatorRefund.record({ ...raceBase, amount: '7.00', submissionId: id })));
+    assert.strictEqual(race.filter(r => r.status === 'fulfilled').length, 1, 'two concurrent 7.00 refunds against a 10.00 plan: exactly one is recorded');
+    assert(race.find(r => r.status === 'rejected').reason.message.match(/more than the plan cost/i), 'the other is refused by the cap');
+    const raceTotal = Number((await query(`SELECT COALESCE(SUM(-gross_amount_minor),0) n FROM payment_history_transactions WHERE customer_id=$1`, [raceCustomer.id])).rows[0].n);
+    assert.strictEqual(raceTotal, 700, 'the ledger shows 7.00 refunded, never 14.00');
+
+    // A failure part-way through is not final: the attempt is marked failed (and stops counting toward
+    // the cap), and submitting the same amount and reason finishes it without repeating anything.
+    const retryCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Retry', email: `${unique('refund-retry')}@example.invalid` });
+    created.customers.push(retryCustomer.id);
+    const retrySub = await fixtureSubscription({ query }, { customerId: retryCustomer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-retry') });
+    const retryBase = { customerId: retryCustomer.id, subscriptionId: retrySub.id, reason: 'Refunded in the Plisio dashboard after a duplicate payment', amount: '9.00' };
+    const realRecord = financialState.recordTransaction, realReferral = referrals.revisitRewardAfterAdversePayment;
+    try {
+      financialState.recordTransaction = async () => { throw new Error('simulated ledger failure'); };
+      await assert.rejects(() => operatorRefund.record({ ...retryBase, submissionId: sid() }), /only partly recorded/i, 'a ledger failure is reported as partial');
+      financialState.recordTransaction = realRecord;
+      referrals.revisitRewardAfterAdversePayment = async () => { throw new Error('simulated referral failure'); };
+      await assert.rejects(() => operatorRefund.record({ ...retryBase, submissionId: sid() }), /only partly recorded/i, 'a referral failure is NOT swallowed');
+    } finally { financialState.recordTransaction = realRecord; referrals.revisitRewardAfterAdversePayment = realReferral; }
+    const finished = await operatorRefund.record({ ...retryBase, submissionId: sid() });
+    assert.strictEqual(finished.resumed, true, 'the same amount and reason resumes the failed attempt');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE customer_id=$1`, [retryCustomer.id])).rows[0].n, 1, 'one ledger entry after the retries');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_incidents WHERE customer_id=$1 AND incident_type='refund'`, [retryCustomer.id])).rows[0].n, 1, 'one refund incident after the retries');
+    await assert.rejects(() => operatorRefund.record({ ...retryBase, amount: '2.00', submissionId: sid() }), /more than the plan cost/i, 'failed attempts do not count, but the completed 9.00 does');
+
+    // Only the two supported shapes are accepted.
+    const odd = await fixtureSubscription({ query }, { customerId: raceCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual', providerSubscriptionId: unique('some-provider-ref') });
+    await assert.rejects(() => operatorRefund.record({ customerId: raceCustomer.id, subscriptionId: odd.id, amount: '1.00', reason: 'Odd source with a provider reference', submissionId: sid() }), /reports its own refunds/i, 'a plan with a foreign provider reference is refused');
 
     // A plan with no provider reference (cash): ended, audited, and NOT attributed to any provider's ledger.
     const manual = await operatorRefund.record({ customerId: other.id, subscriptionId: manualSub.id, amount: '10.00', full: true, reason: 'Cash refunded at the counter', submissionId: sid(), actorUserId: null });
