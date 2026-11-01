@@ -18,6 +18,7 @@ const LABELS = {
     policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTAiNFiN policy with live managed Jellyfin users.'],
     customer_inactivity: ['Customer inactivity', 'Applies the two Free Server playback rules and removes eligible Free Jellyfin accounts.'],
     bulk_jobs: ['Bulk operations', 'Processes queued bulk customer actions.'],
+    plisio_payment_sweep: ['Plisio payment check', 'Read-only: compares Plisio\'s completed payments with our checkouts and warns about any that are not settled here. Grants nothing.'],
     stale_reclaim: ['Stale job reclaim', 'Recovers abandoned running bulk items safely.'],
     email_outbox: ['Transactional email', 'Delivers due messages from the encrypted outbox.'],
     notification_outbox: ['Notification delivery', 'Delivers due customer and administrator notifications.'],
@@ -38,7 +39,7 @@ const LABELS = {
 const CORE_JOBS=new Set(jobRegistry.criticalNames());
 const GROUPS=[
     ['Access & servers','Core jobs that keep customer access, Jellyfin health and policy reconciliation moving.',new Set(['health','entitlements','free_capacity_backfill','policy_drift','customer_inactivity','stremio_managed_accounts','stremio_external_tokens','stremio_media_index'])],
-    ['Commerce','Billing, payment recovery, plan transitions and affiliate-credit background work.',new Set(['billing','provider_operation_recovery','payment_events','plan_changes','referral_rewards','marketing_campaigns'])],
+    ['Commerce','Billing, payment recovery, plan transitions and affiliate-credit background work.',new Set(['billing','provider_operation_recovery','plisio_payment_sweep','payment_events','plan_changes','referral_rewards','marketing_campaigns'])],
     ['Messaging & onboarding','Activation cleanup, public registration cleanup, transactional email, notifications and request-service sync.',new Set(['activation_cleanup','pending_registration_cleanup','email_outbox','notification_outbox','request_users','notification_lifecycle'])],
     ['Operations','Bulk work queues and stale-job recovery.',new Set(['bulk_jobs','stale_reclaim'])]
 ];
