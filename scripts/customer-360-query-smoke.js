@@ -58,7 +58,7 @@ assert(compactSource.includes('<details class="providerRefs"><summary>Identifier
 assert(compactSource.includes("customerInactivityStatus.customerStatus(customerId)")&&!compactSource.includes('refreshUserActivity'),'Customer 360 Free activity must reuse the canonical playback-only status service without a retired Jellyfin /Users refresh option');
 assert(compactSource.includes('Free activity'),'Customer 360 must surface the effective Free activity requirement when one applies');
 assert(compactSource.includes('Refunds, disputes & payment incidents'), 'Payments must explicitly distinguish provider incidents from ordinary transaction rows');
-assert(compactSource.includes("function logsDisclosure(detail){const runs=(detail.runs||[]).slice(0,20)"), 'Logs must remain operational provisioning/reconciliation history while staying progressive');
+assert(compactSource.includes("function logsDisclosure(detail,extra={})") && compactSource.includes("runs:(detail.runs||[]).slice(0,40)") && compactSource.includes("timeline.build("), 'Logs must keep the operational provisioning/reconciliation history and add sign-ins, admin changes and payments in one progressive timeline');
 
 // Customer 360 bans are single-customer controls, not a bridge to the bulk
 // workflow. A ban is also a top-level customer state, so it must outrank the

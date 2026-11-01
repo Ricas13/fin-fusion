@@ -12,6 +12,8 @@
 // The playback method is shown as neutral wording only (never as a quality badge or colour).
 // A play can never be longer than 12 hours (a session Jellyfin kept listing is not a 3-day watch).
 
+// The page lists at most this many plays (the query's LIMIT), so its total can cover fewer plays than the period's analytics.
+const LIST_LIMIT = 100;
 const MAX_PLAY_SECONDS = 12 * 3600;
 const PLAYING_NOW_SECONDS = 5 * 60;
 
@@ -134,6 +136,7 @@ function prepare(rows, { now = new Date(), timeZone = serverTimeZone(), env = pr
     return {
         groups,
         capLabel: capWords(capSeconds),
+        limited: prepared.length >= LIST_LIMIT,
         count: prepared.length,
         totalSeconds,
         totalLabel: durationLabel(totalSeconds),
@@ -141,4 +144,4 @@ function prepare(rows, { now = new Date(), timeZone = serverTimeZone(), env = pr
     };
 }
 
-module.exports = { serverTimeZone, MAX_PLAY_SECONDS, PLAYING_NOW_SECONDS, prepare, watchTime, durationLabel, methodOf, unreportedCapSeconds };
+module.exports = { LIST_LIMIT, serverTimeZone, MAX_PLAY_SECONDS, PLAYING_NOW_SECONDS, prepare, watchTime, durationLabel, methodOf, unreportedCapSeconds };

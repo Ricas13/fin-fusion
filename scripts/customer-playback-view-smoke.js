@@ -54,7 +54,7 @@ assert.strictEqual(model.groups[1].rows[0].methodLabel, 'Server transcoding', 'n
 assert.strictEqual(model.groups[2].rows[0].methodKey, 'stream');
 assert.strictEqual(Math.max(...model.groups.flatMap(group => group.rows.map(item => item.barPercent))), 100, 'the longest play fills its bar');
 assert(model.groups.flatMap(group => group.rows).every(item => item.barPercent >= 0 && item.barPercent <= 100));
-assert.deepStrictEqual(view.prepare([], opts), { groups: [], capLabel: '2 hours', count: 0, totalSeconds: 0, totalLabel: '0m', estimated: false }, 'empty is safe');
+assert.deepStrictEqual(view.prepare([], opts), { groups: [], capLabel: '2 hours', limited: false, count: 0, totalSeconds: 0, totalLabel: '0m', estimated: false }, 'empty is safe');
 assert.strictEqual(view.prepare([], { env: { STREAM_POLICY_UNREPORTED_CREDIT_MINUTES: '90' } }).capLabel, '90 minutes', 'the explanation follows the configured cap');
 assert.strictEqual(view.prepare(null, opts).count, 0, 'null is safe');
 
@@ -75,10 +75,17 @@ const dst = view.prepare([row({ item_name: 'before the clock change', started_at
 assert.strictEqual(dst.groups[0].label, 'Yesterday', 'the day before is "Yesterday" across the end of British Summer Time (25 Oct 2026, 23:30 UTC is still 25 Oct in London)');
 const springForward = view.prepare([row({ started_at: '2026-03-28T12:00:00Z' })], { now: new Date('2026-03-29T12:00:00Z'), timeZone: 'Europe/London', env: {} });
 assert.strictEqual(springForward.groups[0].label, 'Yesterday', 'and across the spring clock change');
-const newYear = view.prepare([row({ started_at: '2025-12-31T10:00:00Z' })], { now: new Date('2026-01-01T09:00:00Z'), timeZone: 'Pacific/Auckland', env: {} });
-assert(!/2025|2026/.test(newYear.groups[0].label) || newYear.groups[0].label === 'Yesterday' || newYear.groups[0].label === 'Today', 'year labels use the target time zone, not the host');
+// The year comes from the target time zone. It is already 1 January 2026 in Auckland while it is still 31 December 2025 in UTC:
+// a play on 20 December (neither Today nor Yesterday) belongs to the PREVIOUS year there, so the label must include the year. Using the
+// UTC/host year ("2025 == 2025, same year") would wrongly drop it.
+const newYear = view.prepare([row({ started_at: '2025-12-20T12:00:00Z' })], { now: new Date('2025-12-31T20:00:00Z'), timeZone: 'Pacific/Auckland', env: {} });
+assert(newYear.groups[0].label.includes('2025'), `a previous-year date shows its year in the target time zone (got "${newYear.groups[0].label}")`);
+const sameYearZone = view.prepare([row({ started_at: '2026-01-02T12:00:00Z' })], { now: new Date('2026-01-10T09:00:00Z'), timeZone: 'Pacific/Auckland', env: {} });
+assert(!sameYearZone.groups[0].label.includes('2026'), 'a same-year date has no year');
 const lastYear = view.prepare([row({ started_at: '2025-06-01T10:00:00Z' })], { now: new Date('2026-01-01T09:00:00Z'), timeZone: 'UTC', env: {} });
 assert(lastYear.groups[0].label.includes('2025'), 'a different year includes the year');
+assert.strictEqual(model.limited, false, 'a short list is not flagged as limited');
+assert.strictEqual(view.prepare(Array.from({ length: view.LIST_LIMIT }, (_, i) => row({ started_at: at(0, 0, i) })), opts).limited, true, 'a full 100-row list is flagged so the page can say its total covers the latest plays only');
 assert.strictEqual(model.capLabel, '2 hours', 'the model exposes the credited cap for the explanation');
 
 // Rendering through the real template section.
@@ -95,6 +102,9 @@ assert(!/style=/i.test(html), 'no inline styles (the bar width uses a CSS class)
 assert(html.includes('≈ 10m') && html.includes('playbackEst'), 'an estimated play shows ≈ and an "est." pill');
 assert(html.includes('Up to 2 hours is credited per play; you may have watched longer.'), 'the cap is explained next to estimates');
 assert(html.includes('estimated plays are credited up to 2 hours each'), 'and in the header total');
+assert(html.includes('watched across your latest 1 play'), 'the total says it covers the latest plays');
+const fullPage = render(view.prepare(Array.from({ length: view.LIST_LIMIT }, (_, i) => row({ started_at: at(0, 0, i) })), opts));
+assert(fullPage.includes('the most recent 100; the totals above cover the whole period'), 'with 100 plays the page says the list is limited and that the period totals are higher up');
 assert(html.includes('scope="rowgroup"') && !html.includes('scope="colgroup"'), 'day headings describe row groups');
 const exact = render(view.prepare([row({ duration_seconds: 2700 })], opts));
 assert(exact.includes('45m') && !exact.includes('playbackEst') && !exact.includes('≈'), 'a measured play shows its real time with no estimate marker');

@@ -148,8 +148,8 @@
   </section>
   <% } %>
 
-  <section class="panel activityDetailsPanel playbackPanel" id="recent-playback"><div class="sectionHead playbackHead"><div><h2>Recent playback</h2><p>Your latest recorded Jellyfin plays in the selected period and server scope, newest first.</p></div>
-    <% if (playback && playback.count) { %><div class="playbackSummary"><strong><%= playback.totalLabel %></strong><span>watched across <%= playback.count %> play<%= playback.count===1?'':'s' %><%= playback.estimated ? ' (estimated plays are credited up to ' + playback.capLabel + ' each)' : '' %></span></div><% } %></div>
+  <section class="panel activityDetailsPanel playbackPanel" id="recent-playback"><div class="sectionHead playbackHead"><div><h2>Recent playback</h2><p>Your latest recorded Jellyfin plays (up to 100) in the selected period and server scope, newest first.</p></div>
+    <% if (playback && playback.count) { %><div class="playbackSummary"><strong><%= playback.totalLabel %></strong><span>watched across your latest <%= playback.count %> play<%= playback.count===1?'':'s' %><%= playback.limited ? ' (the most recent 100; the totals above cover the whole period)' : '' %><%= playback.estimated ? ' (estimated plays are credited up to ' + playback.capLabel + ' each)' : '' %></span></div><% } %></div>
     <% if (!playback || !playback.count) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
     <div class="tableWrap"><table class="playbackTable"><caption class="srOnly">Your recent playback, grouped by day</caption><thead><tr><th scope="col">Media</th><th scope="col">Watched</th><th scope="col">Started</th><th scope="col">Playback</th></tr></thead>
       <% playback.groups.forEach(function(group){ %><tbody>
