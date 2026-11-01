@@ -12,8 +12,9 @@ const assert = require('assert');
 const { query } = require('../src/db');
 const { runDbSmoke, unique } = require('./test-fixture');
 const timeline = require('../src/platform/customer-360-timeline');
+const manualSubscriptions = require('../src/entitlements/manual-subscriptions');
 
-const created = { customers: [], users: [] };
+const created = { customers: [], users: [], plans: [], subscriptions: [] };
 
 async function customerWithLogin(label) {
     const username = unique(`tl-${label}`);
@@ -54,12 +55,43 @@ runDbSmoke('customer timeline DB smoke', async () => {
         const nothing = await timeline.load('00000000-0000-4000-8000-000000000000');
         assert.deepStrictEqual([nothing.auth.length, nothing.audit.length], [0, 0], 'an unknown customer is empty, not an error');
 
+        // Manual plan grants and outside refunds are audited against the SUBSCRIPTION, not the customer: they must still appear.
+        const plan = (await query(`
+            INSERT INTO plans(code,name,audience,service_type,billing_interval,duration_days,price_minor,currency,streams,active,visible,sort_order)
+            VALUES($1,'Timeline plan','direct','jellyfin','month',30,1000,'GBP',2,TRUE,TRUE,999) RETURNING id
+        `, [unique('tl-plan')])).rows[0];
+        created.plans.push(plan.id);
+        const grantedToA = await manualSubscriptions.createManualSubscription({
+            customerId: a.customerId, planId: plan.id, startsAt: new Date(), endsAt: new Date(Date.now() + 30 * 86400000),
+            actorUserId: admin.id, source: 'admin_grant', status: 'active', auditAction: 'admin.customer.manual_grant',
+            auditMetadata: { note: 'paid by bank transfer' }
+        });
+        created.subscriptions.push(grantedToA.id);
+        const grantedToB = await manualSubscriptions.createManualSubscription({
+            customerId: b.customerId, planId: plan.id, startsAt: new Date(), endsAt: new Date(Date.now() + 30 * 86400000),
+            actorUserId: admin.id, source: 'admin_grant', status: 'active', auditAction: 'admin.customer.manual_grant', auditMetadata: {}
+        });
+        created.subscriptions.push(grantedToB.id);
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally_completed','subscription',$2,'{"reason":"refunded in Stripe"}'::jsonb)`, [admin.id, grantedToA.id]);
+
+        const withSubs = await timeline.load(a.customerId);
+        const actions = withSubs.audit.map(row => row.action).sort();
+        assert.deepStrictEqual(actions, ['admin.customer.ban', 'admin.customer.manual_grant', 'billing.refund.recorded_externally_completed'], 'customer-scoped AND subscription-scoped admin events are both returned');
+        const shown = timeline.build(withSubs).map(entry => entry.title);
+        assert(shown.includes('Plan added manually') && shown.includes('Refund made outside the app was recorded') && shown.includes('Customer banned'), 'the grant and the outside refund appear in Admin changes');
+        const grantDetail = timeline.build(withSubs).find(entry => entry.title === 'Plan added manually').detail;
+        assert.strictEqual(grantDetail, `by ${adminName} · paid by bank transfer`, 'with the administrator and the note');
+        const forB = await timeline.load(b.customerId);
+        assert.deepStrictEqual(forB.audit.map(row => row.action).sort(), ['admin.customer.manual_grant', 'admin.customer.unban'], 'customer B sees only their own grant, never A\'s grant or refund');
+
         const entries = timeline.build({ ...dataA });
         assert.deepStrictEqual(entries.map(entry => entry.title).sort(), ['Customer banned', 'Failed sign-in (wrong password)', 'Signed in to the portal'].sort());
         assert(entries.every(entry => entry.at), 'every entry has a time');
     } finally {
         await query(`DELETE FROM auth_events WHERE user_id=ANY($1::uuid[])`, [created.users]).catch(() => {});
+        await query(`DELETE FROM subscriptions WHERE id=ANY($1::uuid[])`, [created.subscriptions]).catch(() => {});
         await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [created.customers]).catch(() => {});
+        await query(`DELETE FROM plans WHERE id=ANY($1::uuid[])`, [created.plans]).catch(() => {});
         // audit_log is append-only and references users with ON DELETE SET NULL, so the test admin/users are left in place
         // (disposable test database); nothing here can be deleted without breaking the append-only guarantee.
     }

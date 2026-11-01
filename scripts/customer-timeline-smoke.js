@@ -59,6 +59,32 @@ const incident = entries.find(entry => entry.title === 'Payment incident: failed
 assert(incident && incident.tone === 'bad' && incident.detail.includes('open'), 'open payment incidents are flagged');
 assert.strictEqual(entries.find(entry => entry.title === 'Reconcile').tone, 'bad', 'failed service runs are flagged');
 
+// Payment status classification: settled is green, pending/unknown is neutral, failed is red, adverse is amber.
+const tone = (type, status) => timeline.build({ payments: [{ transaction_type: type, transaction_status: status, gross_amount_minor: 100, currency: 'GBP', provider: 'x', occurred_at: at(1) }] })[0].tone;
+for (const status of ['succeeded', 'completed', 'COMPLETED', 'S', 'paid']) assert.strictEqual(tone('payment', status), 'good', `${status} is settled`);
+for (const status of ['pending', 'new', 'unpaid', 'processing', 'P', 'something_new', '']) assert.strictEqual(tone('payment', status), '', `${status || '(none)'} is never shown as a success`);
+for (const status of ['failed', 'declined', 'denied', 'D', 'error']) assert.strictEqual(tone('payment', status), 'bad', `${status} is a failure`);
+assert.strictEqual(tone('refund', 'completed'), 'warn');
+assert.strictEqual(tone('payment', 'disputed'), 'warn');
+assert.strictEqual(tone('chargeback', 'new'), 'warn');
+
+// Service runs keep their completion time.
+const run = timeline.build({ runs: [{ action: 'reconcile', status: 'succeeded', started_at: at(0), completed_at: at(3) }, { action: 'emby_disable', status: 'running', started_at: at(5), completed_at: null }] });
+assert(run.find(entry => entry.title === 'Reconcile').detail.includes('finished') && run.find(entry => entry.title === 'Reconcile').detail.includes('took 3m'), 'a finished run shows when it finished and how long it took');
+assert(run.find(entry => entry.title === 'Emby disable').detail.includes('not finished'), 'an unfinished run says so');
+
+// Outside refunds: the completed entry is shown, its internal progress markers are not.
+const refunds = timeline.build({ audit: [
+    { action: 'billing.refund.recorded_externally', created_at: at(1), actor_name: 'ricas', metadata: {} },
+    { action: 'billing.refund.recorded_externally_effect', created_at: at(2), actor_name: 'ricas', metadata: {} },
+    { action: 'billing.refund.recorded_externally_completed', created_at: at(3), actor_name: 'ricas', metadata: { reason: 'refunded in Stripe' } },
+    { action: 'billing.refund.recorded_externally_failed', created_at: at(4), actor_name: 'ricas', metadata: {} },
+    { action: 'admin.customer.manual_grant', created_at: at(5), actor_name: 'ricas', metadata: { note: 'paid by bank transfer' } }
+] });
+assert(refunds.some(entry => entry.title === 'Refund made outside the app was recorded') && refunds.some(entry => entry.title === 'Plan added manually'), 'refund completion and manual grants are shown');
+assert.strictEqual(refunds.filter(entry => entry.title.toLowerCase().includes('recorded externally')).length, 0, 'internal progress markers are hidden');
+assert.strictEqual(refunds.find(entry => entry.title.includes('failed')).tone, 'bad', 'a failed outside-refund is flagged');
+
 // Cap
 const many = timeline.build({ audit: Array.from({ length: timeline.MAX_ENTRIES + 40 }, (_, i) => ({ action: 'admin.customer.ban', created_at: at(i), actor_name: 'x', metadata: {} })) });
 assert.strictEqual(many.length, timeline.MAX_ENTRIES, 'the log is capped');
@@ -69,16 +95,37 @@ const withoutEscapedText = html.replace(/&lt;.*?&gt;/g, '');
 assert(!html.includes('<script') && !html.includes('<img'), 'values are escaped: no raw tags from data');
 assert(html.includes('&lt;img') && html.includes('&lt;script'), 'the hostile text is shown as text');
 assert(!/<[^>]*\son[a-z]+=/i.test(withoutEscapedText), 'no event-handler attributes');
-for (const key of ['all', 'security', 'admin', 'payment', 'service']) assert(html.includes(`id="tlf-${key}"`), `filter ${key} exists`);
+for (const key of ['all', 'security', 'admin', 'payment', 'service']) assert(html.includes(`-${key}"`) && html.includes(`for=tl`), `filter ${key} exists`);
+assert(html.includes('<fieldset class="tlWrap"><legend class="tlLegend">'), 'the radios sit in a labelled fieldset');
 assert(timeline.render([]).includes('No activity recorded yet.'), 'empty state');
-assert(timeline.styles().includes('#tlf-payment:checked'), 'the filter is pure CSS');
+const fixed = timeline.render([], { idPrefix: 'fixedlog' });
+assert(fixed.includes('#fixedlog-payment:checked ~ .tlRows .tlRow:not(.tl-payment){display:none}'), 'the filter is pure CSS and scoped to its own prefix');
+assert(fixed.includes('#fixedlog-payment:focus-visible ~ .tlBar label[for=fixedlog-payment]'), 'the focused chip gets a visible focus ring');
+// Two logs on one page never share ids, names or selectors.
+const first = timeline.render([]), second = timeline.render([]);
+const ids = markup => [...markup.matchAll(/id="([^"]+)"/g)].map(match => match[1]);
+assert(ids(first).length === 5 && ids(second).length === 5, 'five filter radios each');
+assert(ids(first).every(id => !ids(second).includes(id)), 'no id is shared between two renderings');
+assert(first.match(/name="([^"]+)"/)[1] !== second.match(/name="([^"]+)"/)[1], 'radio group names differ');
 
-// Lane tabs: none for a single lane; one tab per lane otherwise; pure CSS.
+// Lane tabs: none for a single lane; one tab per lane otherwise; pure CSS; unique per call; no cap.
 assert.strictEqual(accessCards.laneTabs([{ label: 'Premium', html: '<p>only</p>' }]), '<p>only</p>', 'a single lane shows no tabs');
 const tabs = accessCards.laneTabs([{ label: 'Premium · Gold', html: '<p>one</p>' }, { label: 'Free Server', html: '<p>two</p>' }]);
-assert(tabs.includes('id="laneTab-0"') && tabs.includes('id="laneTab-1"') && tabs.includes('Premium · Gold') && tabs.includes('Free Server'), 'one tab per lane');
+assert(tabs.includes('Premium · Gold') && tabs.includes('Free Server') && (tabs.match(/class="laneRadio"/g) || []).length === 2, 'one tab per lane');
 assert(tabs.includes('<p>one</p>') && tabs.includes('<p>two</p>'), 'every lane stays in the page (forms keep working)');
-assert(!tabs.includes('<script') && !/\son[a-z]+=/i.test(tabs), 'no script needed');
+assert(tabs.includes('<fieldset class="laneTabs"><legend class="laneLegend">Service lane</legend>'), 'the tabs are a labelled radio group');
+assert(!tabs.includes('<script') && !/\son[a-z]+=/i.test(tabs.replace(/<style>.*?<\/style>/g, '')), 'no script needed');
+const seven = accessCards.laneTabs(Array.from({ length: 7 }, (_, index) => ({ label: `Lane ${index}`, html: `<form>lane-${index}</form>` })));
+for (let index = 0; index < 7; index++) assert(seven.includes(`<form>lane-${index}</form>`) && seven.includes(`Lane ${index}`), `lane ${index} is not dropped (no cap)`);
+const again = accessCards.laneTabs([{ label: 'A', html: 'a' }, { label: 'B', html: 'b' }]);
+const laneIds = markup => [...markup.matchAll(/id="([^"]+)"/g)].map(match => match[1]);
+assert(laneIds(tabs).every(id => !laneIds(again).includes(id)), 'two tab sets on one page never share ids');
+assert(seven.includes(':nth-child(7)'), 'there is a display rule for the seventh panel');
 assert(accessCards.styles().includes('.threeCol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'), 'access, libraries and requests are three columns');
+assert(!/laneTab-\d/.test(accessCards.styles()), 'no fixed-id rules remain in the shared stylesheet');
+
+// Library and setting names keep their full text available when the column is narrow.
+const cardsSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/platform/customer-360-access-cards.js'), 'utf8');
+assert(!/<span class="lbl">\$\{esc\(/.test(cardsSource), 'every dense-row label has a title with the full name');
 
 console.log('customer timeline smoke: ok');

@@ -195,9 +195,9 @@ function segmented(name,checkedValue){
 function technicalRow(field,row){
   const label=FIELD_LABELS[field]||field,hasOverride=row?.override!==null&&row?.override!==undefined;
   if(field==='streams'){
-    return `<div class="denseRow"><span class="lbl">${esc(label)}</span><span class="val">${esc(row?.effective??'—')}</span><input class="streamInput" type="number" name="${esc(field)}" min="1" max="50" placeholder="Inherit" value="${hasOverride?esc(row.override):''}"></div>`;
+    return `<div class="denseRow"><span class="lbl" title="${esc(label)}">${esc(label)}</span><span class="val">${esc(row?.effective??'—')}</span><input class="streamInput" type="number" name="${esc(field)}" min="1" max="50" placeholder="Inherit" value="${hasOverride?esc(row.override):''}"></div>`;
   }
-  return `<div class="denseRow"><span class="lbl">${esc(label)}</span><span class="val">${esc(booleanLabel(Boolean(row?.effective)))}</span>${segmented(field,hasOverride?String(row.override):'')}</div>`;
+  return `<div class="denseRow"><span class="lbl" title="${esc(label)}">${esc(label)}</span><span class="val">${esc(booleanLabel(Boolean(row?.effective)))}</span>${segmented(field,hasOverride?String(row.override):'')}</div>`;
 }
 
 function accessControlsPanel(lane,token,customerId,technicalRows){
@@ -208,7 +208,7 @@ function accessControlsPanel(lane,token,customerId,technicalRows){
 
 function requestRow(item){
   const hasOverride=item.override!==null&&item.override!==undefined;
-  return `<div class="denseRow"><span class="lbl">${esc(item.label)}</span><span class="val">${esc(item.plan?'Plan allows':'Plan blocks')}</span>${segmented(`permission_${item.key}`,hasOverride?String(item.override):'')}</div>`;
+  return `<div class="denseRow"><span class="lbl" title="${esc(item.label)}">${esc(item.label)}</span><span class="val">${esc(item.plan?'Plan allows':'Plan blocks')}</span>${segmented(`permission_${item.key}`,hasOverride?String(item.override):'')}</div>`;
 }
 
 function requestsPanel(token,customerId,effective){
@@ -221,7 +221,7 @@ function requestsPanel(token,customerId,effective){
 
 function libraryRow(row,lane,index){
   const hasOverride=row.override!==null&&row.override!==undefined;
-  return `<div class="denseRow"><input type="hidden" name="libraryName" value="${esc(row.name)}"><span class="lbl">${esc(row.name)}</span><span class="val">${esc(enabledLabel(Boolean(row.effective)))}</span>${segmented(`libraryValue_${lane}_${index}`,hasOverride?String(row.override):'')}</div>`;
+  return `<div class="denseRow"><input type="hidden" name="libraryName" value="${esc(row.name)}"><span class="lbl" title="${esc(row.name)}">${esc(row.name)}</span><span class="val">${esc(enabledLabel(Boolean(row.effective)))}</span>${segmented(`libraryValue_${lane}_${index}`,hasOverride?String(row.override):'')}</div>`;
 }
 
 function libraryBucket(name){
@@ -254,7 +254,7 @@ async function laneEffective(customerId,lane,planRow){
 
 function householdPanel(token,customerId,rows){
   if(!rows.length)return'';
-  const body=rows.map(([name,label,planValue,override])=>`<div class="denseRow"><span class="lbl">${esc(label)}</span><span class="val">${esc(override??planValue??'—')}</span><input class="streamInput" type="number" name="${esc(name)}" min="1" max="10" placeholder="Inherit" value="${override==null?'':esc(override)}"></div>`).join('');
+  const body=rows.map(([name,label,planValue,override])=>`<div class="denseRow"><span class="lbl" title="${esc(label)}">${esc(label)}</span><span class="val">${esc(override??planValue??'—')}</span><input class="streamInput" type="number" name="${esc(name)}" min="1" max="10" placeholder="Inherit" value="${override==null?'':esc(override)}"></div>`).join('');
   return `<details class="panel"><summary><span>Household networks</span><span class="chev">▸</span><span class="cnt">${rows.length} rule${rows.length===1?'':'s'}</span></summary><div class="panelBody"><form method="post" action="/admin/users/${encodeURIComponent(customerId)}/household-overrides">${csrfHidden(token)}<div class="denseList">${body}</div><div class="denseSaveRow"><button class="button primary sm" type="submit">Save</button></div></form><form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/household-overrides/reset-all">${csrfHidden(token)}<button class="button secondary sm" type="submit">Reset to plan</button></form></div></details>`;
 }
 
@@ -286,14 +286,18 @@ async function stremioLaneBlock(detail,token,options){
 }
 
 // One tab per service lane (each lane is its own server), pure CSS (radio inputs) so no script is needed. A single lane shows no tabs.
-const MAX_LANE_TABS=6;
+// Every call gets its own id prefix and its own rules, there is no cap on the number of lanes, and the radios sit in a labelled
+// fieldset with a visible focus ring on the focused tab.
+let laneTabCounter=0;
 function laneTabs(blocks){
-  const lanes=blocks.slice(0,MAX_LANE_TABS);
+  const lanes=blocks.filter(Boolean);
   if(lanes.length<2)return lanes.map(lane=>lane.html).join('');
-  const radios=lanes.map((lane,index)=>`<input class="laneRadio" type="radio" name="laneTab" id="laneTab-${index}" ${index===0?'checked':''}>`).join('');
-  const labels=lanes.map((lane,index)=>`<label class="laneTabLabel" for="laneTab-${index}">${esc(lane.label)}</label>`).join('');
+  const prefix=`lt${++laneTabCounter}`;
+  const rules=lanes.map((lane,index)=>`#${prefix}-${index}:checked~.laneTabPanels>.laneTabPanel:nth-child(${index+1}){display:block}#${prefix}-${index}:checked~.laneTabBar label[for=${prefix}-${index}]{background:rgba(110,190,255,.16);border-color:var(--accent,#5db7ff);color:var(--text,#e8eef4)}#${prefix}-${index}:focus-visible~.laneTabBar label[for=${prefix}-${index}]{outline:2px solid var(--accent,#5db7ff);outline-offset:2px}`).join('');
+  const radios=lanes.map((lane,index)=>`<input class="laneRadio" type="radio" name="${prefix}-lane" id="${prefix}-${index}" ${index===0?'checked':''}>`).join('');
+  const labels=lanes.map((lane,index)=>`<label class="laneTabLabel" for="${prefix}-${index}">${esc(lane.label)}</label>`).join('');
   const panels=lanes.map(lane=>`<div class="laneTabPanel">${lane.html}</div>`).join('');
-  return `<div class="laneTabs">${radios}<div class="laneTabBar">${labels}</div><div class="laneTabPanels">${panels}</div></div>`;
+  return `<style>${rules}</style><fieldset class="laneTabs"><legend class="laneLegend">Service lane</legend>${radios}<div class="laneTabBar">${labels}</div><div class="laneTabPanels">${panels}</div></fieldset>`;
 }
 
 async function accessLibrariesRequests(detail,token,options={}){
@@ -376,13 +380,12 @@ function styles(){return `<style>
 .laneHead h4{margin:0;font-size:.85rem;font-weight:800}
 .twoCol{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
 .threeCol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}
+.laneTabs{border:0;margin:0;padding:0;min-width:0}
+.laneLegend{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .laneTabs .laneRadio{position:absolute;opacity:0;pointer-events:none}
 .laneTabBar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
 .laneTabLabel{cursor:pointer;border:1px solid var(--border,#29333d);border-radius:9px;padding:7px 14px;font-size:.78rem;font-weight:700;color:var(--muted,#9aa7b3)}
 .laneTabPanel{display:none}
-.laneTabs .laneRadio:focus-visible~.laneTabBar{outline:2px solid var(--accent,#5db7ff);outline-offset:2px}
-.laneTabs #laneTab-0:checked~.laneTabPanels .laneTabPanel:nth-child(1),.laneTabs #laneTab-1:checked~.laneTabPanels .laneTabPanel:nth-child(2),.laneTabs #laneTab-2:checked~.laneTabPanels .laneTabPanel:nth-child(3),.laneTabs #laneTab-3:checked~.laneTabPanels .laneTabPanel:nth-child(4),.laneTabs #laneTab-4:checked~.laneTabPanels .laneTabPanel:nth-child(5),.laneTabs #laneTab-5:checked~.laneTabPanels .laneTabPanel:nth-child(6){display:block}
-.laneTabs #laneTab-0:checked~.laneTabBar label[for=laneTab-0],.laneTabs #laneTab-1:checked~.laneTabBar label[for=laneTab-1],.laneTabs #laneTab-2:checked~.laneTabBar label[for=laneTab-2],.laneTabs #laneTab-3:checked~.laneTabBar label[for=laneTab-3],.laneTabs #laneTab-4:checked~.laneTabBar label[for=laneTab-4],.laneTabs #laneTab-5:checked~.laneTabBar label[for=laneTab-5]{background:rgba(110,190,255,.16);border-color:var(--accent,#5db7ff);color:var(--text,#e8eef4)}
 .colStack{display:flex;flex-direction:column;gap:12px}
 details.panel{border:1px solid var(--border,#29333d);border-radius:10px;overflow:hidden;background:rgba(255,255,255,.012)}
 details.panel summary{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;list-style:none;font-size:.8rem;font-weight:800}
