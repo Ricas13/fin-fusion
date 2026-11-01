@@ -12,7 +12,9 @@ const onboarding = { url: 'https://store.example/activate/RAWTOKEN123', path: '/
 
 const withLink = compact.portalCard(detail, 'csrf', onboarding);
 assert(withLink.includes('id="customer-portal"'), 'the card is an anchor target');
-assert(withLink.includes('value="https://store.example/activate/RAWTOKEN123"') && withLink.includes('data-copy-value="https://store.example/activate/RAWTOKEN123"'), 'the full link is shown and copyable');
+const linkAttribute = (html, name) => (html.match(new RegExp(`${name}="([^"]*)"`)) || [])[1];
+assert.strictEqual(linkAttribute(withLink, 'value'), onboarding.url, 'the full link is shown');
+assert.strictEqual(linkAttribute(withLink, 'data-copy-value'), onboarding.url, 'and copyable');
 assert(withLink.includes('Copy link') && withLink.includes('valid until') && withLink.includes('href="/activate/RAWTOKEN123"'));
 assert(withLink.includes('New onboarding link') && !withLink.includes('Reset / onboarding link'));
 
@@ -36,7 +38,9 @@ assert(compact.portalCard(detail, 'csrf', { url: null, path: '/activate/T', expi
     let link = await compact.onboardingLink(customer.id, { queryFn, activeForUser, settings: httpCfg, env: { NODE_ENV: 'production' } });
     assert.strictEqual(link.url, null, 'an http base URL never reaches the copyable absolute link in production');
     assert.strictEqual(link.path, '/activate/RAW%2FTOKEN');
-    assert(!compact.portalCard(detail, 'csrf', link).includes('http://store.example'));
+    const rendered = compact.portalCard(detail, 'csrf', link);
+    const attributeUrls = [...rendered.matchAll(/(?:value|data-copy-value|href)="([^"]*)"/g)].map(match => match[1]);
+    assert(attributeUrls.some(value => value.startsWith('/activate/')) && !attributeUrls.some(value => /^https?:/i.test(value)), 'only the relative link is rendered when the base is not https');
     link = await compact.onboardingLink(customer.id, { queryFn, activeForUser, settings: httpsCfg, env: { NODE_ENV: 'production' } });
     assert.strictEqual(link.url, 'https://store.example/activate/RAW%2FTOKEN');
     link = await compact.onboardingLink(customer.id, { queryFn, activeForUser, settings: httpCfg, env: { NODE_ENV: 'development' } });
