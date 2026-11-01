@@ -78,7 +78,12 @@ async function api(path, params = {}, { timeoutMs = 15000 } = {}) {
         if (!response.ok || payload?.status === 'error') {
             const detail = payload?.data?.message || payload?.message || payload?.error || `HTTP ${response.status}`;
             console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
-            throw new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
+            const failure = new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
+            // Only an authenticated HTTP 404 means "this operation does not exist". Timeouts, 401/403, 5xx and
+            // malformed bodies never do, so they can never be mistaken for an abandoned invoice.
+            failure.providerStatus = response.status;
+            failure.providerNotFound = response.status === 404;
+            throw failure;
         }
         return payload?.status === 'success' && payload?.data !== undefined ? payload.data : payload;
     } catch (error) {

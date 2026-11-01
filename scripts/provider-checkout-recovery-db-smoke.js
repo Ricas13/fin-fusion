@@ -320,6 +320,61 @@ async function main() {
     // Production reality: Plisio's operations API returns only ids, status and crypto totals for an
     // invoice (no order number, fiat amount or currency). A completed invoice bound to our intent
     // must activate from the contract we created the invoice with, but nothing looser.
+    // --- Automatic closure (no operator): an invoice nobody ever paid, and one Plisio no longer knows about.
+    const giveUp = await attachedIntent('recovery plisio never paid', 'plisio', `PLISIO-${unique('never')}`, null, 'payment', server);
+    const inFlight = await attachedIntent('recovery plisio in flight', 'plisio', `PLISIO-${unique('flight')}`, null, 'payment', server);
+    const fresh = await attachedIntent('recovery plisio fresh', 'plisio', `PLISIO-${unique('fresh')}`, null, 'payment', server);
+    const gone = await attachedIntent('recovery plisio not found', 'plisio', `PLISIO-${unique('gone')}`, null, 'payment', server);
+    const goneEarly = await attachedIntent('recovery plisio not found early', 'plisio', `PLISIO-${unique('goneearly')}`, null, 'payment', server);
+    const outage = await attachedIntent('recovery plisio outage', 'plisio', `PLISIO-${unique('outage')}`, null, 'payment', server);
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '2 days',updated_at=NOW()-INTERVAL '2 days' WHERE id=ANY($1::uuid[])`, [[giveUp.id, inFlight.id, gone.id, outage.id]]);
+    const notFound = Object.assign(new Error('unavailable'), { providerNotFound: true, providerStatus: 404 });
+    const unavailable = Object.assign(new Error('unavailable'), { providerNotFound: false, providerStatus: 503 });
+    const autoRun = await recovery.run({
+        limit: 100,
+        checkoutIntentIds: [giveUp.id, inFlight.id, fresh.id, gone.id, goneEarly.id, outage.id],
+        handlers: {
+            async plisio(row) {
+                if (row.id === giveUp.id || row.id === fresh.id) return { status: 'new', completed: false, waiting: true };
+                if (row.id === inFlight.id) return { status: 'pending', completed: false, waiting: true };
+                if (row.id === gone.id || row.id === goneEarly.id) throw notFound;
+                throw unavailable;
+            },
+            async markTerminal(row) { return intents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled'); }
+        }
+    });
+    assert.strictEqual((await stateOf(giveUp.id)).state, 'cancelled', 'an invoice still unpaid long after its window is closed automatically');
+    assert((await stateOf(giveUp.id)).provider_terminal_at, 'and stops being polled or listed');
+    assert.strictEqual((await stateOf(gone.id)).state, 'cancelled', 'an old invoice Plisio reports as not found (404) is closed automatically');
+    assert.strictEqual((await stateOf(inFlight.id)).state, 'open', 'a payment that is pending on the chain is never given up on by age');
+    assert.strictEqual((await stateOf(fresh.id)).state, 'open', 'an invoice inside its window is left alone');
+    assert.strictEqual((await stateOf(goneEarly.id)).state, 'open', 'not-found inside the window is not trusted yet');
+    assert.strictEqual((await stateOf(outage.id)).state, 'open', 'a Plisio outage (503) is never mistaken for an abandoned invoice');
+    assert.strictEqual(autoRun.terminal, 2, 'exactly the two abandoned invoices were closed');
+    assert.strictEqual(autoRun.failed, 2, 'early not-found and the outage stay visible as recovery failures');
+    // A closed invoice that is paid late still activates (only completed payments may override a closed intent).
+    const closedRow = (await query(`SELECT commercial_snapshot FROM billing_checkout_intents WHERE id=$1`, [giveUp.id])).rows[0];
+    const closedSnapshot = closedRow.commercial_snapshot;
+    assert.strictEqual((await intents.verifiedProviderContract({
+        provider: 'plisio', providerCheckoutId: giveUp.providerCheckoutId, scope: 'customer', ownerId: giveUp.owner.id,
+        planId: giveUp.plan.id, checkoutMode: 'payment', amountMinor: Number(closedSnapshot.discountedMinor ?? closedSnapshot.priceMinor), currency: closedSnapshot.currency
+    })).intent.id, giveUp.id, 'a late payment on an auto-closed invoice is still accepted by the checkout contract');
+
+    // --- Fairness: payments inside their window first, then least-recently-checked, so a backlog is worked through in turn.
+    const old1 = await attachedIntent('recovery fair 1', 'plisio', `PLISIO-${unique('fair1')}`, null, 'payment', server);
+    const old2 = await attachedIntent('recovery fair 2', 'plisio', `PLISIO-${unique('fair2')}`, null, 'payment', server);
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '3 days',updated_at=NOW()-INTERVAL '3 hours' WHERE id=$1`, [old1.id]);
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '3 days',updated_at=NOW()-INTERVAL '5 hours' WHERE id=$1`, [old2.id]);
+    const order = (await recovery.candidates({ limit: 100, checkoutIntentIds: [old1.id, old2.id, fresh.id] })).map(row => row.id);
+    assert.deepStrictEqual(order, [fresh.id, old2.id, old1.id], 'in-window payment first, then the longest-unchecked backlog row');
+    await recovery.run({ limit: 100, checkoutIntentIds: [old2.id], handlers: { async plisio() { return { status: 'pending', completed: false, waiting: true }; } } });
+    assert.deepStrictEqual((await recovery.candidates({ limit: 100, checkoutIntentIds: [old1.id, old2.id] })).map(row => row.id), [old1.id, old2.id], 'a row that was just checked goes to the back of the line');
+
+    // --- A payment the operator marked for review is still recovered automatically (it no longer needs finishing by hand).
+    const review = await attachedIntent('recovery plisio review', 'plisio', `PLISIO-${unique('review')}`, null, 'payment', server);
+    await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid_review',operator_resolved_at=NOW() WHERE id=$1`, [review.id]);
+    assert((new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(review.id), 'marked_paid_review rows are no longer excluded from automatic recovery');
+
     const realShape = txn => ({ txn_id: txn, invoice_url: `https://plisio.net/invoice/${txn}`, invoice_total_sum: '0.00060658', user_id: 12174, shop_id: 's1', type: 'invoice', status: 'completed', tx_url: 'https://blockchair.com/bitcoin/transaction/abc', id: txn });
     const contractIntent = {
         id: 'intent-1', provider: 'plisio', checkout_mode: 'payment', provider_checkout_id: 'TXN-1',
