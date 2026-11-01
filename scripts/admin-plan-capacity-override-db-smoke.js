@@ -12,6 +12,8 @@ if (skipIfNoDatabase('admin plan capacity override DB smoke')) process.exit(0);
 const { query, getPool } = require('../src/db');
 const manual = require('../src/entitlements/admin-manual-entitlement-service');
 const lifecycle = require('../src/access/admin-customer-lifecycle-service');
+const registry = require('../src/jellyfin/registry');
+const provisioning = require('../src/jellyfin/resilient-provisioning');
 const { unique, fixtureCustomer, fixturePlan, fixtureSubscription } = require('./test-fixture');
 
 const created = { customers: [], plans: [], servers: [] };
@@ -107,6 +109,31 @@ async function main() {
     await query('DROP TRIGGER IF EXISTS zz_block_override_audit ON audit_log');
     await query('DROP FUNCTION IF EXISTS zz_block_override_audit()');
   }
+
+  // The reconciler must not undo a deferred placement. A customer with an existing active account on the OLD plan's
+  // server is moved to a plan whose only server is full: the stale assignment is cleared, and the reconciler must
+  // not re-adopt the old server (which the new plan cannot use) as the sticky assignment.
+  const mkServer = async (label, max) => {
+    const id = (await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,location,api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,health_status,last_health_check)
+      VALUES($1,$1,'premium','https://${label}.example.invalid','https://${label}.example.invalid','${label}','key',TRUE,TRUE,TRUE,TRUE,10,${max},'healthy',NOW()) RETURNING id`, [unique(label)])).rows[0].id;
+    created.servers.push(id);
+    return id;
+  };
+  const oldSrv = await mkServer('old-host', 50), newSrv = await mkServer('new-host', 1);
+  const planOld = await newPlan('Old pool plan', { capacityLimit: 50 }), planNew = await newPlan('New pool plan', { capacityLimit: 50 });
+  await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100),($3,$4,100)', [planOld.id, oldSrv, planNew.id, newSrv]);
+  const squatter = await newCustomer('New host occupant');
+  await query(`INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose) VALUES($1,$2,$3,$4,FALSE,'jellyfin')`, [squatter.id, newSrv, unique('jfu'), unique('squat')]);
+  const traveller = await newCustomer('Traveller');
+  const travelSub = await fixtureSubscription({ query }, { customerId: traveller.id, planId: planOld.id, source: 'admin_grant', billingMode: 'manual' });
+  await query(`INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,account_purpose,access_lane) VALUES($1,$2,$3,$4,FALSE,TRUE,'jellyfin','primary')`, [traveller.id, oldSrv, unique('jfu'), unique('trav')]);
+  await query(`UPDATE subscriptions SET media_server_id=$1 WHERE id=$2`, [oldSrv, travelSub.id]);
+  const travelled = await lifecycle.changePlan({ customerId: traveller.id, subscriptionId: travelSub.id, targetPlanId: planNew.id, allowOverCapacity: true });
+  assert(/no server for it yet/i.test(travelled.message), 'placement was deferred');
+  const realRequest = registry.request;
+  registry.request = async () => ({});
+  try { await provisioning.reconcileCustomer(traveller.id); } catch (_) { /* creating on the full server fails by design */ } finally { registry.request = realRequest; }
+  assert.strictEqual((await query('SELECT media_server_id FROM subscriptions WHERE id=$1', [travelSub.id])).rows[0].media_server_id, null, 'the reconciler must not re-adopt the old plan\'s server as the sticky assignment');
 
   // A pool with NO eligible server at all is a configuration problem, not a full pool: the override does not apply.
   const noHostPlan = await newPlan('No host plan', { capacityLimit: 50, serverClass: 'custom' });
