@@ -31,8 +31,10 @@ assert.strictEqual(expiry.failedProviderVerificationProtected(due, { now: '2026-
 const extended = { ...due, service_extension_days: 2 };
 assert.strictEqual(expiry.failedProviderVerificationProtected(extended, { now: '2026-09-04T23:59:59.000Z', graceHours: 48 }), true,
   'service-credit time must remain part of the local paid-access end before verification grace starts');
-assert.strictEqual(expiry.providerExpiryProtected(due, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }, { now: '2026-09-10T00:00:00Z', graceHours: 48 }), true,
-  'current provider proof of an active recurring agreement must still protect the row');
+assert.strictEqual(expiry.providerExpiryProtected(due, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }, { now: '2026-09-02T00:00:00Z', graceHours: 48 }), true,
+  'an active recurring agreement protects a renewal that is only just late (the charge may still be settling)');
+assert.strictEqual(expiry.providerExpiryProtected(due, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }, { now: '2026-09-10T00:00:00Z', graceHours: 48 }), false,
+  'an agreement the provider still calls active must NOT keep a term alive forever once it is past the bounded grace without a renewed paid-through date');
 assert.strictEqual(expiry.providerExpiryProtected(due, { ok: true, remote: { status: 'canceled', cancelAtPeriodEnd: true } }, { now: '2026-09-01T01:00:00Z', graceHours: 48 }), false,
   'provider-confirmed cancellation must never be hidden by the outage grace');
 
