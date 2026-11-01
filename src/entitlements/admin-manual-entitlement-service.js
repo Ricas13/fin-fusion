@@ -114,7 +114,9 @@ function normalizedGrantInput(body = {}) {
     endAt,
     externalReference: text(body.externalReference, 255) || null,
     note: text(body.note, 500) || null,
-    returnTab: body.returnTab === 'billing' ? 'billing' : 'access'
+    returnTab: body.returnTab === 'billing' ? 'billing' : 'access',
+    // Deliberate administrator choice: grant even when the plan or its servers are full.
+    allowOverCapacity: String(body.allowOverCapacity || '') === '1'
   };
 }
 async function createManualGrant(customerId, actorUserId, input) {
@@ -145,17 +147,32 @@ async function createManualGrant(customerId, actorUserId, input) {
     const adminTrialRegrant = plan.billing_interval === 'trial';
     const status = adminTrialRegrant ? 'trialing' : 'active';
 
-    await planCapacity.lockAndAssert(client, plan.id, plan.name || 'This plan', {
-      households: plan.stremio_household_network_limit || null
+    const capacityState = await planCapacity.lockAndAssert(client, plan.id, plan.name || 'This plan', {
+      households: plan.stremio_household_network_limit || null,
+      allowSoldOut: input.allowOverCapacity === true
     });
+    const planFullOverride = Boolean(input.allowOverCapacity === true && capacityState?.soldOut);
 
     let mediaServer = null;
     let mediaLocation = null;
+    let serverFullOverride = false;
     if (customerServerChoice.mediaServerType(plan)) {
-      mediaServer = await customerServerChoice.selectServerForLocationLocked(plan, null, {
-        db: (sql, params) => client.query(sql, params),
-        requireSelection: false
-      });
+      try {
+        mediaServer = await customerServerChoice.selectServerForLocationLocked(plan, null, {
+          db: (sql, params) => client.query(sql, params),
+          requireSelection: false
+        });
+      } catch (error) {
+        // Every server that could host this plan is full. An administrator who chose to override
+        // capacity still gets the plan; the customer is simply not pinned to a server yet and is
+        // placed afterwards with Add to server (which also overrides capacity).
+        // Only a pool that EXISTS but is full is tolerated. A pool with no eligible server at all (disabled,
+        // wrong class, not allowed for this plan) is a configuration problem and still refuses the grant.
+        const hasEligibleServer = input.allowOverCapacity === true && error?.code === 'MEDIA_LOCATION_UNAVAILABLE'
+          && (await customerServerChoice.eligibleServers(plan, { db: (sql, params) => client.query(sql, params) })).length > 0;
+        if (hasEligibleServer) serverFullOverride = true;
+        else throw error;
+      }
       mediaLocation = mediaServer?.selected_location || customerServerChoice.locationLabel(mediaServer?.location);
     }
     const sub = await manualSubscriptions.createManualSubscriptionTx(client, {
@@ -180,6 +197,7 @@ async function createManualGrant(customerId, actorUserId, input) {
         recognizedProviderReference: recognizedReference,
         providerLinked: false,
         adminTrialRegrant,
+        capacityOverride: planFullOverride || serverFullOverride,
         note: input.note,
         renewal: false,
         chargedProvider: false
@@ -197,7 +215,7 @@ async function createManualGrant(customerId, actorUserId, input) {
       `, [sub.id, mediaServer.id, mediaLocation, customerId]);
       if (!assigned.rowCount) throw new Error('Manual entitlement changed before its media-server reservation could be persisted.');
     }
-    return { subscriptionId: sub.id, planName: plan.name, serviceType: String(plan.service_type || 'jellyfin'), startsAt: input.startAt, endsAt: input.endAt, mediaServerId: mediaServer?.id || null, mediaLocation };
+    return { subscriptionId: sub.id, planName: plan.name, serviceType: String(plan.service_type || 'jellyfin'), startsAt: input.startAt, endsAt: input.endAt, mediaServerId: mediaServer?.id || null, mediaLocation, capacityOverride: planFullOverride || serverFullOverride };
   });
   let stremioLinkReady = null;
   const now = new Date();

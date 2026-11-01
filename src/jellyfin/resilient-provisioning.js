@@ -365,7 +365,14 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
     }
 
     if (!entitlement.media_server_id && !entitlement.admin_forced_server_id) {
-        const existing = unambiguousLegacyAccount(laneAccounts, `${lane} Jellyfin`);
+        let existing = unambiguousLegacyAccount(laneAccounts, `${lane} Jellyfin`);
+        // An account is only adopted as the sticky assignment if its server can host the CURRENT plan. After an
+        // administrator deliberately deferred placement (a plan change onto a full pool), re-adopting the previous
+        // plan's server would undo that decision and leave the customer on a server the new plan cannot use.
+        if (existing) {
+            const eligible = await customerServerChoice.eligibleServers(entitlement);
+            if (!eligible.some(server => String(server.id) === String(existing.server_id))) existing = null;
+        }
         if (existing) {
             await customerServerChoice.persistAssignment(entitlement.subscription_id, existing);
             entitlement = { ...entitlement, media_server_id: existing.server_id, media_location_snapshot: customerServerChoice.locationLabel(existing.server_location) };

@@ -70,7 +70,7 @@ async function lockSubscriptionForPlanChange(client,sub,target){
   return{subscriptionId,alreadyApplied:false};
 }
 
-async function applyLocalPlanContract(sub,target){
+async function applyLocalPlanContract(sub,target,{allowOverCapacity=false,actorUserId=null}={}){
   const preferredCurrency=String(sub.currency_snapshot||sub.currency||target.currency||'GBP').trim().toUpperCase();
   const price=await planPricing.resolvePrice(target.id,preferredCurrency,{allowFallback:true});
   if(!price)throw new Error('Target plan has no active price to snapshot.');
@@ -79,13 +79,16 @@ async function applyLocalPlanContract(sub,target){
   const snapshot=planChange.contractSnapshot(pricedTarget,mapping,sub.source||'admin');
   const periodEnd=planExpiry.endForPlan(target),freeTier=planExpiry.isFreeTier(target);
   let alreadyApplied=false;
+  let capacityOverride=false;
+  let placementDeferred=false;
   let targetMediaServer=null;
   await transaction(async client=>{
     const locked=await lockSubscriptionForPlanChange(client,sub,target);
     alreadyApplied=locked.alreadyApplied;
     if(alreadyApplied)return;
 
-    await planCapacity.lockAndAssert(client,target.id,target.name||'This plan');
+    const capacityState=await planCapacity.lockAndAssert(client,target.id,target.name||'This plan',{allowSoldOut:allowOverCapacity===true});
+    capacityOverride=Boolean(allowOverCapacity===true&&capacityState?.soldOut);
 
     if(customerServerChoice.mediaServerType(target)){
       const admin=await jellyfinAdminControl.state(sub.customer_id,locked.subscriptionId,{client});
@@ -106,11 +109,22 @@ async function applyLocalPlanContract(sub,target){
           {db:(sql,params)=>client.query(sql,params)}
         );
         if(!targetMediaServer){
-          targetMediaServer=await customerServerChoice.selectServerForLocationLocked(
-            target,
-            null,
-            {db:(sql,params)=>client.query(sql,params),requireSelection:false}
-          );
+          try{
+            targetMediaServer=await customerServerChoice.selectServerForLocationLocked(
+              target,
+              null,
+              {db:(sql,params)=>client.query(sql,params),requireSelection:false}
+            );
+          }catch(error){
+            // Every server for the target plan is full and the administrator chose to override: keep the
+            // customer's current server assignment and place them afterwards with Add to server.
+            // Only a pool that exists but is full is tolerated; a pool with no eligible server is a
+            // configuration problem and still refuses the change.
+            const hasEligibleServer=allowOverCapacity===true&&error?.code==='MEDIA_LOCATION_UNAVAILABLE'
+              &&(await customerServerChoice.eligibleServers(target,{db:(sql,params)=>client.query(sql,params)})).length>0;
+            if(hasEligibleServer){capacityOverride=true;placementDeferred=true;}
+            else throw error;
+          }
         }
       }
     }
@@ -124,21 +138,23 @@ async function applyLocalPlanContract(sub,target){
           plan_price_id_snapshot=$11,provider_mapping_id_snapshot=NULL,
           provider_mapping_external_id_snapshot=NULL,current_period_end=$12,
           service_extension_days=CASE WHEN $13::boolean THEN 0 ELSE service_extension_days END,
-          media_location_preference=CASE WHEN $15::uuid IS NULL THEN media_location_preference ELSE $16 END,
-          media_server_id=CASE WHEN $15::uuid IS NULL THEN media_server_id ELSE $15 END,
-          media_location_snapshot=CASE WHEN $15::uuid IS NULL THEN media_location_snapshot ELSE $16 END,
+          media_location_preference=CASE WHEN $17::boolean THEN NULL WHEN $15::uuid IS NULL THEN media_location_preference ELSE $16 END,
+          media_server_id=CASE WHEN $17::boolean THEN NULL WHEN $15::uuid IS NULL THEN media_server_id ELSE $15 END,
+          media_location_snapshot=CASE WHEN $17::boolean THEN NULL WHEN $15::uuid IS NULL THEN media_location_snapshot ELSE $16 END,
           updated_at=NOW()
       WHERE id=$1 AND customer_id=$14 RETURNING id`,
       [locked.subscriptionId,target.id,target.name,target.code,Number(price.price_minor),
        String(price.currency).toUpperCase(),target.billing_interval,Number(target.duration_days||30),
        target.service_type,JSON.stringify(commercialSnapshot),price.id,periodEnd,freeTier,sub.customer_id,
-       targetMediaServer?.id||null,mediaLocation]);
+       targetMediaServer?.id||null,mediaLocation,placementDeferred]);
     if(!updated.rowCount)throw new Error('Subscription changed before the plan update could be applied.');
+    // The sensitive override is audited in the SAME transaction as the change, so it can never apply without a record.
+    if(capacityOverride)await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.plan_change.capacity_override','customer',$2,$3::jsonb)`,[actorUserId,String(sub.customer_id),JSON.stringify({subscriptionId:locked.subscriptionId,planId:target.id,planCode:target.code,placementDeferred})]);
   });
-  return{price,snapshot,periodEnd,freeTier,alreadyApplied,targetMediaServer};
+  return{price,snapshot,periodEnd,freeTier,alreadyApplied,targetMediaServer,capacityOverride,placementDeferred};
 }
 
-async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=null}){
+async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=null,allowOverCapacity=false}){
   const sub=await subscriptionForCustomer(customerId,subscriptionId);
   const target=await targetPlan(targetPlanId);
   if(!serviceScope.overlaps(sub,target)||!jellyfinCapable(target)){
@@ -169,7 +185,7 @@ async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=nu
     return{message:`${result.message||`Plan change to ${target.name||target.code} accepted.`}${warning}`,mode:result.mode||'provider'};
   }
 
-  const contract=await applyLocalPlanContract(sub,target);
+  const contract=await applyLocalPlanContract(sub,target,{allowOverCapacity,actorUserId});
   const warnings=[];
   try{
     await audit(actorUserId,'admin.customer.plan_change',customerId,{
@@ -177,13 +193,21 @@ async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=nu
       targetServiceType:target.service_type,currency:contract.price.currency,
       priceMinor:Number(contract.price.price_minor),contractSnapshotRefreshed:!contract.alreadyApplied,
       freeTier:contract.freeTier,providerBillingChanged:false,mode:'manual_entitlement',
-      alreadyApplied:contract.alreadyApplied
+      alreadyApplied:contract.alreadyApplied,capacityOverride:Boolean(contract.capacityOverride)
     });
   }catch(error){warnings.push(`audit logging needs review: ${clean(error.message||error,140)}`);}
   try{await provisioning.reconcileCustomer(customerId);}
   catch(error){warnings.push(`access reconciliation needs retry: ${clean(error.message||error,180)}`);}
   const suffix=warnings.length?` Warning: ${warnings.join('; ')}`:'';
-  return{message:`Subscription moved to ${target.name||target.code}.${suffix}`,mode:'manual'};
+  let overrideNote='';
+  if(contract.placementDeferred){
+    // Which follow-up is correct depends on whether the customer still has a Jellyfin account from their previous plan.
+    const current=(await query(`SELECT js.name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND COALESCE(ja.account_purpose,'jellyfin')='jellyfin' ORDER BY ja.is_primary DESC NULLS LAST LIMIT 1`,[customerId]).catch(()=>({rows:[]}))).rows[0];
+    overrideNote=current
+      ?` The new plan's servers are full, so this was applied as an administrator capacity override. The customer keeps their account on ${current.name} until you use Move server on the Jellyfin card (Move also overrides capacity).`
+      :' The plan was full, so this was applied as an administrator capacity override and the customer has no server for it yet. Use Add to server on the Jellyfin card to place them.';
+  }else if(contract.capacityOverride)overrideNote=' The plan was full, so this was applied as an administrator capacity override.';
+  return{message:`Subscription moved to ${target.name||target.code}.${overrideNote}${suffix}`,mode:'manual'};
 }
 
 
