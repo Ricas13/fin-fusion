@@ -15,6 +15,7 @@ const operatorRefund = require('../src/payments/operator-refund');
 const { historyKind } = require('../src/payments/provider-transaction-classifier');
 const financialState = require('../src/payments/provider-financial-state');
 const referrals = require('../src/referrals');
+const incidentsModule = require('../src/payments/incidents');
 const { unique, fixtureCustomer, fixturePlan, fixtureSubscription } = require('./test-fixture');
 
 const created = { customers: [], plans: [] };
@@ -99,6 +100,40 @@ async function main() {
     assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE customer_id=$1`, [retryCustomer.id])).rows[0].n, 1, 'one ledger entry after the retries');
     assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_incidents WHERE customer_id=$1 AND incident_type='refund'`, [retryCustomer.id])).rows[0].n, 1, 'one refund incident after the retries');
     await assert.rejects(() => operatorRefund.record({ ...retryBase, amount: '2.00', submissionId: sid() }), /more than the plan cost/i, 'failed attempts do not count, but the completed 9.00 does');
+
+    // A submission id is bound to what it was first used for: a failed 4.00 partial refund cannot be
+    // resumed as a 9.00 full refund under the old id.
+    const bindCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Bind', email: `${unique('refund-bind')}@example.invalid` });
+    created.customers.push(bindCustomer.id);
+    const bindSub = await fixtureSubscription({ query }, { customerId: bindCustomer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-bind') });
+    const bindBase = { customerId: bindCustomer.id, subscriptionId: bindSub.id, reason: 'Refunded in the Plisio dashboard after a duplicate payment' };
+    const boundId = sid();
+    const keepRecord = financialState.recordTransaction;
+    try {
+      financialState.recordTransaction = async () => { throw new Error('simulated ledger failure'); };
+      await assert.rejects(() => operatorRefund.record({ ...bindBase, amount: '4.00', full: false, submissionId: boundId }), /only partly recorded/i);
+    } finally { financialState.recordTransaction = keepRecord; }
+    await assert.rejects(() => operatorRefund.record({ ...bindBase, amount: '9.00', full: true, submissionId: boundId }), /already used for a different refund/i, 'a reused submission id cannot change the amount or type');
+    await assert.rejects(() => operatorRefund.record({ ...bindBase, amount: '4.00', full: false, reason: 'A completely different reason text', submissionId: boundId }), /different refund/i, 'nor the reason');
+    assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [bindSub.id])).rows[0].status, 'active', 'the plan was not ended by the rejected mismatch');
+    // The failed attempt already persisted a refund incident, so that 4.00 still counts toward the cap.
+    await assert.rejects(() => operatorRefund.record({ ...bindBase, amount: '7.00', reason: 'A different refund entirely, same plan', submissionId: sid() }), /more than the plan cost/i, 'a failed attempt that left a durable effect still counts toward the cap');
+    // The same amount and reason (new form id) resumes it and completes.
+    const bound = await operatorRefund.record({ ...bindBase, amount: '4.00', full: false, submissionId: sid() });
+    assert.strictEqual(bound.resumed, true);
+
+    // A failed attempt that left NO durable effect does not hold any of the cap.
+    const cleanCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Clean', email: `${unique('refund-clean')}@example.invalid` });
+    created.customers.push(cleanCustomer.id);
+    const cleanSub = await fixtureSubscription({ query }, { customerId: cleanCustomer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-clean') });
+    const cleanBase = { customerId: cleanCustomer.id, subscriptionId: cleanSub.id };
+    const keepIncident = incidentsModule.record;
+    try {
+      incidentsModule.record = async () => { throw new Error('simulated incident failure'); };
+      await assert.rejects(() => operatorRefund.record({ ...cleanBase, amount: '9.00', reason: 'First try which fails before any effect', submissionId: sid() }), /only partly recorded/i);
+    } finally { incidentsModule.record = keepIncident; }
+    const second = await operatorRefund.record({ ...cleanBase, amount: '9.00', reason: 'Second try with a different reason text', submissionId: sid() });
+    assert.strictEqual(second.resumed, false, 'a different refund is a new one and is not blocked by an attempt that changed nothing');
 
     // Only the two supported shapes are accepted.
     const odd = await fixtureSubscription({ query }, { customerId: raceCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual', providerSubscriptionId: unique('some-provider-ref') });

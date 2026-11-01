@@ -63,29 +63,43 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
             SELECT
               EXISTS(SELECT 1 FROM audit_log WHERE action='billing.refund.recorded_externally_completed' AND metadata->>'submissionId'=$1) AS completed,
               EXISTS(SELECT 1 FROM audit_log WHERE action='billing.refund.recorded_externally_failed' AND metadata->>'submissionId'=$1) AS failed,
-              (SELECT MAX(created_at) FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1) AS attempted_at`, [sid]);
+              (SELECT MAX(created_at) FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1) AS attempted_at,
+              (SELECT metadata->>'fingerprint' FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at LIMIT 1) AS fingerprint,
+              (SELECT metadata->>'eventId' FROM audit_log WHERE action='billing.refund.recorded_externally' AND metadata->>'submissionId'=$1 ORDER BY created_at LIMIT 1) AS event_id`, [sid]);
         const row = own.rows[0];
         if (row.completed) throw new Error('This refund was already recorded.');
-        if (row.attempted_at && !row.failed && Date.now() - new Date(row.attempted_at).getTime() < 5 * 60 * 1000) throw new Error('This refund is already being recorded. Wait a moment and reload.');
-        if (row.attempted_at) return { resume: true, submission: sid, eventId };
+        if (row.attempted_at) {
+            // A submission id is bound to the plan, amount, type and reason it was first used with.
+            if (row.fingerprint !== fingerprint) throw new Error('This form was already used for a different refund. Reload the page to start a new one.');
+            if (!row.failed && Date.now() - new Date(row.attempted_at).getTime() < 5 * 60 * 1000) throw new Error('This refund is already being recorded. Wait a moment and reload.');
+            return { resume: true, submission: sid, eventId: row.event_id || eventId };
+        }
 
         // A failed earlier attempt with the same plan, amount and reason is resumed rather than repeated.
         const earlier = await client.query(`
             SELECT a.metadata->>'submissionId' AS submission_id, a.metadata->>'eventId' AS event_id
             FROM audit_log a
             WHERE a.action='billing.refund.recorded_externally' AND a.entity_id=$1 AND a.metadata->>'fingerprint'=$2
-              AND EXISTS(SELECT 1 FROM audit_log f WHERE f.action='billing.refund.recorded_externally_failed' AND f.metadata->>'submissionId'=a.metadata->>'submissionId')
+              AND (EXISTS(SELECT 1 FROM audit_log f WHERE f.action='billing.refund.recorded_externally_failed' AND f.metadata->>'submissionId'=a.metadata->>'submissionId')
+                   OR a.created_at < NOW()-INTERVAL '5 minutes')
               AND NOT EXISTS(SELECT 1 FROM audit_log c WHERE c.action='billing.refund.recorded_externally_completed' AND c.metadata->>'submissionId'=a.metadata->>'submissionId')
             ORDER BY a.created_at DESC LIMIT 1`, [String(sub.id), fingerprint]);
         if (earlier.rowCount) return { resume: true, submission: earlier.rows[0].submission_id, eventId: earlier.rows[0].event_id };
 
-        const priorAudit = Number((await client.query(`
-            SELECT COALESCE(SUM((a.metadata->>'amountMinor')::bigint),0) AS n
-            FROM audit_log a
-            WHERE a.entity_id=$1 AND a.action='billing.refund.recorded_externally'
-              AND NOT (
-                EXISTS(SELECT 1 FROM audit_log f WHERE f.action='billing.refund.recorded_externally_failed' AND f.metadata->>'submissionId'=a.metadata->>'submissionId')
-                AND NOT EXISTS(SELECT 1 FROM audit_log c WHERE c.action='billing.refund.recorded_externally_completed' AND c.metadata->>'submissionId'=a.metadata->>'submissionId'))`, [String(sub.id)])).rows[0].n);
+        // Attempts that are completed or still in flight count. A FAILED attempt counts only if it left a durable
+        // financial effect (a refund incident or a ledger entry), because that money is already recorded as refunded.
+        const attempts = (await client.query(`
+            SELECT a.metadata->>'eventId' AS event_id,(a.metadata->>'amountMinor')::bigint AS amount,
+                   (EXISTS(SELECT 1 FROM audit_log f WHERE f.action='billing.refund.recorded_externally_failed' AND f.metadata->>'submissionId'=a.metadata->>'submissionId')
+                    AND NOT EXISTS(SELECT 1 FROM audit_log c WHERE c.action='billing.refund.recorded_externally_completed' AND c.metadata->>'submissionId'=a.metadata->>'submissionId')) AS failed
+            FROM audit_log a WHERE a.entity_id=$1 AND a.action='billing.refund.recorded_externally'`, [String(sub.id)])).rows;
+        let priorAudit = 0;
+        for (const attempt of attempts) {
+            if (!attempt.failed) { priorAudit += Number(attempt.amount || 0); continue; }
+            const incident = (await client.query(`SELECT 1 FROM payment_incidents WHERE provider='plisio' AND provider_event_id=$1 LIMIT 1`, [attempt.event_id])).rowCount > 0;
+            // The incident is always written before the ledger entry, so it is enough to detect any durable effect.
+            if (incident) priorAudit += Number(attempt.amount || 0);
+        }
         const priorIncidents = plisioBacked ? Number((await client.query(`SELECT COALESCE(SUM(amount_minor),0) AS n FROM payment_incidents WHERE provider='plisio' AND provider_subscription_id=$1 AND incident_type='refund' AND provider_event_id NOT LIKE 'operator-refund:%'`, [providerRef])).rows[0].n) : 0;
         const alreadyRefunded = priorAudit + priorIncidents;
         if (Number(sub.price_minor) > 0 && alreadyRefunded + minor > Number(sub.price_minor)) {
@@ -138,7 +152,7 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
         // same amount and reason. The administrator is told exactly that.
         await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally_failed','subscription',$2,$3::jsonb)`,
             [actorUserId, sub.id, JSON.stringify({ submissionId: submission, eventId, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
-        const failure = new Error(`The refund was only partly recorded (${String(error.message || 'unexpected error').slice(0, 150)}). Submit the same amount and reason again to finish it; nothing is repeated or double counted.`);
+        const failure = new Error(`The refund was only partly recorded (${String(error.message || 'unexpected error').slice(0, 150)}). Submit the same amount and reason again to finish it; steps that already completed are not repeated.`);
         failure.cause = error;
         throw failure;
     }
