@@ -13,6 +13,7 @@ if (skipIfNoDatabase('playback history accuracy DB smoke')) process.exit(0);
 const { query, getPool } = require('../src/db');
 const registry = require('../src/jellyfin/registry');
 const activity = require('../src/jellyfin/activity');
+const webhook = require('../src/jellyfin/playback-webhook');
 const { unique, fixtureCustomer } = require('./test-fixture');
 
 const created = { customers: [], servers: [] };
@@ -96,6 +97,38 @@ async function main() {
   assert.strictEqual(e.ended_reason, 'stale_session', 'a long-silent, motionless session is closed as stale');
   assert(e.ended_at, 'and it is ended');
   assert(Number(e.seconds) < 8 * 3600 - 9 * 60, `it must not keep accruing while Jellyfin lists it (${Math.round(e.seconds / 60)} min)`);
+  // 5. A session that resumes after being closed as stale is a NEW period of watching: the earlier period
+  //    stays as its own finished row and the live row restarts, so the idle gap is never counted as watch time.
+  const resumed = jellyfinSession({ id: `se-${tag}`, userId: jfUser, itemId: itemE, ticks: 600000000, playSessionId: 'ps-e', lastActivity: new Date() });
+  registry.request = async () => [resumed];
+  await activity.runActivityPolicyCycle();
+  const segments = (await query(`SELECT playback_key,started_at,ended_at,ended_reason,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)) AS seconds FROM playback_history WHERE server_id=$1 AND item_id=$2 ORDER BY started_at`, [server, itemE])).rows;
+  assert.strictEqual(segments.length, 2, 'the resumed play becomes a second period, the first one is kept');
+  assert(segments[0].playback_key.includes(':seg:') && segments[0].ended_reason === 'stale_session', 'the earlier period is archived as finished');
+  assert(Number(segments[0].seconds) < 8 * 3600 - 9 * 60, 'and does not span the idle gap');
+  assert(!segments[1].ended_at && Number(segments[1].seconds) < 60, 'the live period starts fresh at the resume, not at the original start');
+
+  // 6. A ghost session: Jellyfin keeps listing it, nothing moves and nothing is reported. It may earn
+  //    watch time only up to the unreported-credit allowance (default 2 hours) after its last activity.
+  const itemG = `item-g-${tag}`;
+  const ghost = jellyfinSession({ id: `sg-${tag}`, userId: jfUser, itemId: itemG, ticks: 7, playSessionId: 'ps-g', lastActivity: new Date(Date.now() - 4 * 3600 * 1000) });
+  registry.request = async (_id, path) => (String(path).includes('activeWithinSeconds') ? [] : [ghost]);
+  await activity.runActivityPolicyCycle();
+  await activity.runActivityPolicyCycle();
+  const g = await row(itemG);
+  assert(Number(g.seconds) <= 60, `a brand-new ghost session earns nothing beyond its last activity (${g.seconds}s)`);
+  await query(`UPDATE playback_history SET started_at=NOW()-INTERVAL '4 hours' WHERE server_id=$1 AND item_id=$2`, [server, itemG]);
+  await activity.runActivityPolicyCycle();
+  const g2 = await row(itemG);
+  assert(Number(g2.seconds) <= 2 * 3600 + 60, `a ghost session earns at most the 2 hour allowance, not the 4 hours it was listed (${Math.round(g2.seconds / 60)} min)`);
+  assert(Number(g2.seconds) >= 2 * 3600 - 120, `and it does receive the allowance (${Math.round(g2.seconds / 60)} min)`);
+
+  // 7. A webhook-only start is recorded as having no progress reports (not left unlabelled).
+  registry.request = async () => [];
+  const itemH = `item-h-${tag}`;
+  const started = await webhook.ingest(server, { NotificationType: 'PlaybackStart', UserId: jfUser, ItemId: itemH, Name: 'Webhook only', ItemType: 'Movie', ClientName: 'Moonfin', DeviceName: 'TV', PlayMethod: 'DirectPlay', PlaybackPositionTicks: 0 });
+  assert.strictEqual(started.recorded, true, 'the webhook start is recorded');
+  assert.strictEqual((await row(itemH)).progress_reported, false, 'a webhook start with no progress is flagged false, not NULL');
 }
 
 main()

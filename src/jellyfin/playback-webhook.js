@@ -150,8 +150,8 @@ async function upsertStart(serverId, account, payload, at) {
         await client.query(`
             INSERT INTO playback_history(
                 server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-                client_name,device_name,playback_method,started_at,last_seen_at,access_lane_snapshot
-            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                client_name,device_name,playback_method,started_at,last_seen_at,access_lane_snapshot,progress_reported
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,FALSE)
             ON CONFLICT(server_id,playback_key) DO UPDATE SET
                 last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
                 playback_method=EXCLUDED.playback_method

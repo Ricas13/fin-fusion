@@ -29,6 +29,10 @@ function config() {
         // A session Jellyfin still lists but that has shown no activity and no movement for this long
         // is treated as abandoned: it stops accruing watch time and is closed.
         staleSessionSeconds: intEnv('STREAM_POLICY_STALE_SESSION_HOURS', 6, 1, 48) * 3600,
+        // How long after its last reported activity a still-listed, motionless, unpaused session may keep
+        // earning watch time. It covers a client that only reports the start (a whole film is credited),
+        // but a ghost session that Jellyfin keeps listing can never earn more than this.
+        unreportedCreditSeconds: intEnv('STREAM_POLICY_UNREPORTED_CREDIT_MINUTES', 120, 5, 720) * 60,
         confirmationsRequired: intEnv('STREAM_POLICY_CONFIRMATIONS', 2, 2, 10),
         countPaused: process.env.STREAM_POLICY_COUNT_PAUSED === 'true',
         historyRetentionDays: intEnv('ACTIVITY_RETENTION_DAYS', 90, 7, 3650),
@@ -157,8 +161,36 @@ async function managedAccountsByServer() {
     return byServer;
 }
 
+// A play that was closed and then comes back after a real pause is a NEW period of watching. The
+// earlier period is kept as its own finished row; the live row restarts at the new observation.
+// Without this the idle gap between the two would be counted as watch time.
+const RESUME_SEGMENT_GAP_SECONDS = 300;
+
 async function upsertHistorySession(s, seenAt = new Date(), progressReported = false) {
     const observedAt = seenAt instanceof Date && Number.isFinite(seenAt.getTime()) ? seenAt : new Date();
+    await query(`
+        WITH old AS (
+            SELECT * FROM playback_history
+            WHERE server_id=$1 AND playback_key=$2 AND ended_at IS NOT NULL
+              AND $3::timestamptz > ended_at + ($4::int * INTERVAL '1 second')
+            FOR UPDATE
+        ), archived AS (
+            INSERT INTO playback_history(
+                server_id,customer_id,jellyfin_account_id,jellyfin_user_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
+                client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+            )
+            SELECT server_id,customer_id,jellyfin_account_id,jellyfin_user_id,
+                   playback_key||':seg:'||(EXTRACT(EPOCH FROM ended_at)::bigint)::text,
+                   jellyfin_session_id,item_id,item_name,item_type,client_name,device_name,playback_method,transcode_reasons,
+                   started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+            FROM old
+            ON CONFLICT (server_id,playback_key) DO NOTHING
+            RETURNING 1
+        )
+        UPDATE playback_history ph
+        SET started_at=$3::timestamptz,last_seen_at=$3::timestamptz,ended_at=NULL,ended_reason=NULL,progress_reported=FALSE
+        FROM old WHERE ph.id=old.id
+    `, [s.serverId, s.playbackKey, observedAt, RESUME_SEGMENT_GAP_SECONDS]);
     await query(`
         INSERT INTO playback_history(
             server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
@@ -329,9 +361,15 @@ async function pollServer(serverId, accounts, entitlements, cfg) {
             // row keeps the last time it was genuinely active and is closed as stale.
             await closeStaleSession(normalized);
         } else {
-            const pausedAt = normalized.isPaused && normalized.lastActivityAt instanceof Date && Number.isFinite(normalized.lastActivityAt.getTime())
-                ? normalized.lastActivityAt
-                : new Date();
+            const lastActive = normalized.lastActivityAt instanceof Date && Number.isFinite(normalized.lastActivityAt.getTime()) ? normalized.lastActivityAt : null;
+            // Paused: time stops at the last activity. Listed but silent and motionless: it keeps earning only
+            // up to the unreported-credit allowance after the last activity, so a session Jellyfin keeps
+            // listing cannot accrue unlimited watch time.
+            const pausedAt = lastActive && normalized.isPaused
+                ? lastActive
+                : lastActive
+                    ? new Date(Math.min(Date.now(), lastActive.getTime() + cfg.unreportedCreditSeconds * 1000))
+                    : new Date();
             await upsertHistorySession(normalized, pausedAt, moved);
         }
     }
