@@ -252,13 +252,13 @@ function createAdminBillingRouter() {
             // The attempt is recorded before the provider is contacted. If the audit row cannot be
             // written nothing runs, so a payment recovery never happens without a trail.
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.recheck','billing_checkout_intent',$2,'{}'::jsonb)`, [actor, id]);
-            const summary = await providerCheckoutRecovery.run({ limit: 1, checkoutIntentIds: [id] });
+            const summary = await providerCheckoutRecovery.run({ limit: 1, checkoutIntentIds: [id], ignoreLookback: true });
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.recheck_result','billing_checkout_intent',$2,$3::jsonb)`,
                 [actor, id, JSON.stringify({ total: summary.total, recovered: summary.recovered, waiting: summary.waiting, terminal: summary.terminal, failed: summary.failed })]);
             // "failed" covers any error in the recovery run (provider unreachable, a timeout, or a completed
             // invoice whose amount could not be verified), so the wording must not claim Plisio reported a payment.
             const detail = String(summary.failures?.[0]?.error || '').slice(0, 200);
-            const message = !summary.total ? 'This checkout is outside the recovery window or already settled; nothing to re-check.'
+            const message = !summary.total ? 'Nothing to re-check: this checkout is already settled, or Plisio is not configured.'
                 : summary.recovered ? 'Payment confirmed with the provider and access activated.'
                 : summary.failed ? `The re-check could not confirm this checkout${detail ? ` (${detail})` : ''}. Confirm its status directly in the Plisio dashboard (transaction ID and amount) before making any manual change; Grant plan manually on the customer page records who granted it and why.`
                 : summary.terminal ? 'Plisio reports this invoice as expired or cancelled; access was not activated.'
@@ -300,7 +300,7 @@ function createAdminBillingRouter() {
         try {
             const actor = req.session?.authUserId || null;
             if (!await claimCheckout(id, 'dismissed', actor, reason, 'billing.checkout.dismissed')) return res.redirect(back + '?error=' + encodeURIComponent('That checkout cannot be dismissed: it is still inside its payment window, already settled, closed by the provider or already dismissed.'));
-            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If a Plisio payment callback or the customer confirmation arrives later, access still activates. Automatic re-checking only continues for 7 days after the checkout was created.'));
+            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If a Plisio payment callback or the customer confirmation arrives later, access still activates. Automatic re-checking continues for 90 days after the checkout was created (daily after the first week).'));
         } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Checkout could not be dismissed.')); }
     });
     // Finish a payment that was only partly recorded (or whose request died part-way). It re-runs the same

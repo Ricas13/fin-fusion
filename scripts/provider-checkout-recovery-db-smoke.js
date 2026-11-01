@@ -300,7 +300,19 @@ async function main() {
     assert(!afterIds.has(plisioRecovered.id), 'completed Plisio checkouts must not be polled');
     assert(!afterIds.has(plisioTerminal.id), 'provider-terminal expired Plisio checkouts must not be polled');
     assert(afterIds.has(plisioUnverifiable.id), 'recently failed (e.g. underpaid) Plisio checkouts stay eligible for a top-up');
-    assert(!afterIds.has(plisioWaiting.id), 'Plisio checkouts older than the lookback must not be polled');
+    assert(!afterIds.has(plisioWaiting.id), 'an aged unresolved Plisio checkout that was just checked is not polled again straight away');
+
+    // Beyond the fast 7-day window an unresolved invoice is still checked, once a day, up to 90 days.
+    await query(`UPDATE billing_checkout_intents SET updated_at=NOW()-INTERVAL '2 days' WHERE id=$1`, [plisioWaiting.id]);
+    assert((new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(plisioWaiting.id), 'a 10-day-old unresolved Plisio checkout is checked again once a day');
+    const agedRun = await recovery.run({ limit: 100, checkoutIntentIds: [plisioWaiting.id], handlers: { async plisio() { return { status: 'pending', completed: false, waiting: true }; } } });
+    assert.strictEqual(agedRun.waiting, 1);
+    assert(!(new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(plisioWaiting.id), 'and after being checked it waits until tomorrow');
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '100 days',updated_at=NOW()-INTERVAL '2 days' WHERE id=$1`, [plisioWaiting.id]);
+    assert(!(new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(plisioWaiting.id), 'automatic checking stops after 90 days');
+    assert.strictEqual((await recovery.candidates({ limit: 100, checkoutIntentIds: [plisioWaiting.id] })).length, 0, 'a scoped request without the override still respects the windows');
+    assert.strictEqual((await recovery.candidates({ limit: 100, checkoutIntentIds: [plisioWaiting.id], ignoreLookback: true })).length, 1, 'an operator re-check of one named checkout ignores every age window');
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '10 days' WHERE id=$1`, [plisioWaiting.id]);
     await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '3 days' WHERE id=$1`, [plisioUnverifiable.id]);
     assert(!(new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(plisioUnverifiable.id),
         'failed Plisio checkouts stop being re-polled after 48 hours');
@@ -346,6 +358,19 @@ async function main() {
         const pendingOutcome = await plisio.confirmCheckout(pending.providerCheckoutId, await intents.findById(pending.id));
         assert.strictEqual(pendingOutcome.completed, false);
         assert.strictEqual(pendingOutcome.waiting, true);
+
+        // Old invoices clear themselves: a 40-day-old unresolved invoice that Plisio reports as expired is closed by
+        // the ordinary worker (no operator involved), and one that Plisio reports as paid is activated.
+        const agedExpired = await attachedIntent('recovery plisio aged expired', 'plisio', `PLISIO-${unique('agedexpired')}`, null, 'payment', server);
+        const agedPaid = await attachedIntent('recovery plisio aged paid', 'plisio', `PLISIO-${unique('agedpaid')}`, null, 'payment', server);
+        remote.set(agedExpired.providerCheckoutId, { ...realShape(agedExpired.providerCheckoutId), status: 'expired' });
+        remote.set(agedPaid.providerCheckoutId, realShape(agedPaid.providerCheckoutId));
+        await query(`UPDATE billing_checkout_intents SET state='open',created_at=NOW()-INTERVAL '40 days',updated_at=NOW()-INTERVAL '3 days' WHERE id=ANY($1::uuid[])`, [[agedExpired.id, agedPaid.id]]);
+        const agedRunAll = await recovery.run({ limit: 100 });
+        assert(agedRunAll.terminal >= 1 && agedRunAll.recovered >= 1, 'the daily check of old invoices closes an expired one and activates a paid one automatically');
+        const agedExpiredRow = await stateOf(agedExpired.id), agedPaidRow = await stateOf(agedPaid.id);
+        assert(agedExpiredRow.provider_terminal_at, 'the expired invoice is marked closed by the provider, so it leaves the exception queue');
+        assert.strictEqual(agedPaidRow.state, 'completed', 'the paid old invoice is completed and access is activated');
     } finally {
         global.fetch = realFetch;
     }
