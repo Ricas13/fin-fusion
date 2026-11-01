@@ -22,7 +22,7 @@ const realRequest = registry.request;
 
 function jellyfinSession({ id, userId, itemId, name = 'Movie', ticks = 0, paused = false, playSessionId = 'ps-1', lastActivity = new Date() }) {
   return { Id: id, UserId: userId, Client: 'TestClient', DeviceName: 'TV', NowPlayingItem: { Id: itemId, Name: name, Type: 'Movie' },
-    PlayState: { PositionTicks: ticks, IsPaused: paused, PlayMethod: 'DirectPlay', PlaySessionId: playSessionId }, LastActivityDate: lastActivity.toISOString() };
+    PlayState: { PositionTicks: ticks, IsPaused: paused, PlayMethod: 'DirectPlay', PlaySessionId: playSessionId }, ...(lastActivity ? { LastActivityDate: lastActivity.toISOString() } : {}) };
 }
 
 async function row(playbackKeyLike) {
@@ -129,6 +129,30 @@ async function main() {
   const started = await webhook.ingest(server, { NotificationType: 'PlaybackStart', UserId: jfUser, ItemId: itemH, Name: 'Webhook only', ItemType: 'Movie', ClientName: 'Moonfin', DeviceName: 'TV', PlayMethod: 'DirectPlay', PlaybackPositionTicks: 0 });
   assert.strictEqual(started.recorded, true, 'the webhook start is recorded');
   assert.strictEqual((await row(itemH)).progress_reported, false, 'a webhook start with no progress is flagged false, not NULL');
+  // 8. A listed session with NO usable activity timestamp is recorded on first sight but never extended,
+  //    so it cannot earn watch time just by still being listed.
+  const itemK = `item-k-${tag}`;
+  const noStamp = jellyfinSession({ id: `sk-${tag}`, userId: jfUser, itemId: itemK, ticks: 3, playSessionId: 'ps-k', lastActivity: null });
+  registry.request = async (_id, path) => (String(path).includes('activeWithinSeconds') ? [] : [noStamp]);
+  await activity.runActivityPolicyCycle();
+  await query(`UPDATE playback_history SET started_at=NOW()-INTERVAL '5 hours',last_seen_at=NOW()-INTERVAL '5 hours' WHERE server_id=$1 AND item_id=$2`, [server, itemK]);
+  await activity.runActivityPolicyCycle();
+  await activity.runActivityPolicyCycle();
+  const k = await row(itemK);
+  assert(Number(k.seconds) < 60, `a session with no activity timestamp must not accrue while merely listed (${Math.round(k.seconds / 60)} min)`);
+
+  // 9. A short interruption (over two minutes) is also a new period, not watch time.
+  const itemJ = `item-j-${tag}`;
+  const keyJ = require('crypto').createHash('sha256').update(`${server}|sj-${tag}|ps-j|${itemJ}`).digest('hex');
+  await query(`INSERT INTO playback_history(server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,client_name,device_name,playback_method,started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot)
+    SELECT $1,$2,ja.id,$3,$4,$5,'Interrupted','TestClient','TV','directplay',NOW()-INTERVAL '13 minutes',NOW()-INTERVAL '3 minutes',NOW()-INTERVAL '3 minutes','webhook_stop','primary' FROM jellyfin_accounts ja WHERE ja.server_id=$1 AND ja.customer_id=$2`,
+    [server, customer.id, keyJ, `sj-${tag}`, itemJ]);
+  const back = jellyfinSession({ id: `sj-${tag}`, userId: jfUser, itemId: itemJ, ticks: 900000000, playSessionId: 'ps-j', lastActivity: new Date() });
+  registry.request = async () => [back];
+  await activity.runActivityPolicyCycle();
+  const parts = (await query(`SELECT playback_key,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)) AS seconds FROM playback_history WHERE server_id=$1 AND item_id=$2 ORDER BY started_at`, [server, itemJ])).rows;
+  assert.strictEqual(parts.length, 2, 'a 3 minute interruption starts a new period');
+  assert(Number(parts[0].seconds) <= 10 * 60 + 5 && Number(parts[1].seconds) < 60, 'the 3 minute gap is not counted as watching');
 }
 
 main()

@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { getPool, query } = require('../db');
+const { getPool, query, transaction } = require('../db');
 const { encryptString } = require('../crypto');
 const registry = require('./registry');
 
@@ -164,51 +164,60 @@ async function managedAccountsByServer() {
 // A play that was closed and then comes back after a real pause is a NEW period of watching. The
 // earlier period is kept as its own finished row; the live row restarts at the new observation.
 // Without this the idle gap between the two would be counted as watch time.
-const RESUME_SEGMENT_GAP_SECONDS = 300;
+// Shorter than Jellyfin's own active window (120 s) so a normal pause-and-resume is one play, but any real
+// interruption starts a new period rather than being counted as watching.
+const RESUME_SEGMENT_GAP_SECONDS = 120;
 
-async function upsertHistorySession(s, seenAt = new Date(), progressReported = false) {
+// `advance=false` records the first observation of a play but never moves last_seen_at forward for an
+// existing row. It is used when a session carries no usable activity timestamp, so such a session cannot
+// earn watch time just by still being listed.
+async function upsertHistorySession(s, seenAt = new Date(), progressReported = false, { advance = true } = {}) {
     const observedAt = seenAt instanceof Date && Number.isFinite(seenAt.getTime()) ? seenAt : new Date();
-    await query(`
-        WITH old AS (
-            SELECT * FROM playback_history
-            WHERE server_id=$1 AND playback_key=$2 AND ended_at IS NOT NULL
-              AND $3::timestamptz > ended_at + ($4::int * INTERVAL '1 second')
-            FOR UPDATE
-        ), archived AS (
-            INSERT INTO playback_history(
-                server_id,customer_id,jellyfin_account_id,jellyfin_user_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-                client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+    // The archive/restart and the upsert are one atomic step so a concurrent webhook cannot interleave.
+    await transaction(async client => {
+        await client.query(`
+            WITH old AS (
+                SELECT * FROM playback_history
+                WHERE server_id=$1 AND playback_key=$2 AND ended_at IS NOT NULL
+                  AND $3::timestamptz > ended_at + ($4::int * INTERVAL '1 second')
+                FOR UPDATE
+            ), archived AS (
+                INSERT INTO playback_history(
+                    server_id,customer_id,jellyfin_account_id,jellyfin_user_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
+                    client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+                )
+                SELECT server_id,customer_id,jellyfin_account_id,jellyfin_user_id,
+                       playback_key||':seg:'||(EXTRACT(EPOCH FROM ended_at)::bigint)::text,
+                       jellyfin_session_id,item_id,item_name,item_type,client_name,device_name,playback_method,transcode_reasons,
+                       started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+                FROM old
+                ON CONFLICT (server_id,playback_key) DO NOTHING
+                RETURNING 1
             )
-            SELECT server_id,customer_id,jellyfin_account_id,jellyfin_user_id,
-                   playback_key||':seg:'||(EXTRACT(EPOCH FROM ended_at)::bigint)::text,
-                   jellyfin_session_id,item_id,item_name,item_type,client_name,device_name,playback_method,transcode_reasons,
-                   started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+            UPDATE playback_history ph
+            SET started_at=$3::timestamptz,last_seen_at=$3::timestamptz,ended_at=NULL,ended_reason=NULL,progress_reported=FALSE
             FROM old
-            ON CONFLICT (server_id,playback_key) DO NOTHING
-            RETURNING 1
-        )
-        UPDATE playback_history ph
-        SET started_at=$3::timestamptz,last_seen_at=$3::timestamptz,ended_at=NULL,ended_reason=NULL,progress_reported=FALSE
-        FROM old WHERE ph.id=old.id
-    `, [s.serverId, s.playbackKey, observedAt, RESUME_SEGMENT_GAP_SECONDS]);
-    await query(`
-        INSERT INTO playback_history(
-            server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-            client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,access_lane_snapshot,progress_reported
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13,$14,$15)
-        ON CONFLICT(server_id,playback_key) DO UPDATE SET
-            customer_id=EXCLUDED.customer_id,
-            jellyfin_account_id=EXCLUDED.jellyfin_account_id,
-            last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
-            playback_method=EXCLUDED.playback_method,
-            transcode_reasons=EXCLUDED.transcode_reasons,
-            progress_reported=COALESCE(playback_history.progress_reported,FALSE) OR EXCLUDED.progress_reported,
-            ended_at=NULL,
-            ended_reason=NULL
-    `, [
-        s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
-        s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null,Boolean(progressReported)
-    ]);
+            WHERE ph.id=old.id AND EXISTS (SELECT 1 FROM archived)
+        `, [s.serverId, s.playbackKey, observedAt, RESUME_SEGMENT_GAP_SECONDS]);
+        await client.query(`
+            INSERT INTO playback_history(
+                server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
+                client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,access_lane_snapshot,progress_reported
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$13,$14,$15)
+            ON CONFLICT(server_id,playback_key) DO UPDATE SET
+                customer_id=EXCLUDED.customer_id,
+                jellyfin_account_id=EXCLUDED.jellyfin_account_id,
+                last_seen_at=CASE WHEN $16::boolean THEN GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at) ELSE playback_history.last_seen_at END,
+                playback_method=EXCLUDED.playback_method,
+                transcode_reasons=EXCLUDED.transcode_reasons,
+                progress_reported=COALESCE(playback_history.progress_reported,FALSE) OR EXCLUDED.progress_reported,
+                ended_at=NULL,
+                ended_reason=NULL
+        `, [
+            s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
+            s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null,Boolean(progressReported),Boolean(advance)
+        ]);
+    });
 }
 
 async function upsertObservedSession(s) {
@@ -363,14 +372,14 @@ async function pollServer(serverId, accounts, entitlements, cfg) {
         } else {
             const lastActive = normalized.lastActivityAt instanceof Date && Number.isFinite(normalized.lastActivityAt.getTime()) ? normalized.lastActivityAt : null;
             // Paused: time stops at the last activity. Listed but silent and motionless: it keeps earning only
-            // up to the unreported-credit allowance after the last activity, so a session Jellyfin keeps
-            // listing cannot accrue unlimited watch time.
+            // up to the unreported-credit allowance after the last activity. With NO usable activity timestamp
+            // there is nothing to measure from, so the play is recorded on first sight but never extended.
             const pausedAt = lastActive && normalized.isPaused
                 ? lastActive
                 : lastActive
                     ? new Date(Math.min(Date.now(), lastActive.getTime() + cfg.unreportedCreditSeconds * 1000))
                     : new Date();
-            await upsertHistorySession(normalized, pausedAt, moved);
+            await upsertHistorySession(normalized, pausedAt, moved, { advance: Boolean(lastActive) });
         }
     }
 
