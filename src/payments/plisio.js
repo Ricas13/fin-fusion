@@ -374,6 +374,9 @@ async function activateCompleted(remote, fields, intent, { attestation = null } 
     await intents.completeVerifiedProvider('plisio', fields.id, 'completed');
     // An administrator may have dismissed this checkout as abandoned before the customer paid it.
     // The payment is honoured; the dismissal is annotated so the record is not contradictory.
+    // Whatever completed this checkout (callback, customer confirmation, recovery or the operator), a pending
+    // "needs attention" flag from a partly recorded manual payment is now resolved.
+    await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid' WHERE id=$1 AND operator_resolution='marked_paid_review'`, [intent.id]);
     const late = await query(`UPDATE billing_checkout_intents SET operator_resolution_note=LEFT(COALESCE(operator_resolution_note,'')||' [Provider later confirmed payment; access activated.]',700)
         WHERE id=$1 AND operator_resolution='dismissed' RETURNING id`, [intent.id]);
     if (late.rowCount) {

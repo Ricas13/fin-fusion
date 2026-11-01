@@ -453,12 +453,23 @@ async function recordTransaction(input) {
           ELSE COALESCE(EXCLUDED.provider_source_id,payment_history_transactions.provider_source_id)
         END,
         customer_id=COALESCE(payment_history_transactions.customer_id,EXCLUDED.customer_id),
-        metadata=COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
+        metadata=(
+          COALESCE(payment_history_transactions.metadata,'{}'::jsonb)
           ||COALESCE(EXCLUDED.metadata,'{}'::jsonb)
           ||CASE
               WHEN COALESCE(payment_history_transactions.metadata->>'feeDataAvailable','false')='true'
                AND COALESCE(EXCLUDED.metadata->>'feeDataAvailable','false')<>'true'
               THEN '{"feeDataAvailable":true}'::jsonb ELSE '{}'::jsonb
+            END
+          -- Genuine provider verification is never downgraded by a later operator-attested write of the same transaction.
+          ||CASE
+              WHEN COALESCE(payment_history_transactions.metadata->>'providerVerified','false')='true'
+              THEN '{"providerVerified":true}'::jsonb ELSE '{}'::jsonb
+            END
+        ) - CASE
+              WHEN COALESCE(payment_history_transactions.metadata->>'providerVerified','false')='true'
+               AND COALESCE(EXCLUDED.metadata->>'operatorAttested','false')='true'
+              THEN ARRAY['operatorAttested','attestedBy','attestationReason']::text[] ELSE ARRAY[]::text[]
             END,
         updated_at=NOW()
       WHERE payment_history_transactions.customer_id IS NULL

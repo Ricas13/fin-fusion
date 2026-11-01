@@ -26,6 +26,7 @@ const adminOrders = require('../src/platform/admin-orders');
 const intents = require('../src/payments/checkout-intents');
 const recovery = require('../src/payments/provider-checkout-recovery');
 const plisioModule = require('../src/payments/plisio');
+const financialState = require('../src/payments/provider-financial-state');
 const { fixtureCustomer, fixturePlan } = require('./test-fixture');
 
 
@@ -200,6 +201,46 @@ async function main() {
       const crashedRow = (await adminOrders.checkoutIssues({ page: 0 })).find(row => row.checkout_id === crashed.id);
       assert(crashedRow && crashedRow.needs_review, 'a claim whose request never finished is still visible in the queue');
     } finally { plisioModule.settleAttested = realSettle; }
+
+    // Genuine provider verification is never downgraded by an operator-attested settlement of the same transaction.
+    const verified = await makeIntent('verified', { ageDays: 9 });
+    const verifiedIntent = await intents.findById(verified.id);
+    await financialState.recordTransaction({ provider: 'plisio', providerTransactionId: verifiedIntent.provider_checkout_id, transactionType: 'payment', transactionStatus: 'completed', occurredAt: new Date(), currency: 'GBP', grossMinor: 1000, feeMinor: 0, netMinor: 1000, providerReferenceId: String(verified.id), customerId: verified.customerId, metadata: { providerAuthoritative: true, providerVerified: true, feeDataAvailable: false, source: 'verified_operation' } });
+    await plisioModule.settleAttested(verifiedIntent, { actorUserId: null, reason: 'operator replay after the provider callback arrived' });
+    const keptMeta = (await query(`SELECT metadata FROM payment_history_transactions WHERE provider='plisio' AND provider_transaction_id=$1`, [verifiedIntent.provider_checkout_id])).rows[0].metadata;
+    assert.strictEqual(keptMeta.providerVerified, true, 'an operator replay must not downgrade provider-verified metadata');
+    assert(!('operatorAttested' in keptMeta), 'and the ledger row is not relabelled as operator-attested');
+
+    // Two administrators finishing the same partly recorded payment at once: one completes it, the other finds nothing to do.
+    const dual = await makeIntent('dual', { ageDays: 9 });
+    try {
+      plisioModule.settleAttested = async intent => {
+        await financialState.recordTransaction({ provider: 'plisio', providerTransactionId: intent.provider_checkout_id, transactionType: 'payment', transactionStatus: 'completed', occurredAt: new Date(), currency: 'GBP', grossMinor: 1000, feeMinor: 0, netMinor: 1000, providerReferenceId: String(intent.id), customerId: intent.customer_id, metadata: { providerAuthoritative: true, operatorAttested: true } });
+        throw new Error('simulated failure after the ledger entry');
+      };
+      await post(dual.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
+    } finally { plisioModule.settleAttested = realSettle; }
+    await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW()-INTERVAL '5 minutes' WHERE id=$1`, [dual.id]);
+    const both = await Promise.all([post(dual.id, 'finish-recording', {}), post(dual.id, 'finish-recording', {})]);
+    assert.strictEqual(both.filter(r => r.location.includes('message=')).length, 1, 'exactly one concurrent finish succeeds');
+    assert.strictEqual(await audits(dual.id, 'billing.checkout.mark_paid_finished'), 1, 'and the completion is audited exactly once');
+
+    // A review flag is resolved by whatever completes the checkout (here a provider confirmation), so it can never
+    // linger on a completed checkout.
+    const viaProvider = await makeIntent('viaprovider', { ageDays: 9 });
+    await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NOW(),operator_resolution='marked_paid_review' WHERE id=$1`, [viaProvider.id]);
+    const realFetch2 = global.fetch;
+    global.fetch = async (url, options) => {
+      const u = new URL(String(url));
+      if (u.hostname !== 'api.plisio.net') return realFetch2(url, options);
+      const txn = decodeURIComponent(u.pathname.split('/').pop());
+      return new Response(JSON.stringify({ status: 'success', data: { txn_id: txn, id: txn, type: 'invoice', status: 'completed', invoice_total_sum: '0.0006' } }), { status: 200 });
+    };
+    try {
+      const vi = await intents.findById(viaProvider.id);
+      assert.strictEqual((await plisioModule.confirmCheckout(vi.provider_checkout_id, vi)).completed, true);
+    } finally { global.fetch = realFetch2; }
+    assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [viaProvider.id])).rows[0].operator_resolution, 'marked_paid', 'completion by another path clears the review flag');
 
     // A backlog of any size is reachable: the queue is paged, each page is complete and the total is shown.
     const many = [];

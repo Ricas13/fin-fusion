@@ -314,15 +314,19 @@ function createAdminBillingRouter() {
         const actor = req.session?.authUserId || null;
         try {
             const intent = await checkoutIntents.findById(id);
-            const row = (await query(`SELECT operator_resolution,operator_resolution_note,(operator_resolved_at < NOW()-INTERVAL '2 minutes') AS settled_wait FROM billing_checkout_intents WHERE id=$1`, [id])).rows[0];
-            if (!intent || !row || row.operator_resolution !== 'marked_paid_review') return res.redirect(back + '?error=' + encodeURIComponent('That checkout is not waiting to be finished.'));
-            if (!row.settled_wait) return res.redirect(back + '?error=' + encodeURIComponent('The original attempt may still be running. Wait two minutes and try again.'));
-            await plisio.settleAttested(intent, { actorUserId: actor, reason: String(row.operator_resolution_note || 'Finishing a partly recorded payment').slice(0, 500) });
-            await transaction(async client => {
-                await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',updated_at=NOW() WHERE id=$1 AND operator_resolution='marked_paid_review'`, [id]);
+            // One administrator at a time per checkout: the lock is held for the whole finish, and the state is
+            // re-read under it, so a second concurrent request finds nothing left to do and writes no second audit row.
+            const outcome = await transaction(async client => {
+                await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`finish-checkout:${id}`]);
+                const row = (await client.query(`SELECT operator_resolution,operator_resolution_note,(operator_resolved_at < NOW()-INTERVAL '2 minutes') AS settled_wait FROM billing_checkout_intents WHERE id=$1`, [id])).rows[0];
+                if (!intent || !row || row.operator_resolution !== 'marked_paid_review') return { done: false, reason: 'That checkout is not waiting to be finished.' };
+                if (!row.settled_wait) return { done: false, reason: 'The original attempt may still be running. Wait two minutes and try again.' };
+                await plisio.settleAttested(intent, { actorUserId: actor, reason: String(row.operator_resolution_note || 'Finishing a partly recorded payment').slice(0, 500) });
+                await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',updated_at=NOW() WHERE id=$1`, [id]);
                 await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_finished','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ customerId: intent.customer_id })]);
+                return { done: true };
             });
-            return res.redirect(back + '?message=' + encodeURIComponent('Payment fully recorded and access activated.'));
+            return res.redirect(back + '?' + (outcome.done ? 'message=' : 'error=') + encodeURIComponent(outcome.done ? 'Payment fully recorded and access activated.' : outcome.reason));
         } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(`Could not finish recording: ${String(error.message || 'try again').slice(0, 200)}`)); }
     });
     router.post('/admin/billing/checkouts/:id/mark-paid', checkoutRecheckLimit, async (req, res) => {
