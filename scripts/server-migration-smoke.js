@@ -164,6 +164,20 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     await assert.rejects(() => migration.preflight(third.customerId, target.id), error => error.code === 'TARGET_LIBRARIES_MISSING');
     state(target.id).libraries = [{ Id: 'lib-target', ItemId: 'lib-target', Name: 'Movies' }];
 
+    // A full target refuses an automatic-style move, but a deliberate administrator override is allowed:
+    // only the capacity limit is bypassed and the override is reported.
+    const fifth = await makeCustomer('capacity-override', plan.id, source, 'source-user-5');
+    await makeCustomer('capacity-filler', plan.id, target, 'target-user-filler');
+    await query(`UPDATE jellyfin_servers SET max_users=1 WHERE id=$1`, [target.id]);
+    await assert.rejects(() => migration.preflight(fifth.customerId, target.id), error => error.code === 'TARGET_AT_CAPACITY', 'a full target is refused by default');
+    const overridden = await migration.preflight(fifth.customerId, target.id, { allowOverCapacity: true });
+    assert.strictEqual(overridden.overCapacityOverride, true, 'the override is reported so it can be audited');
+    assert.strictEqual(overridden.target.id, target.id);
+    await query(`UPDATE jellyfin_servers SET max_users=100 WHERE id=$1`, [target.id]);
+    // The page offers that override from the refusal itself instead of leaving it hidden behind a checkbox.
+    const routeSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'platform', 'admin-server-migrations.js'), 'utf8');
+    assert(routeSource.includes("error?.code === 'TARGET_AT_CAPACITY'") && routeSource.includes('name="allowOverCapacity" value="1"') && routeSource.includes('Preview anyway (admin override)'), 'a capacity refusal must offer a one-click admin override');
+
     // If source deletion fails, target cleanup must remove the newly-created
     // target account and leave the source as the sole enabled primary account.
     const fourth = await makeCustomer('cutover-fail', plan.id, source, 'source-user-4');
