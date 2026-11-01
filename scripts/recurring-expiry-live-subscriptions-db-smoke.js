@@ -73,6 +73,7 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
     const originalQuery = db.query;
     const originalTransaction = db.transaction;
     let started = false;
+    let unrelatedBefore = null;
     try {
         const identity = (await client.query('SELECT current_database() AS name, current_user AS role')).rows[0];
         assert.strictEqual(identity.name, decodeURIComponent(url.pathname.slice(1)), 'Database identity must match the disposable URL');
@@ -105,7 +106,7 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         const advanced = new Set([renewed, renewedPaypal]);
         const unreachable = new Set([outageShort, outageLong]);
         const recorded = [];
-        const unrelatedBefore = (await query(`
+        unrelatedBefore = (await query(`
             SELECT id,status,current_period_end,service_extension_days FROM subscriptions
             WHERE id <> ALL($1::uuid[]) ORDER BY id
         `, [created.subs])).rows;
@@ -142,11 +143,7 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         assert.strictEqual(recorded[0][0].kind, 'failed_renewal');
         assert.strictEqual(recorded[0][0].metadata.reason, 'expiry_provider_verification_exhausted');
         assert.strictEqual(await statusOf(paygOver), 'expired', 'a pay-as-you-go term that ran out ends as before');
-        const unrelatedAfter = (await query(`
-            SELECT id,status,current_period_end,service_extension_days FROM subscriptions
-            WHERE id <> ALL($1::uuid[]) ORDER BY id
-        `, [created.subs])).rows;
-        assert.deepStrictEqual(unrelatedAfter, unrelatedBefore, 'global expiry must not change unrelated test-suite subscriptions');
+
     } finally {
         try {
             if (started) await client.query('ROLLBACK');
@@ -157,6 +154,13 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
             client.release();
         }
     }
+    // Only the post-ROLLBACK state matters: the genuine global SQL may touch other rows within
+    // the test transaction, but must leave them unchanged for every later DB smoke.
+    const unrelatedAfter = (await db.query(`
+        SELECT id,status,current_period_end,service_extension_days FROM subscriptions
+        WHERE id <> ALL($1::uuid[]) ORDER BY id
+    `, [created.subs])).rows;
+    assert.deepStrictEqual(unrelatedAfter, unrelatedBefore, 'rollback must restore every unrelated subscription');
     // Rollback, not best-effort DELETE, is the sole cleanup mechanism. Any failure here fails CI.
     const survivors = await db.query('SELECT COUNT(*)::int AS n FROM subscriptions WHERE id=ANY($1::uuid[])', [created.subs]);
     assert.strictEqual(survivors.rows[0].n, 0, 'the expiry smoke must leave zero fixture subscriptions behind');
