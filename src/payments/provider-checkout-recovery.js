@@ -362,6 +362,16 @@ async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds =
     }
 
     if (summary.failed) summary.warning = failureWarning(summary.failures);
+    // Report-only look at Plisio's completed payments (never writes, never grants). It can never fail or slow the recovery above.
+    if (!checkoutIntentIds) {
+        try {
+            const sweep = await require('./plisio-sweep').report();
+            summary.sweep = sweep;
+            if (sweep.warning) summary.warning = [summary.warning, sweep.warning].filter(Boolean).join(' ');
+        } catch (error) {
+            summary.sweep = { error: String(error?.message || error).slice(0, 200) };
+        }
+    }
     return summary;
 }
 
