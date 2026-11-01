@@ -199,7 +199,14 @@ async function changePlan({customerId,subscriptionId,targetPlanId,actorUserId=nu
   try{await provisioning.reconcileCustomer(customerId);}
   catch(error){warnings.push(`access reconciliation needs retry: ${clean(error.message||error,180)}`);}
   const suffix=warnings.length?` Warning: ${warnings.join('; ')}`:'';
-  const overrideNote=contract.placementDeferred?' The plan was full, so this was applied as an administrator capacity override and the customer has no server for it yet. Use Add to server on the Jellyfin card to place them.':contract.capacityOverride?' The plan was full, so this was applied as an administrator capacity override.':'';
+  let overrideNote='';
+  if(contract.placementDeferred){
+    // Which follow-up is correct depends on whether the customer still has a Jellyfin account from their previous plan.
+    const current=(await query(`SELECT js.name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND COALESCE(ja.account_purpose,'jellyfin')='jellyfin' ORDER BY ja.is_primary DESC NULLS LAST LIMIT 1`,[customerId]).catch(()=>({rows:[]}))).rows[0];
+    overrideNote=current
+      ?` The new plan's servers are full, so this was applied as an administrator capacity override. The customer keeps their account on ${current.name} until you use Move server on the Jellyfin card (Move also overrides capacity).`
+      :' The plan was full, so this was applied as an administrator capacity override and the customer has no server for it yet. Use Add to server on the Jellyfin card to place them.';
+  }else if(contract.capacityOverride)overrideNote=' The plan was full, so this was applied as an administrator capacity override.';
   return{message:`Subscription moved to ${target.name||target.code}.${overrideNote}${suffix}`,mode:'manual'};
 }
 

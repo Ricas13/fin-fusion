@@ -14,6 +14,7 @@ const manual = require('../src/entitlements/admin-manual-entitlement-service');
 const lifecycle = require('../src/access/admin-customer-lifecycle-service');
 const registry = require('../src/jellyfin/registry');
 const provisioning = require('../src/jellyfin/resilient-provisioning');
+const operatorService = require('../src/access/admin-customer-operator-service');
 const { unique, fixtureCustomer, fixturePlan, fixtureSubscription } = require('./test-fixture');
 
 const created = { customers: [], plans: [], servers: [] };
@@ -129,11 +130,32 @@ async function main() {
   await query(`INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,account_purpose,access_lane) VALUES($1,$2,$3,$4,FALSE,TRUE,'jellyfin','primary')`, [traveller.id, oldSrv, unique('jfu'), unique('trav')]);
   await query(`UPDATE subscriptions SET media_server_id=$1 WHERE id=$2`, [oldSrv, travelSub.id]);
   const travelled = await lifecycle.changePlan({ customerId: traveller.id, subscriptionId: travelSub.id, targetPlanId: planNew.id, allowOverCapacity: true });
-  assert(/no server for it yet/i.test(travelled.message), 'placement was deferred');
+  assert(/keeps their account on/i.test(travelled.message) && /Move server/i.test(travelled.message), 'a customer who still has an account is told to use Move server, not Add to server');
   const realRequest = registry.request;
   registry.request = async () => ({});
   try { await provisioning.reconcileCustomer(traveller.id); } catch (_) { /* creating on the full server fails by design */ } finally { registry.request = realRequest; }
   assert.strictEqual((await query('SELECT media_server_id FROM subscriptions WHERE id=$1', [travelSub.id])).rows[0].media_server_id, null, 'the reconciler must not re-adopt the old plan\'s server as the sticky assignment');
+
+  // The advertised recovery works: Move server places the customer on the full pool's server (it overrides capacity)
+  // and retires the old account.
+  let remoteUsers = 0;
+  registry.request = async (_id, endpoint, options = {}) => {
+    if (endpoint === '/Library/VirtualFolders') return [{ Id: 'lib', ItemId: 'lib', Name: 'Movies' }];
+    if (endpoint === '/Users/New' && options.method === 'POST') { remoteUsers += 1; return { Id: `remote-${remoteUsers}`, Name: String(options.body?.Name || '') }; }
+    const one = String(endpoint).match(/^\/Users\/([^/]+)$/);
+    if (one && (!options.method || options.method === 'GET')) return { Id: one[1], Name: 'u', Policy: {} };
+    if (/\/Users$/.test(String(endpoint))) return [];
+    return {};
+  };
+  try {
+    const moved2 = await operatorService.move(traveller.id, newSrv, { actorUserId: null });
+    assert(moved2, 'Move server succeeds from the deferred state');
+  } finally { registry.request = realRequest; }
+  const afterMove = (await query(`SELECT server_id,disabled FROM jellyfin_accounts WHERE customer_id=$1 ORDER BY created_at`, [traveller.id])).rows;
+  assert(afterMove.some(a => String(a.server_id) === String(newSrv) && !a.disabled), 'the customer now has an enabled account on the new plan\'s (full) server');
+  assert(afterMove.filter(a => String(a.server_id) === String(oldSrv)).every(a => a.disabled), 'and the old plan\'s account is retired');
+  const pin = await require('../src/jellyfin/admin-control').state(traveller.id, travelSub.id);
+  assert(pin && pin.mode === 'admin_server_pin' && String(pin.server_id) === String(newSrv), 'the placement is recorded as an administrator server pin (monitored by automation, unlike Force access)');
 
   // A pool with NO eligible server at all is a configuration problem, not a full pool: the override does not apply.
   const noHostPlan = await newPlan('No host plan', { capacityLimit: 50, serverClass: 'custom' });
