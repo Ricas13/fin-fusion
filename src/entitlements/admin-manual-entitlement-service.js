@@ -166,7 +166,11 @@ async function createManualGrant(customerId, actorUserId, input) {
         // Every server that could host this plan is full. An administrator who chose to override
         // capacity still gets the plan; the customer is simply not pinned to a server yet and is
         // placed afterwards with Add to server (which also overrides capacity).
-        if (input.allowOverCapacity === true && error?.code === 'MEDIA_LOCATION_UNAVAILABLE') serverFullOverride = true;
+        // Only a pool that EXISTS but is full is tolerated. A pool with no eligible server at all (disabled,
+        // wrong class, not allowed for this plan) is a configuration problem and still refuses the grant.
+        const hasEligibleServer = input.allowOverCapacity === true && error?.code === 'MEDIA_LOCATION_UNAVAILABLE'
+          && (await customerServerChoice.eligibleServers(plan, { db: (sql, params) => client.query(sql, params) })).length > 0;
+        if (hasEligibleServer) serverFullOverride = true;
         else throw error;
       }
       mediaLocation = mediaServer?.selected_location || customerServerChoice.locationLabel(mediaServer?.location);

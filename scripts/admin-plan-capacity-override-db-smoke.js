@@ -82,13 +82,39 @@ async function main() {
   const currentPlan = await newPlan('Current plan', { capacityLimit: 50 });
   const mover = await newCustomer('Mover');
   const moverSub = await fixtureSubscription({ query }, { customerId: mover.id, planId: currentPlan.id, source: 'admin_grant', billingMode: 'manual' });
+  await query(`UPDATE subscriptions SET media_server_id=$1,media_location_snapshot='Room' WHERE id=$2`, [server, moverSub.id]);
   await assert.rejects(() => lifecycle.changePlan({ customerId: mover.id, subscriptionId: moverSub.id, targetPlanId: fullPlan.id }), /sold out/i, 'moving onto a full plan is refused by default');
   assert.strictEqual(String((await query('SELECT plan_id FROM subscriptions WHERE id=$1', [moverSub.id])).rows[0].plan_id), String(currentPlan.id), 'a refused change leaves the plan alone');
   const moved = await lifecycle.changePlan({ customerId: mover.id, subscriptionId: moverSub.id, targetPlanId: fullPlan.id, allowOverCapacity: true });
-  assert(/capacity override/i.test(moved.message), 'the result says it was an override');
+  assert(/capacity override/i.test(moved.message) && /no server for it yet/i.test(moved.message), 'the result says it was an override with placement still to do');
+  const movedRow = (await query('SELECT media_server_id,media_location_snapshot FROM subscriptions WHERE id=$1', [moverSub.id])).rows[0];
+  assert.strictEqual(movedRow.media_server_id, null, 'the previous plan\'s server assignment is cleared, not silently kept');
+  assert.strictEqual(movedRow.media_location_snapshot, null, 'and so is its location');
   assert.strictEqual(String((await query('SELECT plan_id FROM subscriptions WHERE id=$1', [moverSub.id])).rows[0].plan_id), String(fullPlan.id), 'the override moves the customer onto the full plan');
   const changeAudit = (await query(`SELECT metadata FROM audit_log WHERE action='admin.customer.plan_change' AND (entity_id=$1 OR entity_id=$2)`, [String(mover.id), String(moverSub.id)])).rows[0];
   assert.strictEqual(changeAudit.metadata.capacityOverride, true, 'the plan change audit records the override');
+  assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE action='admin.customer.plan_change.capacity_override' AND entity_id=$1`, [String(mover.id)])).rows[0].n, 1, 'and the override has its own audit row written in the same transaction');
+
+  // The override audit is atomic with the change: if it cannot be written the plan is not changed.
+  const atomicMover = await newCustomer('Atomic mover');
+  const atomicSub = await fixtureSubscription({ query }, { customerId: atomicMover.id, planId: currentPlan.id, source: 'admin_grant', billingMode: 'manual' });
+  await query(`CREATE OR REPLACE FUNCTION zz_block_override_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='admin.customer.plan_change.capacity_override' THEN RAISE EXCEPTION 'audit blocked for test'; END IF; RETURN NEW; END $$`);
+  await query(`CREATE TRIGGER zz_block_override_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION zz_block_override_audit()`);
+  try {
+    await assert.rejects(() => lifecycle.changePlan({ customerId: atomicMover.id, subscriptionId: atomicSub.id, targetPlanId: fullPlan.id, allowOverCapacity: true }), /audit blocked/);
+    assert.strictEqual(String((await query('SELECT plan_id FROM subscriptions WHERE id=$1', [atomicSub.id])).rows[0].plan_id), String(currentPlan.id), 'a change whose override audit failed is not applied');
+  } finally {
+    await query('DROP TRIGGER IF EXISTS zz_block_override_audit ON audit_log');
+    await query('DROP FUNCTION IF EXISTS zz_block_override_audit()');
+  }
+
+  // A pool with NO eligible server at all is a configuration problem, not a full pool: the override does not apply.
+  const noHostPlan = await newPlan('No host plan', { capacityLimit: 50, serverClass: 'custom' });
+  const lonely = await newCustomer('Lonely');
+  const emptyServer = (await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,location,api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,health_status,last_health_check) VALUES($1,$1,'custom','https://off.example.invalid','https://off.example.invalid','Off','key',FALSE,TRUE,TRUE,TRUE,10,10,'healthy',NOW()) RETURNING id`, [unique('off-server')])).rows[0].id;
+  created.servers.push(emptyServer);
+  await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)', [noHostPlan.id, emptyServer]);
+  await assert.rejects(() => manual.createManualGrant(lonely.id, null, grantInput(noHostPlan.id, true)), /No eligible/i, 'a plan whose only server is disabled is refused even with the override');
 }
 
 async function cleanup() {
