@@ -327,30 +327,38 @@ async function main() {
     const gone = await attachedIntent('recovery plisio not found', 'plisio', `PLISIO-${unique('gone')}`, null, 'payment', server);
     const goneEarly = await attachedIntent('recovery plisio not found early', 'plisio', `PLISIO-${unique('goneearly')}`, null, 'payment', server);
     const outage = await attachedIntent('recovery plisio outage', 'plisio', `PLISIO-${unique('outage')}`, null, 'payment', server);
-    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '2 days',updated_at=NOW()-INTERVAL '2 days' WHERE id=ANY($1::uuid[])`, [[giveUp.id, inFlight.id, gone.id, outage.id]]);
+    const reviewOld = await attachedIntent('recovery plisio review old', 'plisio', `PLISIO-${unique('reviewold')}`, null, 'payment', server);
+    await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '2 days',updated_at=NOW()-INTERVAL '2 days' WHERE id=ANY($1::uuid[])`, [[giveUp.id, inFlight.id, gone.id, outage.id, reviewOld.id]]);
+    await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid_review',operator_resolved_at=NOW() WHERE id=$1`, [reviewOld.id]);
     const notFound = Object.assign(new Error('unavailable'), { providerNotFound: true, providerStatus: 404 });
     const unavailable = Object.assign(new Error('unavailable'), { providerNotFound: false, providerStatus: 503 });
     const autoRun = await recovery.run({
         limit: 100,
-        checkoutIntentIds: [giveUp.id, inFlight.id, fresh.id, gone.id, goneEarly.id, outage.id],
+        checkoutIntentIds: [giveUp.id, inFlight.id, fresh.id, gone.id, goneEarly.id, outage.id, reviewOld.id],
         handlers: {
             async plisio(row) {
-                if (row.id === giveUp.id || row.id === fresh.id) return { status: 'new', completed: false, waiting: true };
+                if (row.id === giveUp.id || row.id === fresh.id || row.id === reviewOld.id) return { status: 'new', completed: false, waiting: true };
                 if (row.id === inFlight.id) return { status: 'pending', completed: false, waiting: true };
                 if (row.id === gone.id || row.id === goneEarly.id) throw notFound;
                 throw unavailable;
             },
+            async autoClose(row, note) { return intents.autoCloseUnpaid(row.id, note); },
             async markTerminal(row) { return intents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled'); }
         }
     });
-    assert.strictEqual((await stateOf(giveUp.id)).state, 'cancelled', 'an invoice still unpaid long after its window is closed automatically');
-    assert((await stateOf(giveUp.id)).provider_terminal_at, 'and stops being polled or listed');
+    const giveUpRow = (await query(`SELECT state,provider_terminal_at,operator_resolution,operator_resolved_by FROM billing_checkout_intents WHERE id=$1`, [giveUp.id])).rows[0];
+    assert.strictEqual(giveUpRow.operator_resolution, 'dismissed', 'an invoice still unpaid long after its window is closed automatically (it leaves the Orders queue)');
+    assert.strictEqual(giveUpRow.operator_resolved_by, null, 'recorded as automatic, with no operator');
+    assert.strictEqual(giveUpRow.provider_terminal_at, null, 'but NOT provider-terminal: it keeps being re-checked so a late payment is still found');
+    assert((new Set((await recovery.candidates({ limit: 100 })).map(row => row.id))).has(giveUp.id), 'and the worker still polls it');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM audit_log WHERE action='billing.checkout.auto_closed' AND entity_id=$1`, [giveUp.id])).rows[0].n, 1, 'the automatic closure is audited');
+    assert.strictEqual((await query(`SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1`, [reviewOld.id])).rows[0].operator_resolution, 'marked_paid_review', 'a payment an operator tried to record is never auto-closed as unpaid');
     assert.strictEqual((await stateOf(gone.id)).state, 'cancelled', 'an old invoice Plisio reports as not found (404) is closed automatically');
     assert.strictEqual((await stateOf(inFlight.id)).state, 'open', 'a payment that is pending on the chain is never given up on by age');
     assert.strictEqual((await stateOf(fresh.id)).state, 'open', 'an invoice inside its window is left alone');
     assert.strictEqual((await stateOf(goneEarly.id)).state, 'open', 'not-found inside the window is not trusted yet');
     assert.strictEqual((await stateOf(outage.id)).state, 'open', 'a Plisio outage (503) is never mistaken for an abandoned invoice');
-    assert.strictEqual(autoRun.terminal, 2, 'exactly the two abandoned invoices were closed');
+    assert.strictEqual(autoRun.terminal, 2, 'exactly the abandoned invoice and the not-found one were closed');
     assert.strictEqual(autoRun.failed, 2, 'early not-found and the outage stay visible as recovery failures');
     // A closed invoice that is paid late still activates (only completed payments may override a closed intent).
     const closedRow = (await query(`SELECT commercial_snapshot FROM billing_checkout_intents WHERE id=$1`, [giveUp.id])).rows[0];
@@ -367,6 +375,11 @@ async function main() {
     await query(`UPDATE billing_checkout_intents SET created_at=NOW()-INTERVAL '3 days',updated_at=NOW()-INTERVAL '5 hours' WHERE id=$1`, [old2.id]);
     const order = (await recovery.candidates({ limit: 100, checkoutIntentIds: [old1.id, old2.id, fresh.id] })).map(row => row.id);
     assert.deepStrictEqual(order, [fresh.id, old2.id, old1.id], 'in-window payment first, then the longest-unchecked backlog row');
+    const fresh2 = await attachedIntent('recovery fair fresh 2', 'plisio', `PLISIO-${unique('fair3')}`, null, 'payment', server);
+    const fresh3 = await attachedIntent('recovery fair fresh 3', 'plisio', `PLISIO-${unique('fair4')}`, null, 'payment', server);
+    const squeezed = (await recovery.candidates({ limit: 2, checkoutIntentIds: [fresh.id, fresh2.id, fresh3.id, old2.id] })).map(row => row.id);
+    assert(squeezed.includes(old2.id), 'with more in-window payments than slots, an older row still gets a slot every batch (no starvation)');
+    assert.strictEqual(squeezed.filter(id => id !== old2.id).length, 1, 'and the rest of the batch still goes to payments inside their window');
     await recovery.run({ limit: 100, checkoutIntentIds: [old2.id], handlers: { async plisio() { return { status: 'pending', completed: false, waiting: true }; } } });
     assert.deepStrictEqual((await recovery.candidates({ limit: 100, checkoutIntentIds: [old1.id, old2.id] })).map(row => row.id), [old1.id, old2.id], 'a row that was just checked goes to the back of the line');
 
@@ -426,6 +439,16 @@ async function main() {
         const agedExpiredRow = await stateOf(agedExpired.id), agedPaidRow = await stateOf(agedPaid.id);
         assert(agedExpiredRow.provider_terminal_at, 'the expired invoice is marked closed by the provider, so it leaves the exception queue');
         assert.strictEqual(agedPaidRow.state, 'completed', 'the paid old invoice is completed and access is activated');
+
+        // End to end: the auto-closed invoice is paid late and no callback ever arrives. The worker finds it by itself,
+        // activates the plan once, and the intent ends completed.
+        remote.set(giveUp.providerCheckoutId, realShape(giveUp.providerCheckoutId));
+        const lateRun = await recovery.run({ limit: 100, checkoutIntentIds: [giveUp.id] });
+        assert.strictEqual(lateRun.recovered, 1, 'a payment that lands after the invoice was auto-closed is recovered with no callback');
+        assert.strictEqual((await stateOf(giveUp.id)).state, 'completed');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND status='active'`, [giveUp.owner.id, giveUp.plan.id])).rows[0].n, 1, 'and the customer holds exactly one active subscription');
+        await recovery.run({ limit: 100, checkoutIntentIds: [giveUp.id], ignoreLookback: true });
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2`, [giveUp.owner.id, giveUp.plan.id])).rows[0].n, 1, 'replaying the recovery never duplicates it');
     } finally {
         global.fetch = realFetch;
     }

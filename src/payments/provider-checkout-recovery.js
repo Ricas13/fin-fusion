@@ -69,8 +69,11 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null, ign
     // $3 is always bound (empty array when unscoped) so $4/$5 keep fixed positions.
     const params = [safeLimit, LOOKBACK_DAYS, scopedIds, ...plisioParams, Boolean(plisio.enabled()), Boolean(ignoreLookback && scopedIds.length), PLISIO_AGED_LOOKBACK_DAYS, PLISIO_AGED_RECHECK_HOURS];
     const result = await query(`
+        SELECT * FROM (
         SELECT i.id,i.customer_id,i.plan_id,i.provider,i.provider_checkout_id,i.checkout_mode,i.state,
-               i.provider_terminal_at,i.created_at,i.updated_at,paid.provider_transaction_id AS paid_capture_id
+               i.provider_terminal_at,i.created_at,i.updated_at,i.operator_resolution,i.operator_resolved_at,paid.provider_transaction_id AS paid_capture_id,
+               (i.created_at >= NOW() - INTERVAL '4 hours') AS in_window,
+               ROW_NUMBER() OVER (PARTITION BY (i.created_at >= NOW() - INTERVAL '4 hours') ORDER BY i.updated_at ASC,i.id ASC) AS slot
         FROM billing_checkout_intents i
         LEFT JOIN LATERAL (
             SELECT ph.provider_transaction_id
@@ -146,9 +149,10 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null, ign
               )
           )
           ${scopeSql}
-        -- Payments in their payment window first (a customer is waiting), then everything else least-recently-checked first,
-        -- so a large backlog is worked through fairly instead of the same newest rows being polled every run.
-        ORDER BY (i.created_at >= NOW() - INTERVAL '4 hours') DESC,i.updated_at ASC,i.id ASC
+        ) due
+        -- Every batch alternates between payments still inside their window (a customer is waiting) and the longest-unchecked
+        -- older rows, each class least-recently-checked first. Neither class can starve the other, whatever the backlog.
+        ORDER BY slot*2 + (CASE WHEN in_window THEN 0 ELSE 1 END),updated_at ASC,id ASC
         LIMIT $1
     `, params);
     return result.rows;
@@ -176,6 +180,9 @@ function defaultHandlers() {
         async paypalActivatePayment(row, order) {
             return paypal.activateCompletedOrder(order);
         },
+        async autoClose(row, note) {
+            return checkoutIntents.autoCloseUnpaid(row.id, note);
+        },
         async markTerminal(row) {
             return checkoutIntents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled');
         },
@@ -198,7 +205,9 @@ function plisioUnpaidDeadlineHours() {
 
 async function recoverPlisio(row, handlers) {
     const ageHours = (Date.now() - new Date(row.created_at).getTime()) / 3600000;
-    const pastDeadline = Number.isFinite(ageHours) && ageHours > plisioUnpaidDeadlineHours();
+    // A payment an operator already tried to record may have partly applied access: it is finished by the settlement path,
+    // never closed as unpaid here.
+    const pastDeadline = Number.isFinite(ageHours) && ageHours > plisioUnpaidDeadlineHours() && row.operator_resolution !== 'marked_paid_review';
     let outcome;
     try {
         outcome = await handlers.plisio(row);
@@ -226,7 +235,9 @@ async function recoverPlisio(row, handlers) {
     // Still 'new' (nothing was ever sent) well after the invoice could be paid: close it, no operator needed.
     const waitingStatus = String(outcome?.status || '').toLowerCase();
     if (pastDeadline && outcome?.waiting && waitingStatus === 'new' && !PLISIO_IN_FLIGHT.has(waitingStatus)) {
-        await handlers.markTerminal(row);
+        // Closed for the queue and for capacity, but NOT provider-terminal: the daily recheck keeps looking, so a payment that
+        // arrives later (even with no callback) is still found and activated.
+        if (!row.operator_resolved_at) await handlers.autoClose(row, 'Closed automatically: unpaid long after the invoice payment window.');
         return { state: 'terminal', detail: 'UNPAID_TIMEOUT' };
     }
     return { state: 'waiting', detail: outcome?.status || 'pending' };
@@ -311,7 +322,7 @@ async function recoverPayPal(row, handlers) {
 async function markAgedChecked(row, state) {
     // Every unresolved row that was just checked goes to the back of the line (the queue is ordered by updated_at), which
     // also gates the once-a-day recheck of invoices past the fast window.
-    if (state === 'recovered' || state === 'terminal') return;
+    if (row.provider !== 'plisio' || state === 'recovered' || state === 'terminal') return;
     await query(`UPDATE billing_checkout_intents SET updated_at=NOW() WHERE id=$1`, [row.id]);
 }
 
