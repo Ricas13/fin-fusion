@@ -108,7 +108,7 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
                   i.provider='plisio'
                   AND $6::boolean
                   AND i.checkout_mode='payment'
-                  AND i.operator_resolution IS DISTINCT FROM 'marked_paid'
+                  AND i.operator_resolution IS DISTINCT FROM 'marked_paid' AND i.operator_resolution IS DISTINCT FROM 'marked_paid_review'
                   AND i.state IN ('open','failed','expired','cancelled')
                   AND i.created_at >= NOW() - ($4::int * INTERVAL '1 day')
                   AND (

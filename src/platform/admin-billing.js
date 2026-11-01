@@ -300,8 +300,24 @@ function createAdminBillingRouter() {
         try {
             const actor = req.session?.authUserId || null;
             if (!await claimCheckout(id, 'dismissed', actor, reason, 'billing.checkout.dismissed')) return res.redirect(back + '?error=' + encodeURIComponent('That checkout cannot be dismissed: it is still inside its payment window, already settled, closed by the provider or already dismissed.'));
-            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If the customer pays it later, the payment is still detected and activates access.'));
+            return res.redirect(back + '?message=' + encodeURIComponent('Checkout dismissed. No access was granted. If a Plisio payment callback or the customer confirmation arrives later, access still activates. Automatic re-checking only continues for 7 days after the checkout was created.'));
         } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Checkout could not be dismissed.')); }
+    });
+    router.post('/admin/billing/checkouts/:id/review-done', checkoutRecheckLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const { id, reason } = resolutionInput(req), back = '/admin/commerce/orders';
+        if (!UUID.test(id)) return res.redirect(back + '?error=' + encodeURIComponent('Choose a valid checkout.'));
+        if (reason.length < 10 || reason.length > 500) return res.redirect(back + '?error=' + encodeURIComponent('Enter a reason of 10 to 500 characters.'));
+        try {
+            const actor = req.session?.authUserId || null;
+            const done = await transaction(async client => {
+                const updated = await client.query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid',operator_resolution_note=LEFT(COALESCE(operator_resolution_note,'')||' [Reviewed: '||$2||']',700),updated_at=NOW() WHERE id=$1 AND operator_resolution='marked_paid_review' RETURNING id`, [id, reason]);
+                if (updated.rowCount !== 1) return false;
+                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_reviewed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ reason })]);
+                return true;
+            });
+            return res.redirect(back + '?' + (done ? 'message=' : 'error=') + encodeURIComponent(done ? 'Marked as reviewed.' : 'That checkout is not waiting for review.'));
+        } catch (error) { return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Could not mark it reviewed.')); }
     });
     router.post('/admin/billing/checkouts/:id/mark-paid', checkoutRecheckLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
@@ -326,9 +342,10 @@ function createAdminBillingRouter() {
                 // reappear as unpaid, and tell the administrator to verify. Only a failure before any effect
                 // releases the claim so the action can be retried.
                 const partial = await checkoutPartlyApplied(intent).catch(() => true);
+                if (partial) await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid_review' WHERE id=$1 AND operator_resolution='marked_paid'`, [id]).catch(() => {});
                 if (!partial) await query(`UPDATE billing_checkout_intents SET operator_resolved_at=NULL,operator_resolved_by=NULL,operator_resolution=NULL,operator_resolution_note=NULL WHERE id=$1 AND operator_resolution='marked_paid' AND state<>'completed'`, [id]).catch(() => {});
                 await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.checkout.mark_paid_failed','billing_checkout_intent',$2,$3::jsonb)`, [actor, id, JSON.stringify({ partiallyApplied: partial, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
-                if (partial) return res.redirect(back + '?error=' + encodeURIComponent('The payment was only partly recorded. Open the customer and confirm their access and the payment history before doing anything else; this checkout stays closed so it is not recorded twice.'));
+                if (partial) return res.redirect(back + '?error=' + encodeURIComponent('The payment was only partly recorded. Open the customer and confirm their access and the payment history before doing anything else; it now stays in the Orders list marked for review (and cannot be recorded twice) until you mark it reviewed.'));
             }
             return res.redirect(back + '?error=' + encodeURIComponent(error.message || 'Payment could not be recorded.'));
         }

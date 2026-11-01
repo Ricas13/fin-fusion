@@ -171,18 +171,32 @@ async function main() {
       };
       const r2 = await post(partial.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
       assert(/only partly recorded/.test(r2.location), `a partial failure must be explained (${r2.location})`);
-      assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [partial.id])).rows[0].operator_resolution, 'marked_paid', 'a partly applied payment keeps its claim');
-      assert(!await inQueue(partial.id), 'so it does not reappear as unpaid');
+      assert.strictEqual((await query('SELECT operator_resolution FROM billing_checkout_intents WHERE id=$1', [partial.id])).rows[0].operator_resolution, 'marked_paid_review', 'a partly applied payment keeps its claim and is flagged for review');
+      const reviewRow = (await adminOrders.checkoutIssues({ page: 0 })).find(row => row.checkout_id === partial.id);
+      assert(reviewRow && reviewRow.needs_review, 'it stays visible in the exception queue for any administrator, marked as needing review');
+      assert(/partly recorded/.test(reviewRow.last_error), 'with an explanation');
+      assert(/Mark reviewed/.test(await (await fetch(`${base}/admin/commerce/orders`, { headers: { cookie: j.get() } })).text()), 'and offers Mark reviewed instead of Record as paid or Dismiss');
+      assert(/not waiting for review/.test((await post(early.id, 'review-done', { reason: 'Verified the access and payment history' })).location), 'only a checkout waiting for review can be marked reviewed');
+      assert((await post(partial.id, 'review-done', { reason: 'Verified the access and payment history' })).location.includes('message='), 'marking it reviewed succeeds');
+      assert(!await inQueue(partial.id), 'and it then leaves the queue');
+      assert.strictEqual(await audits(partial.id, 'billing.checkout.mark_paid_reviewed'), 1, 'the review is audited');
       assert.strictEqual(await audits(partial.id, 'billing.checkout.mark_paid_failed'), 1, 'the failure is audited');
     } finally { plisioModule.settleAttested = realSettle; }
 
-    // More than the first page: the panel can show everything.
+    // A backlog of any size is reachable: the queue is paged, each page is complete and the total is shown.
     const many = [];
-    for (let i = 0; i < 12; i += 1) many.push(await makeIntent(`many${i}`, { ageDays: 8 }));
-    const pageHtml = await (await fetch(`${base}/admin/commerce/orders`, { headers: { cookie: j.get() } })).text();
-    assert(pageHtml.includes('issues=all'), 'a backlog beyond the first page offers Show all');
-    const allHtml = await (await fetch(`${base}/admin/commerce/orders?issues=all`, { headers: { cookie: j.get() } })).text();
-    for (const item of many) assert(allHtml.includes(`/admin/billing/checkouts/${item.id}/mark-paid`), 'Show all reaches every unresolved checkout');
+    for (let i = 0; i < 60; i += 1) many.push(await makeIntent(`many${i}`, { ageDays: 8 }));
+    const total = await adminOrders.checkoutIssueTotal();
+    assert(total >= 60, 'the total counts the whole backlog');
+    const pages = Math.ceil(total / adminOrders.CHECKOUT_PAGE_SIZE);
+    assert(pages >= 3, 'the backlog spans several pages');
+    const reached = new Set();
+    for (let n = 0; n < pages; n += 1) {
+      const html = await (await fetch(`${base}/admin/commerce/orders?issues_page=${n}`, { headers: { cookie: j.get() } })).text();
+      if (n === 0) assert(html.includes('data-issues-pager') && html.includes('issues_page=1'), 'the first page offers the next page');
+      for (const item of many) if (html.includes(`/admin/billing/checkouts/${item.id}/mark-paid`)) reached.add(item.id);
+    }
+    assert.strictEqual(reached.size, many.length, 'walking the pages reaches every unresolved checkout, including the oldest');
 
     // Record as paid: grants access, completes the checkout, writes an operator-attested ledger row.
     const paid = await post(old.id, 'mark-paid', { reason: 'Plisio dashboard shows the invoice completed', confirm: 'PAID' });
