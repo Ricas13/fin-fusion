@@ -1,97 +1,131 @@
-# Design: record an external Stripe/PayPal payment, and the automatic Plisio sweep
+# Design v2: record an external Stripe/PayPal payment, and the automatic Plisio sweep
 
-Status: DESIGN ONLY, nothing built. For review before implementation. Target repo: Ricas13/fin-fusion (main at ca0308fb).
+Status: DESIGN ONLY, nothing built. v2 incorporates the first design review (BUILD AFTER CHANGES). Target: Ricas13/fin-fusion main (ca0308fb).
+This file lives on branch `claude/full-analysis-hpmuwq`.
 
-## 0. Why
+## 0. Rule of the system
+Payments are fully automatic. The only manual money action is: a customer paid outside the portal directly in Stripe or PayPal, and the
+operator links that payment by its provider ID. Money is at stake: refuse rather than guess. No amount, currency or "payment received"
+claim is ever typed in by the operator; all of it comes from the provider.
 
-Payments must be fully automatic. The only manual money action the operator should ever need is: "a customer paid me outside the portal
-(directly in Stripe or PayPal) — give them their plan and link that payment". Everything else (unpaid invoices, lapsed subscribers,
-late payments) must resolve by itself. Money is at stake, so the design prefers refusing over guessing.
+## 1. Facts this builds on (verified in code)
+- Ledger `payment_history_transactions`, written only via `provider-financial-state.recordTransaction()`: upsert unique on
+  (provider, provider_transaction_id). It uses the shared `query`, not a transaction client. An upsert is not a one-time fulfilment claim.
+- `lifecycle-primitives.activatePurchase` locks the customer row, checks payment-linked subscriptions / access extensions and recorded
+  money loss. `subscription-access-extensions.js` serialises per subscription and tracks purchased days per payment.
+- Stripe identities differ by path: checkout uses the PaymentIntent id; history sync keys the ledger by balance-transaction id.
+- PayPal: capture is the money identity (`getCapture`, `recordCompletedCapture`), the order id is an alias.
+- `manual_payment_events` is a cash/bank NOTE ledger, no access effect; it stays, relabelled "Note a cash/bank payment".
+- Customer attribution by email exists for reporting only (`provider-financial-state.resolveCustomerId`). It is NOT sufficient to authorise access.
 
-## 1. Facts about the current code that this design builds on
+## 2. Feature A: record an external payment
 
-- Money ledger: `payment_history_transactions`, written only through `provider-financial-state.js recordTransaction()`;
-  unique on `(provider, provider_transaction_id)`; upsert is idempotent. Providers: stripe, paypal, plisio.
-- Access grant: `lifecycle.activatePurchase(input)` (plan, customer, provider, providerSubscriptionId?, commercialSnapshot incl. kind
-  `subscription_extension`); it enforces audience, Stremio acquirability, one live recurring per service, and releases inactivity holds.
-- Already-existing live fetch helpers: Stripe `live-stripe-payment-history.upsertCharge` (charge + balance transaction), PayPal
-  `paypal.getCapture / recordCompletedCapture`.
-- Existing "manual payments" (`manual-payment-ledger.js`, table `manual_payment_events`) is a cash/bank/crypto NOTE ledger. It does not
-  grant access and does not touch the financial ledger. It stays as is (renamed in the UI to "Note a cash/bank payment").
-- Checkout intents already record portal-started payments; a payment made through the portal must never be recorded a second time here.
+### 2.1 Fulfilment record (the one durable identity)
+New table `external_payment_fulfilments`:
+`id, provider, canonical_payment_id, alias_ids text[], merchant_account (Stripe account id / PayPal client+env), customer_id, plan_id,
+service_lane, subscription_id, ledger_provider_transaction_id, verified_amount_minor, verified_currency, evidence_fingerprint,
+submission_id (unique), state ('applied'|'reversed'), recorded_by, created_at, reversed_at, reversal_reason`.
+Unique on (provider, merchant_account, canonical_payment_id) AND a unique index over every alias (separate alias table or a partial unique
+per alias) so the same money cannot be claimed through a different reference.
+- Canonical id: Stripe = PaymentIntent (aliases: charge id, balance transaction id, invoice id). PayPal = capture id (alias: order id).
+  An order id alone is refused (no proof of capture).
+- Before anything: reject if ANY alias exists in `external_payment_fulfilments`, in `payment_history_transactions` with a customer / local
+  subscription effect, or in `checkout_intents` (portal payment → refer the operator to the existing confirm/recovery action).
 
-## 2. Feature A: "Record a payment made outside the app" (Stripe / PayPal)
+### 2.2 Operator flow
+Customer page → Payments card → "Record a payment made outside the app": provider, payment ID, plan, optional note → "Look up payment"
+(read-only preview from the provider: amount, currency, status, date, payer, refunded/disputed amounts, plan price, ownership evidence,
+exactly what access will result) → "Record and activate".
 
-### 2.1 Operator flow (customer page → Payments card)
-1. Choose provider (Stripe or PayPal), paste the provider payment ID (Stripe `pi_…`/`ch_…`/`in_…`; PayPal capture ID or order ID).
-2. Choose the plan to give. Optional note.
-3. Press "Look up payment". Server fetches the payment FROM THE PROVIDER and shows a read-only preview:
-   amount, currency, status, date, payer email/name, refunded amount, whether already recorded, and the plan price for comparison.
-4. Press "Record and activate" (second step, bound to the preview by a signed token, see 2.3).
+### 2.3 Ownership (positive evidence required, no override in v1)
+Allowed only if at least one holds, evaluated server-side from the provider record:
+(a) the Stripe customer / PayPal payer id is already linked to THIS customer (existing provider identity), or
+(b) the provider payment carries our customerId metadata for THIS customer, or
+(c) the payer email equals this customer's account email exactly (case-insensitive) AND no other customer owns that email or that provider identity.
+If the provider identity is linked to a DIFFERENT customer → refuse. If no evidence → refuse ("cannot prove this payment belongs to this
+customer"); there is no operator override. (Decision for the owner: whether a later, separately reviewed owner-only override is wanted.)
 
-The operator never types the amount or currency: they come from the provider. If the provider cannot be reached, the form refuses
-("try again shortly"); there is no unverified mode.
+### 2.4 Preview → confirm
+Preview returns a signed token binding: provider, merchant account, canonical id, customer, plan, service lane, verified amount+currency,
+evidence fingerprint, intended access effect, expiry (10 min), and a one-time submission id.
+Confirm re-fetches from the provider with server credentials and refuses unless: payment is fully completed/captured, belongs to our merchant
+account/environment, amount+currency equal the token, NO refund / reversal / dispute / chargeback (any amount) exists, and the evidence
+fingerprint still matches. Then it takes the fulfilment lock (see 2.5) and re-checks everything local. Provider unreachable, rate-limited or
+ambiguous → nothing is written; the operator sees "try again".
 
-### 2.2 Refusals (all with a plain-language reason, nothing written)
-- Provider lookup fails or the ID does not exist / belongs to another Stripe account or PayPal merchant.
-- Payment not fully captured/paid; refunded or partially refunded; disputed.
-- Already recorded in the ledger (shows where: which customer, which date) — including payments made via the portal.
-- A checkout intent for this provider ID exists (portal payment): do NOT create a second grant; show "This was a portal checkout" and
-  offer the existing confirm/recovery action instead.
-- Currency differs from the plan's price currency. Amount below the plan price → refused unless the operator ticks
-  "Amount differs from plan price" and gives a reason (stored in audit). Amount above price is allowed with a warning.
-- Customer already has a live subscription for the same service lane with a different plan → shown as "this will extend / replace",
-  using the existing prepaid stacking rules; no new rule invented here.
+### 2.5 Atomic apply (one transaction)
+1. Lock customer row (same lock `activatePurchase` uses).
+2. Insert the fulfilment row (`ON CONFLICT DO NOTHING`; zero rows inserted = already applied → return the original outcome, change nothing).
+3. Write the ledger row with a NEW transaction-aware `recordTransaction(input, client)` (metadata: `source:'operator_recorded'`, recordedBy, fulfilment id).
+4. Apply the access effect (2.6) in the same transaction.
+5. Insert `audit_log` (`admin.payment.external_recorded`) with provider, ids, amount, plan, effect, operator.
+Crash anywhere → the whole transaction rolls back; a retry re-verifies and starts again. Response lost after commit → resubmitting returns the
+stored outcome (keyed by submission_id / canonical id). Webhooks, the history sync and checkout recovery that later see the same payment hit
+the same unique ids and the existing idempotent upserts; they cannot create a second grant because step 2 already claimed it, and they must
+check the fulfilment table before applying.
 
-### 2.3 Atomicity and idempotency
-- One database transaction: lock the customer row; re-check "not already recorded" under lock; insert ledger row (kind
-  `charge`, `metadata.source='operator_recorded'`, `recordedBy`, `note`); call the activation path; write `audit_log`
-  (`admin.payment.external_recorded`) with provider, ID, amount, plan, subscription id, operator.
-- Idempotent on `(provider, provider_transaction_id)`: pressing the button twice, or a later Stripe webhook / history sync / PayPal
-  event for the same payment, produces no second ledger row and no second grant (the upsert path is reused).
-- Preview → confirm uses a short-lived signed token over (customer, provider, id, plan, verified amount, currency); the confirm step
-  re-fetches from the provider and refuses if anything differs from what the operator saw.
-- Access type: one-off payment (`billing_mode='payment'`, not recurring), period from the plan duration, no provider subscription linked.
-  Linking an ongoing Stripe/PayPal subscription is the existing "link subscription" tool and stays separate.
+### 2.6 Access effect (explicit, v1 conservative)
+Per customer + service lane, evaluated under the lock:
+- Live Stripe/PayPal recurring agreement for that lane → REFUSE (no overlapping or hidden credit in v1). Never touch the provider link.
+- Live prepaid term (Plisio / earlier external payment), same plan and service → EXTEND via the existing access-extension mechanism: paid-through
+  moves forward by the plan duration, recomputed under the subscription lock; never overwritten by now + duration.
+- Live term on a different plan → REFUSE (needs the existing plan-change flow).
+- No live term → ONE new one-off subscription (`billing_mode='payment'`, source = provider, no provider subscription id), period = plan duration.
+Capacity, Stremio acquirability and recorded-loss checks from `activatePurchase` still apply.
 
-### 2.4 Afterwards
-- Payments card shows the entry tagged "Recorded by <admin>"; customer log shows a plain-language line.
-- Customer notification `payment.received` follows the existing preference (default on; operator checkbox "don't email customer").
-- Reversal = the existing refund/operator-refund flow. No "undo record" button.
-- Rate limit + CSRF + admin-only (same as other billing writes); owner capability not required.
+### 2.7 Refund / dispute / reversal
+The fulfilment row stores the ledger transaction so the existing refund and dispute handling (webhooks, history sync, operator refund) can
+recognise the purchase. Required behaviour, to be proven by tests before build is declared done: a refund or dispute arriving at any time
+(before, during or after confirm) marks the fulfilment `reversed` and removes only that purchase's contribution to paid-through access
+(recompute from remaining purchases; never destroy time bought by other payments); a dispute opened later reverses the same way.
+No "undo" button: reversal is the existing refund flow. A reversed payment id can never be recorded again.
 
-### 2.5 Open questions for the reviewer
-1. `recordTransaction` uses the shared `query`, not a transaction client. Is a transaction-aware variant needed so the ledger row and
-   the grant commit together, or is the idempotent upsert plus a compensating check enough?
-2. Is "refuse unless amount ≥ plan price (or reason given)" the right guard, or should any mismatch require the reason?
-3. PayPal: accept order ID and capture ID, or capture ID only?
-4. Should a payment older than N days be refused (stale evidence)?
+### 2.8 Notifications, permissions, audit
+- One `payment.received` customer notification after commit (default on; operator checkbox "do not email customer"), deduped by fulfilment id.
+- Admin-only, CSRF, write rate limit. Audit EVERY preview, refusal (with reason code) and confirm; never store secrets or raw provider payloads.
+- Plain-language refusal reasons; the preview page shows exactly why it would be refused.
 
-## 3. Feature B: automatic Plisio sweep (no operator action)
+## 3. Feature B: automatic Plisio sweep
 
-### 3.1 New finding from production (`plisio:list-shape` at ca0308fb)
-- `/api/v1/operations` returns `operations`, `_links`, `_meta{totalCount,pageCount,currentPage,perPage}`.
-- Unfiltered `totalCount=4` (all `completed`; 3 are `type=invoice`) but every request returned 0 items.
-- Every request sent `page=1` and the reply said `currentPage=2` → Plisio's `page` is ZERO-based; `page=1` is the second (empty) page.
-- `limit=5` is honoured (`perPage=5`); `per-page` is ignored (perPage stayed 10).
-- So the list works; we were reading the wrong page. Nothing about the account is wrong.
+### 3.1 Production evidence (plisio:list-shape at ca0308fb)
+`_meta.totalCount=4` (all completed, 3 invoices) yet every request returned 0 items; every request sent page=1 and Plisio answered
+`currentPage=2` → `page` is zero-based on this account; `limit` is honoured (`perPage=5`), `per-page` is ignored. Plisio's public docs do not say
+zero-based, so the contract is established empirically and then guarded.
 
-### 3.2 Sweep behaviour
-- Every 5 min (inside the existing recovery worker): page=0, `limit=50`, walk pages while `currentPage-1 < pageCount`, hard cap 20 pages.
-  Self-check each response: `_meta.currentPage == requestedPage+1`, otherwise stop and raise a provider-contract incident (so a
-  future API change is loud, not silent).
-- For each operation: look up our checkout intent / ledger row by `txn_id` or `order_number`.
-  - Known and already completed: nothing.
-  - Known intent, provider says completed/mismatch-overpaid: verify through the existing per-ID path (`confirmCheckout`) — the
-    list is only a discovery hint, never trusted for amount or status.
-  - Known intent, provider terminal-unpaid (expired/cancelled/error): existing close logic.
-  - Completed at Plisio but unknown to us: "unmatched receipt" incident (not a loss incident), shown to the operator with the ID.
-- Only the per-ID verified result can grant access (unchanged). Rate: ≤ 1 list request per cycle plus per-ID calls for changes.
+### 3.2 Behaviour
+- A persistent cursor + bounded run: up to N requests per run (e.g. 10), `page=0` first, `limit=50`, advancing; overlapping rescan of the newest
+  page each run because offset paging shifts when new operations arrive.
+- Contract guard each response: `_meta.currentPage == requestedPage+1`; items.length matches min(perPage, remaining totalCount); unique
+  operation ids across pages; items collected ≥ expected total at the end. Any violation → stop, record ONE deduped "provider contract changed"
+  incident, do not mark the sweep complete. A first sweep with totalCount>0 and zero items found is always a violation.
+- The list is only a discovery hint. For each operation not already settled locally, run the existing per-ID verification (`confirmCheckout`),
+  never granting from list data. 429/5xx → backoff with jitter and resume next run.
+- Cooperates with the existing 5-minute checkout recovery through the same row locks: both end in the idempotent per-ID path, so there is no second
+  grant. Fair scheduling: oldest-unchecked first with a per-operation attempt counter and cool-down so a poison row cannot starve the rest.
+- Verified-evidence rule: amount/currency/status for any grant come from the per-ID provider response. `confirmCheckout`'s fallback to
+  callback/intent values is labelled "contract value, not provider-verified"; when the provider response lacks amount/currency the operation is
+  NOT granted by the sweep and goes to an incident instead.
+- Completed at Plisio but matching no local intent → one "unmatched receipt" incident per operation (deduped by txn id), operator-visible, no grant.
 
-## 4. Test plan (summary)
-Unit: validation/refusal matrix (2.2), token binding. Real-DB: double submit, webhook race, portal-payment duplicate, refunded
-payment, wrong currency, concurrent record for two customers (one wins). Sweep: page-base self-check, empty/partial pages, unknown
-operation → incident, hostile list data. Existing suites must stay green; no change to expiry, renewal or refund behaviour.
+## 4. Rollout
+1. Ship the sweep in REPORT-ONLY mode (reads, matches, reports discrepancies and contract violations, grants nothing). Review real output.
+2. Enable sweep verification (per-ID path) once the zero-based contract has run clean for a few days.
+3. Ship the external-payment preview (read-only lookup + discrepancy) first, then the confirm step behind a setting limited to admins.
+Rollback = disable entry points / setting; never delete financial evidence.
 
-## 5. Out of scope
-Stripe `past_due` policy; late-retry recovery after local expiry; PayPal one-off polling. Tracked separately.
+## 5. Test matrix (release gate)
+Concurrent double confirm; confirm vs webhook; confirm vs history sync; confirm vs checkout recovery; wrong customer / other customer's
+identity / ambiguous email; wrong merchant account or environment; amount or currency mismatch; refunded, partially refunded, disputed,
+old refunded capture; recurring Stripe/PayPal present; Plisio prepaid stacking; different-plan refusal; crash after claim (rollback) and after
+commit (replay returns the stored outcome); refund after record reverses only that purchase; Plisio page-zero vs page-one, empty page with
+totalCount>0, repeated page, shifted pages, 429, poison row, hostile list data. Existing suites unchanged and green; no change to expiry, renewal
+or refund behaviour for existing customers.
+
+## 6. Open questions
+1. Owner-only override for payments we cannot tie to the customer (default: none in v1)?
+2. Refuse payments older than N days (suggest 90)?
+3. Is refusing a live recurring agreement for the same lane too strict operationally, or is a separately modelled credit wanted later?
+4. Does the existing refund/dispute handling reliably find an `operator_recorded` ledger row and its subscription? (Must be verified in code before build.)
+
+## 7. Out of scope
+Stripe `past_due` policy; late-retry recovery after local expiry; PayPal one-off polling.
