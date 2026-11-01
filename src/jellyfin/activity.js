@@ -179,6 +179,7 @@ async function upsertHistorySession(s, seenAt = new Date(), progressReported = f
             WITH old AS (
                 SELECT * FROM playback_history
                 WHERE server_id=$1 AND playback_key=$2 AND ended_at IS NOT NULL
+                  AND $5::boolean
                   AND $3::timestamptz > ended_at + ($4::int * INTERVAL '1 second')
                 FOR UPDATE
             ), archived AS (
@@ -198,7 +199,7 @@ async function upsertHistorySession(s, seenAt = new Date(), progressReported = f
             SET started_at=$3::timestamptz,last_seen_at=$3::timestamptz,ended_at=NULL,ended_reason=NULL,progress_reported=FALSE
             FROM old
             WHERE ph.id=old.id AND EXISTS (SELECT 1 FROM archived)
-        `, [s.serverId, s.playbackKey, observedAt, RESUME_SEGMENT_GAP_SECONDS]);
+        `, [s.serverId, s.playbackKey, observedAt, RESUME_SEGMENT_GAP_SECONDS, Boolean(advance)]);
         await client.query(`
             INSERT INTO playback_history(
                 server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,

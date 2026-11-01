@@ -143,10 +143,17 @@ async function main() {
   await query(`UPDATE playback_history SET started_at=NOW()-INTERVAL '7 hours',last_seen_at=NOW()-INTERVAL '7 hours' WHERE server_id=$1 AND item_id=$2`, [server, itemK]);
   await activity.runActivityPolicyCycle();
   await activity.runActivityPolicyCycle();
-  const kClosed = await row(itemK);
-  assert.strictEqual(kClosed.ended_reason, 'stale_session', 'a timestamp-less play that has not advanced for the threshold is closed, not left open forever');
-  assert(kClosed.ended_at, 'and ended');
-  assert(Number(kClosed.seconds) <= 60, 'without gaining any watch time (it stays closed even though Jellyfin keeps listing it)');
+  // Look at the ORIGINAL live row by its key (not 'the newest row'), after several further polling cycles: it must stay
+  // closed, and no phantom archived segments may appear for a play that never resumed.
+  await activity.runActivityPolicyCycle();
+  await activity.runActivityPolicyCycle();
+  const keyK = require('crypto').createHash('sha256').update(`${server}|sk-${tag}|ps-k|${itemK}`).digest('hex');
+  const kLive = (await query(`SELECT ended_at,ended_reason,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)) AS seconds FROM playback_history WHERE server_id=$1 AND playback_key=$2`, [server, keyK])).rows[0];
+  assert(kLive, 'the original live row exists');
+  assert.strictEqual(kLive.ended_reason, 'stale_session', 'a timestamp-less play that has not advanced for the threshold is closed, not left open forever');
+  assert(kLive.ended_at, 'and it stays ended across later polls even though Jellyfin keeps listing it');
+  assert(Number(kLive.seconds) <= 60, 'without gaining any watch time');
+  assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM playback_history WHERE server_id=$1 AND item_id=$2`, [server, itemK])).rows[0].n, 1, 'and no phantom archived segments are created for a play that never resumed');
 
   // 9. A short interruption (over two minutes) is also a new period, not watch time.
   const itemJ = `item-j-${tag}`;
