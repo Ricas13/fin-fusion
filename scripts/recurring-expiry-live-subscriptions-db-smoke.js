@@ -10,9 +10,12 @@ process.env.SESSION_SECRET ||= 'recurring-expiry-smoke-session-secret-0123456789
 process.env.NODE_ENV ||= 'test';
 
 const assert = require('assert');
-const { query } = require('../src/db');
+const db = require('../src/db');
 const { runDbSmoke, unique } = require('./test-fixture');
-const expiry = require('../src/entitlements/subscription-expiry');
+
+// Populated only inside the smoke's uncommitted database transaction.
+// The expiry module captures db.query/db.transaction at import time, so require it after binding these.
+let query = null;
 
 const created = { customers: [], plans: [], subs: [] };
 
@@ -46,14 +49,43 @@ async function subscription({ label, source, billingMode, status = 'active', end
 
 const statusOf = async id => (await query(`SELECT status FROM subscriptions WHERE id=$1`, [id])).rows[0].status;
 
-async function cleanup() {
-    await query(`DELETE FROM subscriptions WHERE id=ANY($1::uuid[])`, [created.subs]).catch(() => {});
-    await query(`DELETE FROM customers WHERE id=ANY($1::uuid[])`, [created.customers]).catch(() => {});
-    await query(`DELETE FROM plans WHERE id=ANY($1::uuid[])`, [created.plans]).catch(() => {});
+// This test calls a GLOBAL expiry sweep. Never run it against an ordinary database, even though every
+// SQL write is enclosed in a rollback-only transaction. CI supplies a disposable local PostgreSQL service.
+// Local runs require an explicit opt-in AND a local database whose name says test/ci/smoke.
+function safeDatabaseUrl() {
+    const raw = String(process.env.DATABASE_URL || '');
+    let url;
+    try { url = new URL(raw); } catch { throw new Error('Expiry DB smoke requires a valid disposable DATABASE_URL.'); }
+    const localHost = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+    const ci = process.env.CI === 'true' && process.env.GITHUB_ACTIONS === 'true'
+        && process.env.GITHUB_REPOSITORY === 'Ricas13/fin-fusion'
+        && url.pathname === '/steamfusion' && url.username === 'steamfusion';
+    const optedIn = process.env.EXPIRY_DB_SMOKE_DISPOSABLE === 'I_ACCEPT_DISPOSABLE_DB'
+        && /(?:^|[_-])(test|ci|smoke)(?:$|[_-])/i.test(decodeURIComponent(url.pathname.slice(1)));
+    assert(localHost && process.env.NODE_ENV === 'test' && (ci || optedIn),
+        'Refusing global expiry smoke outside a local, explicitly disposable test database.');
+    return { url, ci };
 }
 
 runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
+    const { url, ci } = safeDatabaseUrl();
+    const client = await db.getPool().connect();
+    const originalQuery = db.query;
+    const originalTransaction = db.transaction;
+    let started = false;
     try {
+        const identity = (await client.query('SELECT current_database() AS name, current_user AS role')).rows[0];
+        assert.strictEqual(identity.name, decodeURIComponent(url.pathname.slice(1)), 'Database identity must match the disposable URL');
+        if (ci) assert.strictEqual(identity.role, 'steamfusion', 'CI must use its disposable database owner');
+        await client.query('BEGIN');
+        started = true;
+        query = (sql, params) => client.query(sql, params);
+        db.query = query;
+        // The production expiry SQL runs unchanged on the SAME connection; its transaction wrapper is
+        // replaced only to avoid committing inside our outer, deliberately rollback-only transaction.
+        db.transaction = async fn => fn(client);
+        const expiry = require('../src/entitlements/subscription-expiry');
+        const billingControl = require('../src/payments/billing-control');
         // Customers who renewed or are healthy.
         const renewed = await subscription({ label: 'renewed', source: 'stripe', billingMode: 'subscription', endOffset: '-72 hours' });
         const renewedPaypal = await subscription({ label: 'renewed-paypal', source: 'paypal', billingMode: 'subscription', endOffset: '-72 hours' });
@@ -73,11 +105,22 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         const advanced = new Set([renewed, renewedPaypal]);
         const unreachable = new Set([outageShort, outageLong]);
         const recorded = [];
+        const unrelatedBefore = (await query(`
+            SELECT id,status,current_period_end,service_extension_days FROM subscriptions
+            WHERE id <> ALL($1::uuid[]) ORDER BY id
+        `, [created.subs])).rows;
         const syncRecurring = async id => {
             if (unreachable.has(id)) return { ok: false, error: 'provider unreachable' };
             if (advanced.has(id)) {
-                // What a real sync does after a successful renewal: adopt the provider's new paid-through date.
-                await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '20 days' WHERE id=$1`, [id]);
+                // Exercise the REAL syncSubscription -> applyRemoteState -> updateProviderSubscription
+                // chain, substituting only the remote provider's successful renewed-period response.
+                return billingControl.syncSubscription(id, { adapter: {
+                    fetchRemote: async () => ({
+                        status: 'active',
+                        periodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
+                        cancelAtPeriodEnd: false
+                    })
+                } });
             }
             return { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } };
         };
@@ -95,9 +138,26 @@ runDbSmoke('recurring expiry live subscriptions DB smoke', async () => {
         // Only genuinely unpaid terms end.
         assert.strictEqual(await statusOf(unpaidActive), 'expired', 'an "active" agreement that never advanced its paid-through date for 72h has not been paid');
         assert.strictEqual(await statusOf(outageLong), 'expired', 'an outage that outlasts the grace ends the term (unchanged behaviour) and records an incident');
-        assert.strictEqual(recorded.length, 1, 'exactly one durable incident for the exhausted verification');
+        assert.strictEqual(recorded.length, 1, 'incident recorder invoked once for exhausted verification');
+        assert.strictEqual(recorded[0][0].kind, 'failed_renewal');
+        assert.strictEqual(recorded[0][0].metadata.reason, 'expiry_provider_verification_exhausted');
         assert.strictEqual(await statusOf(paygOver), 'expired', 'a pay-as-you-go term that ran out ends as before');
+        const unrelatedAfter = (await query(`
+            SELECT id,status,current_period_end,service_extension_days FROM subscriptions
+            WHERE id <> ALL($1::uuid[]) ORDER BY id
+        `, [created.subs])).rows;
+        assert.deepStrictEqual(unrelatedAfter, unrelatedBefore, 'global expiry must not change unrelated test-suite subscriptions');
     } finally {
-        await cleanup();
+        try {
+            if (started) await client.query('ROLLBACK');
+        } finally {
+            db.query = originalQuery;
+            db.transaction = originalTransaction;
+            query = null;
+            client.release();
+        }
     }
+    // Rollback, not best-effort DELETE, is the sole cleanup mechanism. Any failure here fails CI.
+    const survivors = await db.query('SELECT COUNT(*)::int AS n FROM subscriptions WHERE id=ANY($1::uuid[])', [created.subs]);
+    assert.strictEqual(survivors.rows[0].n, 0, 'the expiry smoke must leave zero fixture subscriptions behind');
 });

@@ -57,7 +57,7 @@ function callbackDigest(secretKey, payload) {
     return crypto.createHmac('sha1', key).update(JSON.stringify(ordered)).digest('hex');
 }
 
-async function api(path, params = {}, { timeoutMs = 15000 } = {}) {
+async function api(path, params = {}, { timeoutMs = 15000, quiet = false } = {}) {
     const cfg = await providerSettings.get('plisio');
     if (!cfg.secretKey) throw new Error('Plisio secret key is not configured.');
     if (typeof path !== 'string' || !path.startsWith('/api/v1/') || path.startsWith('//')) throw new Error('Invalid Plisio API path.');
@@ -77,7 +77,8 @@ async function api(path, params = {}, { timeoutMs = 15000 } = {}) {
         }
         if (!response.ok || payload?.status === 'error') {
             const detail = payload?.data?.message || payload?.message || payload?.error || `HTTP ${response.status}`;
-            console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
+            // Quiet calls must never print provider-supplied text, but preserve typed errors for payment recovery.
+            if (!quiet) console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
             const failure = new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
             // Only an HTTP 404 carrying Plisio's documented operation-not-found error (status 'error', data.code 111; a gateway/proxy 404 does not) means "this operation does not exist". Timeouts, 401/403, 5xx and
             // malformed bodies never do, so they can never be mistaken for an abandoned invoice.
