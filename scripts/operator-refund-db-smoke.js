@@ -77,9 +77,17 @@ async function main() {
     const raceBase = { customerId: raceCustomer.id, subscriptionId: raceSub.id, reason: 'Refunded in the Plisio dashboard after a duplicate payment' };
     const race = await Promise.allSettled([sid(), sid()].map(id => operatorRefund.record({ ...raceBase, amount: '7.00', submissionId: id })));
     assert.strictEqual(race.filter(r => r.status === 'fulfilled').length, 1, 'two concurrent 7.00 refunds against a 10.00 plan: exactly one is recorded');
-    assert(race.find(r => r.status === 'rejected').reason.message.match(/more than the plan cost/i), 'the other is refused by the cap');
+    assert(race.find(r => r.status === 'rejected').reason.message.match(/more than the plan cost|already being recorded/i), 'the other is refused (as an identical refund in flight, or by the cap)');
     const raceTotal = Number((await query(`SELECT COALESCE(SUM(-gross_amount_minor),0) n FROM payment_history_transactions WHERE customer_id=$1`, [raceCustomer.id])).rows[0].n);
     assert.strictEqual(raceTotal, 700, 'the ledger shows 7.00 refunded, never 14.00');
+
+    // Different reasons (so they are genuinely different refunds) racing for the same cap: still only one fits.
+    const race2Customer = await fixtureCustomer({ query }, { displayName: 'Refund Race 2', email: `${unique('refund-race2')}@example.invalid` });
+    created.customers.push(race2Customer.id);
+    const race2Sub = await fixtureSubscription({ query }, { customerId: race2Customer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-race2') });
+    const race2 = await Promise.allSettled([['First administrator reason text'], ['Second administrator reason text']].map(([reason]) => operatorRefund.record({ customerId: race2Customer.id, subscriptionId: race2Sub.id, amount: '7.00', reason, submissionId: sid() })));
+    assert.strictEqual(race2.filter(r => r.status === 'fulfilled').length, 1, 'two different 7.00 refunds racing on a 10.00 plan: exactly one is recorded');
+    assert(race2.find(r => r.status === 'rejected').reason.message.match(/more than the plan cost/i), 'the other is refused by the cap');
 
     // A failure part-way through is not final: the attempt is marked failed (and stops counting toward
     // the cap), and submitting the same amount and reason finishes it without repeating anything.
@@ -134,6 +142,51 @@ async function main() {
     } finally { incidentsModule.record = keepIncident; }
     const second = await operatorRefund.record({ ...cleanBase, amount: '9.00', reason: 'Second try with a different reason text', submissionId: sid() });
     assert.strictEqual(second.resumed, false, 'a different refund is a new one and is not blocked by an attempt that changed nothing');
+
+    // A no-effect failed attempt must not be resumable AFTER another refund consumed the cap: resuming is
+    // checked against the cap again, so the total can never reach 14.00 on a 10.00 plan.
+    const capCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Cap', email: `${unique('refund-cap')}@example.invalid` });
+    created.customers.push(capCustomer.id);
+    const capSub = await fixtureSubscription({ query }, { customerId: capCustomer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-cap') });
+    const capBase = { customerId: capCustomer.id, subscriptionId: capSub.id };
+    const firstReason = 'First refund which fails before any effect';
+    const keepIncident2 = incidentsModule.record;
+    try {
+      incidentsModule.record = async () => { throw new Error('simulated incident failure'); };
+      await assert.rejects(() => operatorRefund.record({ ...capBase, amount: '7.00', reason: firstReason, submissionId: sid() }), /only partly recorded/i);
+    } finally { incidentsModule.record = keepIncident2; }
+    await operatorRefund.record({ ...capBase, amount: '7.00', reason: 'A different refund completes meanwhile', submissionId: sid() });
+    await assert.rejects(() => operatorRefund.record({ ...capBase, amount: '7.00', reason: firstReason, submissionId: sid() }), /more than the plan cost/i, 'resuming the earlier failed refund re-checks the cap and is refused');
+    const capTotal = Number((await query(`SELECT COALESCE(SUM(-gross_amount_minor),0) n FROM payment_history_transactions WHERE customer_id=$1`, [capCustomer.id])).rows[0].n);
+    assert.strictEqual(capTotal, 700, 'only 7.00 is recorded as refunded, never 14.00');
+
+    // Only one request can resume a failed attempt: concurrent resumers cannot both run its effects.
+    const resumeCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Resume', email: `${unique('refund-resume')}@example.invalid` });
+    created.customers.push(resumeCustomer.id);
+    const resumeSub = await fixtureSubscription({ query }, { customerId: resumeCustomer.id, planId: plan.id, source: 'plisio', billingMode: 'payment', providerSubscriptionId: unique('plisio-resume') });
+    const resumeBase = { customerId: resumeCustomer.id, subscriptionId: resumeSub.id, amount: '5.00', reason: 'Refunded in the Plisio dashboard after a duplicate payment' };
+    try {
+      incidentsModule.record = async () => { throw new Error('simulated incident failure'); };
+      await assert.rejects(() => operatorRefund.record({ ...resumeBase, submissionId: sid() }), /only partly recorded/i);
+    } finally { incidentsModule.record = keepIncident2; }
+    const resumers = await Promise.allSettled([sid(), sid()].map(id => operatorRefund.record({ ...resumeBase, submissionId: id })));
+    assert.strictEqual(resumers.filter(r => r.status === 'fulfilled').length, 1, 'exactly one concurrent request resumes the failed attempt');
+    assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM payment_history_transactions WHERE customer_id=$1`, [resumeCustomer.id])).rows[0].n, 1, 'and there is exactly one ledger entry');
+
+    // A cash refund that ended the plan but failed before completing still counts toward the cap.
+    const cashCustomer = await fixtureCustomer({ query }, { displayName: 'Refund Cash', email: `${unique('refund-cash')}@example.invalid` });
+    created.customers.push(cashCustomer.id);
+    const cashSub = await fixtureSubscription({ query }, { customerId: cashCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual' });
+    await query(`CREATE OR REPLACE FUNCTION zz_block_refund_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='billing.refund.recorded_externally_completed' THEN RAISE EXCEPTION 'completion blocked for test'; END IF; RETURN NEW; END $$`);
+    await query(`CREATE TRIGGER zz_block_refund_completion BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION zz_block_refund_completion()`);
+    try {
+      await assert.rejects(() => operatorRefund.record({ customerId: cashCustomer.id, subscriptionId: cashSub.id, amount: '8.00', full: true, reason: 'Cash refunded at the counter in full', submissionId: sid() }), /only partly recorded/i);
+    } finally {
+      await query('DROP TRIGGER IF EXISTS zz_block_refund_completion ON audit_log');
+      await query('DROP FUNCTION IF EXISTS zz_block_refund_completion()');
+    }
+    assert.strictEqual((await query('SELECT status FROM subscriptions WHERE id=$1', [cashSub.id])).rows[0].status, 'cancelled', 'the plan was already ended');
+    await assert.rejects(() => operatorRefund.record({ customerId: cashCustomer.id, subscriptionId: cashSub.id, amount: '8.00', full: true, reason: 'A second cash refund for the same plan', submissionId: sid() }), /more than the plan cost/i, 'the ended-plan refund still holds its share of the cap even though it never completed');
 
     // Only the two supported shapes are accepted.
     const odd = await fixtureSubscription({ query }, { customerId: raceCustomer.id, planId: plan.id, source: 'admin_grant', billingMode: 'manual', providerSubscriptionId: unique('some-provider-ref') });
