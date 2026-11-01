@@ -65,6 +65,9 @@ for (const status of ['succeeded', 'completed', 'COMPLETED', 'S', 'paid']) asser
 for (const status of ['pending', 'new', 'unpaid', 'processing', 'P', 'something_new', '']) assert.strictEqual(tone('payment', status), '', `${status || '(none)'} is never shown as a success`);
 for (const status of ['failed', 'declined', 'denied', 'D', 'error']) assert.strictEqual(tone('payment', status), 'bad', `${status} is a failure`);
 assert.strictEqual(tone('refund', 'completed'), 'warn');
+assert.strictEqual(tone('refund', 'failed'), 'bad', 'a failed refund is a failure, not just adverse');
+assert.strictEqual(tone('payment', 'V'), 'warn', 'a PayPal reversal is adverse');
+assert.strictEqual(tone('refund', 'pending'), 'warn', 'a pending refund is still flagged');
 assert.strictEqual(tone('payment', 'disputed'), 'warn');
 assert.strictEqual(tone('chargeback', 'new'), 'warn');
 
@@ -72,6 +75,23 @@ assert.strictEqual(tone('chargeback', 'new'), 'warn');
 const run = timeline.build({ runs: [{ action: 'reconcile', status: 'succeeded', started_at: at(0), completed_at: at(3) }, { action: 'emby_disable', status: 'running', started_at: at(5), completed_at: null }] });
 assert(run.find(entry => entry.title === 'Reconcile').detail.includes('finished') && run.find(entry => entry.title === 'Reconcile').detail.includes('took 3m'), 'a finished run shows when it finished and how long it took');
 assert(run.find(entry => entry.title === 'Emby disable').detail.includes('not finished'), 'an unfinished run says so');
+
+// Durations never read '1h 60m'.
+const took = seconds => timeline.build({ runs: [{ action: 'x', status: 'ok', started_at: at(0), completed_at: new Date(new Date(at(0)).getTime() + seconds * 1000).toISOString() }] })[0].detail;
+assert(took(7185).includes('took 2h 00m') && !took(7185).includes('60m'), '1h 59m 45s rounds to 2h 00m, never 1h 60m');
+assert(took(3599).includes('took 1h 00m'), '59m 59s rounds up to 1h 00m');
+assert(took(45).includes('took 45s') && took(600).includes('took 10m') && took(5400).includes('took 1h 30m'));
+
+// An interrupted outside refund (progress markers, no completed/failed entry) stays visible; a finished one does not duplicate.
+const interrupted = timeline.build({ audit: [
+    { id: 1, action: 'billing.refund.recorded_externally', created_at: at(1), actor_name: 'ricas', metadata: { submissionId: 'sub-1' } },
+    { id: 2, action: 'billing.refund.recorded_externally_effect', created_at: at(2), actor_name: 'ricas', metadata: { submissionId: 'sub-1' } },
+    { id: 3, action: 'billing.refund.recorded_externally', created_at: at(3), actor_name: 'ricas', metadata: { submissionId: 'sub-2' } },
+    { id: 4, action: 'billing.refund.recorded_externally_completed', created_at: at(4), actor_name: 'ricas', metadata: { submissionId: 'sub-2' } }
+] });
+assert.deepStrictEqual(interrupted.map(entry => entry.title).sort(), ['Refund made outside the app is not finished', 'Refund made outside the app was recorded'].sort(), 'only the unfinished refund shows as unfinished; the finished one shows once as recorded');
+assert.strictEqual(interrupted.find(entry => entry.title.endsWith('not finished')).tone, 'warn');
+assert.strictEqual(interrupted.find(entry => entry.title.endsWith('not finished')).at, at(2), 'dated at its last step');
 
 // Outside refunds: the completed entry is shown, its internal progress markers are not.
 const refunds = timeline.build({ audit: [

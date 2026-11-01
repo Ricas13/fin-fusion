@@ -83,8 +83,9 @@ const PAYMENT_ADVERSE = ['refund', 'reversed', 'reversal', 'disputed', 'dispute'
 function paymentTone(type, status) {
     const kind = String(type || '').toLowerCase();
     const state = String(status || '').toLowerCase();
-    if (PAYMENT_ADVERSE.some(word => kind.includes(word) || state.includes(word)) || state === 'v') return 'warn';
+    // An explicitly failed payment is a failure whatever its type (a failed refund is a failure, not just "adverse").
     if (PAYMENT_FAILED.has(state)) return 'bad';
+    if (PAYMENT_ADVERSE.some(word => kind.includes(word) || state.includes(word)) || state === 'v') return 'warn';
     if (PAYMENT_SETTLED.has(state)) return 'good';
     return '';
 }
@@ -94,8 +95,9 @@ function took(startedAt, completedAt) {
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '';
     const seconds = Math.round((end - start) / 1000);
     if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-    return `${Math.floor(seconds / 3600)}h ${String(Math.round((seconds % 3600) / 60)).padStart(2, '0')}m`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 }
 
 function time(value) {
@@ -126,6 +128,28 @@ function build({ auth = [], audit = [], payments = [], incidents = [], runs = []
             title: ADMIN_ACTIONS[action] || humanise(action),
             detail: [row.actor_name ? `by ${row.actor_name}` : '', note].filter(Boolean).join(' · '),
             tone: ADMIN_TONES[action] || ''
+        });
+    }
+    // An outside refund is recorded in steps. If the last step written is a progress marker (and no completed/failed entry exists for the
+    // same submission), the operation is unfinished: show it, so an interrupted refund can never silently disappear from the log.
+    const refundSteps = new Map();
+    for (const row of audit) {
+        const action = String(row.action || '');
+        if (!action.startsWith('billing.refund.recorded_externally')) continue;
+        const sid = row.metadata && typeof row.metadata === 'object' ? String(row.metadata.submissionId || '') : '';
+        const key = sid || `row-${row.id || row.created_at}`;
+        const group = refundSteps.get(key) || { terminal: false, latest: null, actor: '' };
+        if (action.endsWith('_completed') || action.endsWith('_failed')) group.terminal = true;
+        if (!group.latest || time(row.created_at) > time(group.latest)) { group.latest = row.created_at; group.actor = row.actor_name || ''; }
+        refundSteps.set(key, group);
+    }
+    for (const group of refundSteps.values()) {
+        if (group.terminal || !group.latest) continue;
+        entries.push({
+            at: group.latest, category: 'admin',
+            title: 'Refund made outside the app is not finished',
+            detail: [group.actor ? `by ${group.actor}` : '', 'recording started but did not complete; check the Payments card'].filter(Boolean).join(' · '),
+            tone: 'warn'
         });
     }
     for (const row of payments) {
