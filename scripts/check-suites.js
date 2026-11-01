@@ -225,6 +225,7 @@ module.exports = {
     "check:db:access": [
       "node scripts/request-user-sync-smoke.js",
       "node scripts/admin-plan-capacity-override-db-smoke.js",
+      "node scripts/playback-history-accuracy-db-smoke.js",
       "node scripts/admin-jellyfin-reenable-db-smoke.js",
       "node scripts/access-entitlement-matrix-db-smoke.js",
       "node scripts/customer-entitlements-admin-authority-db-smoke.js",
@@ -257,6 +258,8 @@ module.exports = {
       "node scripts/notification-payment-receipts-db-smoke.js",
       "node scripts/admin-usability-db-smoke.js",
       "node scripts/billing-recheck-route-db-smoke.js",
+      "node scripts/checkout-exception-queue-db-smoke.js",
+      "node scripts/operator-refund-db-smoke.js",
       "node scripts/provider-operation-recovery-db-smoke.js"
     ],
     "check:db:concurrency": [

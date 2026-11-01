@@ -150,8 +150,8 @@ async function upsertStart(serverId, account, payload, at) {
         await client.query(`
             INSERT INTO playback_history(
                 server_id,customer_id,jellyfin_account_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-                client_name,device_name,playback_method,started_at,last_seen_at,access_lane_snapshot
-            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                client_name,device_name,playback_method,started_at,last_seen_at,access_lane_snapshot,progress_reported
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,FALSE)
             ON CONFLICT(server_id,playback_key) DO UPDATE SET
                 last_seen_at=GREATEST(playback_history.last_seen_at,EXCLUDED.last_seen_at),
                 playback_method=EXCLUDED.playback_method
@@ -176,7 +176,7 @@ async function progress(serverId, account, payload, at) {
                 is_paused=$3,position_ticks=COALESCE($4,position_ticks),last_activity_at=GREATEST(COALESCE(last_activity_at,$5),$5),last_seen_at=GREATEST(last_seen_at,$5)
             WHERE server_id=$1 AND jellyfin_session_id=$2
         `, [serverId,active.jellyfin_session_id,Boolean(payload?.IsPaused),ticks,at]);
-        await client.query(`UPDATE playback_history SET last_seen_at=GREATEST(last_seen_at,$3) WHERE server_id=$1 AND playback_key=$2`, [serverId,active.playback_key,at]);
+        await client.query(`UPDATE playback_history SET last_seen_at=GREATEST(last_seen_at,$3),progress_reported=TRUE WHERE server_id=$1 AND playback_key=$2`, [serverId,active.playback_key,at]);
         await touchAccount(account, at, client);
     });
     return { recorded: true, playbackKey: active.playback_key, sessionId: active.jellyfin_session_id };
@@ -188,7 +188,7 @@ async function stop(serverId, account, payload, at) {
     await transaction(async client => {
         await client.query(`
             UPDATE playback_history
-            SET ended_at=COALESCE(ended_at,$3),last_seen_at=GREATEST(last_seen_at,$3),ended_reason=COALESCE(ended_reason,'webhook_stop')
+            SET ended_at=COALESCE(ended_at,$3),last_seen_at=GREATEST(last_seen_at,$3),ended_reason=COALESCE(ended_reason,'webhook_stop'),progress_reported=TRUE
             WHERE server_id=$1 AND playback_key=$2
         `, [serverId,active.playback_key,at]);
         await client.query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND jellyfin_session_id=$2`, [serverId,active.jellyfin_session_id]);

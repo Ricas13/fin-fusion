@@ -124,7 +124,7 @@ async function makeIntent(customerId, planId, state, createdAgo, label, { termin
   // The re-check route records the attempt before contacting the provider and never swallows the audit failure.
   const billingSource = require('fs').readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-billing.js'), 'utf8');
   const routeStart = billingSource.indexOf("router.post('/admin/billing/checkouts/:id/recheck'");
-  const route = billingSource.slice(routeStart, billingSource.indexOf("router.post('/admin/billing/sync-due'"));
+  const route = billingSource.slice(routeStart, billingSource.indexOf('// Close a crypto checkout automation'));
   assert(route.indexOf("'billing.checkout.recheck'") > 0 && route.indexOf("'billing.checkout.recheck'") < route.indexOf('providerCheckoutRecovery.run'), 'the attempt must be audited before the provider is contacted');
   assert(!/audit_log[^;]*\)\.catch\(/.test(route), 'a failed audit write must not be swallowed');
   assert(route.indexOf("target.provider !== 'plisio'") > 0 && route.indexOf("target.provider !== 'plisio'") < route.indexOf("'billing.checkout.recheck'"), 'only Plisio checkouts may be re-checked, decided before anything is audited or contacted');
