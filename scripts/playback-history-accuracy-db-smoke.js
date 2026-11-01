@@ -140,6 +140,13 @@ async function main() {
   await activity.runActivityPolicyCycle();
   const k = await row(itemK);
   assert(Number(k.seconds) < 60, `a session with no activity timestamp must not accrue while merely listed (${Math.round(k.seconds / 60)} min)`);
+  await query(`UPDATE playback_history SET started_at=NOW()-INTERVAL '7 hours',last_seen_at=NOW()-INTERVAL '7 hours' WHERE server_id=$1 AND item_id=$2`, [server, itemK]);
+  await activity.runActivityPolicyCycle();
+  await activity.runActivityPolicyCycle();
+  const kClosed = await row(itemK);
+  assert.strictEqual(kClosed.ended_reason, 'stale_session', 'a timestamp-less play that has not advanced for the threshold is closed, not left open forever');
+  assert(kClosed.ended_at, 'and ended');
+  assert(Number(kClosed.seconds) <= 60, 'without gaining any watch time (it stays closed even though Jellyfin keeps listing it)');
 
   // 9. A short interruption (over two minutes) is also a new period, not watch time.
   const itemJ = `item-j-${tag}`;

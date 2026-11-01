@@ -211,8 +211,9 @@ async function upsertHistorySession(s, seenAt = new Date(), progressReported = f
                 playback_method=EXCLUDED.playback_method,
                 transcode_reasons=EXCLUDED.transcode_reasons,
                 progress_reported=COALESCE(playback_history.progress_reported,FALSE) OR EXCLUDED.progress_reported,
-                ended_at=NULL,
-                ended_reason=NULL
+                -- An observation that does not advance the play (no usable activity timestamp) never reopens a closed row.
+                ended_at=CASE WHEN $16::boolean THEN NULL ELSE playback_history.ended_at END,
+                ended_reason=CASE WHEN $16::boolean THEN NULL ELSE playback_history.ended_reason END
         `, [
             s.serverId,s.customerId,s.accountId,s.playbackKey,s.sessionId,s.itemId,s.itemName,s.itemType,
             s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null,Boolean(progressReported),Boolean(advance)
@@ -389,6 +390,14 @@ async function pollServer(serverId, accounts, entitlements, cfg) {
         seenPlaybackKeys,
         seenActive
     );
+    // Any play that has not advanced for the stale threshold is finished, whether or not Jellyfin still lists it
+    // and whether or not it carries an activity timestamp (such sessions no longer extend, so they would stay open).
+    await query(`
+        UPDATE playback_history
+        SET ended_at=last_seen_at,ended_reason='stale_session'
+        WHERE server_id=$1 AND jellyfin_account_id=ANY($2::uuid[]) AND ended_at IS NULL
+          AND last_seen_at < NOW() - ($3::int * INTERVAL '1 second')
+    `, [serverId, accounts.map(account => account.id), cfg.staleSessionSeconds]);
     pruneMotion(serverId, seenMotionKeys);
     return managed;
 }
