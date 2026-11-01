@@ -211,8 +211,7 @@ function row(x,previousSeenAt=null){
     const last=x.last_activity_at?{primary:relativeTime(x.last_activity_at),secondary:formatDate(x.last_activity_at)}:{primary:'Never',secondary:''};
     const expiryColour=({good:'#5ae0a0',warn:'#e6bd62',bad:'#ff6f78'})[expiry.tone]||'';
     const expiryStyle=expiryColour?` style="color:${expiryColour}!important"`:'';
-    const sinceMs=previousSeenAt?new Date(previousSeenAt).getTime():null;
-    const isNew=sinceMs!=null&&Number.isFinite(sinceMs)&&x.created_at&&new Date(x.created_at).getTime()>sinceMs;
+    const isNew=Boolean(x.created_at)&&readCursors.isAfterWatermark(x.created_exact,x.created_at,previousSeenAt);
     return `<tr data-customer-row>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
         <td data-label="Customer"><div class="customerIdentityCell"><span class="customerAvatar" aria-hidden="true">${esc(initials(customerName))}</span><div><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${isNew?' <span class="pill accent" title="Registered since you last viewed Customers">New</span>':''}${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</div></div></td>

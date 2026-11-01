@@ -100,8 +100,8 @@ async function updateAdmin({ticketId,adminUserId,status:statusValue,priority:pri
   });
 }
 async function staffQueueSummary(since=null){
-  const row=(await query(`SELECT COUNT(*)::int n,MAX(COALESCE(last_customer_reply_at,created_at)) updated FROM support_tickets WHERE status IN ('open','awaiting_staff') AND ($1::timestamptz IS NULL OR COALESCE(last_customer_reply_at,created_at)>$1::timestamptz)`,[since])).rows[0];
-  return{count:Number(row?.n||0),updatedAt:row?.updated||null};
+  const row=(await query(`SELECT COUNT(*)::int n,MAX(COALESCE(last_customer_reply_at,created_at)) updated,to_char(MAX(COALESCE(last_customer_reply_at,created_at)) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') updated_exact FROM support_tickets WHERE status IN ('open','awaiting_staff') AND ($1::timestamptz IS NULL OR COALESCE(last_customer_reply_at,created_at)>$1::timestamptz)`,[since])).rows[0];
+  return{count:Number(row?.n||0),updatedAt:row?.updated||null,updatedExact:row?.updated_exact||null};
 }
 
 module.exports={CATEGORIES,PRIORITIES,STATUSES,create,listForCustomer,getForCustomer,replyCustomer,listForAdmin,getForAdmin,replyAdmin,updateAdmin,staffQueueSummary,cleanText,category,priority,status};

@@ -36,7 +36,7 @@ for (const privileged of [2, 4, 8, 16, 1048576, 268435456]) {
   assert(!policy.CUSTOMER_PERMISSION_DEFS.some(item => item.bit === privileged), `privileged permission ${privileged} must not be plan-configurable`);
 }
 
-assert(planUi.includes('Requests / Jellyseerr'), 'plan policy must render as a Requests / Jellyseerr card');
+assert(planUi.includes('<h2>Request service</h2>'), 'plan policy must render as a Request service card');
 assert(planUi.includes('permissionMode'), 'plan policy must support preserve vs managed permission modes');
 assert(planUi.includes('requestAccessEnabled'), 'plan policy must control request-service access');
 assert(planUi.includes('confirmRequestDeletion'), 'disabling request access must require explicit destructive confirmation');
