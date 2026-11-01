@@ -164,3 +164,8 @@
  .ordersTableFooter{padding-bottom:12px}
  .ordersPagination{max-width:100%;overflow-x:auto}
 }
+
+.ordersRowMenu .ordersResolve{margin-top:.5rem;border-top:1px solid var(--border,#2a2f3a);padding-top:.5rem}
+.ordersRowMenu .ordersResolve summary{cursor:pointer;font-weight:600}
+.ordersRowMenu .ordersResolve form{display:grid;gap:.5rem;margin-top:.5rem;min-width:18rem;max-width:22rem}
+.ordersRowMenu .ordersResolve label{display:grid;gap:.25rem;font-size:.85rem}
