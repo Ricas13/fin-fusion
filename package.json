@@ -12,6 +12,7 @@
     "legacy:import-json": "node scripts/migrate-json-to-postgres.js",
     "db:runtime-roles": "node scripts/configure-runtime-db-roles.js",
     "db:activity-role": "node scripts/configure-activity-db-role.js",
+    "plisio:list-shape": "node scripts/plisio-list-shape.js",
     "db:backup": "node scripts/backup-db.js",
     "db:offsite": "node scripts/offsite-backup.js",
     "db:inspect-backup": "node scripts/inspect-backup.js",
