@@ -16,9 +16,18 @@ const LOOKBACK_DAYS = 90;
 // already reported as failed (e.g. mismatch) are only re-polled for the first 48 hours.
 const PLISIO_LOOKBACK_DAYS = 7;
 const PLISIO_FAILED_RETRY_HOURS = 48;
+// Beyond the fast 7-day window an unresolved Plisio invoice is still checked, once a day, until it is this old.
+const PLISIO_AGED_LOOKBACK_DAYS = 90;
+const PLISIO_AGED_RECHECK_HOURS = 24;
 // Past this age an unverifiable completed payment stops raising a job failure (it would
 // otherwise degrade this critical job indefinitely); it stays visible in the audit log.
 const PLISIO_UNVERIFIED_ALERT_HOURS = 72;
+// An invoice is payable for INVOICE_LIFETIME_MINUTES. After that plus this grace (for slow confirmations and top-ups), an
+// invoice Plisio still reports as merely 'new' was never paid: close it locally. A genuine late payment still arrives through
+// the signed callback / re-check and activates normally, because only completed payments are allowed to override a closed intent.
+const PLISIO_UNPAID_GIVE_UP_HOURS = 24;
+// Statuses that mean money may be in flight; these are never given up on by age alone.
+const PLISIO_IN_FLIGHT = new Set(['pending', 'pending internal']);
 const PAYPAL_RECOVERABLE = new Set(['ACTIVE', 'SUSPENDED']);
 const PAYPAL_TERMINAL = new Set(['CANCELLED', 'CANCELED', 'EXPIRED']);
 const PAYPAL_LOCALLY_ABANDONED = new Set(['expired', 'cancelled']);
@@ -49,7 +58,8 @@ function failureWarning(failures) {
     return `${failures.length} provider checkout recovery failure${failures.length === 1 ? '' : 's'}: ${shown.join('; ')}${extra}`.slice(0, 1000);
 }
 
-async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = {}) {
+// ignoreLookback is only passed for an operator's explicit re-check of one named checkout: it skips every age window.
+async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null, ignoreLookback = false } = {}) {
     const safeLimit = clampLimit(limit);
     const scopedIds = Array.isArray(checkoutIntentIds)
         ? checkoutIntentIds.map(value => String(value || '').trim()).filter(Boolean)
@@ -57,10 +67,13 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
     const scopeSql = 'AND (cardinality($3::uuid[])=0 OR i.id=ANY($3::uuid[]))';
     const plisioParams = [PLISIO_LOOKBACK_DAYS, PLISIO_FAILED_RETRY_HOURS];
     // $3 is always bound (empty array when unscoped) so $4/$5 keep fixed positions.
-    const params = [safeLimit, LOOKBACK_DAYS, scopedIds, ...plisioParams, Boolean(plisio.enabled())];
+    const params = [safeLimit, LOOKBACK_DAYS, scopedIds, ...plisioParams, Boolean(plisio.enabled()), Boolean(ignoreLookback && scopedIds.length), PLISIO_AGED_LOOKBACK_DAYS, PLISIO_AGED_RECHECK_HOURS];
     const result = await query(`
+        SELECT * FROM (
         SELECT i.id,i.customer_id,i.plan_id,i.provider,i.provider_checkout_id,i.checkout_mode,i.state,
-               i.provider_terminal_at,i.created_at,i.updated_at,paid.provider_transaction_id AS paid_capture_id
+               i.provider_terminal_at,i.created_at,i.updated_at,i.operator_resolution,i.operator_resolved_at,paid.provider_transaction_id AS paid_capture_id,
+               (i.created_at >= NOW() - INTERVAL '4 hours') AS in_window,
+               ROW_NUMBER() OVER (PARTITION BY (i.created_at >= NOW() - INTERVAL '4 hours') ORDER BY i.updated_at ASC,i.id ASC) AS slot
         FROM billing_checkout_intents i
         LEFT JOIN LATERAL (
             SELECT ph.provider_transaction_id
@@ -102,15 +115,22 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
         ) paid ON TRUE
         WHERE i.provider IN ('stripe','paypal','plisio')
           AND i.provider_checkout_id IS NOT NULL
-          AND i.created_at >= NOW() - ($2::int * INTERVAL '1 day')
+          AND ($7::boolean OR i.created_at >= NOW() - ($2::int * INTERVAL '1 day'))
           AND (
               (
                   i.provider='plisio'
                   AND $6::boolean
                   AND i.checkout_mode='payment'
-                  AND i.operator_resolution IS DISTINCT FROM 'marked_paid' AND i.operator_resolution IS DISTINCT FROM 'marked_paid_review'
+                  AND i.operator_resolution IS DISTINCT FROM 'marked_paid'
                   AND i.state IN ('open','failed','expired','cancelled')
-                  AND i.created_at >= NOW() - ($4::int * INTERVAL '1 day')
+                  AND (
+                      $7::boolean
+                      OR i.created_at >= NOW() - ($4::int * INTERVAL '1 day')
+                      -- older but still unresolved: checked once a day (updated_at is touched after each check)
+                      OR (i.created_at >= NOW() - ($8::int * INTERVAL '1 day')
+                          AND i.provider_terminal_at IS NULL
+                          AND i.updated_at < NOW() - ($9::int * INTERVAL '1 hour'))
+                  )
                   AND (
                       i.provider_terminal_at IS NULL
                       OR (i.state='failed' AND i.created_at >= NOW() - ($5::int * INTERVAL '1 hour'))
@@ -129,7 +149,10 @@ async function candidates({ limit = DEFAULT_LIMIT, checkoutIntentIds = null } = 
               )
           )
           ${scopeSql}
-        ORDER BY i.created_at DESC,i.id DESC
+        ) due
+        -- Every batch alternates between payments still inside their window (a customer is waiting) and the longest-unchecked
+        -- older rows, each class least-recently-checked first. Neither class can starve the other, whatever the backlog.
+        ORDER BY slot*2 + (CASE WHEN in_window THEN 0 ELSE 1 END),updated_at ASC,id ASC
         LIMIT $1
     `, params);
     return result.rows;
@@ -157,6 +180,9 @@ function defaultHandlers() {
         async paypalActivatePayment(row, order) {
             return paypal.activateCompletedOrder(order);
         },
+        async autoClose(row, note) {
+            return checkoutIntents.autoCloseUnpaid(row.id, note);
+        },
         async markTerminal(row) {
             return checkoutIntents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled');
         },
@@ -173,8 +199,27 @@ async function recoverStripe(row, handlers) {
     return { state: 'terminal', detail: outcome?.status || 'terminal' };
 }
 
+function plisioUnpaidDeadlineHours() {
+    return plisio.INVOICE_LIFETIME_MINUTES / 60 + PLISIO_UNPAID_GIVE_UP_HOURS;
+}
+
 async function recoverPlisio(row, handlers) {
-    const outcome = await handlers.plisio(row);
+    const ageHours = (Date.now() - new Date(row.created_at).getTime()) / 3600000;
+    // A payment an operator already tried to record may have partly applied access: it is finished by the settlement path,
+    // never closed as unpaid here.
+    const pastDeadline = Number.isFinite(ageHours) && ageHours > plisioUnpaidDeadlineHours() && row.operator_resolution !== 'marked_paid_review';
+    let outcome;
+    try {
+        outcome = await handlers.plisio(row);
+    } catch (error) {
+        // Plisio answered that this operation does not exist, long after its payment window: there is nothing to wait for.
+        // Timeouts, auth failures and 5xx are never treated this way (providerNotFound is only set for an HTTP 404).
+        if (error?.providerNotFound === true && pastDeadline) {
+            await handlers.markTerminal(row);
+            return { state: 'terminal', detail: 'PROVIDER_NOT_FOUND' };
+        }
+        throw error;
+    }
     if (outcome?.completed) return { state: 'recovered', detail: outcome.status || 'completed' };
     // Plisio says the invoice is paid but the fiat amount cannot be verified, so access
     // cannot be activated safely. Surface it as a failure so the job shows a warning
@@ -187,6 +232,14 @@ async function recoverPlisio(row, handlers) {
         throw new Error(`Plisio ${row.provider_checkout_id} is completed but its fiat amount could not be verified; reconcile it manually.`);
     }
     if (outcome?.terminal) return { state: 'terminal', detail: outcome.status || 'terminal' };
+    // Still 'new' (nothing was ever sent) well after the invoice could be paid: close it, no operator needed.
+    const waitingStatus = String(outcome?.status || '').toLowerCase();
+    if (pastDeadline && outcome?.waiting && waitingStatus === 'new' && !PLISIO_IN_FLIGHT.has(waitingStatus)) {
+        // Closed for the queue and for capacity, but NOT provider-terminal: the daily recheck keeps looking, so a payment that
+        // arrives later (even with no callback) is still found and activated.
+        if (!row.operator_resolved_at) await handlers.autoClose(row, 'Closed automatically: unpaid long after the invoice payment window.');
+        return { state: 'terminal', detail: 'UNPAID_TIMEOUT' };
+    }
     return { state: 'waiting', detail: outcome?.status || 'pending' };
 }
 
@@ -264,8 +317,17 @@ async function recoverPayPal(row, handlers) {
     return { state: 'waiting', detail: providerStatus || 'provider_pending' };
 }
 
-async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds = null } = {}) {
-    const rows = await candidates({ limit, checkoutIntentIds });
+// An old (past the fast window) Plisio invoice that is still unresolved is rechecked once a day: record that it
+// was just checked so it is not polled again until tomorrow.
+async function markAgedChecked(row, state) {
+    // Every unresolved row that was just checked goes to the back of the line (the queue is ordered by updated_at), which
+    // also gates the once-a-day recheck of invoices past the fast window.
+    if (row.provider !== 'plisio' || state === 'recovered' || state === 'terminal') return;
+    await query(`UPDATE billing_checkout_intents SET updated_at=NOW() WHERE id=$1`, [row.id]);
+}
+
+async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds = null, ignoreLookback = false } = {}) {
+    const rows = await candidates({ limit, checkoutIntentIds, ignoreLookback });
     const activeHandlers = handlers || defaultHandlers();
     const summary = {
         total: rows.length,
@@ -286,7 +348,9 @@ async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds =
                     ? await recoverPlisio(row, activeHandlers)
                     : await recoverPayPal(row, activeHandlers);
             summary[result.state] = Number(summary[result.state] || 0) + 1;
+            await markAgedChecked(row, result.state);
         } catch (error) {
+            await markAgedChecked(row, 'failed').catch(() => {});
             summary.failed += 1;
             summary.failures.push({
                 checkoutIntentId: row.id,
@@ -315,8 +379,12 @@ module.exports = {
     recoverStripe,
     recoverPlisio,
     PLISIO_LOOKBACK_DAYS,
+    PLISIO_AGED_LOOKBACK_DAYS,
+    PLISIO_AGED_RECHECK_HOURS,
     PLISIO_FAILED_RETRY_HOURS,
     PLISIO_UNVERIFIED_ALERT_HOURS,
+    PLISIO_UNPAID_GIVE_UP_HOURS,
+    plisioUnpaidDeadlineHours,
     recoverPayPalPayment,
     recoverPayPal,
     run

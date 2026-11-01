@@ -71,9 +71,14 @@ function providerExpiryProtected(row, syncResult, options = {}) {
     if (remote.cancelAtPeriodEnd === true) return false;
     const source = String(row?.source || '').toLowerCase();
     const status = String(remote.status || '').toLowerCase();
-    if (source === 'stripe') return ['active', 'trialing'].includes(status);
-    if (source === 'paypal') return ['active', 'approval_pending', 'approved'].includes(status);
-    return false;
+    const providerSaysLive = source === 'stripe'
+        ? ['active', 'trialing'].includes(status)
+        : source === 'paypal' && ['active', 'approval_pending', 'approved'].includes(status);
+    if (!providerSaysLive) return false;
+    // A provider that keeps calling the agreement live does not keep an unpaid term alive forever. The sync above has
+    // already adopted any renewed period end (a renewed row is no longer expired by the SQL guard below); a row that is
+    // STILL past its paid-through date after the same bounded grace used for provider outages has not actually been paid.
+    return failedProviderVerificationProtected(row, options);
 }
 
 async function dueRecurringSubscriptions() {

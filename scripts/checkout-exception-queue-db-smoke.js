@@ -73,7 +73,9 @@ async function main() {
   const queue = await adminOrders.checkoutIssues();
   const oldRow = queue.find(row => row.checkout_id === old.id);
   assert(oldRow, 'a Plisio checkout older than the retry window must stay in the exception queue');
-  assert(/Past automatic retries/.test(oldRow.last_error), 'an aged checkout must say automatic retries are over');
+  assert(!/Past the 90-day/.test(oldRow.last_error), 'a 10-day-old checkout is still being checked automatically, so it is not labelled as past automatic checks');
+  const ancient = await makeIntent('ancient', { ageDays: 100 });
+  assert(/Past the 90-day automatic checks/.test((await adminOrders.checkoutIssues({ page: 0 })).find(row => row.checkout_id === ancient.id).last_error), 'a checkout older than 90 days is labelled as past the automatic checks');
   assert(!queue.some(row => row.checkout_id === stripe.id), 'only Plisio checkouts appear in this queue');
   assert(!queue.some(row => row.checkout_id === fresh.id), 'a checkout still inside its payment window is not an exception');
 

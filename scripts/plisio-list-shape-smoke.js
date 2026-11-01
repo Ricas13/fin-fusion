@@ -54,6 +54,19 @@ assert(out.includes('string:completed'), 'enumerated status codes are still show
         assert.strictEqual(logged.join('\n'), '', 'quiet mode prints nothing from the provider error');
         await assert.rejects(plisio.api('/api/v1/operations', { page: 1 }));
         assert(logged.join('\n').includes('Plisio API error (500)'), 'normal production logging is unchanged');
+        // Preserve #924's strict provider-not-found classification after merging quiet mode.
+        logged.length = 0;
+        global.fetch = async () => new Response(JSON.stringify({ status: 'error', data: { code: 111, message: `secret ${SECRET}` } }), { status: 404 });
+        await assert.rejects(
+            plisio.api('/api/v1/operations/no-such-operation', {}, { quiet: true }),
+            error => error.providerStatus === 404 && error.providerNotFound === true
+        );
+        assert.strictEqual(logged.length, 0, 'quiet 404 does not print provider-supplied text');
+        global.fetch = async () => new Response(JSON.stringify({ status: 'error', data: { code: 999, message: 'other 404' } }), { status: 404 });
+        await assert.rejects(
+            plisio.api('/api/v1/operations/no-such-operation', {}, { quiet: true }),
+            error => error.providerStatus === 404 && error.providerNotFound === false
+        );
     } finally {
         global.fetch = realFetch;
         console.error = realError;

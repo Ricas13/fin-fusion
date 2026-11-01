@@ -226,6 +226,7 @@ module.exports = {
     "check:db:access": [
       "node scripts/request-user-sync-smoke.js",
       "node scripts/admin-plan-capacity-override-db-smoke.js",
+      "node scripts/admin-plan-full-confirm-db-smoke.js",
       "node scripts/playback-history-accuracy-db-smoke.js",
       "node scripts/admin-jellyfin-reenable-db-smoke.js",
       "node scripts/access-entitlement-matrix-db-smoke.js",

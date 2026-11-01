@@ -77,9 +77,14 @@ async function api(path, params = {}, { timeoutMs = 15000, quiet = false } = {})
         }
         if (!response.ok || payload?.status === 'error') {
             const detail = payload?.data?.message || payload?.message || payload?.error || `HTTP ${response.status}`;
-            // quiet: the read-only diagnostic must never echo provider-supplied text (it can carry links or payment details).
+            // Quiet calls must never print provider-supplied text, but preserve typed errors for payment recovery.
             if (!quiet) console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
-            throw new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
+            const failure = new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
+            // Only an HTTP 404 carrying Plisio's documented operation-not-found error (status 'error', data.code 111; a gateway/proxy 404 does not) means "this operation does not exist". Timeouts, 401/403, 5xx and
+            // malformed bodies never do, so they can never be mistaken for an abandoned invoice.
+            failure.providerStatus = response.status;
+            failure.providerNotFound = response.status === 404 && payload?.status === 'error' && Number(payload?.data?.code) === 111;
+            throw failure;
         }
         return payload?.status === 'success' && payload?.data !== undefined ? payload.data : payload;
     } catch (error) {
@@ -379,7 +384,7 @@ async function activateCompleted(remote, fields, intent, { attestation = null } 
     // "needs attention" flag from a partly recorded manual payment is now resolved.
     await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid' WHERE id=$1 AND operator_resolution='marked_paid_review'`, [intent.id]);
     const late = await query(`UPDATE billing_checkout_intents SET operator_resolution_note=LEFT(COALESCE(operator_resolution_note,'')||' [Provider later confirmed payment; access activated.]',700)
-        WHERE id=$1 AND operator_resolution='dismissed' RETURNING id`, [intent.id]);
+        WHERE id=$1 AND operator_resolution='dismissed' AND COALESCE(operator_resolution_note,'') NOT LIKE '%[Provider later confirmed payment; access activated.]%' RETURNING id`, [intent.id]);
     if (late.rowCount) {
         await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'billing.checkout.dismissed_then_paid','billing_checkout_intent',$1,$2::jsonb)`,
             [String(intent.id), JSON.stringify({ providerTransactionId: fields.id })]);
@@ -550,13 +555,22 @@ async function applyRemoteOperation(
     const fields = verifiedFields || operationFields(remote);
     if (fields.status === 'completed') return activateCompleted(remote, fields, intent);
     if (WAITING_STATUSES.has(fields.status)) return { status: fields.status, completed: false, waiting: true };
+    // An operator already recorded this payment and it is only partly applied (access may be live). A non-completed
+    // provider answer (Plisio uses 'expired' for partial payments too) must neither close the checkout nor retire the
+    // access it may already have granted: keep it in the review queue for Finish recording.
+    if (intent?.operator_resolution === 'marked_paid_review') {
+        return { status: fields.status || 'unknown', completed: false, waiting: true, review: true };
+    }
     if (['expired', 'cancelled', 'cancelled duplicate'].includes(fields.status)) {
-        await intents.completeVerifiedProvider('plisio', fields.id, 'cancelled');
+        const closed = await intents.completeVerifiedProvider('plisio', fields.id, 'cancelled');
+        // The row was marked for review after this caller read it: leave it, and its access, alone.
+        if (closed?.operator_resolution === 'marked_paid_review') return { status: fields.status, completed: false, waiting: true, review: true };
         const loss = await recordActivatedProviderLoss(fields, { eventId });
         return { status: fields.status, completed: false, terminal: true, activatedProviderLoss: loss.matched };
     }
     if (['error', 'mismatch'].includes(fields.status)) {
-        await intents.completeVerifiedProvider('plisio', fields.id, 'failed');
+        const closed = await intents.completeVerifiedProvider('plisio', fields.id, 'failed');
+        if (closed?.operator_resolution === 'marked_paid_review') return { status: fields.status, completed: false, waiting: true, review: true };
         const loss = await recordActivatedProviderLoss(fields, { eventId });
         return { status: fields.status, completed: false, terminal: true, activatedProviderLoss: loss.matched };
     }
