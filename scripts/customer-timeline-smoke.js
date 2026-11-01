@@ -93,6 +93,20 @@ assert.deepStrictEqual(interrupted.map(entry => entry.title).sort(), ['Refund ma
 assert.strictEqual(interrupted.find(entry => entry.title.endsWith('not finished')).tone, 'warn');
 assert.strictEqual(interrupted.find(entry => entry.title.endsWith('not finished')).at, at(2), 'dated at its last step');
 
+// Legacy markers with no submission id can't be matched to a completion, so they are never guessed to be unfinished.
+const legacy = timeline.build({ audit: [
+    { id: 11, action: 'billing.refund.recorded_externally', created_at: at(1), actor_name: 'ricas', metadata: {} },
+    { id: 12, action: 'billing.refund.recorded_externally_effect', created_at: at(2), actor_name: 'ricas', metadata: null },
+    { id: 13, action: 'billing.refund.recorded_externally_completed', created_at: at(3), actor_name: 'ricas', metadata: {} }
+] });
+assert.deepStrictEqual(legacy.map(entry => entry.title), ['Refund made outside the app was recorded'], 'a finished legacy refund shows once and never with a false "not finished"');
+assert.deepStrictEqual(timeline.unfinishedRefundCandidates([
+    { action: 'billing.refund.recorded_externally', entity_id: 'sub-a', metadata: { submissionId: 's1' } },
+    { action: 'billing.refund.recorded_externally', entity_id: 'sub-a', metadata: { submissionId: 's2' } },
+    { action: 'billing.refund.recorded_externally_completed', entity_id: 'sub-a', metadata: { submissionId: 's2' } },
+    { action: 'billing.refund.recorded_externally', entity_id: 'sub-a', metadata: {} }
+]), [{ submissionId: 's1', entityId: 'sub-a' }], 'only a submission with a progress marker and no terminal row is a candidate to double-check');
+
 // Outside refunds: the completed entry is shown, its internal progress markers are not.
 const refunds = timeline.build({ audit: [
     { action: 'billing.refund.recorded_externally', created_at: at(1), actor_name: 'ricas', metadata: {} },

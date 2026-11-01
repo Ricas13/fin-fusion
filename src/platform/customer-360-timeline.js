@@ -105,6 +105,21 @@ function time(value) {
     return Number.isFinite(stamp) ? stamp : 0;
 }
 
+// Submissions that have a progress marker but no completed/failed row in the rows we were given: [{ submissionId, entityId }].
+function unfinishedRefundCandidates(audit) {
+    const seen = new Map();
+    for (const row of audit || []) {
+        const action = String(row.action || '');
+        if (!action.startsWith('billing.refund.recorded_externally')) continue;
+        const sid = row.metadata && typeof row.metadata === 'object' ? String(row.metadata.submissionId || '') : '';
+        if (!sid) continue;
+        const entry = seen.get(sid) || { submissionId: sid, entityId: row.entity_id ? String(row.entity_id) : '', terminal: false };
+        if (action.endsWith('_completed') || action.endsWith('_failed')) entry.terminal = true;
+        seen.set(sid, entry);
+    }
+    return [...seen.values()].filter(entry => !entry.terminal && entry.entityId).map(({ submissionId, entityId }) => ({ submissionId, entityId }));
+}
+
 // Pure: turn raw rows from the different sources into one sorted list of { at, category, title, detail, tone }.
 function build({ auth = [], audit = [], payments = [], incidents = [], runs = [] } = {}) {
     const entries = [];
@@ -132,16 +147,18 @@ function build({ auth = [], audit = [], payments = [], incidents = [], runs = []
     }
     // An outside refund is recorded in steps. If the last step written is a progress marker (and no completed/failed entry exists for the
     // same submission), the operation is unfinished: show it, so an interrupted refund can never silently disappear from the log.
+    // Only rows that carry their submission id take part: an older row that cannot be matched to its own completion is never guessed
+    // to be unfinished (that would show a false warning next to a refund that did complete).
     const refundSteps = new Map();
     for (const row of audit) {
         const action = String(row.action || '');
         if (!action.startsWith('billing.refund.recorded_externally')) continue;
         const sid = row.metadata && typeof row.metadata === 'object' ? String(row.metadata.submissionId || '') : '';
-        const key = sid || `row-${row.id || row.created_at}`;
-        const group = refundSteps.get(key) || { terminal: false, latest: null, actor: '' };
+        if (!sid) continue;
+        const group = refundSteps.get(sid) || { terminal: false, latest: null, actor: '' };
         if (action.endsWith('_completed') || action.endsWith('_failed')) group.terminal = true;
         if (!group.latest || time(row.created_at) > time(group.latest)) { group.latest = row.created_at; group.actor = row.actor_name || ''; }
-        refundSteps.set(key, group);
+        refundSteps.set(sid, group);
     }
     for (const group of refundSteps.values()) {
         if (group.terminal || !group.latest) continue;
@@ -193,12 +210,12 @@ async function load(customerId) {
         // plan grants and outside refunds are recorded against the subscription).
         query(`
             SELECT * FROM (
-                (SELECT a.id,a.action,a.created_at,a.metadata,COALESCE(NULLIF(u.username,''),'') AS actor_name
+                (SELECT a.id,a.action,a.entity_id,a.created_at,a.metadata,COALESCE(NULLIF(u.username,''),'') AS actor_name
                    FROM audit_log a LEFT JOIN app_users u ON u.id=a.actor_user_id
                   WHERE a.entity_type='customer' AND a.entity_id=$1::text
                   ORDER BY a.created_at DESC LIMIT 120)
                 UNION ALL
-                (SELECT a.id,a.action,a.created_at,a.metadata,COALESCE(NULLIF(u.username,''),'') AS actor_name
+                (SELECT a.id,a.action,a.entity_id,a.created_at,a.metadata,COALESCE(NULLIF(u.username,''),'') AS actor_name
                    FROM audit_log a LEFT JOIN app_users u ON u.id=a.actor_user_id
                   WHERE a.entity_type='subscription' AND a.entity_id IN (SELECT s.id::text FROM subscriptions s WHERE s.customer_id=$1::uuid)
                   ORDER BY a.created_at DESC LIMIT 120)
@@ -207,6 +224,22 @@ async function load(customerId) {
             LIMIT 150
         `, [customerId]).then(r => r.rows).catch(() => [])
     ]);
+    // The audit window is the newest rows only. If a refund looks unfinished, ask for ITS completed/failed row directly (a bounded,
+    // entity-scoped lookup), so a terminal row that fell outside the window can never cause a false "not finished".
+    const candidates = unfinishedRefundCandidates(audit);
+    if (candidates.length) {
+        const found = await query(`
+            SELECT a.id,a.action,a.entity_id,a.created_at,a.metadata,'' AS actor_name
+            FROM audit_log a
+            WHERE a.entity_type='subscription'
+              AND a.entity_id = ANY($1::text[])
+              AND a.action IN ('billing.refund.recorded_externally_completed','billing.refund.recorded_externally_failed')
+              AND a.metadata->>'submissionId' = ANY($2::text[])
+            LIMIT 50
+        `, [candidates.map(c => c.entityId), candidates.map(c => c.submissionId)]).then(r => r.rows).catch(() => []);
+        const have = new Set(audit.map(row => String(row.id)));
+        for (const row of found) if (!have.has(String(row.id))) audit.push(row);
+    }
     return { auth, audit };
 }
 
@@ -245,4 +278,4 @@ function styles() {
     return `<style>.tlWrap{display:block;border:0;margin:0;padding:0;min-width:0}.tlLegend{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.tlRadio{position:absolute;opacity:0;pointer-events:none}.tlBar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}.tlChip{cursor:pointer;border:1px solid var(--border,#29333d);border-radius:999px;padding:4px 11px;font-size:.7rem;color:var(--muted,#9aa7b3)}.tlChip span{opacity:.7;margin-left:3px}.tlRows{display:grid}.tlRow{display:grid;grid-template-columns:150px minmax(0,1fr) 150px;gap:12px;padding:8px 4px;border-bottom:1px solid var(--border,#29333d);align-items:start;font-size:.76rem}.tlWhat{display:grid;gap:2px}.tlWhat small,.tlCat{color:var(--muted,#9aa7b3);font-size:.68rem}.tlTitle.bad{color:var(--danger,#e16c72)}.tlTitle.warn{color:var(--warn,#e0b25b)}.tlTitle.good{color:var(--good,#5cc28b)}@media(max-width:760px){.tlRow{grid-template-columns:1fr}.tlCat{display:none}}</style>`;
 }
 
-module.exports = { CATEGORIES, MAX_ENTRIES, build, load, render, styles, humanise };
+module.exports = { unfinishedRefundCandidates, CATEGORIES, MAX_ENTRIES, build, load, render, styles, humanise };
