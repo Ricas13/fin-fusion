@@ -466,10 +466,35 @@ async function main() {
             assert.notStrictEqual(outcome.terminal, true, `${status} must not be treated as a terminal unpaid result for a partly recorded payment`);
         }
         const partlyAfter = (await query(`SELECT state,provider_terminal_at,operator_resolution FROM billing_checkout_intents WHERE id=$1`, [partly.id])).rows[0];
+        assert.strictEqual(partlyAfter.state, 'open', 'the checkout state is unchanged');
         assert.strictEqual(partlyAfter.provider_terminal_at, null, 'still not provider-terminal');
         assert.strictEqual(partlyAfter.operator_resolution, 'marked_paid_review', 'still waiting in the review queue');
         assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND status='active'`, [partly.owner.id, partly.plan.id])).rows[0].n, 1, 'the access that was already granted survives');
         assert.strictEqual(Number((await query(`SELECT COUNT(*)::int n FROM payment_incidents`)).rows[0].n), incidentsBefore, 'and no money-loss incident was raised');
+        // The same protection holds when the caller read the intent BEFORE the operator marked it for review (stale object),
+        // on both the terminal-status path and the worker's 404 path.
+        const raced = await attachedIntent('recovery plisio raced review', 'plisio', `PLISIO-${unique('raced')}`, null, 'payment', server);
+        const staleIntent = await intents.findById(raced.id);
+        const racedRow = await intents.findById(raced.id);
+        await require('../src/payments/lifecycle').activatePurchase({
+            customerId: raced.owner.id, planId: raced.plan.id, provider: 'plisio', providerSubscriptionId: raced.providerCheckoutId,
+            providerStatus: 'completed', commercialSnapshot: { ...racedRow.commercial_snapshot, checkoutIntentId: raced.id }
+        });
+        await query(`UPDATE billing_checkout_intents SET operator_resolution='marked_paid_review',operator_resolved_at=NOW() WHERE id=$1`, [raced.id]);
+        const racedIncidents = Number((await query(`SELECT COUNT(*)::int n FROM payment_incidents`)).rows[0].n);
+        remote.set(raced.providerCheckoutId, { ...realShape(raced.providerCheckoutId), status: 'expired' });
+        const racedOutcome = await plisio.confirmCheckout(raced.providerCheckoutId, staleIntent);
+        assert.strictEqual(racedOutcome.completed, false);
+        assert.notStrictEqual(racedOutcome.terminal, true, 'a stale intent cannot close a row that is now under review');
+        const staleRow = { id: raced.id, provider: 'plisio', provider_checkout_id: raced.providerCheckoutId, created_at: new Date(Date.now() - 96 * 3600000), operator_resolution: null, operator_resolved_at: null };
+        const gone404 = Object.assign(new Error('x'), { providerNotFound: true });
+        await recovery.recoverPlisio(staleRow, { async plisio() { throw gone404; }, async markTerminal(row) { return intents.completeVerifiedProvider(row.provider, row.provider_checkout_id, 'cancelled'); } });
+        const racedAfter = (await query(`SELECT state,provider_terminal_at,operator_resolution FROM billing_checkout_intents WHERE id=$1`, [raced.id])).rows[0];
+        assert.strictEqual(racedAfter.provider_terminal_at, null, 'neither path made the review row provider-terminal');
+        assert.strictEqual(racedAfter.operator_resolution, 'marked_paid_review');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND status='active'`, [raced.owner.id, raced.plan.id])).rows[0].n, 1, 'access survives the race');
+        assert.strictEqual(Number((await query(`SELECT COUNT(*)::int n FROM payment_incidents`)).rows[0].n), racedIncidents, 'and no money-loss incident was raised');
+
         // A genuine completion still finishes it.
         remote.set(partly.providerCheckoutId, realShape(partly.providerCheckoutId));
         assert.strictEqual((await plisio.confirmCheckout(partly.providerCheckoutId, await intents.findById(partly.id))).completed, true);

@@ -561,12 +561,15 @@ async function applyRemoteOperation(
         return { status: fields.status || 'unknown', completed: false, waiting: true, review: true };
     }
     if (['expired', 'cancelled', 'cancelled duplicate'].includes(fields.status)) {
-        await intents.completeVerifiedProvider('plisio', fields.id, 'cancelled');
+        const closed = await intents.completeVerifiedProvider('plisio', fields.id, 'cancelled');
+        // The row was marked for review after this caller read it: leave it, and its access, alone.
+        if (closed?.operator_resolution === 'marked_paid_review') return { status: fields.status, completed: false, waiting: true, review: true };
         const loss = await recordActivatedProviderLoss(fields, { eventId });
         return { status: fields.status, completed: false, terminal: true, activatedProviderLoss: loss.matched };
     }
     if (['error', 'mismatch'].includes(fields.status)) {
-        await intents.completeVerifiedProvider('plisio', fields.id, 'failed');
+        const closed = await intents.completeVerifiedProvider('plisio', fields.id, 'failed');
+        if (closed?.operator_resolution === 'marked_paid_review') return { status: fields.status, completed: false, waiting: true, review: true };
         const loss = await recordActivatedProviderLoss(fields, { eventId });
         return { status: fields.status, completed: false, terminal: true, activatedProviderLoss: loss.matched };
     }

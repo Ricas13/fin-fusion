@@ -400,6 +400,9 @@ async function completeVerifiedProvider(provider, providerCheckoutId, state = 'c
         const row = result.rows[0];
         if (row.state === 'completed') return row;
         if (state !== 'completed' && row.provider_terminal_at) return row;
+        // Decided on the CURRENT row under its lock, not on whatever a caller read earlier: an operator-recorded payment that
+        // is only partly applied is finished by settlement, never closed by a non-completed provider answer.
+        if (state !== 'completed' && row.operator_resolution === 'marked_paid_review') return row;
         const nextState = state === 'completed' || row.state === 'open' ? state : row.state;
         const updated = await client.query(`
             UPDATE billing_checkout_intents
