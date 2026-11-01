@@ -26,7 +26,30 @@ assert(!hostile.includes('<script>alert(1)</script>') && !hostile.includes('"><b
 // A site with no public base URL still gives a usable relative link.
 assert(compact.portalCard(detail, 'csrf', { url: null, path: '/activate/T', expiresAt: null }).includes('value="/activate/T"'));
 
-// The route sends the operator to the card with the link.
+// Loader: HTTPS-only absolute links in production, isolation per customer, nothing when there is no portal user or no active token.
+(async () => {
+    const queries = [];
+    const queryFn = async (sql, params) => { queries.push(params[0]); return { rows: params[0] === customer.id ? [{ user_id: 'u1' }] : [] }; };
+    const seenUsers = [];
+    const activeForUser = async userId => { seenUsers.push(userId); return userId === 'u1' ? { raw: 'RAW/TOKEN', expires_at: '2026-11-08T10:00:00Z' } : null; };
+    const httpCfg = { publicBaseUrl: 'http://store.example' }, httpsCfg = { publicBaseUrl: 'https://store.example' };
+    let link = await compact.onboardingLink(customer.id, { queryFn, activeForUser, settings: httpCfg, env: { NODE_ENV: 'production' } });
+    assert.strictEqual(link.url, null, 'an http base URL never reaches the copyable absolute link in production');
+    assert.strictEqual(link.path, '/activate/RAW%2FTOKEN');
+    assert(!compact.portalCard(detail, 'csrf', link).includes('http://store.example'));
+    link = await compact.onboardingLink(customer.id, { queryFn, activeForUser, settings: httpsCfg, env: { NODE_ENV: 'production' } });
+    assert.strictEqual(link.url, 'https://store.example/activate/RAW%2FTOKEN');
+    link = await compact.onboardingLink(customer.id, { queryFn, activeForUser, settings: httpCfg, env: { NODE_ENV: 'development' } });
+    assert.strictEqual(link.url, 'http://store.example/activate/RAW%2FTOKEN', 'outside production http is allowed, like the management page');
+    for (const bad of ['', 'not a url', 'ftp://x/y', 'javascript:alert(1)']) assert.strictEqual(compact.secureActivationBase(bad, { NODE_ENV: 'production' }), '');
+    assert.strictEqual(await compact.onboardingLink('other-customer', { queryFn, activeForUser, settings: httpsCfg }), null, 'a customer without a portal user gets nothing');
+    assert.deepStrictEqual(seenUsers.filter(id => id !== 'u1'), [], 'only the selected customer\'s portal user is looked up');
+    assert.strictEqual(await compact.onboardingLink(customer.id, { queryFn, activeForUser: async () => null, settings: httpsCfg }), null, 'no active token -> nothing shown');
+    // The real token query only returns unused, unrevoked, unexpired activation tokens.
+    const activationSource = fs.readFileSync(path.join(__dirname, '..', 'src/auth/account-activation.js'), 'utf8');
+    assert(/used_at IS NULL AND revoked_at IS NULL AND expires_at>NOW\(\)/.test(activationSource));
+    // The route sends the operator to the card with the link.
 const route = fs.readFileSync(path.join(__dirname, '..', 'src/platform/admin-customer-management.js'), 'utf8');
 assert(route.includes("copy it from the Customer portal card") && route.includes("'#customer-portal'"));
 console.log('customer onboarding link smoke: ok');
+})().catch(error => { console.error(error); process.exit(1); });

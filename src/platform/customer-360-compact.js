@@ -26,15 +26,29 @@ function currentSubscriptions(detail){return (detail.subscriptions||[]).filter(s
 function recurring(sub){const ref=String(sub?.provider_subscription_id||'');return (sub?.source==='stripe'&&/^sub_/i.test(ref))||(sub?.source==='paypal'&&/^I-/i.test(ref));}
 function jellyfinPlan(sub){return ['jellyfin','bundle'].includes(String(sub?.service_type_snapshot||sub?.service_type||'jellyfin').toLowerCase());}
 
+// An absolute activation link carries a live token, so in production it is only built on an https public base URL (same rule as
+// operations-settings.absoluteUrl). Otherwise only the relative /activate/... path is shown.
+function secureActivationBase(base,env=process.env){
+  const raw=String(base||'').trim();
+  if(!raw)return'';
+  let parsed;
+  try{parsed=new URL(raw);}catch{return'';}
+  if(!['http:','https:'].includes(parsed.protocol))return'';
+  if(String(env.NODE_ENV||'').toLowerCase()==='production'&&parsed.protocol!=='https:')return'';
+  return raw;
+}
+
 // The current one-time onboarding link (recoverable: the token is stored encrypted), so the operator can copy it right after creating it.
-async function onboardingLink(customerId){
-  const user=await query(`SELECT user_id FROM customers WHERE id=$1`,[customerId]);
+async function onboardingLink(customerId,{queryFn=query,activeForUser=null,settings=null,env=process.env}={}){
+  const user=await queryFn(`SELECT user_id FROM customers WHERE id=$1`,[customerId]);
   const userId=user.rows[0]?.user_id;
   if(!userId)return null;
-  const row=await require('../auth/account-activation').activeForUser(userId,'customer_activation');
+  const activation=require('../auth/account-activation');
+  const row=await (activeForUser||activation.activeForUser)(userId,'customer_activation');
   if(!row)return null;
-  const base=(await require('./operations-settings').get().catch(()=>null))?.publicBaseUrl||'';
-  return{url:base?require('../auth/account-activation').activationUrl(base,row.raw):null,path:`/activate/${encodeURIComponent(row.raw)}`,expiresAt:row.expires_at};
+  const cfg=settings||await require('./operations-settings').get().catch(()=>null);
+  const base=secureActivationBase(cfg?.publicBaseUrl,env);
+  return{url:base?activation.activationUrl(base,row.raw):null,path:`/activate/${encodeURIComponent(row.raw)}`,expiresAt:row.expires_at};
 }
 
 async function supplementary(customerId){
@@ -233,4 +247,4 @@ async function render(detail,token,options={}){
   return `${accessCards.styles()}${styles()}${timeline.styles()}<link rel="stylesheet" href="/css/admin-customer-folds.css">${core}`;
 }
 
-module.exports={render,supplementary,portalCard,plansCard,mediaCard,stremioCard,overseerrCard,dangerCard,activityDisclosure,playbackPolicyDisclosure,paymentsDisclosure,logsDisclosure,styles,watchDuration,providerReferences,bytes};
+module.exports={render,supplementary,onboardingLink,secureActivationBase,portalCard,plansCard,mediaCard,stremioCard,overseerrCard,dangerCard,activityDisclosure,playbackPolicyDisclosure,paymentsDisclosure,logsDisclosure,styles,watchDuration,providerReferences,bytes};
