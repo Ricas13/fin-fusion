@@ -89,3 +89,27 @@ assert(read('src/automation/jobs.js').includes('integrityGuidance.warningLine(')
 assert(read('src/platform/admin-automation.js').includes("integrityGuidance.guidanceFor(finding.kind)") && !read('src/platform/admin-automation.js').includes('INTEGRITY_GUIDANCE['), 'the Automation page uses it');
 
 console.log('integrity alert text smoke: ok');
+
+// 3. Revenue finding with no single customer keeps the provider reference and links every affected customer; text fits one chat message.
+{
+    const dupA = '11111111-2222-4333-8444-555555555555', dupB = '66666666-7777-4888-8999-000000000000';
+    const dup = { kind: 'duplicate_provider_billing_identity', id: 'abc12345-0000-4000-8000-000000000000', customerId: null, customerIds: [dupA, dupB],
+        detail: `stripe provider identity sub_1TestIdentity999 is attached to 2 local subscriptions across customer(s) ${dupA}, ${dupB}.` };
+    const alert = guidance.buildAlert([dup], { customers: new Map([[dupA, { display_name: 'Jane Smith', email: 'j@example.com' }]]), baseUrl: 'https://example.test' });
+    for (const expected of ['sub_1TestIdentity999', 'Jane Smith', `https://example.test/admin/users/${dupA}`, 'customer 66666666…']) assert(alert.text.includes(expected), `duplicate identity alert should include ${expected}`);
+    assert(!alert.text.includes('see Admin → Automation'), 'no pointer to a page that does not list revenue findings');
+}
+{
+    const many = Array.from({ length: 40 }, (_, i) => ({ kind: i % 2 ? 'primary_server_without_plan' : 'invalid_recurring_provider_reference', id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        customerId: `11111111-2222-4333-8444-${String(i).padStart(12, '0')}`, detail: 'x'.repeat(300) }));
+    const alert = guidance.buildAlert(many, { baseUrl: 'https://example.test' });
+    assert(alert.text.length <= 1700, `alert text must fit Discord/Telegram (${alert.text.length})`);
+    assert(!/https:\/\/example\.test\/admin\/users\/[^\s]{0,20}$/.test(alert.text), 'no half-cut link at the end');
+}
+
+// 4. An explicit admin link survives dispatch when there is no notification customer (it used to be overwritten with '').
+(async () => {
+    const payload = await require('../src/integrations/notification-dispatch').structuredPayload({ templatePayload: { adminUrl: 'https://example.test/admin/users/abc' } });
+    assert.strictEqual(payload.adminUrl, 'https://example.test/admin/users/abc');
+    process.exit(0);
+})().catch(error => { console.error(error); process.exit(1); });

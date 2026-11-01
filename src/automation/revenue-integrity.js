@@ -107,6 +107,7 @@ function finding(kind, row, detail) {
         kind,
         id: String(row.id || row.customer_id || row.subscription_id || 'unknown'),
         customerId: row.customer_id || row.owner_id || null,
+        ...(Array.isArray(row.customer_ids) && row.customer_ids.length ? { customerIds: row.customer_ids.map(String).slice(0, 10) } : {}),
         detail: clean(detail, 900)
     };
 }
@@ -404,7 +405,8 @@ function fingerprint(findings) {
 }
 
 async function customerNames(findings) {
-    const ids = [...new Set(findings.slice(0, 40).map(item => String(item.customerId || '')).filter(id => /^[0-9a-f-]{36}$/i.test(id)))];
+    const isUuid = id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const ids = [...new Set(findings.slice(0, 40).flatMap(item => [item.customerId, ...(item.customerIds || [])]).map(id => String(id || '')).filter(isUuid))];
     if (!ids.length) return new Map();
     const rows = await query(`SELECT c.id,COALESCE(NULLIF(c.display_name,''),NULLIF(u.username,'')) AS display_name,COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) AS email FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE c.id=ANY($1::uuid[])`, [ids]).then(r => r.rows).catch(() => []);
     return new Map(rows.map(row => [String(row.id), row]));

@@ -56,7 +56,7 @@ const GUIDANCE = Object.freeze({
     },
     stremio_active_without_effective_subscription: {
         title: 'Stremio still switched on after the plan ended',
-        meaning: "A customer's Stremio access is still active, but the subscription behind it has ended, been blocked or removed. Reconciliation should have switched it off, so this is not clearing by itself.",
+        meaning: "A customer's Stremio access is still active, but the subscription behind it has ended, been blocked or removed. Reconciliation normally switches it off, so if it is still listed it may need a manual reconcile.",
         action: `${OPEN_CUSTOMER} and check their plans. If they should keep Stremio, fix or add the plan. If not, ${RECONCILE} to switch Stremio off. If it keeps coming back after that, report it: the reconciliation is not turning it off.`
     },
     stremio_external_source_not_playback_ready: {
@@ -90,7 +90,7 @@ const GUIDANCE = Object.freeze({
     duplicate_provider_billing_identity: {
         title: 'One Stripe/PayPal subscription attached to several customers',
         meaning: 'The same provider subscription is linked to more than one local subscription, so one payment could give access to the wrong people.',
-        action: 'Do not ignore this. Open Admin → Billing and the customers listed, keep it on the right customer and detach the others.'
+        action: 'Do not ignore this. Open each customer listed below, check their billing, keep the provider subscription on the right customer and detach it from the others.'
     },
     renewal_service_credit_unsettled: {
         title: 'Stripe invoice with unsettled service credit',
@@ -127,7 +127,7 @@ const GUIDANCE = Object.freeze({
     payment_loss_event_without_incident: {
         title: 'Refund or dispute was processed but not recorded',
         meaning: 'A refund, dispute or similar payment event was marked as handled, but no payment incident exists for it.',
-        action: "Check the customer's billing for the refund or dispute (Admin → Payments) and record it. If this repeats, report it."
+        action: "Find the event in your Stripe/PayPal dashboard using the reference below, check the customer's payments and subscription in Admin, and fix any access or payment record by hand if it is wrong. If this repeats, report it."
     },
     payment_event_stale: {
         title: 'A payment event has not been processed',
@@ -205,6 +205,15 @@ function customerUrl(baseUrl, customerId) {
 
 const MAX_KINDS = 6;
 const MAX_PER_KIND = 5;
+const MAX_TEXT = 1700;
+
+// One line of finding detail, with long ids shortened and cut at a word boundary.
+function compact(text, max) {
+    const line = shortenIds(text).replace(/\s+/g, ' ').trim();
+    if (line.length <= max) return line;
+    const cut = line.slice(0, max);
+    return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), max - 30))}…`;
+}
 
 // findings: [{ kind, id, customerId, detail }]; customers: Map(customerId -> { display_name, email }).
 function buildAlert(findings, { customers = new Map(), baseUrl = '' } = {}) {
@@ -221,36 +230,53 @@ function buildAlert(findings, { customers = new Map(), baseUrl = '' } = {}) {
     });
     const needsAction = ordered.some(([kind]) => !GUIDANCE[kind]?.selfHeals);
     const total = list.length;
+    const compose = (kindLimit, perKind) => {
     const blocks = [];
-    for (const [kind, items] of ordered.slice(0, MAX_KINDS)) {
+    for (const [kind, items] of ordered.slice(0, kindLimit)) {
         const info = guidanceFor(kind);
         const lines = [`■ ${info.title}${items.length > 1 ? ` (${items.length})` : ''}`];
         if (info.meaning) lines.push(info.meaning);
         lines.push(`What to do: ${info.action}`);
         if (info.selfHeals) lines.push('This usually clears by itself; only act if it appears again in the next alert.');
         const who = [];
-        for (const item of items.slice(0, MAX_PER_KIND)) {
-            const customer = customers.get(String(item.customerId || ''));
-            const label = customerLabel(customer);
-            const link = customerUrl(baseUrl, item.customerId);
+        for (const item of items.slice(0, perKind)) {
+            const ids = item.customerId ? [item.customerId] : (item.customerIds || []).slice(0, 3);
             const ref = item.id ? ` (ref ${String(item.id).slice(0, 8)})` : '';
-            if (label) who.push(`• ${label}${link ? ` — ${link}` : ''}${ref}`);
-            else if (info.known) who.push(`• ${item.customerId ? `customer ${String(item.customerId).slice(0, 8)}…` : 'see Admin → Automation'}${ref}`);
-            else who.push(`• ${shortenIds(item.detail)}`);
+            const named = ids.map(id => {
+                const label = customerLabel(customers.get(String(id)));
+                const link = customerUrl(baseUrl, id);
+                return label ? `${label}${link ? ` — ${link}` : ''}` : `customer ${String(id).slice(0, 8)}…`;
+            });
+            if (named.length && item.customerId) who.push(`• ${named[0]}${ref}`);
+            else if (named.length) who.push(`• ${compact(item.detail, 140)}\n  ${named.join('\n  ')}`);
+            else who.push(`• ${compact(item.detail, 220)}${ref}`);
         }
-        if (items.length > MAX_PER_KIND) who.push(`• +${items.length - MAX_PER_KIND} more`);
+        if (items.length > perKind) who.push(`• +${items.length - perKind} more`);
         if (who.length) lines.push(...who);
         blocks.push(lines.join('\n'));
     }
-    if (ordered.length > MAX_KINDS) blocks.push(`+${ordered.length - MAX_KINDS} more kind(s) of problem; see Admin → Automation.`);
+    if (ordered.length > kindLimit) blocks.push(`+${ordered.length - kindLimit} more kind(s) of problem (${ordered.slice(kindLimit).reduce((n, [, g]) => n + g.length, 0)} items) not shown; check the admin dashboard.`);
+    const intro = `${total} thing${total === 1 ? '' : 's'} need${total === 1 ? 's' : ''} your attention.`;
+    return `${intro}\n\n${blocks.join('\n\n')}`;
+    };
 
     const first = guidanceFor(ordered[0]?.[0]);
     const more = ordered.length > 1 ? ` (+${ordered.length - 1} more)` : '';
     const subject = needsAction
         ? `Needs attention: ${first.title}${more}`
         : `Check: ${first.title}${more} (usually clears itself)`;
-    const intro = `${total} thing${total === 1 ? '' : 's'} need${total === 1 ? 's' : ''} your attention.`;
-    const text = `${intro}\n\n${blocks.join('\n\n')}`.slice(0, 3800);
+    // Discord/Telegram show about 1,800 characters: shrink whole items (never cut through a line or link) until it fits.
+    let text = '';
+    for (const [kindLimit, perKind] of [[MAX_KINDS, MAX_PER_KIND], [MAX_KINDS, 3], [4, 2], [3, 1], [2, 1], [1, 1]]) {
+        text = compose(kindLimit, perKind);
+        if (text.length <= MAX_TEXT) break;
+    }
+    if (text.length > MAX_TEXT) {
+        // Last resort: drop whole trailing lines, never half a line or link.
+        const kept = text.slice(0, MAX_TEXT - 60).split('\n');
+        kept.pop();
+        text = `${kept.join('\n')}\n…more not shown; check the admin dashboard.`;
+    }
 
     // A single customer across every finding gets an "Open customer" button.
     const customerIds = [...new Set(list.map(item => String(item.customerId || '')).filter(Boolean))];
