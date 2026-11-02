@@ -39,6 +39,25 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.strictEqual(result.excludedOutgoing, 5);
     assert(!result.incomplete && !result.structural.length, 'outgoing operations still count toward pagination completeness');
 
+    // Exactly one verified legacy invoice is suppressed, by the FULL operation ID
+    // and type. A suffix, another invoice, or a missing type must not bypass alerts.
+    const verifiedLegacyId = '66ddfb1961357445640aca3d';
+    result = await sweep.scan({ apiFn: async () => page([
+        {txn_id: verifiedLegacyId, type: 'invoice', status: 'completed'},
+        {txn_id: 'abcd0000000000000040aca3d', type: 'invoice', status: 'completed'},
+        {txn_id: verifiedLegacyId + 'a', type: 'invoice', status: 'completed'}
+    ], {current: 1, pages: 1, total: 3}) });
+    assert.strictEqual(result.excludedVerifiedLegacy, 1);
+    assert.strictEqual(result.operations.length, 2);
+    assert(!result.incomplete, 'legacy exclusions do not make a complete scan partial');
+
+    result = await sweep.scan({ apiFn: async () => page([
+        {txn_id: verifiedLegacyId, status: 'completed'},
+        {txn_id: verifiedLegacyId + 'a', type: 'invoice', status: 'completed'}
+    ], {current: 1, pages: 1, total: 2}) });
+    assert.strictEqual(result.excludedVerifiedLegacy, 0, 'unknown type is not silently excluded');
+    assert.strictEqual(result.operations.length, 2);
+
     // Structural contract problems.
     assert.deepStrictEqual((await sweep.scan({ apiFn: async () => page([op(1)], { current: 2, pages: 1, total: 1 }) })).structural, ['page_base_changed']);
     assert.deepStrictEqual((await sweep.scan({ apiFn: async () => page([], { current: 1, pages: 1, total: 4 }) })).structural, ['empty_first_page']);
@@ -81,6 +100,22 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.strictEqual(outgoingAndSettled.unmatched, 0);
     assert.strictEqual(outgoingAndSettled.excludedOutgoing, 1);
     assert(!outgoingAndSettled.warning && !outgoingAndSettled.partial);
+
+    // Excluding a verified prior-store invoice does not suppress a new unmatched invoice.
+    const legacyAndUnmatched = await sweep.report({
+        apiFn: async () => page([
+            {txn_id: verifiedLegacyId, type: 'invoice', status: 'completed'},
+            { ...op(4), type: 'invoice' },
+            { ...op(2), type: 'cash_out' }
+        ], {current: 1, pages: 1, total: 3}),
+        queryFn
+    });
+    assert.strictEqual(legacyAndUnmatched.excludedVerifiedLegacy, 1);
+    assert.strictEqual(legacyAndUnmatched.excludedOutgoing, 1);
+    assert.strictEqual(legacyAndUnmatched.unmatched, 1);
+    assert(legacyAndUnmatched.warning.includes(ID(4).slice(-6)));
+    assert(!legacyAndUnmatched.warning.includes(verifiedLegacyId.slice(-6)));
+    assert(!legacyAndUnmatched.partial);
 
     // Full report: terminal checkouts are reported; the grace period suppresses normal in-flight settlement; partial scans are labelled.
     let clockNow = 1_000_000;
