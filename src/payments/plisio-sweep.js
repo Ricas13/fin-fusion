@@ -38,11 +38,11 @@ function isOutgoingOperation(raw) {
 const VERIFIED_LEGACY_INVOICE_IDS = new Set([
     '8b5e743bcc4f5206d798176343f30114186a4bc1725d67ea95cdd8fa8a01de18'
 ]);
-function isVerifiedLegacyInvoice(raw, operationId) {
+function isVerifiedLegacyInvoice(raw, operationId, acceptedHashes = VERIFIED_LEGACY_INVOICE_IDS) {
     if (String(raw?.type || '').trim().toLowerCase() !== 'invoice') return false;
     if (!/^[a-f0-9]{24}$/i.test(String(operationId))) return false;
     const hash = createHash('sha256').update(String(operationId).toLowerCase()).digest('hex');
-    return VERIFIED_LEGACY_INVOICE_IDS.has(hash);
+    return acceptedHashes.has(hash);
 }
 
 function wholeNumber(value) {
@@ -59,7 +59,7 @@ function operationOf(raw) {
 //   structural: contract violations (the API no longer behaves as observed) -> a "could not run safely" warning
 //   incomplete: the list changed under us, is larger than one run scans, or the time budget ran out -> a partial observation
 //   failed:     the request itself failed (network, rate limit, bad key)
-async function scan({ apiFn, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetMs = TIME_BUDGET_MS, now = Date.now } = {}) {
+async function scan({ apiFn, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetMs = TIME_BUDGET_MS, now = Date.now, verifiedLegacyHashes = VERIFIED_LEGACY_INVOICE_IDS } = {}) {
     const result = { operations: [], excludedOutgoing: 0, excludedVerifiedLegacy: 0, structural: [], incomplete: false, failed: null, pages: 0, totalCount: null };
     const seen = new Set();
     const deadline = now() + budgetMs;
@@ -90,7 +90,7 @@ async function scan({ apiFn, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetM
             if (seen.has(operation.id)) { result.incomplete = true; continue; }
             seen.add(operation.id);
             if (isOutgoingOperation(raw)) result.excludedOutgoing += 1;
-            else if (isVerifiedLegacyInvoice(raw, operation.id)) result.excludedVerifiedLegacy += 1;
+            else if (isVerifiedLegacyInvoice(raw, operation.id, verifiedLegacyHashes)) result.excludedVerifiedLegacy += 1;
             else result.operations.push(operation);
         }
         if (page + 1 >= pageCount) {
@@ -153,10 +153,10 @@ function longUnsettled(ids, at) {
     return old;
 }
 
-async function report({ apiFn = null, queryFn = null, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetMs = TIME_BUDGET_MS, now = Date.now } = {}) {
+async function report({ apiFn = null, queryFn = null, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetMs = TIME_BUDGET_MS, now = Date.now, verifiedLegacyHashes = VERIFIED_LEGACY_INVOICE_IDS } = {}) {
     const plisio = require('./plisio');
     if (!apiFn && !plisio.enabled()) return { skipped: 'plisio_not_configured' };
-    const scanned = await scan({ apiFn: apiFn || plisio.api, pageSize, maxPages, budgetMs, now });
+    const scanned = await scan({ apiFn: apiFn || plisio.api, pageSize, maxPages, budgetMs, now, verifiedLegacyHashes });
     const summary = {
         reportOnly: true, pages: scanned.pages, completedAtProvider: scanned.operations.length, excludedOutgoing: scanned.excludedOutgoing, excludedVerifiedLegacy: scanned.excludedVerifiedLegacy, totalCount: scanned.totalCount,
         partial: scanned.incomplete, structural: scanned.structural, failed: scanned.failed
@@ -190,4 +190,4 @@ async function runJob() {
     return { ...summary, processed: Number(summary.completedAtProvider || 0), failed: warned, ...(warned ? { warning: summary.warning } : {}) };
 }
 
-module.exports = { PAGE_SIZE, MAX_PAGES, TIME_BUDGET_MS, GRACE_MINUTES, scan, compare, report, runJob };
+module.exports = { PAGE_SIZE, MAX_PAGES, TIME_BUDGET_MS, GRACE_MINUTES, isVerifiedLegacyInvoice, scan, compare, report, runJob };
