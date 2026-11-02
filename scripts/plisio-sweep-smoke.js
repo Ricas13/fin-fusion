@@ -4,6 +4,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const {createHash} = require('crypto');
 const sweep = require('../src/payments/plisio-sweep');
 
 const ID = n => `txn-abcdefgh-${n}`;
@@ -41,12 +42,16 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
     // Exactly one verified legacy invoice is suppressed, by the FULL operation ID
     // and type. A suffix, another invoice, or a missing type must not bypass alerts.
-    const verifiedLegacyId = '66ddfb1961357445640aca3d';
+    const verifiedLegacyId = '0123456789abcdef01234567'; // Synthetic; never expose real transaction ID in tests.
+    const verifiedLegacyHashes = new Set([createHash('sha256').update(verifiedLegacyId).digest('hex')]);
+    assert(sweep.isVerifiedLegacyInvoice({type:'invoice'}, verifiedLegacyId, verifiedLegacyHashes));
+    assert(!sweep.isVerifiedLegacyInvoice({type:'cash_out'}, verifiedLegacyId, verifiedLegacyHashes));
+    assert(!sweep.isVerifiedLegacyInvoice({type:'invoice'}, verifiedLegacyId + 'a', verifiedLegacyHashes));
     result = await sweep.scan({ apiFn: async () => page([
         {txn_id: verifiedLegacyId, type: 'invoice', status: 'completed'},
-        {txn_id: 'abcd0000000000000040aca3d', type: 'invoice', status: 'completed'},
+        {txn_id: 'abcdef012345678901234567', type: 'invoice', status: 'completed'},
         {txn_id: verifiedLegacyId + 'a', type: 'invoice', status: 'completed'}
-    ], {current: 1, pages: 1, total: 3}) });
+    ], {current: 1, pages: 1, total: 3}), verifiedLegacyHashes });
     assert.strictEqual(result.excludedVerifiedLegacy, 1);
     assert.strictEqual(result.operations.length, 2);
     assert(!result.incomplete, 'legacy exclusions do not make a complete scan partial');
@@ -54,7 +59,7 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     result = await sweep.scan({ apiFn: async () => page([
         {txn_id: verifiedLegacyId, status: 'completed'},
         {txn_id: verifiedLegacyId + 'a', type: 'invoice', status: 'completed'}
-    ], {current: 1, pages: 1, total: 2}) });
+    ], {current: 1, pages: 1, total: 2}), verifiedLegacyHashes });
     assert.strictEqual(result.excludedVerifiedLegacy, 0, 'unknown type is not silently excluded');
     assert.strictEqual(result.operations.length, 2);
 
@@ -108,7 +113,8 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
             { ...op(4), type: 'invoice' },
             { ...op(2), type: 'cash_out' }
         ], {current: 1, pages: 1, total: 3}),
-        queryFn
+        queryFn,
+        verifiedLegacyHashes
     });
     assert.strictEqual(legacyAndUnmatched.excludedVerifiedLegacy, 1);
     assert.strictEqual(legacyAndUnmatched.excludedOutgoing, 1);
