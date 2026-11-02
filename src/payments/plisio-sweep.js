@@ -17,6 +17,14 @@ const TIME_BUDGET_MS = 60000; // the whole scan, however many pages
 const GRACE_MINUTES = 20;
 const MAX_REPORTED = 8;
 const MAX_TRACKED = 500;
+// Only invoices originate from Fin-Fusion checkouts. Explicitly identified outgoing
+// Plisio operations are not customer payments; unknown types remain visible
+// rather than being silently omitted if Plisio changes its API.
+const OUTGOING_TYPES = new Set(['cash_out', 'mass_cash_out', 'withdraw', 'withdrawal']);
+function isOutgoingOperation(raw) {
+    const type = String(raw?.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return OUTGOING_TYPES.has(type);
+}
 
 function wholeNumber(value) {
     const number = Number(value);
@@ -33,7 +41,7 @@ function operationOf(raw) {
 //   incomplete: the list changed under us, is larger than one run scans, or the time budget ran out -> a partial observation
 //   failed:     the request itself failed (network, rate limit, bad key)
 async function scan({ apiFn, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetMs = TIME_BUDGET_MS, now = Date.now } = {}) {
-    const result = { operations: [], structural: [], incomplete: false, failed: null, pages: 0, totalCount: null };
+    const result = { operations: [], excludedOutgoing: 0, structural: [], incomplete: false, failed: null, pages: 0, totalCount: null };
     const seen = new Set();
     const deadline = now() + budgetMs;
     for (let page = 0; page < maxPages; page += 1) {
@@ -62,10 +70,11 @@ async function scan({ apiFn, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, budgetM
             if (!operation) { result.incomplete = true; continue; }
             if (seen.has(operation.id)) { result.incomplete = true; continue; }
             seen.add(operation.id);
-            result.operations.push(operation);
+            if (isOutgoingOperation(raw)) result.excludedOutgoing += 1;
+            else result.operations.push(operation);
         }
         if (page + 1 >= pageCount) {
-            if (result.operations.length < total) result.incomplete = true;
+            if (result.operations.length + result.excludedOutgoing < total) result.incomplete = true;
             return result;
         }
         if (!items.length) { result.incomplete = true; return result; }
@@ -129,7 +138,7 @@ async function report({ apiFn = null, queryFn = null, pageSize = PAGE_SIZE, maxP
     if (!apiFn && !plisio.enabled()) return { skipped: 'plisio_not_configured' };
     const scanned = await scan({ apiFn: apiFn || plisio.api, pageSize, maxPages, budgetMs, now });
     const summary = {
-        reportOnly: true, pages: scanned.pages, completedAtProvider: scanned.operations.length, totalCount: scanned.totalCount,
+        reportOnly: true, pages: scanned.pages, completedAtProvider: scanned.operations.length, excludedOutgoing: scanned.excludedOutgoing, totalCount: scanned.totalCount,
         partial: scanned.incomplete, structural: scanned.structural, failed: scanned.failed
     };
     if (scanned.structural.length) {
