@@ -4,6 +4,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const {createHash} = require('crypto');
 const sweep = require('../src/payments/plisio-sweep');
 
 const ID = n => `txn-abcdefgh-${n}`;
@@ -20,6 +21,47 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert(calls.every(c => c.params.limit === 50 && c.params.status === 'completed' && c.p === '/api/v1/operations' && c.options.timeoutMs <= 10000 && c.options.quiet));
     assert.strictEqual(result.operations.length, 3);
     assert(!result.incomplete && !result.structural.length && !result.failed);
+
+    // Plisio lists withdrawals alongside completed invoices. Outgoing operations
+    // must not count as customer payments or falsely mark a fully scanned page partial.
+    const mixed = page([
+        { ...op(1), type: 'invoice' },
+        { ...op(2), type: 'cash_out' },
+        { ...op(3), type: 'mass_cash_out' },
+        { ...op(4), type: 'withdraw' },
+        { ...op(5), type: 'withdrawal' },
+        { ...op(6), type: 'cash-out' },
+        { ...op(7), type: 'cash_in' },
+        { ...op(8), type: 'future_unknown_type' }
+    ], { current: 1, pages: 1, total: 8 });
+    result = await sweep.scan({ apiFn: async () => mixed });
+    assert.deepStrictEqual(result.operations.map(o => o.id), [ID(1), ID(7), ID(8)],
+        'keep incoming and unknown types; exclude only explicit outgoing types');
+    assert.strictEqual(result.excludedOutgoing, 5);
+    assert(!result.incomplete && !result.structural.length, 'outgoing operations still count toward pagination completeness');
+
+    // Exactly one verified legacy invoice is suppressed, by the FULL operation ID
+    // and type. A suffix, another invoice, or a missing type must not bypass alerts.
+    const verifiedLegacyId = '0123456789abcdef01234567'; // Synthetic; never expose real transaction ID in tests.
+    const verifiedLegacyHashes = new Set([createHash('sha256').update(verifiedLegacyId).digest('hex')]);
+    assert(sweep.isVerifiedLegacyInvoice({type:'invoice'}, verifiedLegacyId, verifiedLegacyHashes));
+    assert(!sweep.isVerifiedLegacyInvoice({type:'cash_out'}, verifiedLegacyId, verifiedLegacyHashes));
+    assert(!sweep.isVerifiedLegacyInvoice({type:'invoice'}, verifiedLegacyId + 'a', verifiedLegacyHashes));
+    result = await sweep.scan({ apiFn: async () => page([
+        {txn_id: verifiedLegacyId, type: 'invoice', status: 'completed'},
+        {txn_id: 'abcdef012345678901234567', type: 'invoice', status: 'completed'},
+        {txn_id: verifiedLegacyId + 'a', type: 'invoice', status: 'completed'}
+    ], {current: 1, pages: 1, total: 3}), verifiedLegacyHashes });
+    assert.strictEqual(result.excludedVerifiedLegacy, 1);
+    assert.strictEqual(result.operations.length, 2);
+    assert(!result.incomplete, 'legacy exclusions do not make a complete scan partial');
+
+    result = await sweep.scan({ apiFn: async () => page([
+        {txn_id: verifiedLegacyId, status: 'completed'},
+        {txn_id: verifiedLegacyId + 'a', type: 'invoice', status: 'completed'}
+    ], {current: 1, pages: 1, total: 2}), verifiedLegacyHashes });
+    assert.strictEqual(result.excludedVerifiedLegacy, 0, 'unknown type is not silently excluded');
+    assert.strictEqual(result.operations.length, 2);
 
     // Structural contract problems.
     assert.deepStrictEqual((await sweep.scan({ apiFn: async () => page([op(1)], { current: 2, pages: 1, total: 1 }) })).structural, ['page_base_changed']);
@@ -52,6 +94,34 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     const compared = await sweep.compare(ops, queryFn);
     assert.deepStrictEqual(compared, { settled: [ID(1), ID(5)], unmatched: [ID(4)], pending: [ID(2)], closed: [ID(3), ID(6), ID(7)] });
     assert(sqls.every(text => /^\s*SELECT/i.test(text) && !/INSERT|UPDATE|DELETE/i.test(text)), 'the comparisons only read');
+
+    // Report-only outcome: completed cash-outs cannot degrade an otherwise settled scan.
+    const outgoingAndSettled = await sweep.report({
+        apiFn: async () => page([
+            { ...op(2), type: 'cash_out' }, { ...op(1), type: 'invoice' }
+        ], { current: 1, pages: 1, total: 2 }),
+        queryFn
+    });
+    assert.strictEqual(outgoingAndSettled.unmatched, 0);
+    assert.strictEqual(outgoingAndSettled.excludedOutgoing, 1);
+    assert(!outgoingAndSettled.warning && !outgoingAndSettled.partial);
+
+    // Excluding a verified prior-store invoice does not suppress a new unmatched invoice.
+    const legacyAndUnmatched = await sweep.report({
+        apiFn: async () => page([
+            {txn_id: verifiedLegacyId, type: 'invoice', status: 'completed'},
+            { ...op(4), type: 'invoice' },
+            { ...op(2), type: 'cash_out' }
+        ], {current: 1, pages: 1, total: 3}),
+        queryFn,
+        verifiedLegacyHashes
+    });
+    assert.strictEqual(legacyAndUnmatched.excludedVerifiedLegacy, 1);
+    assert.strictEqual(legacyAndUnmatched.excludedOutgoing, 1);
+    assert.strictEqual(legacyAndUnmatched.unmatched, 1);
+    assert(legacyAndUnmatched.warning.includes(ID(4).slice(-6)));
+    assert(!legacyAndUnmatched.warning.includes(verifiedLegacyId.slice(-6)));
+    assert(!legacyAndUnmatched.partial);
 
     // Full report: terminal checkouts are reported; the grace period suppresses normal in-flight settlement; partial scans are labelled.
     let clockNow = 1_000_000;
