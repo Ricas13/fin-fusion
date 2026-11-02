@@ -21,6 +21,24 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.strictEqual(result.operations.length, 3);
     assert(!result.incomplete && !result.structural.length && !result.failed);
 
+    // Plisio lists withdrawals alongside completed invoices. Outgoing operations
+    // must not count as customer payments or falsely mark a fully scanned page partial.
+    const mixed = page([
+        { ...op(1), type: 'invoice' },
+        { ...op(2), type: 'cash_out' },
+        { ...op(3), type: 'mass_cash_out' },
+        { ...op(4), type: 'withdraw' },
+        { ...op(5), type: 'withdrawal' },
+        { ...op(6), type: 'cash-out' },
+        { ...op(7), type: 'cash_in' },
+        { ...op(8), type: 'future_unknown_type' }
+    ], { current: 1, pages: 1, total: 8 });
+    result = await sweep.scan({ apiFn: async () => mixed });
+    assert.deepStrictEqual(result.operations.map(o => o.id), [ID(1), ID(7), ID(8)],
+        'keep incoming and unknown types; exclude only explicit outgoing types');
+    assert.strictEqual(result.excludedOutgoing, 5);
+    assert(!result.incomplete && !result.structural.length, 'outgoing operations still count toward pagination completeness');
+
     // Structural contract problems.
     assert.deepStrictEqual((await sweep.scan({ apiFn: async () => page([op(1)], { current: 2, pages: 1, total: 1 }) })).structural, ['page_base_changed']);
     assert.deepStrictEqual((await sweep.scan({ apiFn: async () => page([], { current: 1, pages: 1, total: 4 }) })).structural, ['empty_first_page']);
@@ -52,6 +70,17 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     const compared = await sweep.compare(ops, queryFn);
     assert.deepStrictEqual(compared, { settled: [ID(1), ID(5)], unmatched: [ID(4)], pending: [ID(2)], closed: [ID(3), ID(6), ID(7)] });
     assert(sqls.every(text => /^\s*SELECT/i.test(text) && !/INSERT|UPDATE|DELETE/i.test(text)), 'the comparisons only read');
+
+    // Report-only outcome: completed cash-outs cannot degrade an otherwise settled scan.
+    const outgoingAndSettled = await sweep.report({
+        apiFn: async () => page([
+            { ...op(2), type: 'cash_out' }, { ...op(1), type: 'invoice' }
+        ], { current: 1, pages: 1, total: 2 }),
+        queryFn
+    });
+    assert.strictEqual(outgoingAndSettled.unmatched, 0);
+    assert.strictEqual(outgoingAndSettled.excludedOutgoing, 1);
+    assert(!outgoingAndSettled.warning && !outgoingAndSettled.partial);
 
     // Full report: terminal checkouts are reported; the grace period suppresses normal in-flight settlement; partial scans are labelled.
     let clockNow = 1_000_000;
