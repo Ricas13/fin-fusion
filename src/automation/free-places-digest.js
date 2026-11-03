@@ -9,6 +9,7 @@ const {FREE_INTENT_MINUTES}=require('../security/pending-registration');
 
 const STATE_KEY='discord_free_places_status_v1';
 const LOCK_SEED=927341;
+const CANONICAL_VERIFY_INTERVAL_MS=5*60*1000;
 
 function localStamp(now,timeZone){
   const parts=new Intl.DateTimeFormat('en-GB',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now);
@@ -75,6 +76,21 @@ async function sendDiscordMessage({channelId,text,message=null,allowEveryone=fal
   if(!channel)throw new Error('Discord channel ID is required.');
   return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages`,{method:'POST',body:discordMessage.body(message,{fallbackText:text,allowEveryone})});
 }
+// A deleted canonical message must not leave an older green availability card
+// advertising sold-out places forever. Inspect at a bounded cadence.
+async function inspectCanonical({channelId,messageId}){
+  return notificationSettings.discordApi(`/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,{method:'GET',maxAttempts:1});
+}
+async function findOwnedStatusMessages({channelId}){
+  const bot=await notificationSettings.discordApi('/users/@me',{method:'GET',maxAttempts:1});
+  if(!bot?.id)throw new Error('Cannot identify Discord availability bot.');
+  const messages=await notificationSettings.discordApi(`/channels/${encodeURIComponent(channelId)}/messages?limit=100`,{method:'GET',maxAttempts:1});
+  if(!Array.isArray(messages))throw new Error('Discord availability history was not a list.');
+  return messages.filter(message=>
+    String(message?.author?.id||'')===String(bot.id) &&
+    (message.embeds||[]).some(embed=>/^(?:🟢|🔴) Free Server availability$/u.test(String(embed?.title||'')))
+  );
+}
 async function loadState(db=query){
   const result=await db('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[STATE_KEY]);
   const value=result.rows[0]?.setting_value||{};
@@ -85,6 +101,7 @@ async function loadState(db=query){
     remaining:value.remaining==null?null:Number(value.remaining),
     observedRemaining:value.observedRemaining==null?null:Number(value.observedRemaining),
     lastAdvertSlot:value.lastAdvertSlot?String(value.lastAdvertSlot):null,
+    lastVerifiedAt:value.lastVerifiedAt||null,
     updatedAt:value.updatedAt||null
   };
 }
@@ -101,7 +118,7 @@ async function deleteDiscordMessage({channelId,messageId}){
   if(!channel||!messageIdSafe)throw new Error('Discord channel/message ID is invalid.');
   return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(messageIdSafe)}`,{method:'DELETE'});
 }
-async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,remove=deleteDiscordMessage,transactionFn=transaction,now=new Date()}={}){
+async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,remove=deleteDiscordMessage,inspect=inspectCanonical,findStatusMessages=findOwnedStatusMessages,transactionFn=transaction,now=new Date()}={}){
   const cfg=settings||await notificationSettings.status();
   if(!cfg.discordFreePlacesDigestEnabled)return{processed:0,updated:0,skipped:'disabled'};
   if(!cfg.discordConfigured)return{processed:0,updated:0,skipped:'discord_not_configured'};
@@ -125,7 +142,7 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     let stored=await loadState(db);
 
     if(stored.channelId!==channelId){
-      stored={channelId,messageId:'',text:'',remaining:null,observedRemaining:null,lastAdvertSlot:null,updatedAt:null};
+      stored={channelId,messageId:'',text:'',remaining:null,observedRemaining:null,lastAdvertSlot:null,lastVerifiedAt:null,updatedAt:null};
     }
 
     // First install (or lost state) creates one canonical status message using
@@ -141,9 +158,83 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
         text:JSON.stringify(initialMessage),
         remaining:actualRemaining,
         observedRemaining:actualRemaining,
-        lastAdvertSlot:currentSlot
+        lastAdvertSlot:currentSlot,
+        lastVerifiedAt:now.toISOString()
       });
       return{processed:1,updated:1,created:1,availabilityRestored:0,remaining:actualRemaining,observedRemaining:actualRemaining,messageId};
+    }
+
+    // A missing canonical message can exist even when the stored count equals
+    // the live count. The normal downward-only edit path cannot detect it.
+    // Reuse and correct an existing bot-owned status card (including orphaned
+    // green messages) rather than posting another duplicate. Do not notify
+    // everyone. The advisory lock serializes this with reservations and digest.
+    let verifiedNow=false;
+    const lastVerified=Date.parse(stored.lastVerifiedAt||'');
+    if(stored.messageId&&(!Number.isFinite(lastVerified)||now.getTime()-lastVerified>=CANONICAL_VERIFY_INTERVAL_MS)){
+      let canonical=null;
+      try{canonical=await inspect({channelId,messageId:stored.messageId});}
+      catch(error){if(!discordMissing(error))throw error;}
+      if(!canonical){
+        const candidates=await findStatusMessages({channelId});
+        const previousCount=stored.remaining==null?actualRemaining:Math.max(0,Math.floor(Number(stored.remaining)||0));
+        const visibleCount=Math.min(actualRemaining,previousCount); // Never publish buffered increases early.
+        const message=persistentMessage(visibleCount,publicBaseUrl);
+        const chosen=candidates[0]||null;
+        let sent;
+        if(chosen){
+          sent=await edit({channelId,messageId:chosen.id,text:persistentText(visibleCount,publicBaseUrl),message});
+        }else{
+          sent=await send({channelId,text:persistentText(visibleCount,publicBaseUrl),message,allowEveryone:false});
+        }
+        const messageId=String(sent?.id||'');
+        if(!messageId)throw new Error('Discord did not confirm replacement availability message.');
+        // Other bot-owned Free Server cards are obsolete. Never touch messages
+        // from other authors or unrelated bot notifications.
+        for(const old of candidates){
+          if(String(old.id)===messageId)continue;
+          try{await remove({channelId,messageId:old.id});}
+          catch(error){if(!discordMissing(error))throw error;}
+        }
+        await saveState(db,{
+          ...stored,channelId,messageId,text:JSON.stringify(message),
+          remaining:visibleCount,observedRemaining:actualRemaining,
+          lastAdvertSlot:currentSlot||stored.lastAdvertSlot,
+          lastVerifiedAt:now.toISOString()
+        });
+        return{processed:1,updated:1,recoveredMissingCanonical:1,created:chosen?0:1,
+          remaining:visibleCount,observedRemaining:actualRemaining,messageId};
+      }
+      const expectedRemaining=stored.remaining==null?actualRemaining:Math.max(0,Math.floor(Number(stored.remaining)||0));
+      const visibleCount=Math.min(expectedRemaining,actualRemaining);
+      const expected=persistentMessage(visibleCount,publicBaseUrl);
+      const remoteEmbed=canonical?.embeds?.find(embed=>/Free Server availability/.test(String(embed.title||'')));
+      // Compare the displayed count, not only the traffic-light title.
+      const inconsistent=remoteEmbed?.title!==expected.embeds[0].title ||
+        remoteEmbed?.description!==expected.embeds[0].description;
+      if(inconsistent){
+        const changed=await edit({channelId,messageId:stored.messageId,text:persistentText(visibleCount,publicBaseUrl),message:expected});
+        if(String(changed?.id||'')!==stored.messageId)throw new Error('Discord did not confirm canonical availability edit.');
+      }
+      // Even a healthy canonical ID can coexist with abandoned green cards
+      // after a previous failed deletion. Never leave two bot-owned statuses.
+      const candidates=await findStatusMessages({channelId});
+      for(const old of candidates){
+        if(String(old.id)===stored.messageId)continue;
+        try{await remove({channelId,messageId:old.id});}
+        catch(error){if(!discordMissing(error))throw error;}
+      }
+      stored.lastVerifiedAt=now.toISOString();
+      verifiedNow=true;
+      if(inconsistent||candidates.some(old=>String(old.id)!==stored.messageId)){
+        await saveState(db,{
+          ...stored,text:JSON.stringify(expected),
+          remaining:visibleCount,observedRemaining:actualRemaining,
+          lastVerifiedAt:now.toISOString(),
+          lastAdvertSlot:currentSlot||stored.lastAdvertSlot
+        });
+        return{processed:1,updated:1,created:0,availabilityRestored:0,repairedCanonicalContent:inconsistent?1:0,removedDuplicates:candidates.filter(old=>String(old.id)!==stored.messageId).length,remaining:visibleCount,messageId:stored.messageId};
+      }
     }
 
     // Existing installations predate scheduled batching. Establish the current
@@ -183,7 +274,7 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     if(publishIncrease){
       try{await remove({channelId,messageId:stored.messageId});}
       catch(error){
-        if(!discordMissing(error))console.warn('[free-places-digest] Failed to delete previous Discord availability message:',error?.message||error);
+        if(!discordMissing(error))throw error; // Do not publish a competing green card while the old status remains.
       }
       const message=persistentMessage(actualRemaining,publicBaseUrl);
       const sent=await send({channelId,text:persistentText(actualRemaining,publicBaseUrl),message,allowEveryone:false});
@@ -229,7 +320,7 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
       return{processed:1,updated:1,created:created?1:0,availabilityRestored:0,remaining:actualRemaining,observedRemaining:actualRemaining,messageId};
     }
 
-    const stateChanged=stored.observedRemaining!==actualRemaining||slotAdvanced;
+    const stateChanged=stored.observedRemaining!==actualRemaining||slotAdvanced||verifiedNow;
     if(stateChanged){
       await saveState(db,{
         channelId,
@@ -237,7 +328,8 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
         text:stored.text,
         remaining:displayedRemaining,
         observedRemaining:actualRemaining,
-        lastAdvertSlot:slotAdvanced?currentSlot:stored.lastAdvertSlot
+        lastAdvertSlot:slotAdvanced?currentSlot:stored.lastAdvertSlot,
+        lastVerifiedAt:stored.lastVerifiedAt
       });
     }
     return{
@@ -253,4 +345,4 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,persistentText,persistentMessage,signupExplanation,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
+module.exports={STATE_KEY,CANONICAL_VERIFY_INTERVAL_MS,run,syncPersistent,localStamp,dueSlot,advertSlotKey,freePlan,freeRegistrationUrl,persistentText,persistentMessage,signupExplanation,loadState,saveState,inspectCanonical,findOwnedStatusMessages,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
