@@ -104,6 +104,15 @@ async function main(){
     assert.equal(oneHeld.reservedUsers,1,'deleting nine pending registrations did not release nine reservations');
     assert.equal(oneHeld.remaining,9,'released pending registrations did not immediately return capacity');
 
+    // Regression: the final physical slot is already held by this verified
+    // registration. A new buyer must see zero capacity, but the reservation
+    // holder must still be able to convert its promised place to Free access.
+    await query('UPDATE jellyfin_servers SET max_users=81,updated_at=NOW() WHERE id=$1',[serverId]);
+    const finalHeld=await capacity.usage(free.id);
+    assert.equal(finalHeld.remaining,0,'the final Free place must remain unavailable to new users');
+    const holderCapacity=await capacity.usage(free.id,query,{excludeReservationId:first.freeReservation.id});
+    assert.equal(holderCapacity.remaining,1,'the reservation holder must be able to claim its own held slot');
+
     const pendingExpiryMs=new Date(first.expires_at).getTime();
     assert.equal(new Date(first.freeReservation.expires_at).getTime(),pendingExpiryMs,'validated Free reservation must expire at the verification-token expiry');
 
