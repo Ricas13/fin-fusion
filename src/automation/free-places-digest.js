@@ -206,21 +206,34 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
           remaining:visibleCount,observedRemaining:actualRemaining,messageId};
       }
       const expectedRemaining=stored.remaining==null?actualRemaining:Math.max(0,Math.floor(Number(stored.remaining)||0));
-      const expected=persistentMessage(Math.min(expectedRemaining,actualRemaining),publicBaseUrl);
-      const expectedTitle=expected.embeds?.[0]?.title;
-      const remoteTitle=canonical?.embeds?.find(embed=>/Free Server availability/.test(String(embed.title||'')))?.title;
-      if(remoteTitle!==expectedTitle){
-        const visibleCount=Math.min(expectedRemaining,actualRemaining);
-        await edit({channelId,messageId:stored.messageId,text:persistentText(visibleCount,publicBaseUrl),message:expected});
+      const visibleCount=Math.min(expectedRemaining,actualRemaining);
+      const expected=persistentMessage(visibleCount,publicBaseUrl);
+      const remoteEmbed=canonical?.embeds?.find(embed=>/Free Server availability/.test(String(embed.title||'')));
+      // Compare the displayed count, not only the traffic-light title.
+      const inconsistent=remoteEmbed?.title!==expected.embeds[0].title ||
+        remoteEmbed?.description!==expected.embeds[0].description;
+      if(inconsistent){
+        const changed=await edit({channelId,messageId:stored.messageId,text:persistentText(visibleCount,publicBaseUrl),message:expected});
+        if(String(changed?.id||'')!==stored.messageId)throw new Error('Discord did not confirm canonical availability edit.');
+      }
+      // Even a healthy canonical ID can coexist with abandoned green cards
+      // after a previous failed deletion. Never leave two bot-owned statuses.
+      const candidates=await findStatusMessages({channelId});
+      for(const old of candidates){
+        if(String(old.id)===stored.messageId)continue;
+        try{await remove({channelId,messageId:old.id});}
+        catch(error){if(!discordMissing(error))throw error;}
+      }
+      stored.lastVerifiedAt=now.toISOString();
+      verifiedNow=true;
+      if(inconsistent||candidates.some(old=>String(old.id)!==stored.messageId)){
         await saveState(db,{
           ...stored,text:JSON.stringify(expected),
           remaining:visibleCount,observedRemaining:actualRemaining,
           lastVerifiedAt:now.toISOString()
         });
-        return{processed:1,updated:1,repairedCanonicalContent:1,remaining:visibleCount,messageId:stored.messageId};
+        return{processed:1,updated:1,repairedCanonicalContent:inconsistent?1:0,removedDuplicates:candidates.filter(old=>String(old.id)!==stored.messageId).length,remaining:visibleCount,messageId:stored.messageId};
       }
-      stored.lastVerifiedAt=now.toISOString();
-      verifiedNow=true;
     }
 
     // Existing installations predate scheduled batching. Establish the current
@@ -260,7 +273,7 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     if(publishIncrease){
       try{await remove({channelId,messageId:stored.messageId});}
       catch(error){
-        if(!discordMissing(error))console.warn('[free-places-digest] Failed to delete previous Discord availability message:',error?.message||error);
+        if(!discordMissing(error))throw error; // Do not publish a competing green card while the old status remains.
       }
       const message=persistentMessage(actualRemaining,publicBaseUrl);
       const sent=await send({channelId,text:persistentText(actualRemaining,publicBaseUrl),message,allowEveryone:false});
