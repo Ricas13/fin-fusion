@@ -199,7 +199,7 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
         await saveState(db,{
           ...stored,channelId,messageId,text:JSON.stringify(message),
           remaining:visibleCount,observedRemaining:actualRemaining,
-          lastAdvertSlot:stored.lastAdvertSlot||currentSlot,
+          lastAdvertSlot:currentSlot||stored.lastAdvertSlot,
           lastVerifiedAt:now.toISOString()
         });
         return{processed:1,updated:1,recoveredMissingCanonical:1,created:chosen?0:1,
@@ -230,9 +230,10 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
         await saveState(db,{
           ...stored,text:JSON.stringify(expected),
           remaining:visibleCount,observedRemaining:actualRemaining,
-          lastVerifiedAt:now.toISOString()
+          lastVerifiedAt:now.toISOString(),
+          lastAdvertSlot:currentSlot||stored.lastAdvertSlot
         });
-        return{processed:1,updated:1,repairedCanonicalContent:inconsistent?1:0,removedDuplicates:candidates.filter(old=>String(old.id)!==stored.messageId).length,remaining:visibleCount,messageId:stored.messageId};
+        return{processed:1,updated:1,created:0,availabilityRestored:0,repairedCanonicalContent:inconsistent?1:0,removedDuplicates:candidates.filter(old=>String(old.id)!==stored.messageId).length,remaining:visibleCount,messageId:stored.messageId};
       }
     }
 
