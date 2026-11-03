@@ -1,7 +1,7 @@
 'use strict';
 
 const {query,transaction}=require('../db');
-const capacity=require('../entitlements/plan-capacity');
+const capacity=require('../entitlements/public-free-capacity');
 const notificationSettings=require('../integrations/notification-settings');
 const discordMessage=require('../integrations/discord-message');
 const operations=require('../platform/operations-settings');

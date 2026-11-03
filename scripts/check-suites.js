@@ -46,6 +46,7 @@ module.exports = {
       "node scripts/check-manifest-smoke.js",
       "node scripts/required-merge-gates-smoke.js",
       "node scripts/automation-job-registry-smoke.js",
+      "node scripts/public-free-capacity-smoke.js",
       "node scripts/automation-registry-ownership-smoke.js",
       "node scripts/automation-job-definition-smoke.js",
       "node scripts/automation-release-hardening-smoke.js",

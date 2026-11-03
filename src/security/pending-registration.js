@@ -5,6 +5,7 @@ const {query,transaction}=require('../db');
 const customers=require('../customers');
 const referrals=require('../referrals');
 const planCapacity=require('../entitlements/plan-capacity');
+const publicFreeCapacity=require('../entitlements/public-free-capacity');
 const customerServerChoice=require('../jellyfin/customer-server-choice');
 
 const LOCK_SEED=761931;
@@ -76,7 +77,8 @@ async function reserveFreeAccess({sessionId}){
             if(!plan)throw new Error('Free Access is not available for new claims right now.');
             // This is only a current-availability hint for UX. It does not hold a
             // place; begin() repeats the check under the capacity advisory lock.
-            await planCapacity.assertAvailable(plan.id,{db:(sql,params)=>client.query(sql,params),label:plan.name||'Free Access'});
+            const current=await publicFreeCapacity.usage(plan.id,(sql,params)=>client.query(sql,params));
+            if(current.soldOut)throw noFreePlacesError();
             const expiresAt=new Date(Date.now()+FREE_INTENT_MINUTES*60000);
             const intent=(await client.query(`
                 INSERT INTO free_access_registration_intents(holder_session_hash,plan_id,expires_at)
