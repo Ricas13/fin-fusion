@@ -42,7 +42,12 @@ function harness(){
     return{id:args.messageId};
   };
   const remove=async args=>{removes.push(args);return{};};
-  const sync=now=>freePlaces.syncPersistent({settings,operationsConfig,usage,send,edit,remove,transactionFn,now:new Date(now)});
+  // Mock Discord GET/list endpoints: normal reads reflect the stored status.
+  // Explicit scenarios below supply missing-message and duplicate-list faults.
+  const inspect=async()=>({embeds:freePlaces.persistentMessage(
+    stored?.remaining==null?remaining:stored.remaining,operationsConfig.publicBaseUrl).embeds});
+  const findStatusMessages=async()=>stored?.messageId?[{id:stored.messageId}]:[];
+  const sync=now=>freePlaces.syncPersistent({settings,operationsConfig,usage,send,edit,remove,inspect,findStatusMessages,transactionFn,now:new Date(now)});
   return{
     sync,sends,edits,removes,
     setRemaining:value=>{remaining=value;},
@@ -174,6 +179,9 @@ function harness(){
   // A missing canonical message during a downward edit is recreated as recovery
   // but is not treated as a scheduled availability advert.
   h.setRemaining(1);
+  // Exercise the normal downward PATCH fallback separately from the five-minute
+  // remote verification, which also catches missing canonical messages.
+  h.setStored({...h.getStored(),lastVerifiedAt:'2026-09-20T00:04:59.000Z'});
   h.missEdit();
   const sendCountBeforeRecovery=h.sends.length;
   result=await h.sync('2026-09-20T00:05:00Z');
@@ -199,6 +207,69 @@ function harness(){
   assert.strictEqual(h.getStored().remaining,5);
   assert.strictEqual(h.getStored().observedRemaining,5);
   assert.strictEqual(h.getStored().lastAdvertSlot,'2026-09-20T00:00');
+
+  // Production incident: saved canonical ID returns 404 while an abandoned
+  // green bot-owned status still advertises one place to the whole channel.
+  // Re-adopt and PATCH that exact card to red, WITHOUT another POST.
+  const recovery=harness();
+  recovery.setRemaining(0);
+  recovery.setStored({
+    channelId:settings.discordFreePlacesChannelId,
+    messageId:'deleted-canonical',
+    remaining:0, observedRemaining:0, lastAdvertSlot:'2026-09-20T00:00'
+  });
+  const sent=[],patched=[],deleted=[];
+  const incidentTx=async fn=>fn({query:async(sql,params=[])=>{
+    if(String(sql).includes('pg_advisory_xact_lock'))return{rows:[]};
+    if(String(sql).includes('SELECT id FROM plans'))return{rows:[{id:'plan'}]};
+    if(String(sql).includes('SELECT setting_value FROM platform_settings'))
+      return{rows:[{setting_value:recovery.getStored()}]};
+    if(String(sql).includes('INSERT INTO platform_settings')){
+      recovery.setStored(JSON.parse(params[1]));
+      return{rows:[]};
+    }
+    throw Error('Unexpected SQL in Discord incident regression');
+  }});
+  const incidentOptions={
+    settings,operationsConfig,usage:async()=>({remaining:0}),transactionFn:incidentTx,
+    now:new Date('2026-09-20T08:00:00Z'),
+    inspect:async()=>{throw Error('Discord HTTP 404 unknown message');},
+    findStatusMessages:async()=>[{
+      id:'orphan-green',embeds:freePlaces.persistentMessage(1,operationsConfig.publicBaseUrl).embeds
+    }],
+    edit:async a=>{patched.push(a);return{id:a.messageId};},
+    send:async a=>{sent.push(a);return{id:'unexpected-post'};},
+    remove:async a=>{deleted.push(a);}
+  };
+  result=await freePlaces.syncPersistent(incidentOptions);
+  assert.equal(result.recoveredMissingCanonical,1);
+  assert.equal(result.created,0);
+  assert.equal(sent.length,0,'recover existing green announcement; do not post another message');
+  assert.equal(patched.length,1);
+  assert.equal(patched[0].message.embeds[0].title,'🔴 Free Server availability');
+  assert.equal(recovery.getStored().messageId,'orphan-green');
+  assert.equal(recovery.getStored().remaining,0);
+  assert.equal(deleted.length,0);
+
+  // A healthy canonical status may coexist with stale green duplicates.
+  recovery.setStored({...recovery.getStored(),lastVerifiedAt:null});
+  patched.length=0;
+  result=await freePlaces.syncPersistent({
+    ...incidentOptions,now:new Date('2026-09-20T08:06:00Z'),
+    inspect:async()=>({embeds:freePlaces.persistentMessage(0,operationsConfig.publicBaseUrl).embeds}),
+    findStatusMessages:async()=>[{id:'orphan-green'}, {id:'stale-green'}]
+  });
+  assert.equal(result.removedDuplicates,1);
+  assert.equal(deleted.length,1);
+  assert.equal(deleted[0].messageId,'stale-green');
+  assert.equal(sent.length,0);
+
+  // A Discord API failure must not silently report successful reconciliation.
+  recovery.setStored({...recovery.getStored(),lastVerifiedAt:null});
+  await assert.rejects(freePlaces.syncPersistent({
+    ...incidentOptions,
+    inspect:async()=>{throw Error('Discord HTTP 429 rate limited');}
+  }),/429/);
 
   assert(h.lockCount()>=16,'every digest observation/mutation must remain serialized');
   console.log('free places Discord scheduled batching smoke: ok');
