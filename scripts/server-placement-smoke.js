@@ -86,7 +86,7 @@ assert(hardeningMigration.includes('CREATE TABLE IF NOT EXISTS jellyfin_server_p
 assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a plan capacity_limit');
 assert(
     pendingRegistrationSource.includes('free_access_registration_intents')&&
-    pendingRegistrationSource.includes('await planCapacity.assertAvailable(plan.id')&&
+    pendingRegistrationSource.includes('await publicFreeCapacity.usage(plan.id')&&
     pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,freePlan.id')&&
     pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),
     'anonymous Free signup must use a non-capacity intent, while validated account submission atomically reserves one fleet user place'
