@@ -193,6 +193,42 @@ async function main() {
     'each distinct transition is counted once');
   assert.strictEqual(measured.observed_ended, true,
     'stop closes the native observation segment');
+  // 11. A stop event can legitimately arrive after polling prematurely
+  // closed the play as missing. Recover the one exact recent play.
+  const recoveredItem = `item-recovered-${tag}`;
+  const endedAt = new Date(Date.now() - 5 * 60 * 1000);
+  const startPayload = {
+    UserId: jfUser, ItemId: recoveredItem, Name: 'Recovered',
+    ItemType: 'Movie', ClientName: 'TestClient', DeviceName: 'TV',
+    PlayMethod: 'DirectPlay'
+  };
+  await webhook.ingest(server, {
+    ...startPayload, NotificationType: 'PlaybackStart',
+    UtcTimestamp: endedAt.toISOString()
+  });
+  await query(`
+    UPDATE active_playback_sessions
+    SET last_seen_at=NOW()-INTERVAL '10 minutes'
+    WHERE server_id=$1 AND item_id=$2
+  `, [server, recoveredItem]);
+  await query(`
+    UPDATE playback_history
+    SET ended_at=$3,last_seen_at=$3,ended_reason='not_seen'
+    WHERE server_id=$1 AND item_id=$2
+  `, [server, recoveredItem, endedAt]);
+  await query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND item_id=$2`,
+    [server, recoveredItem]);
+  const restored = await webhook.ingest(server, {
+    ...startPayload, NotificationType: 'PlaybackStop',
+    UtcTimestamp: new Date().toISOString()
+  });
+  assert.strictEqual(restored.recovered, true,
+    'delayed stop must reconcile a uniquely matched new play');
+  const repaired = await row(recoveredItem);
+  assert.strictEqual(repaired.ended_reason, 'webhook_stop');
+  assert(Number(repaired.observed_watch_seconds) >= 295,
+    'stop reconciles observed start-to-stop viewing');
+
 
 }
 
