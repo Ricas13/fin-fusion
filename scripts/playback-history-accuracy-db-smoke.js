@@ -5,6 +5,7 @@
 // simulated Jellyfin server and checks the cases clients and outages produce.
 
 require('dotenv').config();
+process.env.PLAYBACK_ACCOUNTING_SHADOW_ENABLED = 'true';
 const assert = require('assert');
 const crypto = require('crypto');
 const { skipIfNoDatabase } = require('./smoke-db');
@@ -167,6 +168,32 @@ async function main() {
   const parts = (await query(`SELECT playback_key,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)) AS seconds FROM playback_history WHERE server_id=$1 AND item_id=$2 ORDER BY started_at`, [server, itemJ])).rows;
   assert.strictEqual(parts.length, 2, 'a 3 minute interruption starts a new period');
   assert(Number(parts[0].seconds) <= 10 * 60 + 5 && Number(parts[1].seconds) < 60, 'the 3 minute gap is not counted as watching');
+  // 10. An explicit start/progress/pause/resume/stop sequence calculates
+  // viewed time independently of the legacy session wall-clock duration.
+  registry.request = async () => [];
+  const itemNative = `item-native-${tag}`;
+  const began = new Date(Date.now() - 900000);
+  const tick = n => new Date(began.getTime() + n * 1000).toISOString();
+  const shared = {
+    UserId: jfUser, ItemId: itemNative, Name: 'Native evidence', ItemType: 'Movie',
+    ClientName: 'TestClient', DeviceName: 'TV', PlayMethod: 'DirectPlay'
+  };
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackStart', UtcTimestamp: tick(0) });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackProgress', UtcTimestamp: tick(300), IsPaused: true });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackProgress', UtcTimestamp: tick(600), IsPaused: true });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackProgress', UtcTimestamp: tick(610), IsPaused: false });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackStop', UtcTimestamp: tick(900) });
+  const measured = await row(itemNative);
+  assert(measured, 'native playback history row was written');
+  assert(Math.abs(Number(measured.observed_watch_seconds) - 590) < 3,
+    'native accounting must exclude 310 seconds of pause time');
+  assert.strictEqual(Number(measured.observed_confirmed_seconds), 0,
+    'watch time without advancing position is estimated, not confirmed');
+  assert.strictEqual(Number(measured.observed_sample_count), 5,
+    'each distinct transition is counted once');
+  assert.strictEqual(measured.observed_ended, true,
+    'stop closes the native observation segment');
+
 }
 
 main()
