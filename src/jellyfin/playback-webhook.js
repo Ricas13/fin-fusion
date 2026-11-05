@@ -192,9 +192,56 @@ async function progress(serverId, account, payload, at) {
     return { recorded: true, playbackKey: active.playback_key, sessionId: active.jellyfin_session_id };
 }
 
+// A playback stop event may arrive after the session polling path temporarily
+// marked a session missing. Recover only an unambiguous, recently observed,
+// same-account/item/client play, never historical or unobserved data.
+async function recoverRecentClosedPlay(serverId, account, payload, at) {
+    const itemId = String(payload?.ItemId || '');
+    const clientName = String(payload?.ClientName || '');
+    const deviceName = String(payload?.DeviceName || '');
+    if (!itemId || (!clientName && !deviceName)) return null;
+
+    const matches = await query(`
+        SELECT id,playback_key,jellyfin_session_id
+        FROM playback_history
+        WHERE server_id=$1 AND jellyfin_account_id=$2
+          AND item_id=$3 AND started_at<=$4::timestamptz
+          AND started_at>$4::timestamptz-INTERVAL '4 hours'
+          AND ended_at IS NOT NULL
+          AND ended_reason='not_seen'
+          AND observed_anchor_at IS NOT NULL
+          AND ($5::text='' OR client_name=$5)
+          AND ($6::text='' OR device_name=$6)
+        ORDER BY started_at DESC
+        LIMIT 2
+    `, [serverId, account.id, itemId, at, clientName, deviceName]);
+    if (matches.rowCount !== 1) return null;
+    const candidate = matches.rows[0];
+    // Compare-and-set: a more recent event or another operator action wins.
+    const updated = await query(`
+        UPDATE playback_history SET
+          ended_at=$2,last_seen_at=GREATEST(last_seen_at,$2),
+          ended_reason='webhook_stop',progress_reported=TRUE
+        WHERE id=$1 AND ended_reason='not_seen'
+          AND ended_at IS NOT NULL AND ended_at<=$2
+        RETURNING playback_key,jellyfin_session_id
+    `, [candidate.id, at]);
+    return updated.rows[0] || null;
+}
+
 async function stop(serverId, account, payload, at) {
     const active = await matchingActive(serverId, account, payload, payload?.SessionId || null);
-    if (!active) return { recorded: false, reason: 'active_session_not_found' };
+    if (!active) {
+        const recovered = await recoverRecentClosedPlay(serverId, account, payload, at);
+        if (!recovered) return { recorded: false, reason: 'active_session_not_found' };
+        await playbackAccounting.recordSafely({
+            serverId, playbackKey: recovered.playback_key, at,
+            positionTicks: positionTicks(payload), isPaused: Boolean(payload?.IsPaused),
+            source: 'webhook', event: 'stop'
+        });
+        await touchAccount(account, at);
+        return { recorded: true, recovered: true, playbackKey: recovered.playback_key, sessionId: recovered.jellyfin_session_id };
+    }
     await transaction(async client => {
         await client.query(`
             UPDATE playback_history
