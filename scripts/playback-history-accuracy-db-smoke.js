@@ -208,9 +208,9 @@ async function main() {
   });
   await query(`
     UPDATE active_playback_sessions
-    SET last_seen_at=NOW()-INTERVAL '10 minutes'
+    SET last_seen_at=$3::timestamptz+INTERVAL '1 second'
     WHERE server_id=$1 AND item_id=$2
-  `, [server, recoveredItem]);
+  `, [server, recoveredItem, endedAt]);
   await query(`
     UPDATE playback_history
     SET ended_at=$3,last_seen_at=$3,ended_reason='not_seen'
