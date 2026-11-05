@@ -29,6 +29,7 @@
     "payments:plisio-smoke": "node scripts/plisio-payments-smoke.js",
     "payments:operations-status": "node scripts/provider-operations-status.js",
     "activity:worker": "node scripts/activity-worker.js",
+    "activity:accounting-report": "node scripts/playback-accounting-report.js",
     "automation:worker": "node scripts/automation-worker.js",
     "secrets:rotate-jellyfin": "node scripts/rotate-jellyfin-keys.js",
     "deploy:prepare-env": "node scripts/prepare-production-env.js --write",
