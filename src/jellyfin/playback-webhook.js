@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { query, transaction } = require('../db');
 const registry = require('./registry');
+const playbackAccounting = require('./playback-accounting');
 
 function playbackMethod(value) {
     const method = String(value || '').toLowerCase();
@@ -159,6 +160,10 @@ async function upsertStart(serverId, account, payload, at) {
             payload?.ItemType || null,payload?.ClientName || null,payload?.DeviceName || null,method,firstSeen,at,account.access_lane || 'primary']);
         await touchAccount(account, at, client);
     });
+    await playbackAccounting.recordSafely({
+        serverId, playbackKey, at, positionTicks: ticks,
+        isPaused: Boolean(payload?.IsPaused), source: 'webhook', event: 'start'
+    });
     return { recorded: true, playbackKey, sessionId, source: live ? 'webhook+session' : 'webhook' };
 }
 
@@ -179,6 +184,11 @@ async function progress(serverId, account, payload, at) {
         await client.query(`UPDATE playback_history SET last_seen_at=GREATEST(last_seen_at,$3),progress_reported=TRUE WHERE server_id=$1 AND playback_key=$2`, [serverId,active.playback_key,at]);
         await touchAccount(account, at, client);
     });
+    await playbackAccounting.recordSafely({
+        serverId, playbackKey: active.playback_key, at, positionTicks: ticks,
+        isPaused: Boolean(payload?.IsPaused), source: 'webhook',
+        event: payload?.IsPaused ? 'pause' : 'progress'
+    });
     return { recorded: true, playbackKey: active.playback_key, sessionId: active.jellyfin_session_id };
 }
 
@@ -193,6 +203,11 @@ async function stop(serverId, account, payload, at) {
         `, [serverId,active.playback_key,at]);
         await client.query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND jellyfin_session_id=$2`, [serverId,active.jellyfin_session_id]);
         await touchAccount(account, at, client);
+    });
+    await playbackAccounting.recordSafely({
+        serverId, playbackKey: active.playback_key, at,
+        positionTicks: positionTicks(payload) ?? active.position_ticks,
+        isPaused: Boolean(active.is_paused), source: 'webhook', event: 'stop'
     });
     return { recorded: true, playbackKey: active.playback_key, sessionId: active.jellyfin_session_id };
 }
