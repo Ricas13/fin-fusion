@@ -13,7 +13,8 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261007184500_restore_stremio_bounded_index_cadence.sql',
   '20261007190000_stremio_external_index_shadow.sql',
   '20261031230000_checkout_operator_resolution.sql',
-  '20261031233000_playback_progress_reporting.sql'
+  '20261031233000_playback_progress_reporting.sql',
+  '20261105204500_native_playback_accounting_shadow.sql'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {

@@ -7,6 +7,7 @@ module.exports = {
       "node scripts/customer-access-state-smoke.js",
       "node scripts/integrity-alert-text-smoke.js",
       "node scripts/customer-playback-view-smoke.js",
+      "node scripts/native-playback-accounting-smoke.js",
       "node scripts/customer-timeline-smoke.js",
       "node scripts/plisio-list-shape-smoke.js",
       "node scripts/plisio-sweep-smoke.js",

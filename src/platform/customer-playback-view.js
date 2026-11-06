@@ -52,6 +52,12 @@ function durationLabel(seconds) {
 // Watch time for one row -> { seconds, estimate }.
 function watchTime(row, { env = process.env } = {}) {
     const raw = Math.min(MAX_PLAY_SECONDS, Math.max(0, Number(row?.duration_seconds) || 0));
+    // The new accumulator has already bounded each observed interval. Do not
+    // apply the legacy two-hour "no position movement" cap a second time.
+    if (row?.native_observed === true) {
+        const confirmed = Math.max(0, Number(row?.native_confirmed_seconds) || 0);
+        return { seconds: raw, estimate: confirmed + 1 < raw };
+    }
     if (row?.progress_reported === true) return { seconds: raw, estimate: false };
     return { seconds: Math.min(raw, unreportedCapSeconds(env)), estimate: true };
 }
