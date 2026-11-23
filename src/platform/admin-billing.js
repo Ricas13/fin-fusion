@@ -151,7 +151,7 @@ function endingPaidTermRow(row) {
 function endingPaidTermsSection(rows) {
     if (!rows.length) return '';
     const table = `<div class="tableWrap"><table class="dataTable responsiveTable endingTermTable"><thead><tr><th>Customer</th><th>Plan</th><th>Local source</th><th>Paid through</th><th>State</th><th class="right">Action</th></tr></thead><tbody>${rows.map(endingPaidTermRow).join('')}</tbody></table></div>`;
-    return `<section class="section" id="ending-paid-terms">${ui.sectionHeader({title:`Paid terms ending without renewal (${rows.length})`,description:'These customers have valid paid access until the shown date, but renewal is intentionally stopped. They do not need a provider subscription link.'})}<div class="operatorCallout good"><strong>No action required.</strong> Access remains active through the paid-through date and expires automatically afterwards.</div>${table}</section>`;
+    return `<section class="section" id="ending-paid-terms">${ui.sectionHeader({title:`Paid terms ending without renewal (${rows.length})`,description:'These customers have valid paid access until the shown date, but renewal is intentionally stopped. They do not need a provider subscription link.'})}<div class="operatorCallout good"><strong>No action required.</strong> Access remains active through the paid-through date and expires automatically afterwards.</div><details class="operatorDetails endingTermsDisclosure"><summary><span>Show ${rows.length} customer${rows.length===1?'':'s'}</span><small>Reference only</small></summary><div class="operatorDetailsBody">${table}</div></details></section>`;
 }
 
 function discoveryStatePill(state) {

@@ -1,0 +1,90 @@
+/*
+ * Admin visual polish. Visual-only overrides; no behaviour, routes or data.
+ *
+ * Effective token winners (the inline critical <style> in both admin shells
+ * loads after admin-tokens.css and wins :root ties):
+ *   --radius/--r 8px, --sidebar-w/--rail-w 240px, --bar-h 56px,
+ *   muted/--dim #8794A0, panel #101417.
+ * Several sheets load after this one (JS appends admin-final-polish.css and
+ * operator-business-indicators.css to <head>; some are <link>s in <body>), so
+ * rules here use ancestor prefixes (.topBar, .mainPane, .content,
+ * .analyticsGrid, .adminLiveStreams) to win equal-weight
+ * ties without !important. !important is used only where the overridden rule
+ * already uses it.
+ */
+
+/* Servers page spacing and small text */
+.serverControlOverview span,.serverControlOverview small{font-size:11px;color:var(--dim)}
+.serverControlSection>.sectionHead p,.serverControlHint{font-size:12px;line-height:1.45}
+.serverControlTable td>small,.serverControlIdentity small{font-size:11px;color:var(--dim);line-height:1.35}
+.serverControlIdentity strong{font-size:13px}
+.serverLibraryAction>span{font-size:11px;color:var(--dim)}
+.serverInlineControl .input{font-size:12px}
+.serverControlTable th:nth-child(5){width:24%}
+.serverControlTable th:nth-child(6){width:13%}
+.serverLibraryAction{flex-wrap:wrap;gap:8px}
+.serverPlacementState{gap:10px}
+.serverInlineControl{grid-template-columns:minmax(84px,140px) auto;gap:8px}
+@media (min-width:821px){
+  .serverInlineControl .input,.serverInlineControl .button{height:32px;min-height:32px}
+}
+
+/* Top bar pills at ~1568px */
+.topBar .topBarActions{gap:10px;min-width:0}
+.topBar .operatorSignalStrip,.topBar .topHeaderMetrics{gap:8px}
+.topBar .operatorSignalSummary,.topBar .topHeaderMetric{padding:7px 12px;font-size:12px}
+.topBar .topHeaderMetric>span{font-size:11px;color:var(--dim);letter-spacing:.02em}
+.topBar .topHeaderMetric>strong{font-size:12px}
+@media (min-width:981px) and (max-width:1600px){
+  .topBar .adminQuickFind{flex:1 1 220px;max-width:320px;margin:0 12px}
+}
+
+/* Contrast: small low-contrast greys raised to --dim, sizes floored at 11px */
+.adminCommandPaletteFooter{color:var(--dim);font-size:11px}
+.adminCommandOptionHint{color:var(--dim);font-size:11px}
+.content .analyticsGrid .chartEmpty,
+.content .analyticsGrid .analyticsEmpty{color:var(--dim)}
+.content .analyticsGrid .miniStat span,
+.content .analyticsGrid .barItemLabel span,
+.content .analyticsGrid .analyticsTable .sub,
+.content .analyticsGrid .serverLoadName span,
+.content .analyticsGrid .widgetInfo{color:var(--dim);font-size:11px}
+.content .analyticsGrid .widgetInfo:hover{color:#9eacba}
+.content .analyticsGrid .analyticsTable th,
+.content .analyticsGrid .analyticsTable td{font-size:11px}
+.content .analyticsGrid .analyticsTable th{color:var(--dim)}
+.adminLiveStreams .adminLiveStreamsLoading,
+.adminLiveStreams .adminLiveStreamsEmpty{color:var(--dim)}
+.content .integrationFact span{color:var(--dim);font-size:11px}
+.integrationInlineField>small{color:var(--dim);font-size:11px}
+.workflowCardEyebrow,
+.coherenceSectionTabs .coherenceSectionTab .workflowCardEyebrow{color:var(--dim);font-size:11px}
+.fieldHelp{color:var(--dim)}
+.content .empty{color:var(--dim)}
+.libraryChoice small{color:var(--dim);font-size:11px}
+.content .dashboardAutomationEvent time{color:var(--dim);font-size:11px}
+.adminReleaseLink{color:var(--dim);font-size:11px}
+html body .content.planReferencePage .planServerChoice small,
+html body .content.planReferencePage .requestPermissionMode .choice small,
+html body .content.planReferencePage .requestPermissionGroup>strong,
+html body .content.planReferencePage .planConfigFact span,
+html body .content.planReferencePage .toggleRow small{font-size:11px!important;color:var(--dim)!important}
+html body .content.planReferencePage .planServerChoice strong,
+html body .content.planReferencePage .requestPermissionMode .choice strong{font-size:12px!important}
+html body .content.planReferencePage .requestPermissionMode legend{font-size:11px!important}
+html body .content.planReferencePage .planControlIdentity .muted{font-size:11px}
+html body .content.planReferencePage .libraryChoice small{font-size:11px!important;color:var(--dim)!important}
+html body .content.planReferencePage .inputUnit>span{font-size:11px;color:var(--dim)}
+
+/* Unstyled bare buttons inside the admin main pane */
+.mainPane :where(button:not([class])){display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:6px 12px;border:1px solid #34404c;border-radius:var(--r);background:#1a2731;color:#e3ebf1;font:inherit;font-size:12px;font-weight:650;cursor:pointer}
+.mainPane :where(button:not([class])):hover{border-color:var(--hue)}
+.mainPane :where(button:not([class])):focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+/* Section hue accent on the page title */
+.pageHeader h1::before{content:"";display:inline-block;width:4px;height:.78em;margin-right:10px;border-radius:2px;background:var(--hue);vertical-align:-.04em}
+
+/* Billing: collapsed list of paid terms ending without renewal */
+.endingTermsDisclosure{margin-top:12px}
+.endingTermsDisclosure>summary::after{content:"";display:inline-block;width:6px;height:6px;margin-left:10px;border-right:2px solid var(--dim);border-bottom:2px solid var(--dim);transform:rotate(45deg);transition:transform .15s}
+.endingTermsDisclosure[open]>summary::after{transform:rotate(-135deg)}
