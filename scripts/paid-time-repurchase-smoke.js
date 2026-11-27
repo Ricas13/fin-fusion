@@ -129,6 +129,9 @@ async function repurchaseDecision(){
     assert.equal(await decide([],'payment',{discountCode:'SAVE'}),null);
     target={subscriptionId:'sub-1'};
     assert.equal((await decide([])).subscriptionId,'sub-1','the holder of a full plan can still add time');
+    assert.equal((await decide([])).reason,'plan_full');fullPlanLookups=1;
+    holding=unprotected;assert.equal((await decide([payment])).reason,'unprotected');holding=queued;
+    assert.equal(checkout.commercialSnapshot({plan:payment,mode:'payment',extensionSubscriptionId:'sub-1',repurchaseReason:'plan_full'},'stripe').repurchaseReason,'plan_full');
     assert.equal(fullPlanLookups,1);
     for(const message of Object.values(samePlanRepurchase.MESSAGES))assert(checkout.CHECKOUT_SAFE.includes(message),'refusals must reach the customer');
     const intents=read('src/payments/checkout-intents.js');
@@ -152,6 +155,7 @@ async function queueMovementCallSites(){
   assert(!replayCalls.some(sql=>sql.includes('shift_prepaid_queue')),'a provider replay must not move queued time again');
   await operatorEditsMoveTheQueue();
   await resumeRenewalIsBlocked();
+  await convertedSettlementFailures();
 
   const calls=[];
   const end=new Date(Date.now()+10*DAY);
@@ -238,6 +242,62 @@ async function resumeRenewalIsBlocked(){
   assert(require('../src/platform/customer-subscription-actions').SUBSCRIPTION_ACTION_SAFE.includes(queued.RESUME_BLOCKED),'the customer sees why');
   const control=read('src/payments/billing-control.js'),recovery=control.slice(control.indexOf('async function recoverProviderOperation'));
   assert(recovery.indexOf('hasPurchaseQueuedBehind')>0&&recovery.indexOf('hasPurchaseQueuedBehind')<recovery.indexOf('remoteAdapter.resumeRenewal'),'recovery does not resume over a queued purchase either');
+}
+
+// What happens when a paid repurchase can no longer be applied as an extension.
+async function convertedSettlementFailures(){
+  const primitives=require('../src/payments/lifecycle-primitives'),capacity=require('../src/entitlements/plan-capacity');
+  const originalApply=extensions.applyPurchase,originalHolding=samePlanRepurchase.assessHolding,originalCapacity=capacity.lockAndAssert;
+  const originalError=console.error,originalWarn=console.warn;
+  let statements=[],existing=[],holding={current:true,unprotectedIds:[]},applyError='ACCESS_EXTENSION_ALLOWANCE_CHANGED',applications=0,capacityChecks=0,full=false;
+  try{
+    console.error=()=>{};console.warn=()=>{};
+    extensions.applyPurchase=async()=>{applications++;const error=new Error('cannot apply');error.code=applyError;throw error;};
+    samePlanRepurchase.assessHolding=async()=>holding;
+    capacity.lockAndAssert=async()=>{capacityChecks++;if(full){const error=new Error('full');error.code='PLAN_CAPACITY_EXHAUSTED';throw error;}};
+    queryHandler=async(sql,params)=>{statements.push({sql,params});const rows=sql.includes('INSERT INTO payment_incidents')?[{id:'incident'}]:[];return{rows,rowCount:rows.length};};
+    transactionClient={query:async(sql,params)=>{
+      statements.push({sql,params});
+      const one=row=>({rows:[row],rowCount:1});
+      if(sql.includes('SELECT id FROM customers'))return one({id:'cust-1'});
+      if(sql.includes('SELECT * FROM plans'))return one(plan);
+      if(sql.startsWith('SELECT * FROM subscriptions WHERE source'))return{rows:existing,rowCount:existing.length};
+      if(sql.includes('FROM billing_checkout_intents WHERE id'))return one({id:'intent-1',customer_id:'cust-1',plan_id:'plan-1',provider:'stripe',state:'open'});
+      if(sql.includes('INSERT INTO subscriptions'))return one({id:'sub-new',customer_id:'cust-1',plan_id:'plan-1',status:'active',billing_mode:'payment'});
+      return{rows:[],rowCount:0};
+    }};
+    const activate=reason=>{statements=[];return primitives.activatePurchase({customerId:'cust-1',planId:'plan-1',provider:'stripe',providerSubscriptionId:'pi_1',providerStatus:'active',
+      commercialSnapshot:{kind:'subscription_extension',extensionSubscriptionId:'sub-1',repurchaseReason:reason,checkoutIntentId:'intent-1',planId:'plan-1',provider:'stripe',checkoutMode:'payment',priceMinor:600,durationDays:30,billingInterval:'month',currency:'GBP'}});};
+    const inserted=()=>statements.find(row=>row.sql.includes('INSERT INTO subscriptions'));
+    const incident=()=>statements.find(row=>row.sql.includes('INSERT INTO payment_incidents'));
+
+    assert.equal((await activate('plan_full')).id,'sub-new','a full-plan repurchase still activates as a queued purchase');
+    const rollback=statements.findIndex(row=>row.sql.startsWith('ROLLBACK TO SAVEPOINT'));
+    assert(rollback>0&&rollback<statements.indexOf(inserted()));
+    const stored=inserted().params.find(value=>typeof value==='string'&&value.includes('repurchaseFallback'));
+    assert.equal(JSON.parse(stored).kind,'direct_plan');
+    assert(statements.some(row=>row.sql.includes('UPDATE billing_checkout_intents SET commercial_snapshot')),'the intent no longer reads as an unfulfilled extension');
+    assert.equal(capacityChecks,0,'the holder keeps their own place');
+
+    existing=[{id:'sub-new',customer_id:'cust-1',plan_id:'plan-1',status:'active',billing_mode:'payment'}];applications=0;
+    assert.equal((await activate('plan_full')).id,'sub-new');
+    assert.equal(applications,0,'a replay finds the activated row');assert.equal(inserted(),undefined);
+    existing=[];
+
+    holding={current:true,unprotectedIds:['sub-1']};
+    await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'never over unprotected time');
+    holding={current:false,unprotectedIds:[]};full=true;
+    await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'never into a full plan without a held place');
+    full=false;holding={current:true,unprotectedIds:[]};
+    applyError='ACCESS_EXTENSION_PAYMENT_ALREADY_USED';
+    await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'payment identity conflicts never fall back');
+    applyError='ACCESS_EXTENSION_TARGET_REPLACED';
+    await assert.rejects(activate('unprotected'),error=>error.code===applyError&&error.paidButUnfulfilled===true);
+    assert.equal(inserted(),undefined,'an unprotected repurchase is never activated over held time');
+    const metadata=JSON.parse(incident().params[5]);
+    assert.equal(metadata.reason,'unprotected_repurchase_extension_failed');
+    assert.equal(metadata.extensionFailureCode,applyError);assert.equal(metadata.extensionSubscriptionId,'sub-1');assert(metadata.operatorAction);
+  }finally{extensions.applyPurchase=originalApply;samePlanRepurchase.assessHolding=originalHolding;capacity.lockAndAssert=originalCapacity;console.error=originalError;console.warn=originalWarn;}
 }
 
 // A very small DOM: enough to run the two browser scripts.

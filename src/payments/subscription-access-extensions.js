@@ -52,6 +52,8 @@ function purchasedDays(snapshot={},from=new Date()){
   const end=billingPeriods.addPlanDuration({billingInterval:interval,durationDays},new Date(from));
   return wholeDaysBetween(from,end);
 }
+// The paid-for extension cannot be attached to this subscription.
+function targetUnavailable(message){const error=new Error(message);error.code='ACCESS_EXTENSION_TARGET_UNAVAILABLE';return error;}
 async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId=null}){
   const result=await client.query(`
     SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
@@ -64,11 +66,11 @@ async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutInt
      FOR UPDATE OF s
   `,[subscriptionId,customerId]);
   const row=result.rows[0]||null;
-  if(!row)throw new Error('The subscription being extended no longer exists.');
-  if(String(row.plan_id)!==String(planId))throw new Error('The selected extension no longer matches your current plan.');
-  if(row.superseded_by)throw new Error('This subscription has already been replaced.');
-  if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw new Error('Only a current paid plan can be extended.');
-  if(row.refund_terminated_at)throw new Error('A refunded or charged-back subscription cannot be extended.');
+  if(!row)throw targetUnavailable('The subscription being extended no longer exists.');
+  if(String(row.plan_id)!==String(planId))throw targetUnavailable('The selected extension no longer matches your current plan.');
+  if(row.superseded_by)throw targetUnavailable('This subscription has already been replaced.');
+  if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw targetUnavailable('Only a current paid plan can be extended.');
+  if(row.refund_terminated_at)throw targetUnavailable('A refunded or charged-back subscription cannot be extended.');
 
   let committedCheckout=null;
   if(checkoutIntentId){
@@ -106,7 +108,7 @@ async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutInt
   if(service==='stremio')current=await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
   else if(service==='emby')current=await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
   else if(service==='jellyfin'||service==='bundle')current=await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
-  else throw new Error('This service type cannot be extended through customer checkout.');
+  else throw targetUnavailable('This service type cannot be extended through customer checkout.');
   if(current&&String(current.subscription_id||current.id||'')!==String(row.id)){
     const error=new Error('This subscription was replaced before the extension payment could be fulfilled.');
     error.code='ACCESS_EXTENSION_TARGET_REPLACED';
@@ -172,7 +174,7 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
     }
   }
   const nextTotal=baseDays+activeDays;
-  if(nextTotal>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  if(nextTotal>3650)throw targetUnavailable('This subscription cannot be extended beyond the maximum supported paid-through window.');
   let updated=subscription;
   if(nextTotal!==currentTotal){
     updated=(await client.query('UPDATE subscriptions SET service_extension_days=$2,updated_at=NOW() WHERE id=$1 RETURNING *',[subscriptionId,nextTotal])).rows[0];
@@ -235,7 +237,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   target={...target,...(rebased.subscription||{})};
   const cursor=new Date(new Date(target.current_period_end).getTime()+Math.max(0,Number(target.service_extension_days||0))*86400000);
   const days=purchasedDays(commercialSnapshot,cursor);
-  if(Number(target.service_extension_days||0)+days>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  if(Number(target.service_extension_days||0)+days>3650)throw targetUnavailable('This subscription cannot be extended beyond the maximum supported paid-through window.');
   const directCollision=await client.query(`
     SELECT id,customer_id
     FROM subscriptions

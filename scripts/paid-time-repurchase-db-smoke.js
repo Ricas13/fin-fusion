@@ -370,6 +370,39 @@ async function resumeRenewal(){
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM provider_operations WHERE owner_id=$1',[customer.id])).rows[0].n,0);
 }
 
+// A converted repurchase whose extension can no longer be applied.
+async function convertedSettlement(){
+  const plan=await makePlan('converted');
+  const settle=async({label,fixture,reason})=>{
+    const customer=await makeCustomer('converted-'+label);
+    const current=await insert(customer,plan,{start:-5,end:20,...fixture});
+    const snapshot=purchaseContract(plan,{kind:'subscription_extension',extensionSubscriptionId:current.id,repurchaseReason:reason});
+    const intent=await checkoutIntents.createIntent({scope:'customer',customerId:customer.id,planId:plan.id,provider:'stripe',checkoutMode:'payment',ttlMinutes:30,commercialSnapshot:snapshot});
+    const ref=`pi_paidtime_converted_${label}_${suffix}`;
+    // The held allowance changes while the customer is paying.
+    await query(`UPDATE subscriptions SET commercial_snapshot=commercial_snapshot||'{"accessQuantity":3}'::jsonb WHERE id=$1`,[current.id]);
+    const run=()=>activate(customer,plan,ref,{...snapshot,checkoutIntentId:intent.id});
+    const rows=async()=>(await query('SELECT * FROM subscriptions WHERE customer_id=$1 AND provider_subscription_id=$2',[customer.id,ref])).rows;
+    return{customer,current,intent,run,rows};
+  };
+  const full=await settle({label:'full',fixture:{},reason:'plan_full'});
+  const bought=await full.run();
+  same(bought.starts_at,full.current.access_end,'activated as a queued purchase');
+  assert.equal((await full.run()).id,bought.id,'replay returns the same purchase');
+  assert.equal((await full.rows()).length,1);
+  assert.equal((await query('SELECT COUNT(*)::int AS n FROM subscription_access_extensions WHERE customer_id=$1',[full.customer.id])).rows[0].n,0);
+  assert.equal((await query('SELECT commercial_snapshot FROM billing_checkout_intents WHERE id=$1',[full.intent.id])).rows[0].commercial_snapshot.kind,'direct_plan');
+
+  for(const [label,fixture,reason] of [['unprotected',{recurring:true},'unprotected'],['turned-unprotected',{recurring:true},'plan_full']]){
+    const failed=await settle({label,fixture,reason});
+    await assert.rejects(failed.run(),error=>error?.code==='ACCESS_EXTENSION_ALLOWANCE_CHANGED'&&error.paidButUnfulfilled===true,label);
+    assert.equal((await failed.rows()).length,0,label+': no purchase over unprotected time');
+    const incident=(await query(`SELECT metadata FROM payment_incidents WHERE customer_id=$1 AND incident_type='checkout_completion' AND incident_status='open'`,[failed.customer.id])).rows[0];
+    assert.equal(incident?.metadata.reason,reason+'_repurchase_extension_failed',label);
+    assert.equal(incident.metadata.extensionSubscriptionId,failed.current.id);
+  }
+}
+
 async function jellyfinServer(label){
   const slug=`paidtime-${label}-${suffix}`;
   const row=(await query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,health_status,last_health_check,placement_mode,location)
@@ -494,6 +527,7 @@ async function main(){
     await lockOrder();
     await operatorEdits();
     await resumeRenewal();
+    await convertedSettlement();
     await capacityPlacementAndDecisions();
     await report();
   }finally{await cleanup();}
