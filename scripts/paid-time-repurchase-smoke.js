@@ -53,27 +53,39 @@ async function currentHolderRules(){
     assert.equal(await samePlanRepurchase.currentPaidSubscription('cust-1',plan),null,'free access is never extended');
 
     row=held();
-    let facts={has_queued:false,change_open:false,queue_protects:true};
-    queryHandler=async sql=>{assert(sql.includes('public.prepaid_paid_time'),'the shared paid-time definition decides whether queueing protects');return{rows:[facts],rowCount:1};};
-    assert.deepStrictEqual(await samePlanRepurchase.assessRepurchase('cust-1',plan),{subscriptionId:'sub-1',queueProtects:true});
-    facts={has_queued:true,change_open:false,queue_protects:true};
-    assert.equal(await samePlanRepurchase.assessRepurchase('cust-1',plan),null,'queued purchases keep the direct path');
-    facts={has_queued:false,change_open:true,queue_protects:false};
-    assert.equal(await samePlanRepurchase.assessRepurchase('cust-1',plan),null,'an open plan change keeps the direct path');
-    facts={has_queued:false,change_open:false,queue_protects:false};
+    let facts={has_queued:false,change_open:false};
+    queryHandler=async()=>({rows:[facts],rowCount:1});
+    assert.deepStrictEqual(await samePlanRepurchase.extensionTarget('cust-1',plan),{subscriptionId:'sub-1'});
+    facts={has_queued:true,change_open:false};
+    assert.equal(await samePlanRepurchase.extensionTarget('cust-1',plan),null,'no extension while purchases are queued');
+    facts={has_queued:false,change_open:true};
+    assert.equal(await samePlanRepurchase.extensionTarget('cust-1',plan),null,'no extension during a plan change');
+    facts={has_queued:false,change_open:false};
     row={...held(),service_extension_days:3640};
-    assert.equal(await samePlanRepurchase.assessRepurchase('cust-1',plan),null,'the extension cap keeps the direct path');
+    assert.equal(await samePlanRepurchase.extensionTarget('cust-1',plan),null,'no extension past the cap');
+    row={...held(),blocked:true};
+    assert.equal(await samePlanRepurchase.extensionTarget('cust-1',plan),null,'no extension on a held account');
+
+    const rows=[{id:'migrated',renewing:false,queue_protected:true},{id:'renewing',renewing:true,queue_protected:true},{id:'granted',renewing:false,queue_protected:false}];
+    const db=async sql=>{assert(sql.includes('public.prepaid_paid_time'),'the shared paid-time definition decides whether queueing protects');return{rows};};
+    assert.deepStrictEqual(await samePlanRepurchase.assessHolding('cust-1','plan-1',{db}),{current:true,unprotectedIds:['renewing','granted']},'a renewing agreement is never protected by queueing');
+    await assert.rejects(samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db}),{code:'SAME_PLAN_PURCHASE_UNPROTECTED'});
+    await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'subscription_extension'},{db});
+    await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db:async()=>({rows:[rows[0]]})});
+    await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db:async()=>({rows:[]})});
   }finally{subscriptionState.effectiveSubscription=original;}
 }
 
 async function repurchaseDecision(){
-  const originalAssess=samePlanRepurchase.assessRepurchase,originalOptions=providerPricing.getExtensionOptions,originalWarn=console.warn;
+  const originalHolding=samePlanRepurchase.assessHolding,originalTarget=samePlanRepurchase.extensionTarget,originalOptions=providerPricing.getExtensionOptions,originalWarn=console.warn;
   const payment={...plan,checkout_mode:'payment',variant_kind:'streams',access_quantity:1,quantity:1};
   const recurring={...payment,checkout_mode:'subscription'};
   try{
     console.warn=()=>{};
-    let assessment={subscriptionId:'sub-1',queueProtects:false},subscription=held(),fullPlanLookups=0;
-    samePlanRepurchase.assessRepurchase=async()=>assessment;
+    const unprotected={current:true,unprotectedIds:['sub-1']},queued={current:true,unprotectedIds:[]},none={current:false,unprotectedIds:[]};
+    let holding=unprotected,target={subscriptionId:'sub-1'},subscription=held(),fullPlanLookups=0;
+    samePlanRepurchase.assessHolding=async()=>holding;
+    samePlanRepurchase.extensionTarget=async()=>target;
     providerPricing.getExtensionOptions=async()=>{fullPlanLookups++;return[payment];};
     queryHandler=async sql=>{
       if(sql.includes('FROM plans WHERE code'))return{rows:[plan],rowCount:1};
@@ -82,29 +94,48 @@ async function repurchaseDecision(){
     };
     const request=(body={})=>({session:{customerId:'cust-1'},body});
     const decide=(options,requested='payment',body={})=>checkout.repurchaseAsExtension(request(body),'stripe','monthly',1,requested,options);
+    const refused=(promise,message)=>assert.rejects(promise,{code:'SAME_PLAN_PURCHASE_UNPROTECTED'},message);
 
     assert.equal((await decide([payment])).subscriptionId,'sub-1','time that queueing cannot protect is extended');
     assert.equal((await decide([payment],null)).subscriptionId,'sub-1','a single one-off option counts as a one-off purchase');
     assert.equal(await decide([payment,recurring],null),null,'an unresolved payment-type choice is left to the choice page');
     assert.equal(await decide([recurring],'subscription'),null,'recurring checkouts are untouched');
-    assert.equal(await decide([payment],'payment',{discountCode:'SAVE'}),null,'a promo purchase must not become an extension that refuses the code');
-    assert.equal(await decide([payment],'payment',{applyServiceCredit:'on'}),null,'a service-credit purchase must not become an extension that refuses credit');
-    assert.equal(await decide([recurring],'payment'),null,'no one-off price is invented for a plan that only sells renewals');
+    await refused(decide([payment],'payment',{discountCode:'SAVE'}),'a promo code cannot buy a purchase that runs over paid time, including a zero-value one');
+    await refused(decide([payment],'payment',{applyServiceCredit:'on'}),'service credit cannot either');
+    await refused(decide([recurring],'payment'),'no one-off price is invented for a plan that only sells renewals');
+    target=null;await refused(decide([payment]),'queued rows, a plan change or a held account refuse instead of overlapping');
+    target={subscriptionId:'another'};await refused(decide([payment]),'an extension of a different row does not protect the unprotected one');
+    target={subscriptionId:'sub-1'};subscription={...held(),commercial_snapshot:{accessQuantity:3}};
+    await refused(decide([payment]),'a different allowance is refused, not sold over paid time');
+    subscription={...held(),blocked:true};await refused(decide([payment]));
+    subscription=held();
+    samePlanRepurchase.extensionTarget=async()=>{throw new Error('boom');};
+    await refused(decide([payment]),'an unexpected conversion failure never falls through to a direct purchase');
+    samePlanRepurchase.extensionTarget=async()=>target;
+    samePlanRepurchase.assessHolding=async()=>{throw new Error('function does not exist');};
+    await assert.rejects(decide([payment]),{code:'SAME_PLAN_PURCHASE_UNVERIFIED'},'an unverifiable holder is refused before money');
+    samePlanRepurchase.assessHolding=async()=>holding;
 
-    assessment={subscriptionId:'sub-1',queueProtects:true};
-    assert.equal(await decide([payment]),null,'when queueing keeps the time the purchase stays independent and separately refundable');
+    // Protected holders and buyers without current time are never refused.
+    for(const state of [queued,none]){
+      holding=state;
+      for(const body of [{},{discountCode:'SAVE'},{applyServiceCredit:'on'}])assert.equal(await decide([payment],'payment',body),null);
+    }
+    holding=queued;target=null;
     assert.equal(fullPlanLookups,0);
+    assert.equal(await decide([]),null,'a full plan with no possible extension keeps the existing direct answer');
+    assert.equal(await decide([],'payment',{discountCode:'SAVE'}),null);
+    target={subscriptionId:'sub-1'};
     assert.equal((await decide([])).subscriptionId,'sub-1','the holder of a full plan can still add time');
     assert.equal(fullPlanLookups,1);
-
-    assessment={subscriptionId:'sub-1',queueProtects:false};
-    subscription={...held(),commercial_snapshot:{accessQuantity:3}};
-    assert.equal(await decide([payment]),null,'a different allowance keeps the direct purchase');
-    subscription={...held(),blocked:true};
-    assert.equal(await decide([payment]),null,'a held account keeps the direct purchase instead of a new refusal');
-    samePlanRepurchase.assessRepurchase=async()=>{throw new Error('function does not exist');};
-    assert.equal(await decide([payment]),null,'a failed check must never refuse the purchase');
-  }finally{samePlanRepurchase.assessRepurchase=originalAssess;providerPricing.getExtensionOptions=originalOptions;console.warn=originalWarn;}
+    for(const message of Object.values(samePlanRepurchase.MESSAGES))assert(checkout.CHECKOUT_SAFE.includes(message),'refusals must reach the customer');
+    const intents=read('src/payments/checkout-intents.js');
+    assert(intents.indexOf('assertPurchaseKeepsPaidTime')>intents.indexOf('await lockCheckoutOwner(client, customerId);')&&intents.indexOf('assertPurchaseKeepsPaidTime')<intents.indexOf('INSERT INTO billing_checkout_intents'),'every intent is checked under the customer lock');
+    const zero=read('src/payments/zero-value-checkout.js');
+    assert(zero.indexOf('assertPurchaseKeepsPaidTime')>0&&zero.indexOf('assertPurchaseKeepsPaidTime')<zero.indexOf('INSERT INTO subscriptions('),'zero-value settlement applies the same rule');
+    const primitives=read('src/payments/lifecycle-primitives.js');
+    assert(!primitives.includes('assertPurchaseKeepsPaidTime'),'nothing new may refuse a paid activation');
+  }finally{samePlanRepurchase.assessHolding=originalHolding;samePlanRepurchase.extensionTarget=originalTarget;providerPricing.getExtensionOptions=originalOptions;console.warn=originalWarn;}
 }
 
 async function queueMovementCallSites(){

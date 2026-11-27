@@ -273,7 +273,8 @@ async function capacityPlacementAndDecisions(){
   const holder=await makeCustomer('holder');
   const current=await insert(holder,plan,{start:-1,end:10,serverId:server.id,location:'London'});
   assert.equal((await planCapacity.usage(plan.id)).soldOut,true,'fixture: the holder fills the plan');
-  assert.deepStrictEqual(await samePlanRepurchase.assessRepurchase(holder.id,plan),{subscriptionId:current.id,queueProtects:true});
+  assert.deepStrictEqual(await samePlanRepurchase.assessHolding(holder.id,plan.id),{current:true,unprotectedIds:[]});
+  assert.deepStrictEqual(await samePlanRepurchase.extensionTarget(holder.id,plan),{subscriptionId:current.id});
   const intent=extra=>checkoutIntents.createIntent({scope:'customer',customerId:holder.id,planId:plan.id,provider:'stripe',checkoutMode:'payment',ttlMinutes:30,commercialSnapshot:purchaseContract(plan,extra)});
   await assert.rejects(intent({}),error=>error?.code==='PLAN_CAPACITY_EXHAUSTED','a direct repurchase of a full plan is refused before money is taken');
   assert((await intent({kind:'subscription_extension',extensionSubscriptionId:current.id})).id,'the holder can still extend');
@@ -282,21 +283,42 @@ async function capacityPlacementAndDecisions(){
   const queued=await insert(holder,plan,{snapshot:{kind:'direct_plan',checkoutMode:'payment',mediaLocation:'London',billingInterval:'month',durationDays:30}});
   assert.equal(String(queued.media_server_id),String(server.id),'a queued repurchase keeps the occupied server');
   assert.equal(Number((await planCapacity.usage(plan.id)).planUsed),1,'a queued purchase takes no place before it starts');
-  assert.equal(await samePlanRepurchase.assessRepurchase(holder.id,plan),null,'with a queued purchase the direct path stays');
+  assert.equal(await samePlanRepurchase.extensionTarget(holder.id,plan),null,'with a queued purchase no extension is offered');
+  assert.deepStrictEqual((await samePlanRepurchase.assessHolding(holder.id,plan.id)).unprotectedIds,[]);
   const elsewhere=await insert(holder,plan,{snapshot:{kind:'direct_plan',checkoutMode:'payment',mediaLocation:'Elsewhere',billingInterval:'month',durationDays:30}});
   assert.equal(elsewhere.media_server_id,null,'a deliberately different location is not overridden');
 
   const emby=await makePlan('decide'),target=await makePlan('decide-target');
-  for(const [label,fixture,protects] of [['renewing',{recurring:true},false],['imported',{source:'migration'},true],['handmade',{source:'manual'},false]]){
-    const customer=await makeCustomer(`decide-${label}`);
-    const row=await insert(customer,emby,{...fixture,start:-1,end:20});
-    assert.deepStrictEqual(await samePlanRepurchase.assessRepurchase(customer.id,emby),{subscriptionId:row.id,queueProtects:protects},label);
+  const cases=[
+    ['renewing',{recurring:true},false],['granted',{source:'admin_grant'},false],['handmade',{source:'manual'},false],
+    ['imported',{source:'migration'},true],['credit',{source:'service_credit'},true],['ending',{recurring:true,cancelAtEnd:true},true],
+    ['paid',{},true],['extension-only',{status:'cancelled',end:-1,ext:10},true]
+  ];
+  for(const [label,fixture,protects] of cases){
+    const customer=await makeCustomer('decide-'+label);
+    const row=await insert(customer,emby,{start:-5,end:20,...fixture});
+    assert.deepStrictEqual(await samePlanRepurchase.assessHolding(customer.id,emby.id),{current:true,unprotectedIds:protects?[]:[row.id]},label);
+    const guard=samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:customer.id,planId:emby.id,kind:'direct_plan'});
+    if(protects)await guard;
+    else await assert.rejects(guard,error=>error?.code==='SAME_PLAN_PURCHASE_UNPROTECTED',label+': a direct purchase is refused');
     if(label==='renewing'){
+      assert.deepStrictEqual(await samePlanRepurchase.extensionTarget(customer.id,emby),{subscriptionId:row.id});
       await query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at)
         VALUES($1,$2,$3,'stripe','period_end','pending',NOW()+INTERVAL '20 days')`,[customer.id,row.id,target.id]);
-      assert.equal(await samePlanRepurchase.assessRepurchase(customer.id,emby),null,'an open plan change keeps the direct path');
+      assert.equal(await samePlanRepurchase.extensionTarget(customer.id,emby),null,'an open plan change blocks conversion');
     }
   }
+  // The same rule inside checkout creation: refused with no intent left behind.
+  const renewer=await makeCustomer('decide-intent'),jellyfin=await makePlan('decide-jf',{service:'jellyfin'});
+  await insert(renewer,jellyfin,{recurring:true,start:-5,end:20});
+  await assert.rejects(
+    checkoutIntents.createIntent({scope:'customer',customerId:renewer.id,planId:jellyfin.id,provider:'stripe',checkoutMode:'payment',ttlMinutes:30,commercialSnapshot:purchaseContract(jellyfin)}),
+    error=>error?.code==='SAME_PLAN_PURCHASE_UNPROTECTED','refused before any checkout exists');
+  assert.equal((await query('SELECT COUNT(*)::int AS n FROM billing_checkout_intents WHERE customer_id=$1',[renewer.id])).rows[0].n,0);
+  const unpaid=await makeCustomer('decide-unpaid');
+  await insert(unpaid,emby,{recurring:true,status:'past_due',start:-5,end:20});
+  assert.deepStrictEqual(await samePlanRepurchase.assessHolding(unpaid.id,emby.id),{current:false,unprotectedIds:[]},'an unpaid renewal is not paid time');
+  assert.deepStrictEqual(await samePlanRepurchase.assessHolding((await makeCustomer('decide-new')).id,emby.id),{current:false,unprotectedIds:[]});
 }
 
 async function report(){

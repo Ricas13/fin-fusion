@@ -22,6 +22,22 @@ AS $$
       OR (p_right='bundle' AND p_left IN ('jellyfin','stremio'))
 $$;
 
+-- A provider agreement that bills by itself. Stripe uses sub_* and PayPal I-*.
+CREATE OR REPLACE FUNCTION public.prepaid_row_is_recurring(
+  p_source text,p_provider_subscription_id text,p_billing_mode text
+)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(
+    (p_source IN ('stripe','paypal') AND p_billing_mode='subscription')
+    OR (p_source='stripe' AND COALESCE(p_provider_subscription_id,'') ~* '^sub_')
+    OR (p_source='paypal' AND COALESCE(p_provider_subscription_id,'') ~* '^I-')
+  ,FALSE)
+$$;
+
 -- The single definition of "paid time that a later purchase must not overlap".
 -- Auto-renewing recurring agreements are provider-authoritative and are not in
 -- it. Free tier, free claim, admin grant, invitation and hand-made manual rows
@@ -39,9 +55,7 @@ AS $$
     FROM subscriptions s
     JOIN plans p ON p.id=s.plan_id
     CROSS JOIN LATERAL (
-      SELECT (s.source IN ('stripe','paypal') AND s.billing_mode='subscription')
-          OR (s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_')
-          OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-') AS recurring
+      SELECT public.prepaid_row_is_recurring(s.source,s.provider_subscription_id,s.billing_mode) AS recurring
     ) kind
    WHERE s.customer_id=p_customer
      AND s.superseded_by IS NULL
@@ -82,9 +96,7 @@ AS $$
   SELECT COALESCE(
     (
       p_source IN ('stripe','paypal','plisio')
-      AND NOT (p_source IN ('stripe','paypal') AND COALESCE(p_billing_mode,'')='subscription')
-      AND NOT (p_source='stripe' AND COALESCE(p_provider_subscription_id,'') ~* '^sub_')
-      AND NOT (p_source='paypal' AND COALESCE(p_provider_subscription_id,'') ~* '^I-')
+      AND NOT public.prepaid_row_is_recurring(p_source,p_provider_subscription_id,p_billing_mode)
     )
     OR (p_source='manual' AND COALESCE(p_commercial_snapshot->>'settlementKind','')='fully_discounted_local')
   ,FALSE)
@@ -417,6 +429,7 @@ BEGIN
       FOREACH paid_time_function IN ARRAY ARRAY[
         'public.prepaid_lanes_overlap(text,text)',
         'public.prepaid_paid_time(uuid)',
+        'public.prepaid_row_is_recurring(text,text,text)',
         'public.prepaid_row_is_queueable(text,text,text,jsonb)',
         'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
         'public.shift_prepaid_queue_after_extension_change(uuid,integer)'

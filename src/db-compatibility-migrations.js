@@ -23,6 +23,7 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
 const REQUIRED_FUNCTIONS = Object.freeze([
   'public.prepaid_lanes_overlap(text,text)',
   'public.prepaid_paid_time(uuid)',
+  'public.prepaid_row_is_recurring(text,text,text)',
   'public.prepaid_row_is_queueable(text,text,text,jsonb)',
   'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
   'public.shift_prepaid_queue_after_extension_change(uuid,integer)'

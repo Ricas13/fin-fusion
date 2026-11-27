@@ -59,7 +59,8 @@ const CHECKOUT_SAFE=[
  /^An existing (Stripe|PayPal|Plisio) checkout is still awaiting completion\./,
  /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
  'A plan change is already open for this subscription. Complete or resolve it before buying extra time.',
- 'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.'
+ 'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.',
+ ...Object.values(samePlanRepurchase.MESSAGES)
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
@@ -102,27 +103,44 @@ async function existingRecurringReplacementOption(req,provider,planCode,currency
   return requestedQuantity<=currentQuantity?mapping:null;
 }
 function wantsServiceCredit(req){return['on','true','1','yes'].includes(String(req.body.applyServiceCredit||'').toLowerCase());}
+// The current plan's remaining time as an extension, or null when that cannot
+// be sold. required lists rows the extension has to be attached to.
+async function extensionConversion(customerId,plan,provider,quantity,options,required){
+ const target=await samePlanRepurchase.extensionTarget(customerId,plan);
+ if(!target||required.some(id=>id!==target.subscriptionId))return null;
+ let option=options.find(row=>row.checkout_mode==='payment')||null;
+ if(!option&&!options.length)option=(await providerPricing.getExtensionOptions(plan.code,provider,quantity)).find(row=>row.checkout_mode==='payment')||null;
+ if(!option)return null;
+ await validateExtensionChoice(customerId,target.subscriptionId,option,option);
+ return{subscriptionId:target.subscriptionId,option};
+}
 // A one-off repurchase of the current plan is normally just queued behind the
-// remaining paid time. It becomes an extension only when queueing cannot do it:
-// the current row would not be queued behind (so the new purchase would run on
-// top of it), or the plan is full and only the holder's own place can be used.
-// Anything uncertain keeps the direct purchase; this must never refuse one.
+// remaining paid time. When queueing cannot protect that time it must become an
+// extension or be refused here, before any intent or provider checkout. When
+// queueing does protect it but the plan is full, an extension lets the holder buy.
 async function repurchaseAsExtension(req,provider,planCode,quantity,requested,options){
+ const customerId=req.session?.customerId;if(!customerId)return null;
+ const payable=options.find(option=>option.checkout_mode==='payment');
+ if(!(requested==='payment'||(!requested&&options.length===1&&Boolean(payable))))return null;
+ let plan,holding;
  try{
-  const customerId=req.session?.customerId;
-  if(!customerId||String(req.body.discountCode||'').trim()||wantsServiceCredit(req))return null;
-  const payable=options.find(option=>option.checkout_mode==='payment');
-  const oneOff=requested==='payment'||(!requested&&options.length===1&&Boolean(payable));
-  if(!oneOff)return null;
-  const found=await query('SELECT * FROM plans WHERE code=$1 LIMIT 1',[planCode]);
-  const assessment=found.rowCount?await samePlanRepurchase.assessRepurchase(customerId,found.rows[0]):null;
-  if(!assessment||(payable&&assessment.queueProtects))return null;
-  let option=payable||null;
-  if(!option&&!options.length)option=(await providerPricing.getExtensionOptions(planCode,provider,quantity)).find(row=>row.checkout_mode==='payment')||null;
-  if(!option)return null;
-  await validateExtensionChoice(customerId,assessment.subscriptionId,option,option);
-  return{subscriptionId:assessment.subscriptionId,option};
- }catch(error){console.warn('Same-plan repurchase stays a direct purchase:',error.message);return null;}
+  plan=(await query('SELECT * FROM plans WHERE code=$1 LIMIT 1',[planCode])).rows[0];
+  if(!plan)return null;
+  holding=await samePlanRepurchase.assessHolding(customerId,plan.id);
+ }catch(error){console.warn('Current access could not be checked before checkout:',error.message);throw samePlanRepurchase.refusal('UNVERIFIED');}
+ if(!holding.current)return null;
+ const mustProtect=holding.unprotectedIds.length>0;
+ if(!mustProtect&&options.length)return null;
+ // Promo codes and service credit never apply to an extension.
+ if(String(req.body.discountCode||'').trim()||wantsServiceCredit(req)){
+  if(mustProtect)throw samePlanRepurchase.refusal('UNPROTECTED');
+  return null;
+ }
+ let conversion=null;
+ try{conversion=await extensionConversion(customerId,plan,provider,quantity,options,holding.unprotectedIds);}
+ catch(error){console.warn('Same-plan repurchase could not become an extension:',error.message);}
+ if(!conversion&&mustProtect)throw samePlanRepurchase.refusal('UNPROTECTED');
+ return conversion;
 }
 async function withMediaLocation(req,choice){
  if(choice.extensionSubscriptionId)return choice;
