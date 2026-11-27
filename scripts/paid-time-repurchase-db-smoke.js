@@ -329,6 +329,14 @@ async function lockOrder(){
     ]);
     await assertNoOverlap(customer,'after concurrent refunds and extension');
   }
+  // Two refund events for one customer arrive together.
+  for(let round=0;round<3;round++){
+    const customer=await makeCustomer('two-refunds');
+    const current=await insert(customer,plan,{start:-5,end:25});
+    const one=await insert(customer,plan),two=await insert(customer,plan),kept=await insert(customer,plan);
+    await Promise.all([refundIncident(one),refundIncident(two)]);
+    same((await get(kept.id)).starts_at,current.access_end,'both refunded slots are closed, without a deadlock');
+  }
 }
 
 // The operator actions move the queue in their own transaction.

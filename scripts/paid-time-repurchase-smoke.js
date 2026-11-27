@@ -459,6 +459,9 @@ function schemaGuard(){
 
 function contracts(){
   const migration=read(`db/migrations/${MIGRATION}`),report=read('docs/paid-time-overlap-report.sql');
+  const customerLocks=migration.match(/FROM customers\s+WHERE[\s\S]*?FOR [A-Z ]*UPDATE;/g)||[];
+  assert.equal(customerLocks.length,3);
+  assert(customerLocks.every(lock=>lock.endsWith('FOR NO KEY UPDATE;')),'trigger paths must not upgrade the foreign-key lock to FOR UPDATE');
   assert(compatibility.isRepeatableCompatibilityMigration(MIGRATION),'the migration must stay rolling-compatible');
   assert(/^BEGIN;$/m.test(migration)&&/^COMMIT;$/m.test(migration));
   const statementsOnly=migration.replace(/--.*$/gm,'');

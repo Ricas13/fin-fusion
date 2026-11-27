@@ -293,8 +293,11 @@ BEGIN
     RETURN 0;
   END IF;
 
-  -- Same order as an insert: customer row, then the stacking lock.
-  PERFORM 1 FROM customers WHERE id=p_customer FOR UPDATE;
+  -- Same order as an insert: customer row, then the stacking lock. NO KEY
+  -- UPDATE serialises with every FOR UPDATE holder, but not with the key-share
+  -- lock a foreign key takes: a refund incident already holds that when its
+  -- trigger gets here, and two of them must not deadlock upgrading it.
+  PERFORM 1 FROM customers WHERE id=p_customer FOR NO KEY UPDATE;
   PERFORM pg_advisory_xact_lock(hashtextextended(p_customer::text,0));
 
   FOR queued IN
@@ -404,7 +407,7 @@ BEGIN
     );
   END IF;
 
-  PERFORM 1 FROM customers WHERE id=anchor.customer_id FOR UPDATE;
+  PERFORM 1 FROM customers WHERE id=anchor.customer_id FOR NO KEY UPDATE;
   PERFORM pg_advisory_xact_lock(hashtextextended(anchor.customer_id::text,0));
   moved_ids:=ARRAY[anchor.id];
 
@@ -485,7 +488,7 @@ BEGIN
       ORDER BY s.created_at DESC
       LIMIT 1
    )
-   FOR UPDATE;
+   FOR NO KEY UPDATE;
 
   SELECT s.* INTO refunded
   FROM subscriptions s
