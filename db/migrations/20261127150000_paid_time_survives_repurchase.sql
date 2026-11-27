@@ -153,6 +153,7 @@ BEGIN
      AND held.refund_terminated_at IS NULL
      AND held.starts_at<=NOW()
      AND held.current_period_end+((COALESCE(held.service_extension_days,0)||' days')::interval)>NOW()
+     AND (held.status IN ('active','trialing','past_due','paused') OR COALESCE(held.service_extension_days,0)>0)
      AND (
        NULLIF(BTRIM(COALESCE(NEW.commercial_snapshot->>'mediaLocation','')),'') IS NULL
        OR LOWER(BTRIM(COALESCE(held.media_location_snapshot,'')))=LOWER(BTRIM(NEW.commercial_snapshot->>'mediaLocation'))

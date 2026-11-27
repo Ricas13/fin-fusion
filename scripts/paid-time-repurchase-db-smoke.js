@@ -178,8 +178,11 @@ async function extensionMovement(){
   // An extension applied before this change never moved the queue. Revoking it
   // must not pull purchases into time the holder still has.
   const oldRef=`pi_paidtime_legacy_${suffix}`;
+  // Read as text: a JavaScript Date would drop the microseconds that make a
+  // queued start equal to the previous end.
+  const exact=(await query('SELECT id,starts_at::text AS starts,current_period_end::text AS ends FROM subscriptions WHERE id=ANY($1::uuid[])',[[second.id,third.id]])).rows;
   await transaction(client=>extensions.applyPurchase(client,{customerId:customer.id,subscriptionId:current.id,planId:plan.id,provider:'stripe',providerPaymentId:oldRef,commercialSnapshot:contract}));
-  for(const row of [second,third])await query('UPDATE subscriptions SET starts_at=$2,current_period_end=$3 WHERE id=$1',[row.id,row.starts_at,row.current_period_end]);
+  for(const row of exact)await query('UPDATE subscriptions SET starts_at=$2::timestamptz,current_period_end=$3::timestamptz WHERE id=$1',[row.id,row.starts,row.ends]);
   await extensions.revokeByProviderPayment({provider:'stripe',providerPaymentId:oldRef,customerId:customer.id,reason:'legacy refund'});
   same((await get(second.id)).starts_at,second.starts_at,'a never-moved queue is not pulled into current access');
   await assertNoOverlap(customer,'after legacy revoke');
