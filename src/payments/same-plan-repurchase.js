@@ -62,6 +62,19 @@ async function assessHolding(customerId,planId,{db=query}={}){
   };
 }
 
+// Whether the holder of this plan may be offered a separate one-off purchase of
+// it: it would be queued behind everything they still have. False whenever that
+// cannot be answered. Checkout creation applies the assessment again.
+async function separatePurchaseSafe(customerId,planId,{db=query}={}){
+  try{
+    const holding=await assessHolding(customerId,planId,{db});
+    return Boolean(holding.current&&!holding.lifetime&&!holding.unprotectedIds.length);
+  }catch(error){
+    console.warn('Current access could not be assessed for the plan card:',error.message);
+    return false;
+  }
+}
+
 // Only for when the assessment itself failed: does the buyer have anything to
 // lose? Plain SQL without the paid-time functions, whose absence is a likely
 // reason for that failure. A direct purchase is refused when there is live paid
@@ -180,4 +193,4 @@ async function extensionTarget(customerId,plan){
   return{subscriptionId};
 }
 
-module.exports={MESSAGES,refusal,assessHolding,assertNothingToProtect,assertPurchaseKeepsPaidTime,currentPaidSubscription,extensionTarget};
+module.exports={MESSAGES,refusal,assessHolding,separatePurchaseSafe,assertNothingToProtect,assertPurchaseKeepsPaidTime,currentPaidSubscription,extensionTarget};
