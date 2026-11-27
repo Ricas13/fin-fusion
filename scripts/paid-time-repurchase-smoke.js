@@ -20,6 +20,7 @@ const dbPath=require.resolve('../src/db');
 require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{
   query:(sql,params)=>queryHandler(sql,params),
   transaction:async work=>work(transactionClient),
+  poolStats:()=>({max:1,total:0,idle:0,waiting:0,maxWaiting:1,saturated:false,overloaded:false}),
   getPool:()=>{throw new Error('No database in this smoke.');}
 }};
 
@@ -30,6 +31,7 @@ const extensions=require('../src/payments/subscription-access-extensions');
 const prepaidRefunds=require('../src/payments/lifecycle-prepaid-refunds');
 const checkout=require('../src/platform/flexible-checkout');
 const compatibility=require('../src/db-compatibility-migrations');
+const health=require('../src/platform/health');
 
 const DAY=86400000;
 const MIGRATION='20261127150000_paid_time_survives_repurchase.sql';
@@ -366,8 +368,25 @@ function contracts(){
   assert.equal((statements.match(/;/g)||[]).length,1,'the report is a single statement');
 }
 
+async function readinessNeedsTheFunctions(){
+  let missing=[{name:'public.prepaid_paid_time(uuid)'}];
+  queryHandler=async(sql,params)=>{
+    if(sql.includes('has_function_privilege')){assert.deepStrictEqual(params[0],Array.from(compatibility.REQUIRED_FUNCTIONS));return{rows:missing,rowCount:missing.length};}
+    if(sql.includes('FROM schema_migrations'))return{rows:[{filename:health.latestMigration()}],rowCount:1};
+    return{rows:[],rowCount:0};
+  };
+  let result=await health.readinessChecks();
+  assert.equal(result.checks.migrations,true,'repeatable migrations stay outside the versioned ledger');
+  assert.equal(result.checks.billingFunctions,false);
+  assert.equal(result.ok,false,'a build whose database functions are missing must not take traffic');
+  missing=[];result=await health.readinessChecks();
+  assert.equal(result.checks.billingFunctions,true);
+  assert.equal(health.publicResult(result).checks.billingFunctions,true);
+}
+
 (async()=>{
   contracts();
+  await readinessNeedsTheFunctions();
   schemaGuard();
   await currentHolderRules();
   await repurchaseDecision();

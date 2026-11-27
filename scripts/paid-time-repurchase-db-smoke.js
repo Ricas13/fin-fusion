@@ -16,6 +16,7 @@ const checkoutIntents=require('../src/payments/checkout-intents');
 const planCapacity=require('../src/entitlements/plan-capacity');
 const subscriptionState=require('../src/entitlements/subscription-state');
 const {REQUIRED_FUNCTIONS}=require('../src/db-compatibility-migrations');
+const health=require('../src/platform/health');
 
 const DAY=86400000;
 const suffix=Date.now().toString(36);
@@ -423,6 +424,7 @@ async function main(){
   try{
     await triggerOrder();
     await runtimePrivileges();
+    assert.deepStrictEqual(await health.missingDatabaseFunctions(),[],'readiness finds every required function');
     await queueing();
     await upgrades();
     await activation();
