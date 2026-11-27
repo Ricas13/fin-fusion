@@ -308,6 +308,26 @@ async function refunds(){
   same((await get(waiting.id)).starts_at,pulled.starts_at,'refund recovery does not move the queue twice');
 }
 
+// Refunds and an extension activation for one customer share a lock order.
+async function lockOrder(){
+  const plan=await makePlan('locks');
+  for(let round=0;round<3;round++){
+    const customer=await makeCustomer('locks');
+    const current=await insert(customer,plan,{start:-5,end:25});
+    const refundedByEvent=await insert(customer,plan),refundedByOperator=await insert(customer,plan);
+    await Promise.all([
+      activate(customer,plan,`pi_paidtime_lock_${round}_${suffix}`,{kind:'subscription_extension',extensionSubscriptionId:current.id}),
+      refundIncident(refundedByEvent),
+      prepaidRefunds.applyPrepaidRefund({subscriptionId:refundedByOperator.id,customerId:customer.id,originalEnd:refundedByOperator.current_period_end,cutoffAt:refundedByOperator.starts_at,serviceType:'emby'})
+        .catch(error=>{
+          // The other refund may move this row first; that is a planned refusal, never a deadlock.
+          assert(!/deadlock/i.test(error.message),error.message);
+        })
+    ]);
+    await assertNoOverlap(customer,'after concurrent refunds and extension');
+  }
+}
+
 async function jellyfinServer(label){
   const slug=`paidtime-${label}-${suffix}`;
   const row=(await query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,health_status,last_health_check,placement_mode,location)
@@ -430,6 +450,7 @@ async function main(){
     await activation();
     await extensionMovement();
     await refunds();
+    await lockOrder();
     await capacityPlacementAndDecisions();
     await report();
   }finally{await cleanup();}

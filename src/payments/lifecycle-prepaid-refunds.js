@@ -10,6 +10,8 @@ function dateMs(value, label) {
 
 async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cutoffAt, serviceType }) {
   return transaction(async client => {
+    // One lock order everywhere: the customer, then the subscription.
+    await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
     const result = await client.query(`
       SELECT s.*,p.service_type
       FROM subscriptions s

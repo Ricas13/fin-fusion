@@ -165,7 +165,8 @@ async function queueMovementCallSites(){
   }};
   await extensions.revokeByProviderPayment({provider:'stripe',providerPaymentId:'pi_1',customerId:'cust-1'});
   const position=text=>calls.findIndex(call=>call.sql.includes(text));
-  assert(position('FOR UPDATE OF c')>=0&&position('FOR UPDATE OF c')<position('FOR UPDATE OF s'),'customer row is locked before the subscription, as activation does');
+  assert(position('FOR UPDATE OF c')===0&&position('FOR UPDATE OF c')<position('FOR UPDATE OF s'),'customer row is locked first, as activation does');
+  assert(!calls[0].sql.includes('starts_at'),'the customer lock does not depend on a racy look at the queue');
   const shift=calls[position('shift_prepaid_queue_after_extension_change')];
   assert(shift,'revoking bought time must move the queue back');
   assert.deepStrictEqual(shift.params,['sub-1',30],'the move is measured from the days held before the revoke');
@@ -185,6 +186,10 @@ async function queueMovementCallSites(){
   const result=await prepaidRefunds.applyPrepaidRefund({subscriptionId:'sub-1',customerId:'cust-1',originalEnd,cutoffAt:cutoff,serviceType:'jellyfin'});
   const pull=refundCalls.find(call=>call.sql.includes('public.pull_prepaid_queue'));
   assert(pull,'a pro-rata refund moves queued purchases through the shared owner');
+  assert(/FROM customers WHERE id=\$1 FOR UPDATE/.test(refundCalls[0].sql),'a pro-rata refund locks the customer before the subscription');
+  assert.deepStrictEqual(refundCalls[0].params,['cust-1']);
+  const migrationSql=read(`db/migrations/${MIGRATION}`),reconciler=migrationSql.slice(migrationSql.indexOf('FUNCTION reconcile_future_prepaid_full_refund'));
+  assert(reconciler.indexOf('PERFORM 1 FROM customers')>0&&reconciler.indexOf('PERFORM 1 FROM customers')<reconciler.indexOf('SELECT s.* INTO refunded'),'the refund trigger uses the same order');
   assert.equal(pull.params[3],result.removedMs);
   assert.equal(pull.params[4],7,'extension days removed with the row are part of the vacated slot');
   assert.equal(pull.params[5],'sub-1','the refunded row never blocks its own queue');

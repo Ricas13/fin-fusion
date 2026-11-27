@@ -284,13 +284,12 @@ async function extensionIdentity(provider,providerPaymentId){
 async function revokeByProviderPayment({provider,providerPaymentId,customerId=null,reason='Provider payment was reversed',reference=null}){
   provider=cleanProvider(provider);providerPaymentId=cleanReference(providerPaymentId);
   return transaction(async client=>{
-    // Moving queued purchases needs the customer row. Activation takes it before
-    // the subscription, so do the same whenever there is anything to move.
+    // One lock order everywhere: the customer, then the subscription. Taken
+    // always, because a purchase can be queued between a check and the lock.
     await client.query(`
       SELECT c.id FROM customers c
       JOIN subscription_access_extensions e ON e.customer_id=c.id
       WHERE e.provider=$1 AND e.provider_payment_id=$2
-        AND EXISTS(SELECT 1 FROM subscriptions q WHERE q.customer_id=c.id AND q.superseded_by IS NULL AND q.starts_at>NOW())
       FOR UPDATE OF c
     `,[provider,providerPaymentId]);
     // All purchase, renewal and reversal paths lock the parent first. Locking

@@ -465,6 +465,19 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- One lock order everywhere: the customer, then the subscription.
+  PERFORM 1 FROM customers
+   WHERE id=(
+     SELECT s.customer_id FROM subscriptions s
+      WHERE s.source=NEW.provider
+        AND s.provider_subscription_id=NEW.provider_subscription_id
+        AND s.superseded_by IS NULL
+        AND s.starts_at>NOW()
+      ORDER BY s.created_at DESC
+      LIMIT 1
+   )
+   FOR UPDATE;
+
   SELECT s.* INTO refunded
   FROM subscriptions s
   WHERE s.source=NEW.provider
