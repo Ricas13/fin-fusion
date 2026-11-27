@@ -119,7 +119,8 @@
   const addPlanActions=(container,item)=>{
     if(item.paid&&item.planCode){
       const source=document.querySelector(`.planCard[data-plan-code="${selectorEscape(item.planCode)}"]`);
-      const forms=source?[...source.querySelectorAll('.planActions form.checkoutForm')]:[];
+      // Extend forms add time to a current plan; they are never a re-subscribe.
+      const forms=source?[...source.querySelectorAll('.planActions form.checkoutForm')].filter(form=>!form.querySelector('input[name="extensionSubscriptionId"]')):[];
       for(const sourceForm of forms){
         const form=sourceForm.cloneNode(true);
         form.querySelectorAll('input[name="discountCode"], [data-promo-target]').forEach(input=>input.remove());
