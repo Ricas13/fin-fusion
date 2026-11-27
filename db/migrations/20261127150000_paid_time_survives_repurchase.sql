@@ -1,8 +1,9 @@
+BEGIN;
+
 -- A new one-off purchase must not run on top of paid time the customer still
 -- holds, and moving queued purchases (refunds, bought extensions) must never
 -- create such an overlap either.
 -- Rolling-compatible and repeatable: functions only, no table changes.
-BEGIN;
 
 CREATE OR REPLACE FUNCTION public.prepaid_lanes_overlap(p_left text,p_right text)
 RETURNS boolean
