@@ -14,7 +14,8 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261007190000_stremio_external_index_shadow.sql',
   '20261031230000_checkout_operator_resolution.sql',
   '20261031233000_playback_progress_reporting.sql',
-  '20261105204500_native_playback_accounting_shadow.sql'
+  '20261105204500_native_playback_accounting_shadow.sql',
+  '20261127150000_paid_time_survives_repurchase.sql'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {
