@@ -4,10 +4,11 @@ const express = require('express');
 const csrf = require('../auth/csrf');
 const billingControl = require('../payments/billing-control');
 const planChange = require('../payments/customer-plan-change');
+const queuedPurchases = require('../payments/queued-purchases');
 const routeRateLimit = require('../security/route-rate-limit');
 const publicError = require('./public-error');
 const subscriptionActionLimit = routeRateLimit.middleware({scope:'customer-subscription-action',max:20,windowSeconds:3600});
-const SUBSCRIPTION_ACTION_SAFE=['No active recurring subscription was found.','Unknown renewal action.','There is no pending plan change to cancel.','Cancel your scheduled plan change before stopping automatic renewal.'];
+const SUBSCRIPTION_ACTION_SAFE=['No active recurring subscription was found.','Unknown renewal action.','There is no pending plan change to cancel.','Cancel your scheduled plan change before stopping automatic renewal.',queuedPurchases.RESUME_BLOCKED];
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'))}
 function guard(req,res,next){if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');return next()}
 function redirect(res,key,message){return res.redirect(`/account?${key}=${encodeURIComponent(message)}`)}

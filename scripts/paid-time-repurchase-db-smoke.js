@@ -17,6 +17,8 @@ const planCapacity=require('../src/entitlements/plan-capacity');
 const subscriptionState=require('../src/entitlements/subscription-state');
 const {REQUIRED_FUNCTIONS}=require('../src/db-compatibility-migrations');
 const health=require('../src/platform/health');
+const queuedPurchases=require('../src/payments/queued-purchases');
+const billingControl=require('../src/payments/billing-control');
 const adminActions=require('../src/access/admin-customer-individual-action-service');
 
 const DAY=86400000;
@@ -353,6 +355,21 @@ async function operatorEdits(){
   same((await get(queued.id)).starts_at,before.starts_at,'a lifetime end never pushes a purchase out of reach');
 }
 
+// Resuming renewal over a queued purchase would charge twice for one period.
+async function resumeRenewal(){
+  const plan=await makePlan('resume'),customer=await makeCustomer('resume');
+  const ending=await insert(customer,plan,{recurring:true,cancelAtEnd:true,start:-5,end:20});
+  assert.equal(await queuedPurchases.hasPurchaseQueuedBehind(ending.id),false);
+  const waiting=await insert(customer,plan);
+  same(waiting.starts_at,ending.access_end,'fixture: queued behind the ending agreement');
+  assert.equal(await queuedPurchases.hasPurchaseQueuedBehind(ending.id),true);
+  let providerCalls=0;
+  const adapter={resumeRenewal:async()=>{providerCalls++;},stopRenewal:async()=>{providerCalls++;},fetchRemote:async()=>{providerCalls++;return null;}};
+  await assert.rejects(billingControl.setRenewal(ending.id,true,null,{adapter}),error=>error.message===queuedPurchases.RESUME_BLOCKED);
+  assert.equal(providerCalls,0,'refused before the provider is called');
+  assert.equal((await query('SELECT COUNT(*)::int AS n FROM provider_operations WHERE owner_id=$1',[customer.id])).rows[0].n,0);
+}
+
 async function jellyfinServer(label){
   const slug=`paidtime-${label}-${suffix}`;
   const row=(await query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,health_status,last_health_check,placement_mode,location)
@@ -476,6 +493,7 @@ async function main(){
     await refunds();
     await lockOrder();
     await operatorEdits();
+    await resumeRenewal();
     await capacityPlacementAndDecisions();
     await report();
   }finally{await cleanup();}

@@ -151,6 +151,7 @@ async function queueMovementCallSites(){
   assert.equal(replay.replay,true);
   assert(!replayCalls.some(sql=>sql.includes('shift_prepaid_queue')),'a provider replay must not move queued time again');
   await operatorEditsMoveTheQueue();
+  await resumeRenewalIsBlocked();
 
   const calls=[];
   const end=new Date(Date.now()+10*DAY);
@@ -219,6 +220,24 @@ async function operatorEditsMoveTheQueue(){
     assert.equal(count(file,/queuedPurchases\.accessEndBefore\(/g),writes,file);
     assert.equal(count(file,/queuedPurchases\.moveQueuedPurchases\(/g),writes,file+': the queue moves with each edit');
   }
+}
+
+async function resumeRenewalIsBlocked(){
+  const queued=require('../src/payments/queued-purchases'),billing=require('../src/payments/billing-control');
+  let waiting=true,providerCalls=0;
+  const writes=[];
+  queryHandler=async sql=>{
+    if(sql.includes('AS queued'))return{rows:[{queued:waiting}],rowCount:1};
+    if(/^\s*(INSERT|UPDATE)/i.test(sql))writes.push(sql);
+    return{rows:[{id:'sub-1',customer_id:'cust-1',source:'stripe',billing_mode:'subscription',provider_subscription_id:'sub_1',status:'active',cancel_at_period_end:true}],rowCount:1};
+  };
+  const adapter={resumeRenewal:async()=>{providerCalls++;},stopRenewal:async()=>{providerCalls++;},fetchRemote:async()=>{providerCalls++;return null;}};
+  await assert.rejects(billing.setRenewal('sub-1',true,null,{adapter}),{message:queued.RESUME_BLOCKED});
+  assert.equal(providerCalls,0,'the provider is never asked to resume');
+  assert.deepStrictEqual(writes,[],'no provider operation is opened');
+  assert(require('../src/platform/customer-subscription-actions').SUBSCRIPTION_ACTION_SAFE.includes(queued.RESUME_BLOCKED),'the customer sees why');
+  const control=read('src/payments/billing-control.js'),recovery=control.slice(control.indexOf('async function recoverProviderOperation'));
+  assert(recovery.indexOf('hasPurchaseQueuedBehind')>0&&recovery.indexOf('hasPurchaseQueuedBehind')<recovery.indexOf('remoteAdapter.resumeRenewal'),'recovery does not resume over a queued purchase either');
 }
 
 // A very small DOM: enough to run the two browser scripts.
