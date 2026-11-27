@@ -57,10 +57,14 @@ async function insert(customer,plan,{source='stripe',ref,status='active',start=0
   return get(row.id);
 }
 const zeroValue={source:'manual',snapshot:{kind:'direct_plan',checkoutMode:'payment',settlementKind:'fully_discounted_local',priceMinor:600,discountedMinor:0,billingInterval:'month',durationDays:30}};
-async function refundIncident(row){
-  await query(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,customer_id,provider_subscription_id,amount_minor,currency,access_action,metadata)
-    VALUES($1,$2,$3,'refund','recorded','direct',$4,$5,600,'GBP','preserve','{"fullRefund":true,"originalAmountMinor":600}'::jsonb)`,
-  [row.source,`evt_paidtime_${suffix}_${++sequence}`,`case_paidtime_${suffix}_${sequence}`,row.customer_id,row.provider_subscription_id]);
+// Written the way a web process records it, including one that predates this
+// change. A repeated eventId is a duplicate delivery; owned=false is an event
+// whose customer was not resolved.
+async function refundIncident(row,{eventId=`evt_paidtime_${suffix}_${++sequence}`,full=true,owned=true,db=query}={}){
+  await db(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,customer_id,provider_subscription_id,amount_minor,currency,access_action,metadata)
+    VALUES($1,$2,$3,'refund','recorded',$4,$5,$6,600,'GBP','preserve',$7::jsonb)
+    ON CONFLICT(provider,provider_event_id,incident_type) DO NOTHING`,
+  [row.source,eventId,`case_${eventId}`,owned?'direct':'unresolved',owned?row.customer_id:null,row.provider_subscription_id,JSON.stringify({fullRefund:full,originalAmountMinor:600})]);
 }
 function purchaseContract(plan,extra={}){
   return{kind:'direct_plan',provider:'stripe',planId:plan.id,planCode:plan.code,planName:plan.name,priceMinor:600,discountedMinor:600,currency:'GBP',billingInterval:'month',durationDays:30,checkoutMode:'payment',streams:1,serverClass:'premium',accessVariantKind:'streams',accessQuantity:1,...extra};
@@ -311,10 +315,36 @@ async function refunds(){
   same((await get(waiting.id)).starts_at,pulled.starts_at,'refund recovery does not move the queue twice');
 }
 
-// Refunds and an extension activation for one customer share a lock order.
+// A full-refund event must hold the customer FOR UPDATE from before its row is
+// written; a partial refund takes no more than its foreign key does.
+async function refundInsertLock(){
+  const plan=await makePlan('refund-lock');
+  for(const [full,owned] of [[true,true],[true,false],[false,true]]){
+    const customer=await makeCustomer('refund-lock');
+    const started=await insert(customer,plan,{start:-5,end:25});
+    const holder=await getPool().connect(),other=await getPool().connect();
+    try{
+      await holder.query('BEGIN');
+      await refundIncident(started,{full,owned,db:(sql,params)=>holder.query(sql,params)});
+      await other.query('BEGIN');
+      const probe=other.query('SELECT id FROM customers WHERE id=$1 FOR KEY SHARE NOWAIT',[customer.id]);
+      if(full)await assert.rejects(probe,error=>error.code==='55P03','a full refund holds the customer lock');
+      else assert.equal((await probe).rowCount,1,'a partial refund does not');
+    }finally{
+      for(const client of [other,holder]){await client.query('ROLLBACK').catch(()=>{});client.release();}
+    }
+  }
+}
+
+// Refunds, provider updates and activations for one customer share a lock order.
 async function lockOrder(){
   const plan=await makePlan('locks');
-  for(let round=0;round<3;round++){
+  const plannedRefusal=error=>{
+    // Another refund or the extension may move this row first; that is a planned
+    // refusal, never a deadlock.
+    assert(error.code!=='40P01'&&!/deadlock/i.test(error.message),error.message);
+  };
+  for(let round=0;round<8;round++){
     const customer=await makeCustomer('locks');
     const current=await insert(customer,plan,{start:-5,end:25});
     const refundedByEvent=await insert(customer,plan),refundedByOperator=await insert(customer,plan);
@@ -322,20 +352,56 @@ async function lockOrder(){
       activate(customer,plan,`pi_paidtime_lock_${round}_${suffix}`,{kind:'subscription_extension',extensionSubscriptionId:current.id}),
       refundIncident(refundedByEvent),
       prepaidRefunds.applyPrepaidRefund({subscriptionId:refundedByOperator.id,customerId:customer.id,originalEnd:refundedByOperator.current_period_end,cutoffAt:refundedByOperator.starts_at,serviceType:'emby'})
-        .catch(error=>{
-          // The other refund may move this row first; that is a planned refusal, never a deadlock.
-          assert(!/deadlock/i.test(error.message),error.message);
-        })
+        .catch(plannedRefusal)
     ]);
     await assertNoOverlap(customer,'after concurrent refunds and extension');
   }
   // Two refund events for one customer arrive together.
-  for(let round=0;round<3;round++){
+  for(let round=0;round<10;round++){
     const customer=await makeCustomer('two-refunds');
     const current=await insert(customer,plan,{start:-5,end:25});
     const one=await insert(customer,plan),two=await insert(customer,plan),kept=await insert(customer,plan);
-    await Promise.all([refundIncident(one),refundIncident(two)]);
+    await Promise.all([refundIncident(one),refundIncident(two,{owned:round%2===0})]);
     same((await get(kept.id)).starts_at,current.access_end,'both refunded slots are closed, without a deadlock');
+  }
+  // Three events at once, one of them delivered twice.
+  for(let round=0;round<5;round++){
+    const customer=await makeCustomer('many-refunds');
+    const current=await insert(customer,plan,{start:-5,end:25});
+    const refunded=[await insert(customer,plan),await insert(customer,plan),await insert(customer,plan)];
+    const kept=await insert(customer,plan);
+    const eventId=`evt_paidtime_twice_${round}_${suffix}`;
+    await Promise.all([refundIncident(refunded[0],{eventId}),refundIncident(refunded[0],{eventId}),refundIncident(refunded[1]),refundIncident(refunded[2])]);
+    same((await get(kept.id)).starts_at,current.access_end,'each refunded slot is closed exactly once');
+    assert(Math.abs(duration(await get(kept.id))-duration(kept))<2,'durations are kept');
+  }
+  // Everything that writes this customer's queue at the same time.
+  for(let round=0;round<8;round++){
+    const customer=await makeCustomer('all-writers');
+    const current=await insert(customer,plan,{start:-5,end:25});
+    const first=await insert(customer,plan),second=await insert(customer,plan),third=await insert(customer,plan);
+    const extensionRef=`pi_paidtime_all_${round}_${suffix}`;
+    const extend=()=>activate(customer,plan,extensionRef,{kind:'subscription_extension',extensionSubscriptionId:current.id});
+    const update=()=>lifecycle.updateProviderSubscription({provider:'stripe',providerSubscriptionId:current.provider_subscription_id,providerStatus:'active'});
+    await Promise.all([
+      extend(),update(),refundIncident(first),refundIncident(third),
+      prepaidRefunds.applyPrepaidRefund({subscriptionId:second.id,customerId:customer.id,originalEnd:second.current_period_end,cutoffAt:second.starts_at,serviceType:'emby'}).catch(plannedRefusal),
+      update()
+    ]);
+    await Promise.all([extend(),update(),refundIncident(first)]);
+    assert.equal((await query('SELECT COUNT(*)::int AS n FROM subscription_access_extensions WHERE customer_id=$1',[customer.id])).rows[0].n,1,'the replay adds no time');
+    await assertNoOverlap(customer,'after every writer at once');
+  }
+  // A provider update racing the replay of the payment that created the row.
+  for(let round=0;round<8;round++){
+    const customer=await makeCustomer('update-replay'),ref=`pi_paidtime_replay_${round}_${suffix}`;
+    const bought=await activate(customer,plan,ref);
+    await Promise.all([
+      activate(customer,plan,ref),
+      lifecycle.updateProviderSubscription({provider:'stripe',providerSubscriptionId:ref,providerStatus:'active'}),
+      activate(customer,plan,ref)
+    ]);
+    same((await get(bought.id)).starts_at,bought.starts_at,'neither moves the purchase');
   }
 }
 
@@ -531,6 +597,8 @@ async function cleanup(){
   for(const table of ['customer_entitlement_overrides','subscription_service_extension_events','payment_incidents','billing_checkout_intents','customer_plan_changes','jellyfin_server_placement_leases','subscription_access_extensions','subscriptions']){
     await remove(`DELETE FROM ${table} WHERE customer_id=ANY($1::uuid[])`,customerIds);
   }
+  // Events recorded without a customer.
+  await query('DELETE FROM payment_incidents WHERE customer_id IS NULL AND strpos(provider_event_id,$1)>0',[suffix]).catch(()=>{});
   await remove('DELETE FROM customers WHERE id=ANY($1::uuid[])',customerIds);
   await remove('DELETE FROM plan_server_eligibility WHERE plan_id=ANY($1::uuid[])',planIds);
   await query('UPDATE jellyfin_servers SET enabled=FALSE WHERE id=ANY($1::uuid[])',[serverIds]).catch(()=>{});
@@ -547,6 +615,7 @@ async function main(){
     await activation();
     await extensionMovement();
     await refunds();
+    await refundInsertLock();
     await lockOrder();
     await operatorEdits();
     await resumeRenewal();
