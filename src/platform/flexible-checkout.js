@@ -130,6 +130,7 @@ async function repurchaseAsExtension(req,provider,planCode,quantity,requested,op
   if(!plan)return null;
   holding=await samePlanRepurchase.assessHolding(customerId,plan.id);
  }catch(error){console.warn('Current access could not be checked before checkout:',error.message);throw samePlanRepurchase.refusal('UNVERIFIED');}
+ if(holding.lifetime)throw samePlanRepurchase.refusal('LIFETIME');
  if(!holding.current)return null;
  const mustProtect=holding.unprotectedIds.length>0;
  if(!mustProtect&&options.length)return null;

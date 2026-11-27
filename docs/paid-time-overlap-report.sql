@@ -46,7 +46,13 @@ WITH paid AS (
                 ELSE 0 END
          )) AS b,
          COALESCE(NULLIF(s.service_type_snapshot,''), p.service_type, 'jellyfin') AS svc,
-         (s.source IN ('stripe','paypal') AND s.billing_mode='subscription') AS recurring,
+         -- Same rule as public.prepaid_row_is_recurring, written out so the report
+         -- also runs before that function is installed.
+         COALESCE(
+           (s.source IN ('stripe','paypal') AND s.billing_mode='subscription')
+           OR (s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_')
+           OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-')
+         ,FALSE) AS recurring,
          (s.source='manual') AS zero_value_promo
   FROM subscriptions s
   JOIN plans p ON p.id=s.plan_id

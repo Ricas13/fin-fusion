@@ -70,7 +70,14 @@ async function currentHolderRules(){
 
     const rows=[{id:'migrated',renewing:false,queue_protected:true},{id:'renewing',renewing:true,queue_protected:true},{id:'granted',renewing:false,queue_protected:false}];
     const db=async sql=>{assert(sql.includes('public.prepaid_paid_time'),'the shared paid-time definition decides whether queueing protects');return{rows};};
-    assert.deepStrictEqual(await samePlanRepurchase.assessHolding('cust-1','plan-1',{db}),{current:true,unprotectedIds:['renewing','granted']},'a renewing agreement is never protected by queueing');
+    assert.deepStrictEqual(await samePlanRepurchase.assessHolding('cust-1','plan-1',{db}),{current:true,lifetime:false,unprotectedIds:['renewing','granted']},'a renewing agreement is never protected by queueing');
+    const forever=async()=>({rows:[{id:'forever',renewing:false,queue_protected:false,lifetime:true}]});
+    for(const kind of ['direct_plan','subscription_extension'])await assert.rejects(samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind},{db:forever}),{code:'SAME_PLAN_PURCHASE_LIFETIME'},'nothing is sold to a lifetime holder');
+    row={...held(),current_period_end:new Date('9999-01-01')};
+    assert.equal(await samePlanRepurchase.currentPaidSubscription('cust-1',plan),null,'no Extend for a lifetime end');
+    row={...held(),access_expires_at:Infinity};
+    assert.equal(await samePlanRepurchase.currentPaidSubscription('cust-1',plan),null,'no Extend for permanent access');
+    row=held();
     await assert.rejects(samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db}),{code:'SAME_PLAN_PURCHASE_UNPROTECTED'});
     await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'subscription_extension'},{db});
     await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db:async()=>({rows:[rows[0]]})});
@@ -133,6 +140,9 @@ async function repurchaseDecision(){
     holding=unprotected;assert.equal((await decide([payment])).reason,'unprotected');holding=queued;
     assert.equal(checkout.commercialSnapshot({plan:payment,mode:'payment',extensionSubscriptionId:'sub-1',repurchaseReason:'plan_full'},'stripe').repurchaseReason,'plan_full');
     assert.equal(fullPlanLookups,1);
+    holding={current:true,lifetime:true,unprotectedIds:[]};
+    await assert.rejects(decide([payment]),{code:'SAME_PLAN_PURCHASE_LIFETIME'});
+    assert.equal(await decide([recurring],'subscription'),null,'recurring checkouts are still untouched');
     for(const message of Object.values(samePlanRepurchase.MESSAGES))assert(checkout.CHECKOUT_SAFE.includes(message),'refusals must reach the customer');
     const intents=read('src/payments/checkout-intents.js');
     assert(intents.indexOf('assertPurchaseKeepsPaidTime')>intents.indexOf('await lockCheckoutOwner(client, customerId);')&&intents.indexOf('assertPurchaseKeepsPaidTime')<intents.indexOf('INSERT INTO billing_checkout_intents'),'every intent is checked under the customer lock');
@@ -476,6 +486,10 @@ function contracts(){
   const statements=report.replace(/--.*$/gm,'');
   assert(!/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|TRUNCATE|GRANT)\b/i.test(statements),'the report must stay read only');
   assert.equal((statements.match(/;/g)||[]).length,1,'the report is a single statement');
+  assert(!statements.includes('public.prepaid_'),'the report runs without the new functions');
+  const rule=sql=>["(s.source IN ('stripe','paypal') AND s.billing_mode='subscription')","~* '^sub_'","~* '^I-'"].every(part=>sql.includes(part));
+  assert(rule(report),'the report uses the same recurring rule as the database function');
+  assert(migration.includes("(p_source IN ('stripe','paypal') AND p_billing_mode='subscription')")&&migration.includes("~* '^sub_'"));
 }
 
 async function readinessNeedsTheFunctions(){

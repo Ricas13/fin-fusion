@@ -9,33 +9,44 @@ const EXTENDABLE_STATUSES=new Set(['active','trialing','past_due','paused','canc
 // Customer-visible refusals. Every one of them happens before money is taken.
 const MESSAGES=Object.freeze({
   UNPROTECTED:'A separate one-off purchase would run over the time you still have on this plan. Use Extend on your current plan without a promo code or service credit, or contact support. You have not been charged.',
+  LIFETIME:'Your access to this plan does not expire, so there is nothing more to buy. You have not been charged.',
   UNVERIFIED:'Your current access could not be checked, so nothing was charged. Try again shortly.'
 });
 
 function refusal(code){const error=new Error(MESSAGES[code]);error.code=`SAME_PLAN_PURCHASE_${code}`;return error;}
 function serviceOf(plan){return String(plan?.service_type||'jellyfin').toLowerCase();}
 function accessEndMs(row){return new Date(row?.current_period_end||0).getTime()+Math.max(0,Number(row?.service_extension_days||0))*86400000;}
+// Permanent Access, or an end twenty or more years away.
+function lifetimeAccess(row){
+  if(row?.permanent_access||String(row?.access_expires_at)==='Infinity'||String(row?.access_expires_at)==='infinity')return true;
+  const horizon=new Date();horizon.setUTCFullYear(horizon.getUTCFullYear()+20);
+  return new Date(row?.current_period_end||0).getTime()>=horizon.getTime();
+}
 
 // Every started row on which the customer still has paid time on this plan, and
 // whether a separate one-off purchase of the plan would be queued behind it.
 // A renewing agreement is never queued behind: it keeps charging over whatever
 // is bought beside it. A renewal that is not being paid is not paid time.
 async function assessHolding(customerId,planId,{db=query}={}){
-  if(!customerId||!planId)return{current:false,unprotectedIds:[]};
+  if(!customerId||!planId)return{current:false,lifetime:false,unprotectedIds:[]};
   const result=await db(`
     SELECT s.id,
            (public.prepaid_row_is_recurring(s.source,s.provider_subscription_id,s.billing_mode)
              AND NOT s.cancel_at_period_end AND s.status='active') AS renewing,
-           EXISTS(SELECT 1 FROM public.prepaid_paid_time($1) paid WHERE paid.subscription_id=s.id) AS queue_protected
+           EXISTS(SELECT 1 FROM public.prepaid_paid_time($1) paid WHERE paid.subscription_id=s.id) AS queue_protected,
+           (s.current_period_end>=NOW()+INTERVAL '20 years' OR o.subscription_id IS NOT NULL) AS lifetime
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
+      LEFT JOIN customer_entitlement_overrides o
+        ON o.customer_id=s.customer_id AND o.subscription_id=s.id AND o.permanent_access=TRUE AND o.revoked_at IS NULL
      WHERE s.customer_id=$1 AND s.plan_id=$2
        AND s.superseded_by IS NULL AND s.refund_terminated_at IS NULL
        AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(p.is_free_tier,FALSE)=FALSE
        AND p.price_minor>0 AND p.billing_interval<>'trial'
        AND s.starts_at<=NOW()
        AND (
-         (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+         o.subscription_id IS NOT NULL
+         OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
          OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
              AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW())
        )
@@ -45,16 +56,19 @@ async function assessHolding(customerId,planId,{db=query}={}){
   const rows=result.rows||[];
   return{
     current:rows.length>0,
-    unprotectedIds:rows.filter(row=>row.renewing||!row.queue_protected).map(row=>String(row.id))
+    lifetime:rows.some(row=>row.lifetime),
+    unprotectedIds:rows.filter(row=>!row.lifetime&&(row.renewing||!row.queue_protected)).map(row=>String(row.id))
   };
 }
 
 // The last word before money: a direct one-off purchase may not be created over
 // time it cannot be queued behind. Extensions add to that time and are allowed.
+// Neither buys anything for somebody whose access to the plan never ends.
 async function assertPurchaseKeepsPaidTime({customerId,planId,kind},{db=query}={}){
-  if(kind!=='direct_plan')return;
+  if(kind!=='direct_plan'&&kind!=='subscription_extension')return;
   const holding=await assessHolding(customerId,planId,{db});
-  if(holding.unprotectedIds.length)throw refusal('UNPROTECTED');
+  if(holding.lifetime)throw refusal('LIFETIME');
+  if(kind==='direct_plan'&&holding.unprotectedIds.length)throw refusal('UNPROTECTED');
 }
 
 // The customer's current paid entitlement on this plan's lane, only when it is
@@ -67,7 +81,7 @@ async function currentPaidSubscription(customerId,plan,{includeBlocked=false}={}
   else if(service==='emby')row=await subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked});
   else if(service==='jellyfin'||service==='bundle')row=await subscriptionState.effectiveSubscription(customerId,{includeBlocked});
   if(!row||String(row.plan_id)!==String(plan.id))return null;
-  if(row.blocked||row.is_free_tier||row.is_addon||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')return null;
+  if(row.blocked||row.is_free_tier||row.is_addon||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial'||lifetimeAccess(row))return null;
   const end=accessEndMs(row);
   if(!EXTENDABLE_STATUSES.has(String(row.status||''))||!Number.isFinite(end)||end<=Date.now())return null;
   return row;

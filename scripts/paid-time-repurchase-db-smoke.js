@@ -417,7 +417,7 @@ async function capacityPlacementAndDecisions(){
   const holder=await makeCustomer('holder');
   const current=await insert(holder,plan,{start:-1,end:10,serverId:server.id,location:'London'});
   assert.equal((await planCapacity.usage(plan.id)).soldOut,true,'fixture: the holder fills the plan');
-  assert.deepStrictEqual(await samePlanRepurchase.assessHolding(holder.id,plan.id),{current:true,unprotectedIds:[]});
+  assert.deepStrictEqual(await samePlanRepurchase.assessHolding(holder.id,plan.id),{current:true,lifetime:false,unprotectedIds:[]});
   assert.deepStrictEqual(await samePlanRepurchase.extensionTarget(holder.id,plan),{subscriptionId:current.id});
   const intent=extra=>checkoutIntents.createIntent({scope:'customer',customerId:holder.id,planId:plan.id,provider:'stripe',checkoutMode:'payment',ttlMinutes:30,commercialSnapshot:purchaseContract(plan,extra)});
   await assert.rejects(intent({}),error=>error?.code==='PLAN_CAPACITY_EXHAUSTED','a direct repurchase of a full plan is refused before money is taken');
@@ -441,7 +441,7 @@ async function capacityPlacementAndDecisions(){
   for(const [label,fixture,protects] of cases){
     const customer=await makeCustomer('decide-'+label);
     const row=await insert(customer,emby,{start:-5,end:20,...fixture});
-    assert.deepStrictEqual(await samePlanRepurchase.assessHolding(customer.id,emby.id),{current:true,unprotectedIds:protects?[]:[row.id]},label);
+    assert.deepStrictEqual(await samePlanRepurchase.assessHolding(customer.id,emby.id),{current:true,lifetime:false,unprotectedIds:protects?[]:[row.id]},label);
     const guard=samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:customer.id,planId:emby.id,kind:'direct_plan'});
     if(protects)await guard;
     else await assert.rejects(guard,error=>error?.code==='SAME_PLAN_PURCHASE_UNPROTECTED',label+': a direct purchase is refused');
@@ -461,8 +461,17 @@ async function capacityPlacementAndDecisions(){
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM billing_checkout_intents WHERE customer_id=$1',[renewer.id])).rows[0].n,0);
   const unpaid=await makeCustomer('decide-unpaid');
   await insert(unpaid,emby,{recurring:true,status:'past_due',start:-5,end:20});
-  assert.deepStrictEqual(await samePlanRepurchase.assessHolding(unpaid.id,emby.id),{current:false,unprotectedIds:[]},'an unpaid renewal is not paid time');
-  assert.deepStrictEqual(await samePlanRepurchase.assessHolding((await makeCustomer('decide-new')).id,emby.id),{current:false,unprotectedIds:[]});
+  assert.deepStrictEqual(await samePlanRepurchase.assessHolding(unpaid.id,emby.id),{current:false,lifetime:false,unprotectedIds:[]},'an unpaid renewal is not paid time');
+  assert.deepStrictEqual(await samePlanRepurchase.assessHolding((await makeCustomer('decide-new')).id,emby.id),{current:false,lifetime:false,unprotectedIds:[]});
+  // Lifetime holders are never charged, by an end date or by Permanent Access.
+  for(const label of ['sentinel','permanent']){
+    const customer=await makeCustomer('lifetime-'+label);
+    const row=await insert(customer,emby,label==='sentinel'?{source:'migration',start:-5,end:new Date('9999-01-01T00:00:00Z')}:{source:'migration',status:'cancelled',start:-50,end:-5});
+    if(label==='permanent')await query(`INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason,previous_automation_protected) VALUES($1,$2,TRUE,'paid-time smoke',FALSE)`,[customer.id,row.id]);
+    for(const kind of ['direct_plan','subscription_extension']){
+      await assert.rejects(samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:customer.id,planId:emby.id,kind}),error=>error?.code==='SAME_PLAN_PURCHASE_LIFETIME',label+' '+kind);
+    }
+  }
 }
 
 async function report(){
@@ -486,6 +495,11 @@ async function report(){
   await insert(clean,plan,{start:-5,end:25});
   await insert(clean,plan);
 
+  // An agreement known only by its provider identity is still recurring.
+  const byIdentity=await makeCustomer('report-identity');
+  await insert(byIdentity,plan,{source:'migration',start:-10,end:50});
+  await insert(byIdentity,plan,{ref:`sub_paidtime_identity_${suffix}`,start:0,end:30});
+
   const client=await getPool().connect();
   let rows;
   try{await client.query('BEGIN READ ONLY');rows=(await client.query(sql)).rows;}
@@ -500,12 +514,13 @@ async function report(){
   close(samePlan,25,'same_plan');
   assert.equal(close(promo,25,'same_plan').involves_zero_value_promo,false,'the flag describes the losing rows');
   close(expired,20,'same_plan');
+  close(byIdentity,30,'recurring_over_nonrecurring');
   assert.equal(found(clean),undefined,'queued purchases are not a loss');
 }
 
 async function cleanup(){
   const remove=(sql,ids)=>query(sql,[ids]).catch(error=>console.warn('paid-time smoke cleanup incomplete:',error.message));
-  for(const table of ['subscription_service_extension_events','payment_incidents','billing_checkout_intents','customer_plan_changes','jellyfin_server_placement_leases','subscription_access_extensions','subscriptions']){
+  for(const table of ['customer_entitlement_overrides','subscription_service_extension_events','payment_incidents','billing_checkout_intents','customer_plan_changes','jellyfin_server_placement_leases','subscription_access_extensions','subscriptions']){
     await remove(`DELETE FROM ${table} WHERE customer_id=ANY($1::uuid[])`,customerIds);
   }
   await remove('DELETE FROM customers WHERE id=ANY($1::uuid[])',customerIds);
