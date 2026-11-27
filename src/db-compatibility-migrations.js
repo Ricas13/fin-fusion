@@ -18,6 +18,16 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261127150000_paid_time_survives_repurchase.sql'
 ]);
 
+// Database functions the application calls that only a repeatable migration
+// installs. Keep in step with the grant list in that migration.
+const REQUIRED_FUNCTIONS = Object.freeze([
+  'public.prepaid_lanes_overlap(text,text)',
+  'public.prepaid_paid_time(uuid)',
+  'public.prepaid_row_is_queueable(text,text,text,jsonb)',
+  'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
+  'public.shift_prepaid_queue_after_extension_change(uuid,integer)'
+]);
+
 function isRepeatableCompatibilityMigration(filename) {
   return REPEATABLE_COMPATIBILITY_MIGRATIONS.has(String(filename || ''));
 }
@@ -32,6 +42,7 @@ function latestVersionedMigration(files) {
 
 module.exports = {
   REPEATABLE_COMPATIBILITY_MIGRATIONS,
+  REQUIRED_FUNCTIONS,
   isRepeatableCompatibilityMigration,
   latestVersionedMigration
 };

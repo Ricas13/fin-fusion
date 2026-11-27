@@ -320,6 +320,14 @@ function contracts(){
   assert(migration.includes('pg_advisory_xact_lock(hashtextextended(NEW.customer_id::text,0))'),'stacking keeps the same serialization lock');
   assert(!/RAISE\s+EXCEPTION/i.test(migration),'nothing here may start refusing a paid activation');
   assert(migration.includes("'fully_discounted_local'"));
+  // Every public function the migration creates is granted to the runtime roles
+  // and listed as required; trigger functions need no EXECUTE grant.
+  const names=signatures=>signatures.map(signature=>signature.slice('public.'.length,signature.indexOf('('))).sort();
+  const created=Array.from(migration.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g),match=>match[1]).sort();
+  assert.deepStrictEqual(names(Array.from(compatibility.REQUIRED_FUNCTIONS)),created);
+  const grants=migration.slice(migration.indexOf('DO $grants$'),migration.indexOf('$grants$;'));
+  assert.deepStrictEqual(Array.from(grants.matchAll(/'(public\.[^']+)'/g),match=>match[1]),Array.from(compatibility.REQUIRED_FUNCTIONS),'grant list and required list must match');
+  for(const role of ['steamfusion_app','steamfusion_automation'])assert(grants.includes("'"+role+"'"));
   const statements=report.replace(/--.*$/gm,'');
   assert(!/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|TRUNCATE|GRANT)\b/i.test(statements),'the report must stay read only');
   assert.equal((statements.match(/;/g)||[]).length,1,'the report is a single statement');

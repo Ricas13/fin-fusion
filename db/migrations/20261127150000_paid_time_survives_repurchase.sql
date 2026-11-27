@@ -403,4 +403,29 @@ BEGIN
 END;
 $$;
 
+-- Runtime roles call these from the stacking and refund triggers and from the
+-- application, from the moment this commits, so grant here instead of waiting
+-- for db:runtime-roles. A fresh install has no runtime roles yet; that script
+-- grants them there.
+DO $grants$
+DECLARE
+  runtime_role text;
+  paid_time_function text;
+BEGIN
+  FOREACH runtime_role IN ARRAY ARRAY['steamfusion_app','steamfusion_automation'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname=runtime_role) THEN
+      FOREACH paid_time_function IN ARRAY ARRAY[
+        'public.prepaid_lanes_overlap(text,text)',
+        'public.prepaid_paid_time(uuid)',
+        'public.prepaid_row_is_queueable(text,text,text,jsonb)',
+        'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
+        'public.shift_prepaid_queue_after_extension_change(uuid,integer)'
+      ] LOOP
+        EXECUTE 'GRANT EXECUTE ON FUNCTION '||paid_time_function||' TO '||quote_ident(runtime_role);
+      END LOOP;
+    END IF;
+  END LOOP;
+END
+$grants$;
+
 COMMIT;

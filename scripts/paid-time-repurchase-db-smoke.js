@@ -15,6 +15,7 @@ const samePlanRepurchase=require('../src/payments/same-plan-repurchase');
 const checkoutIntents=require('../src/payments/checkout-intents');
 const planCapacity=require('../src/entitlements/plan-capacity');
 const subscriptionState=require('../src/entitlements/subscription-state');
+const {REQUIRED_FUNCTIONS}=require('../src/db-compatibility-migrations');
 
 const DAY=86400000;
 const suffix=Date.now().toString(36);
@@ -74,6 +75,32 @@ async function triggerOrder(){
   for(const earlier of ['snapshot_subscription_plan_terms_trigger','subscriptions_billing_mode_normalize','subscriptions_free_tier_non_expiring','subscriptions_money_loss_terminal']){
     assert(names.indexOf(earlier)>=0&&names.indexOf(earlier)<stack,`stacking must run after ${earlier}: ${names.join(', ')}`);
   }
+}
+
+// This smoke connects as the schema owner, so prove the runtime roles' access
+// explicitly: take it away, re-run the repeatable migration, and look again.
+// Everything, including any role created here, is rolled back.
+async function runtimePrivileges(){
+  const roles=['steamfusion_app','steamfusion_automation'];
+  const body=fs.readFileSync(path.join(__dirname,'..','db','migrations','20261127150000_paid_time_survives_repurchase.sql'),'utf8')
+    .replace(/^\s*BEGIN\s*;/i,'').replace(/COMMIT\s*;\s*$/i,'');
+  const client=await getPool().connect();
+  const allowed=async(role,signature)=>(await client.query(`SELECT has_function_privilege($1,to_regprocedure($2)::oid,'EXECUTE') AS ok`,[role,signature])).rows[0].ok;
+  try{
+    await client.query('BEGIN');
+    for(const signature of REQUIRED_FUNCTIONS){
+      assert((await client.query('SELECT to_regprocedure($1) AS found',[signature])).rows[0].found,`${signature} must exist`);
+    }
+    for(const role of roles){
+      if(!(await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[role])).rowCount)await client.query(`CREATE ROLE ${role} NOLOGIN`);
+    }
+    for(const signature of REQUIRED_FUNCTIONS)await client.query(`REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC, ${roles.join(', ')}`);
+    assert.equal(await allowed(roles[0],REQUIRED_FUNCTIONS[0]),false,'fixture: access was removed');
+    await client.query(body);
+    for(const role of roles)for(const signature of REQUIRED_FUNCTIONS){
+      assert.equal(await allowed(role,signature),true,`${role} must be able to execute ${signature}`);
+    }
+  }finally{await client.query('ROLLBACK').catch(()=>{});client.release();}
 }
 
 async function queueing(){
@@ -325,6 +352,7 @@ async function cleanup(){
 async function main(){
   try{
     await triggerOrder();
+    await runtimePrivileges();
     await queueing();
     await activation();
     await extensionMovement();
