@@ -32,10 +32,10 @@ async function makeCustomer(label){
   const row=(await query('INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *',[name,`${name}@example.invalid`])).rows[0];
   customerIds.push(row.id);return row;
 }
-async function makePlan(label,{service='emby',capacity=100,interval='month'}={}){
+async function makePlan(label,{service='emby',capacity=100,interval='month',streams=1,serverClass='premium'}={}){
   const code=`paidtime-${label}-${suffix}-${++sequence}`;
   const row=(await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class)
-    VALUES($1,$1,$2,'direct',$3,30,600,'GBP',$4,TRUE,TRUE,1,'premium') RETURNING *`,[code,service,interval,capacity])).rows[0];
+    VALUES($1,$1,$2,'direct',$3,30,600,'GBP',$4,TRUE,TRUE,$5,$6) RETURNING *`,[code,service,interval,capacity,streams,serverClass])).rows[0];
   planIds.push(row.id);return row;
 }
 async function get(id){
@@ -144,8 +144,8 @@ async function queueing(){
   const embyTime=await insert(lanes,plan,{source:'migration',end:90});
   startsNow(await insert(lanes,jellyfin),'another service lane is independent');
   const laneTwo=await makeCustomer('lanes-bundle');
-  const stremioTime=await insert(laneTwo,stremio,{source:'migration',end:50});
-  same((await insert(laneTwo,bundle)).starts_at,stremioTime.access_end,'a bundle shares the Stremio lane');
+  await insert(laneTwo,stremio,{source:'migration',end:50});
+  startsNow(await insert(laneTwo,bundle),'a bundle is broader than imported Stremio time, so the upgrade is not delayed');
   assert(ms(embyTime.access_end)>Date.now());
 
   const free=(await query(`SELECT * FROM plans WHERE is_free_tier=TRUE AND service_type='jellyfin' AND COALESCE(is_addon,FALSE)=FALSE ORDER BY created_at,id LIMIT 1`)).rows[0];
@@ -162,6 +162,54 @@ async function queueing(){
   startsNow(await insert(customer,plan,{recurring:true}),'recurring periods stay provider-authoritative');
   startsNow(await insert(customer,plan,{source:'migration'}),'new imported rows are never moved');
   startsNow(await insert(customer,plan,{source:'admin_grant'}),'new admin grants are never moved');
+}
+
+// Newly counted time only holds back a purchase that gives no more than it does.
+// Upgrades behave exactly as before this change.
+async function upgrades(){
+  const legacy=await makePlan('legacy',{streams:3});
+  const equal=await makePlan('equal',{streams:3}),lower=await makePlan('lower',{streams:1});
+  const higher=await makePlan('higher',{streams:5}),otherClass=await makePlan('class',{streams:3,serverClass:'custom'});
+  const held={source:'migration',start:-5,end:200};
+  for(const [label,plan,waits] of [['equal',equal,true],['lower',lower,true],['higher',higher,false],['class',otherClass,false]]){
+    for(const purchase of [{},zeroValue]){
+      const customer=await makeCustomer('up-'+label);
+      const imported=await insert(customer,legacy,held);
+      const bought=await insert(customer,plan,purchase);
+      if(waits)same(bought.starts_at,imported.access_end,label+': another plan with no more access waits for imported time');
+      else startsNow(bought,label+': an upgrade is not delayed by imported time');
+    }
+  }
+  const same_=await makeCustomer('up-same');
+  const smaller=await insert(same_,legacy,held);
+  const wider=await insert(same_,legacy,{snapshot:{kind:'direct_plan',checkoutMode:'payment',streams:6,billingInterval:'month',durationDays:30}});
+  same(wider.starts_at,smaller.access_end,'the same plan always waits, whatever the allowance');
+
+  const single=await makePlan('single',{service:'jellyfin'}),bundle=await makePlan('wide',{service:'bundle'});
+  const narrow=await makeCustomer('up-narrow');
+  await insert(narrow,bundle,held);
+  startsNow(await insert(narrow,single),'a different service is treated as an upgrade, even a narrower one');
+
+  // Provider one-off anchors keep the previous rule: base term only for upgrades.
+  const customer=await makeCustomer('up-provider');
+  const first=await insert(customer,legacy,{start:-5,end:20,ext:10});
+  const upgrade=await insert(customer,higher);
+  same(upgrade.starts_at,first.current_period_end,'an upgrade queues behind the base term as before, not behind extension days');
+  assert.equal((await insert(customer,higher,zeroValue)).starts_at>=upgrade.access_end,true,'a later zero-value purchase of that upgrade waits for it');
+  const zeroUpgrade=await makeCustomer('up-zero');
+  await insert(zeroUpgrade,legacy,{start:-5,end:20});
+  startsNow(await insert(zeroUpgrade,higher,zeroValue),'a zero-value upgrade was never queued behind provider time');
+
+  // Moving the queue follows the same rule.
+  const moving=await makeCustomer('up-move');
+  const current=await insert(moving,legacy,{start:-5,end:20});
+  const queuedUpgrade=await insert(moving,higher);
+  await query('UPDATE subscriptions SET service_extension_days=10 WHERE id=$1',[current.id]);
+  await query('SELECT public.shift_prepaid_queue_after_extension_change($1,0)',[current.id]);
+  same((await get(queuedUpgrade.id)).starts_at,queuedUpgrade.starts_at,'bought time does not delay a queued upgrade');
+  await query('UPDATE subscriptions SET service_extension_days=0 WHERE id=$1',[current.id]);
+  await query('SELECT public.shift_prepaid_queue_after_extension_change($1,10)',[current.id]);
+  same((await get(queuedUpgrade.id)).starts_at,queuedUpgrade.starts_at,'removing it does not pull the upgrade into the current term');
 }
 
 async function activation(){
@@ -376,6 +424,7 @@ async function main(){
     await triggerOrder();
     await runtimePrivileges();
     await queueing();
+    await upgrades();
     await activation();
     await extensionMovement();
     await refunds();

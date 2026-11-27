@@ -329,7 +329,7 @@ function schemaGuard(){
     assert(checked>10,`${file}: schema guard found too few references to be meaningful`);
   }
   assert(columns.get('subscriptions')?.has('billing_mode')&&columns.get('subscriptions')?.has('media_server_id'),'schema guard must understand later column additions');
-  check(`db/migrations/${MIGRATION}`,{s:['subscriptions'],p:['plans'],held:['subscriptions'],ahead:['subscriptions'],anchor:['subscriptions'],refunded:['subscriptions'],host_server:['jellyfin_servers'],NEW:['subscriptions','payment_incidents']});
+  check(`db/migrations/${MIGRATION}`,{s:['subscriptions'],p:['plans'],held:['subscriptions'],held_plan:['plans'],bought:['plans'],anchor:['subscriptions'],refunded:['subscriptions'],host_server:['jellyfin_servers'],NEW:['subscriptions','payment_incidents']});
   check('docs/paid-time-overlap-report.sql',{s:['subscriptions'],p:['plans'],pi:['payment_incidents'],al:['audit_log'],c:['customers']});
 }
 
@@ -351,6 +351,8 @@ function contracts(){
   assert(migration.includes('pg_advisory_xact_lock(hashtextextended(NEW.customer_id::text,0))'),'stacking keeps the same serialization lock');
   assert(!/RAISE\s+EXCEPTION/i.test(migration),'nothing here may start refusing a paid activation');
   assert(migration.includes("'fully_discounted_local'"));
+  // Stacking, pulling and pushing share one anchor definition.
+  assert.equal((migration.match(/FROM public\.prepaid_stack_anchors\(/g)||[]).length,3);
   // Every public function the migration creates is granted to the runtime roles
   // and listed as required; trigger functions need no EXECUTE grant.
   const names=signatures=>signatures.map(signature=>signature.slice('public.'.length,signature.indexOf('('))).sort();

@@ -17,9 +17,7 @@ LANGUAGE sql
 IMMUTABLE
 SET search_path = public, pg_temp
 AS $$
-  SELECT p_left=p_right
-      OR (p_left='bundle' AND p_right IN ('jellyfin','stremio'))
-      OR (p_right='bundle' AND p_left IN ('jellyfin','stremio'))
+  SELECT p_left=p_right OR p_left='bundle' OR p_right='bundle'
 $$;
 
 -- A provider agreement that bills by itself. Stripe uses sub_* and PayPal I-*.
@@ -102,6 +100,79 @@ AS $$
   ,FALSE)
 $$;
 
+-- TRUE when a purchase of p_plan gives no more than the held subscription does:
+-- the same plan, or the same service and server class with no higher stream or
+-- household allowance. Anything unknown is an upgrade.
+CREATE OR REPLACE FUNCTION public.prepaid_access_covered(
+  p_plan uuid,p_service text,p_snapshot jsonb,p_households integer,p_held uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE((
+    SELECT held.plan_id=bought.id
+        OR (
+          COALESCE(NULLIF(held.service_type_snapshot,''),held_plan.service_type,'jellyfin')=p_service
+          AND COALESCE(NULLIF(p_snapshot->>'serverClass',''),bought.server_class)
+              =COALESCE(NULLIF(held.commercial_snapshot->>'serverClass',''),held_plan.server_class)
+          AND (
+            p_service='stremio'
+            OR COALESCE(CASE WHEN p_snapshot->>'streams' ~ '^[0-9]{1,4}$' THEN (p_snapshot->>'streams')::integer END,bought.streams)
+               <=COALESCE(CASE WHEN held.commercial_snapshot->>'streams' ~ '^[0-9]{1,4}$' THEN (held.commercial_snapshot->>'streams')::integer END,held_plan.streams)
+          )
+          AND (
+            p_service NOT IN ('stremio','bundle')
+            OR COALESCE(CASE WHEN p_snapshot->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN (p_snapshot->>'stremioHouseholdNetworkLimit')::integer END,p_households,bought.stremio_household_network_limit)
+               <=COALESCE(CASE WHEN held.commercial_snapshot->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN (held.commercial_snapshot->>'stremioHouseholdNetworkLimit')::integer END,held.stremio_household_network_limit_snapshot,held_plan.stremio_household_network_limit)
+          )
+        )
+      FROM subscriptions held
+      JOIN plans held_plan ON held_plan.id=held.plan_id
+      JOIN plans bought ON bought.id=p_plan
+     WHERE held.id=p_held
+  ),FALSE)
+$$;
+
+-- Where a purchase of this kind has to wait, per held subscription. Stacking and
+-- every later queue movement use this one definition.
+--   * Provider one-off purchases keep the rule of 20260829202000: behind the base
+--     term of live provider one-offs on the lane, whatever they bought.
+--   * Everything else that counts as paid time (extension days, imported,
+--     service-credit, zero-value and ending recurring rows) only holds back a
+--     purchase that gives no more access than it does. An upgrade is not delayed.
+CREATE OR REPLACE FUNCTION public.prepaid_stack_anchors(
+  p_customer uuid,p_plan uuid,p_service text,p_snapshot jsonb,p_households integer,p_provider boolean
+)
+RETURNS TABLE(subscription_id uuid,starts_at timestamptz,anchor_end timestamptz)
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT anchors.held_id,MIN(anchors.held_start),MAX(anchors.held_end)
+    FROM (
+      SELECT s.id AS held_id,s.starts_at AS held_start,s.current_period_end AS held_end
+        FROM subscriptions s
+        JOIN plans p ON p.id=s.plan_id
+       WHERE p_provider
+         AND s.customer_id=p_customer
+         AND s.superseded_by IS NULL
+         AND COALESCE(p.is_addon,FALSE)=FALSE
+         AND s.status IN ('active','trialing','past_due','paused')
+         AND s.current_period_end>NOW()
+         AND s.source IN ('stripe','paypal','plisio')
+         AND NOT (s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_')
+         AND NOT (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-')
+         AND public.prepaid_lanes_overlap(COALESCE(s.service_type_snapshot,p.service_type,'jellyfin'),p_service)
+      UNION ALL
+      SELECT paid.subscription_id,paid.starts_at,paid.access_end
+        FROM public.prepaid_paid_time(p_customer) paid
+       WHERE public.prepaid_access_covered(p_plan,p_service,p_snapshot,p_households,paid.subscription_id)
+    ) anchors
+   GROUP BY anchors.held_id
+$$;
+
 -- Called by trg_stack_prepaid_subscription_window, which runs after the
 -- snapshot, billing-mode, free-tier and money-loss triggers (name order).
 -- This runs at activation, after payment: it only moves the window, never refuses.
@@ -127,7 +198,7 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT COALESCE(NULLIF(NEW.service_type_snapshot,''),service_type,'jellyfin'),
+  SELECT COALESCE(service_type,'jellyfin'),
          COALESCE(is_addon,FALSE),COALESCE(is_free_tier,FALSE)
     INTO target_service,target_is_addon,target_is_free
     FROM plans
@@ -140,10 +211,12 @@ BEGIN
   -- Keep stacking safe even if two provider completions arrive together.
   PERFORM pg_advisory_xact_lock(hashtextextended(NEW.customer_id::text,0));
 
-  SELECT MAX(paid.access_end)
+  SELECT MAX(waiting.anchor_end)
     INTO stack_end
-    FROM public.prepaid_paid_time(NEW.customer_id) paid
-   WHERE public.prepaid_lanes_overlap(paid.service_type,target_service);
+    FROM public.prepaid_stack_anchors(
+      NEW.customer_id,NEW.plan_id,target_service,NEW.commercial_snapshot,
+      NEW.stremio_household_network_limit_snapshot,NEW.source IN ('stripe','paypal','plisio')
+    ) waiting;
 
   IF stack_end IS NULL OR stack_end<=NOW() THEN
     RETURN NEW;
@@ -192,7 +265,8 @@ $$;
 
 -- Move queued purchases earlier after paid time ahead of them was removed.
 -- Each row moves by at most the removed span, and never to before now, before
--- p_floor, or into paid time that precedes it. Durations are preserved exactly.
+-- p_floor, before anything it would be queued behind, or into paid time that
+-- ends before it currently starts. Durations are preserved exactly.
 CREATE OR REPLACE FUNCTION public.pull_prepaid_queue(
   p_customer uuid,p_service text,p_from timestamptz,p_removed_seconds numeric,
   p_exclude uuid DEFAULT NULL,p_floor timestamptz DEFAULT NULL
@@ -224,7 +298,9 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(p_customer::text,0));
 
   FOR queued IN
-    SELECT s.id,s.starts_at,
+    SELECT s.id,s.starts_at,s.plan_id,s.source,s.commercial_snapshot,
+           s.stremio_household_network_limit_snapshot AS households,
+           COALESCE(p.service_type,'jellyfin') AS target_service,
            COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS service_type
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
@@ -239,13 +315,23 @@ BEGIN
        AND public.prepaid_lanes_overlap(COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin'),p_service)
      ORDER BY s.starts_at,s.created_at,s.id
   LOOP
-    SELECT GREATEST(NOW(),p_floor,MAX(paid.access_end))
+    SELECT GREATEST(NOW(),p_floor,MAX(candidate.held_end))
       INTO floor_at
-      FROM public.prepaid_paid_time(p_customer) paid
-     WHERE paid.subscription_id<>queued.id
-       AND paid.subscription_id IS DISTINCT FROM p_exclude
-       AND public.prepaid_lanes_overlap(paid.service_type,queued.service_type)
-       AND (paid.starts_at,paid.subscription_id)<(queued.starts_at,queued.id);
+      FROM (
+        SELECT waiting.subscription_id AS held_id,waiting.starts_at AS held_start,waiting.anchor_end AS held_end
+          FROM public.prepaid_stack_anchors(
+            p_customer,queued.plan_id,queued.target_service,queued.commercial_snapshot,
+            queued.households,queued.source IN ('stripe','paypal','plisio')
+          ) waiting
+        UNION ALL
+        SELECT paid.subscription_id,paid.starts_at,paid.access_end
+          FROM public.prepaid_paid_time(p_customer) paid
+         WHERE paid.access_end<=queued.starts_at
+           AND public.prepaid_lanes_overlap(paid.service_type,queued.service_type)
+      ) candidate
+     WHERE candidate.held_id<>queued.id
+       AND candidate.held_id IS DISTINCT FROM p_exclude
+       AND (candidate.held_start,candidate.held_id)<(queued.starts_at,queued.id);
 
     pull_seconds:=LEAST(p_removed_seconds,GREATEST(0,EXTRACT(EPOCH FROM (queued.starts_at-floor_at))::numeric));
     IF pull_seconds>0 THEN
@@ -314,8 +400,9 @@ BEGIN
   moved_ids:=ARRAY[anchor.id];
 
   FOR queued IN
-    SELECT s.id,s.starts_at,
-           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS service_type
+    SELECT s.id,s.starts_at,s.plan_id,s.source,s.commercial_snapshot,
+           s.stremio_household_network_limit_snapshot AS households,
+           COALESCE(p.service_type,'jellyfin') AS target_service
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
      WHERE s.customer_id=anchor.customer_id
@@ -329,13 +416,14 @@ BEGIN
        AND public.prepaid_row_is_queueable(s.source,s.provider_subscription_id,s.billing_mode,s.commercial_snapshot)
      ORDER BY s.starts_at,s.created_at,s.id
   LOOP
-    -- Only rows now overlapped by the anchor, or by a row moved because of it.
-    SELECT MAX(ahead.current_period_end+((COALESCE(ahead.service_extension_days,0)||' days')::interval))
+    -- Only a row that has to wait for the changed row, or for one moved with it.
+    SELECT MAX(waiting.anchor_end)
       INTO blocker
-      FROM subscriptions ahead
-      JOIN plans p ON p.id=ahead.plan_id
-     WHERE ahead.id=ANY(moved_ids)
-       AND public.prepaid_lanes_overlap(COALESCE(NULLIF(ahead.service_type_snapshot,''),p.service_type,'jellyfin'),queued.service_type);
+      FROM public.prepaid_stack_anchors(
+        anchor.customer_id,queued.plan_id,queued.target_service,queued.commercial_snapshot,
+        queued.households,queued.source IN ('stripe','paypal','plisio')
+      ) waiting
+     WHERE waiting.subscription_id=ANY(moved_ids);
 
     CONTINUE WHEN blocker IS NULL;
     push_seconds:=LEAST(changed_seconds,GREATEST(0,EXTRACT(EPOCH FROM (blocker-queued.starts_at))::numeric));
@@ -427,9 +515,11 @@ BEGIN
   FOREACH runtime_role IN ARRAY ARRAY['steamfusion_app','steamfusion_automation'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname=runtime_role) THEN
       FOREACH paid_time_function IN ARRAY ARRAY[
+        'public.prepaid_access_covered(uuid,text,jsonb,integer,uuid)',
         'public.prepaid_lanes_overlap(text,text)',
         'public.prepaid_paid_time(uuid)',
         'public.prepaid_row_is_recurring(text,text,text)',
+        'public.prepaid_stack_anchors(uuid,uuid,text,jsonb,integer,boolean)',
         'public.prepaid_row_is_queueable(text,text,text,jsonb)',
         'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
         'public.shift_prepaid_queue_after_extension_change(uuid,integer)'

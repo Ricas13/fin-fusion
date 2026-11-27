@@ -21,9 +21,11 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
 // Database functions the application calls that only a repeatable migration
 // installs. Keep in step with the grant list in that migration.
 const REQUIRED_FUNCTIONS = Object.freeze([
+  'public.prepaid_access_covered(uuid,text,jsonb,integer,uuid)',
   'public.prepaid_lanes_overlap(text,text)',
   'public.prepaid_paid_time(uuid)',
   'public.prepaid_row_is_recurring(text,text,text)',
+  'public.prepaid_stack_anchors(uuid,uuid,text,jsonb,integer,boolean)',
   'public.prepaid_row_is_queueable(text,text,text,jsonb)',
   'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
   'public.shift_prepaid_queue_after_extension_change(uuid,integer)'
