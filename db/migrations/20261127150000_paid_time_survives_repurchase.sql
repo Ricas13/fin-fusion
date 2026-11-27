@@ -348,10 +348,11 @@ BEGIN
 END;
 $$;
 
--- Call in the same transaction that changed a subscription's bought extension
--- days. Added days push the queue later; removed days pull it back.
-CREATE OR REPLACE FUNCTION public.shift_prepaid_queue_after_extension_change(
-  p_subscription uuid,p_previous_extension_days integer
+-- Call in the same transaction that changed a subscription's paid end: bought
+-- or operator-added days, or a new period end. A later end pushes the queue; an
+-- earlier one pulls it back. NULL p_previous_period_end means it did not change.
+CREATE OR REPLACE FUNCTION public.shift_prepaid_queue_after_end_change(
+  p_subscription uuid,p_previous_extension_days integer,p_previous_period_end timestamptz DEFAULT NULL
 )
 RETURNS integer
 LANGUAGE plpgsql
@@ -361,6 +362,7 @@ DECLARE
   anchor subscriptions%ROWTYPE;
   anchor_service text;
   anchor_end timestamptz;
+  previous_period_end timestamptz;
   changed_seconds numeric;
   queued record;
   blocker timestamptz;
@@ -373,15 +375,22 @@ BEGIN
     RETURN 0;
   END IF;
 
+  -- A lifetime end is not something to wait behind: pushing a purchase after it
+  -- would mean it never starts.
+  IF anchor.current_period_end>=NOW()+INTERVAL '20 years' THEN
+    RETURN 0;
+  END IF;
+
+  previous_period_end:=COALESCE(p_previous_period_end,anchor.current_period_end);
   anchor_end:=anchor.current_period_end+((COALESCE(anchor.service_extension_days,0)||' days')::interval);
   changed_seconds:=EXTRACT(EPOCH FROM (
-    anchor_end-(anchor.current_period_end+((COALESCE(p_previous_extension_days,0)||' days')::interval))
+    anchor_end-(previous_period_end+((COALESCE(p_previous_extension_days,0)||' days')::interval))
   ))::numeric;
 
-  IF changed_seconds=0 OR NOT EXISTS (
+  IF ABS(changed_seconds)<1 OR NOT EXISTS (
     SELECT 1 FROM subscriptions s
      WHERE s.customer_id=anchor.customer_id AND s.id<>anchor.id AND s.superseded_by IS NULL
-       AND s.starts_at>NOW() AND s.starts_at>=anchor.current_period_end
+       AND s.starts_at>NOW() AND s.starts_at>=previous_period_end
   ) THEN
     RETURN 0;
   END IF;
@@ -391,7 +400,7 @@ BEGIN
 
   IF changed_seconds<0 THEN
     RETURN public.pull_prepaid_queue(
-      anchor.customer_id,anchor_service,anchor.current_period_end,-changed_seconds,anchor.id,anchor_end
+      anchor.customer_id,anchor_service,previous_period_end,-changed_seconds,anchor.id,anchor_end
     );
   END IF;
 
@@ -411,7 +420,7 @@ BEGIN
        AND s.refund_terminated_at IS NULL
        AND COALESCE(p.is_addon,FALSE)=FALSE
        AND s.starts_at>NOW()
-       AND s.starts_at>=anchor.current_period_end
+       AND s.starts_at>=previous_period_end
        AND s.status IN ('active','trialing','past_due','paused','cancelled')
        AND public.prepaid_row_is_queueable(s.source,s.provider_subscription_id,s.billing_mode,s.commercial_snapshot)
      ORDER BY s.starts_at,s.created_at,s.id
@@ -535,7 +544,7 @@ BEGIN
         'public.prepaid_stack_anchors(uuid,uuid,text,jsonb,integer,boolean)',
         'public.prepaid_row_is_queueable(text,text,text,jsonb)',
         'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
-        'public.shift_prepaid_queue_after_extension_change(uuid,integer)'
+        'public.shift_prepaid_queue_after_end_change(uuid,integer,timestamptz)'
       ] LOOP
         EXECUTE 'GRANT EXECUTE ON FUNCTION '||paid_time_function||' TO '||quote_ident(runtime_role);
       END LOOP;

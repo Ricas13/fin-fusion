@@ -17,6 +17,7 @@ const planCapacity=require('../src/entitlements/plan-capacity');
 const subscriptionState=require('../src/entitlements/subscription-state');
 const {REQUIRED_FUNCTIONS}=require('../src/db-compatibility-migrations');
 const health=require('../src/platform/health');
+const adminActions=require('../src/access/admin-customer-individual-action-service');
 
 const DAY=86400000;
 const suffix=Date.now().toString(36);
@@ -206,10 +207,10 @@ async function upgrades(){
   const current=await insert(moving,legacy,{start:-5,end:20});
   const queuedUpgrade=await insert(moving,higher);
   await query('UPDATE subscriptions SET service_extension_days=10 WHERE id=$1',[current.id]);
-  await query('SELECT public.shift_prepaid_queue_after_extension_change($1,0)',[current.id]);
+  await query('SELECT public.shift_prepaid_queue_after_end_change($1,0)',[current.id]);
   same((await get(queuedUpgrade.id)).starts_at,queuedUpgrade.starts_at,'bought time does not delay a queued upgrade');
   await query('UPDATE subscriptions SET service_extension_days=0 WHERE id=$1',[current.id]);
-  await query('SELECT public.shift_prepaid_queue_after_extension_change($1,10)',[current.id]);
+  await query('SELECT public.shift_prepaid_queue_after_end_change($1,10)',[current.id]);
   same((await get(queuedUpgrade.id)).starts_at,queuedUpgrade.starts_at,'removing it does not pull the upgrade into the current term');
 }
 
@@ -328,6 +329,30 @@ async function lockOrder(){
   }
 }
 
+// The operator actions move the queue in their own transaction.
+async function operatorEdits(){
+  const plan=await makePlan('operator',{service:'jellyfin'}),customer=await makeCustomer('operator');
+  const current=await insert(customer,plan,{start:-5,end:40});
+  const queued=await insert(customer,plan),later=await insert(customer,plan);
+  const follows=async label=>{
+    const anchor=await get(current.id),next=await get(queued.id),last=await get(later.id);
+    same(next.starts_at,anchor.access_end,label+': the queue follows the new end');
+    same(last.starts_at,next.access_end,label+': the whole queue follows');
+    assert(Math.abs(duration(next)-duration(queued))<2&&Math.abs(duration(last)-duration(later))<2,label+': durations are kept');
+  };
+  await adminActions.extend({customerId:customer.id,actorUserId:null,subscriptionId:current.id,operationId:`paidtime-${suffix}`,units:1});
+  assert(ms((await get(current.id)).access_end)>ms(current.access_end));
+  await follows('operator extension');
+  const day=offset=>new Date(Date.now()+offset*DAY).toISOString().slice(0,10);
+  await adminActions.setExpiry({customerId:customer.id,actorUserId:null,subscriptionId:current.id,expiryDate:day(20)});
+  await follows('earlier expiry');
+  await adminActions.setExpiry({customerId:customer.id,actorUserId:null,subscriptionId:current.id,expiryDate:day(120)});
+  await follows('later expiry');
+  const before=await get(queued.id);
+  await adminActions.setExpiry({customerId:customer.id,actorUserId:null,subscriptionId:current.id,expiryDate:'9999-01-01'});
+  same((await get(queued.id)).starts_at,before.starts_at,'a lifetime end never pushes a purchase out of reach');
+}
+
 async function jellyfinServer(label){
   const slug=`paidtime-${label}-${suffix}`;
   const row=(await query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,api_key_encrypted,enabled,allow_new_users,paid_enabled,trial_enabled,priority,max_users,health_status,last_health_check,placement_mode,location)
@@ -429,13 +454,12 @@ async function report(){
 }
 
 async function cleanup(){
-  try{
-    for(const table of ['payment_incidents','billing_checkout_intents','customer_plan_changes','jellyfin_server_placement_leases','subscription_access_extensions','subscriptions']){
-      await query(`DELETE FROM ${table} WHERE customer_id=ANY($1::uuid[])`,[customerIds]);
-    }
-    await query('DELETE FROM customers WHERE id=ANY($1::uuid[])',[customerIds]);
-    await query('DELETE FROM plan_server_eligibility WHERE plan_id=ANY($1::uuid[])',[planIds]);
-  }catch(error){console.warn('paid-time smoke cleanup incomplete:',error.message);}
+  const remove=(sql,ids)=>query(sql,[ids]).catch(error=>console.warn('paid-time smoke cleanup incomplete:',error.message));
+  for(const table of ['subscription_service_extension_events','payment_incidents','billing_checkout_intents','customer_plan_changes','jellyfin_server_placement_leases','subscription_access_extensions','subscriptions']){
+    await remove(`DELETE FROM ${table} WHERE customer_id=ANY($1::uuid[])`,customerIds);
+  }
+  await remove('DELETE FROM customers WHERE id=ANY($1::uuid[])',customerIds);
+  await remove('DELETE FROM plan_server_eligibility WHERE plan_id=ANY($1::uuid[])',planIds);
   await query('UPDATE jellyfin_servers SET enabled=FALSE WHERE id=ANY($1::uuid[])',[serverIds]).catch(()=>{});
   await query('UPDATE plans SET active=FALSE,visible=FALSE WHERE id=ANY($1::uuid[])',[planIds]).catch(()=>{});
 }
@@ -451,6 +475,7 @@ async function main(){
     await extensionMovement();
     await refunds();
     await lockOrder();
+    await operatorEdits();
     await capacityPlacementAndDecisions();
     await report();
   }finally{await cleanup();}

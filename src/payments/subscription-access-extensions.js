@@ -183,7 +183,7 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
 // Purchases queued behind this subscription move with its bought time, in the
 // same transaction. Replays never reach this, so time is not moved twice.
 async function shiftQueuedPurchases(client,subscriptionId,previousExtensionDays){
-  await client.query('SELECT public.shift_prepaid_queue_after_extension_change($1,$2)',[subscriptionId,Math.max(0,Number(previousExtensionDays||0))]);
+  await client.query('SELECT public.shift_prepaid_queue_after_end_change($1,$2)',[subscriptionId,Math.max(0,Number(previousExtensionDays||0))]);
 }
 async function existingExtension(client,{provider,providerPaymentId,checkoutIntentId}){
   const result=await client.query(`

@@ -150,6 +150,7 @@ async function queueMovementCallSites(){
   }},{customerId:'cust-1',subscriptionId:'sub-1',planId:'plan-1',provider:'stripe',providerPaymentId:'pi_1'});
   assert.equal(replay.replay,true);
   assert(!replayCalls.some(sql=>sql.includes('shift_prepaid_queue')),'a provider replay must not move queued time again');
+  await operatorEditsMoveTheQueue();
 
   const calls=[];
   const end=new Date(Date.now()+10*DAY);
@@ -167,7 +168,7 @@ async function queueMovementCallSites(){
   const position=text=>calls.findIndex(call=>call.sql.includes(text));
   assert(position('FOR UPDATE OF c')===0&&position('FOR UPDATE OF c')<position('FOR UPDATE OF s'),'customer row is locked first, as activation does');
   assert(!calls[0].sql.includes('starts_at'),'the customer lock does not depend on a racy look at the queue');
-  const shift=calls[position('shift_prepaid_queue_after_extension_change')];
+  const shift=calls[position('shift_prepaid_queue_after_end_change')];
   assert(shift,'revoking bought time must move the queue back');
   assert.deepStrictEqual(shift.params,['sub-1',30],'the move is measured from the days held before the revoke');
   assert(calls.indexOf(shift)>position('UPDATE subscriptions SET service_extension_days'),'the queue moves after the new access end is written');
@@ -193,6 +194,31 @@ async function queueMovementCallSites(){
   assert.equal(pull.params[3],result.removedMs);
   assert.equal(pull.params[4],7,'extension days removed with the row are part of the vacated slot');
   assert.equal(pull.params[5],'sub-1','the refunded row never blocks its own queue');
+}
+
+// Every operator write to a paid end locks the customer first and then moves the
+// queue before its transaction ends.
+async function operatorEditsMoveTheQueue(){
+  const queued=require('../src/payments/queued-purchases');
+  const seen=[];
+  const client={query:async(sql,params)=>{seen.push({sql,params});return{rows:sql.includes('::text AS period_end')?[{period_end:'2030-01-01 00:00:00.123456+00',service_extension_days:3}]:[]};}};
+  await queued.lockQueueOwner(client,'cust-1');
+  await queued.moveQueuedPurchases(client,'sub-1',await queued.accessEndBefore(client,'sub-1'));
+  assert(/FROM customers WHERE id=\$1 FOR UPDATE/.test(seen[0].sql));
+  assert.deepStrictEqual(seen[2].params,['sub-1',3,'2030-01-01 00:00:00.123456+00'],'the previous end keeps its microseconds');
+  seen.length=0;await queued.moveQueuedPurchases(client,'sub-1',null);assert.equal(seen.length,0);
+  const count=(file,pattern)=>(read(file).match(pattern)||[]).length;
+  for(const [file,writes] of [
+    ['src/access/admin-customer-individual-action-service.js',4],
+    ['src/access/admin-customer-lifecycle-service.js',1],
+    ['src/customers/bulk-operations.js',3],
+    ['src/customers/operator-bulk-operations.js',1],
+    ['src/payments/legacy-customer-import.js',1]
+  ]){
+    assert.equal(count(file,/queuedPurchases\.lockQueueOwner\(/g),writes,file+': customer lock before each edit');
+    assert.equal(count(file,/queuedPurchases\.accessEndBefore\(/g),writes,file);
+    assert.equal(count(file,/queuedPurchases\.moveQueuedPurchases\(/g),writes,file+': the queue moves with each edit');
+  }
 }
 
 // A very small DOM: enough to run the two browser scripts.

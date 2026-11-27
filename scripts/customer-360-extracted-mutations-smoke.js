@@ -29,6 +29,15 @@ const db={
   transaction:async fn=>fn({
     query:async(sql,params=[])=>{
       txQueries.push({sql:String(sql).replace(/\s+/g,' ').trim(),params});
+      if(String(sql).includes('SELECT id FROM customers')){
+        return {rows:[{id:params[0]}],rowCount:1};
+      }
+      if(String(sql).includes('current_period_end::text AS period_end')){
+        return {rows:[{period_end:'2026-10-08 00:00:00+00',service_extension_days:0}],rowCount:1};
+      }
+      if(String(sql).includes('shift_prepaid_queue_after_end_change')){
+        return {rows:[],rowCount:0};
+      }
       if(String(sql).includes('SELECT id FROM subscriptions')&&String(sql).includes('FOR UPDATE')){
         return {rows:lockAvailable?[{id:params[0]}]:[],rowCount:lockAvailable?1:0};
       }
@@ -145,10 +154,12 @@ async function expiryCases(){
   const result=await individual.resetExpiryToPlan({customerId:'customer',actorUserId:'actor'});
   assert.strictEqual(result.subscriptionId,'subscription-1');
   assert.strictEqual(result.end.toISOString(),fixedEnd.toISOString());
-  assert.strictEqual(txQueries.length,3,'expiry reset must lock, update and audit in one transaction');
-  assert(txQueries[0].sql.includes('FOR UPDATE'),'expiry reset must lock the exact customer subscription before mutation');
-  assert(txQueries[1].sql.includes('service_extension_days=0'),'expiry reset must clear service extensions atomically');
-  assert(txQueries[2].sql.includes("admin.customer.expiry.reset_to_plan"),'expiry reset audit must be part of the same transaction');
+  assert.strictEqual(txQueries.length,6,'expiry reset must lock, update, move the queue and audit in one transaction');
+  assert(txQueries[0].sql.includes('FROM customers')&&txQueries[0].sql.includes('FOR UPDATE'),'expiry reset must lock the customer first');
+  assert(txQueries[1].sql.includes('FOR UPDATE'),'expiry reset must lock the exact customer subscription before mutation');
+  assert(txQueries[3].sql.includes('service_extension_days=0'),'expiry reset must clear service extensions atomically');
+  assert(txQueries[4].sql.includes('shift_prepaid_queue_after_end_change'),'queued purchases must move with the new end');
+  assert(txQueries[5].sql.includes("admin.customer.expiry.reset_to_plan"),'expiry reset audit must be part of the same transaction');
   assert.strictEqual(reconciled,1,'successful expiry reset must reconcile access after commit');
 
   lockAvailable=false;
@@ -158,7 +169,7 @@ async function expiryCases(){
     ()=>individual.resetExpiryToPlan({customerId:'customer',actorUserId:'actor'}),
     /active subscription changed/
   );
-  assert.strictEqual(txQueries.length,1,'lost subscription lock must prevent update and audit');
+  assert.strictEqual(txQueries.length,2,'lost subscription lock must prevent update and audit');
   assert.strictEqual(reconciled,0,'failed expiry reset must not reconcile a mutation that never committed');
 }
 

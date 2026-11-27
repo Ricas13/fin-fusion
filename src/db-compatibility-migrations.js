@@ -28,7 +28,7 @@ const REQUIRED_FUNCTIONS = Object.freeze([
   'public.prepaid_stack_anchors(uuid,uuid,text,jsonb,integer,boolean)',
   'public.prepaid_row_is_queueable(text,text,text,jsonb)',
   'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
-  'public.shift_prepaid_queue_after_extension_change(uuid,integer)'
+  'public.shift_prepaid_queue_after_end_change(uuid,integer,timestamptz)'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {
