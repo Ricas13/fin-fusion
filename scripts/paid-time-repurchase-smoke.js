@@ -298,7 +298,9 @@ async function convertedSettlementFailures(){
     await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'never over unprotected time');
     holding={current:false,unprotectedIds:[]};full=true;
     await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'never into a full plan without a held place');
-    full=false;holding={current:true,unprotectedIds:[]};
+    full=false;holding={current:true,lifetime:true,unprotectedIds:[]};
+    await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'never beside access that became permanent');
+    holding={current:true,unprotectedIds:[]};
     applyError='ACCESS_EXTENSION_PAYMENT_ALREADY_USED';
     await assert.rejects(activate('plan_full'),{code:applyError});assert.equal(inserted(),undefined,'payment identity conflicts never fall back');
     applyError='ACCESS_EXTENSION_TARGET_REPLACED';

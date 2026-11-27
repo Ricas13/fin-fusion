@@ -394,9 +394,10 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     await client.query('ROLLBACK TO SAVEPOINT repurchase_extension');
                     const db = (sql, params) => client.query(sql, params);
                     const holding = await samePlanRepurchase.assessHolding(customerId, planId, { db });
-                    // Never over time that queueing would not protect, and never
-                    // into a full plan for someone who no longer holds a place.
-                    if (holding.unprotectedIds.length) throw error;
+                    // Never over time that queueing would not protect (nothing can
+                    // queue behind lifetime access), and never into a full plan
+                    // for someone who no longer holds a place.
+                    if (holding.lifetime || holding.unprotectedIds.length) throw error;
                     if (!holding.current) {
                         try { await capacity.lockAndAssert(client, planId, plan.name || 'This plan', { excludeCheckoutIntentId: settlementIntent?.id || null }); }
                         catch (capacityError) { if (capacityError?.code === 'PLAN_CAPACITY_EXHAUSTED') throw error; throw capacityError; }

@@ -549,4 +549,5 @@ async function main(){
   console.log('paid-time repurchase DB smoke: ok — queueing, activation replay and races, bought-time movement, refunds, capacity, placement and read-only report');
 }
 
-main().then(()=>getPool().end()).catch(async error=>{console.error(error.stack||error);try{await getPool().end();}catch(_){}process.exit(1);});
+// Exit explicitly: operator actions reconcile access, which may keep handles open.
+main().then(async()=>{await getPool().end();process.exit(0);}).catch(async error=>{console.error(error.stack||error);try{await getPool().end();}catch(_){}process.exit(1);});
