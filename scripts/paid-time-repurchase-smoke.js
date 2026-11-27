@@ -189,6 +189,8 @@ async function repurchaseDecision(){
     await assert.rejects(decide([payment]),{code:'SAME_PLAN_PURCHASE_LIFETIME'});
     assert.equal(await decide([recurring],'subscription'),null,'recurring checkouts are still untouched');
     for(const message of Object.values(samePlanRepurchase.MESSAGES))assert(checkout.CHECKOUT_SAFE.includes(message),'refusals must reach the customer');
+    const {UNPROTECTED}=samePlanRepurchase.MESSAGES;
+    assert(UNPROTECTED.includes('at your current allowance, use Extend')&&UNPROTECTED.includes('To change your allowance, contact support'),'a buyer of a different allowance is not sent to Extend');
     const intents=read('src/payments/checkout-intents.js');
     assert(intents.indexOf('assertPurchaseKeepsPaidTime')>intents.indexOf('await lockCheckoutOwner(client, customerId);')&&intents.indexOf('assertPurchaseKeepsPaidTime')<intents.indexOf('INSERT INTO billing_checkout_intents'),'every intent is checked under the customer lock');
     const zero=read('src/payments/zero-value-checkout.js');
