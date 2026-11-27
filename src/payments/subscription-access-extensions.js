@@ -180,6 +180,11 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
   return{changed:nextTotal!==currentTotal,purchasedDays:activeDays,baseDays,subscription:updated,accessExpiresAt:cursor};
 }
 
+// Purchases queued behind this subscription move with its bought time, in the
+// same transaction. Replays never reach this, so time is not moved twice.
+async function shiftQueuedPurchases(client,subscriptionId,previousExtensionDays){
+  await client.query('SELECT public.shift_prepaid_queue_after_extension_change($1,$2)',[subscriptionId,Math.max(0,Number(previousExtensionDays||0))]);
+}
 async function existingExtension(client,{provider,providerPaymentId,checkoutIntentId}){
   const result=await client.query(`
     SELECT *
@@ -258,6 +263,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
      WHERE id=$1
      RETURNING *
   `,[subscriptionId,days])).rows[0];
+  await shiftQueuedPurchases(client,subscriptionId,replayTarget?.service_extension_days);
   await client.query(`
     INSERT INTO audit_log(action,entity_type,entity_id,metadata)
     VALUES('subscription.access_extension.purchase','subscription',$1,$2::jsonb)
@@ -278,14 +284,23 @@ async function extensionIdentity(provider,providerPaymentId){
 async function revokeByProviderPayment({provider,providerPaymentId,customerId=null,reason='Provider payment was reversed',reference=null}){
   provider=cleanProvider(provider);providerPaymentId=cleanReference(providerPaymentId);
   return transaction(async client=>{
+    // Moving queued purchases needs the customer row. Activation takes it before
+    // the subscription, so do the same whenever there is anything to move.
+    await client.query(`
+      SELECT c.id FROM customers c
+      JOIN subscription_access_extensions e ON e.customer_id=c.id
+      WHERE e.provider=$1 AND e.provider_payment_id=$2
+        AND EXISTS(SELECT 1 FROM subscriptions q WHERE q.customer_id=c.id AND q.superseded_by IS NULL AND q.starts_at>NOW())
+      FOR UPDATE OF c
+    `,[provider,providerPaymentId]);
     // All purchase, renewal and reversal paths lock the parent first. Locking
     // an extension first deadlocks concurrent refunds against recomputation.
-    await client.query(`
-      SELECT s.id FROM subscriptions s
+    const parent=(await client.query(`
+      SELECT s.id,s.service_extension_days FROM subscriptions s
       JOIN subscription_access_extensions e ON e.subscription_id=s.id
       WHERE e.provider=$1 AND e.provider_payment_id=$2
       FOR UPDATE OF s
-    `,[provider,providerPaymentId]);
+    `,[provider,providerPaymentId])).rows[0]||null;
     const extension=(await client.query(`
       SELECT * FROM subscription_access_extensions
        WHERE provider=$1 AND provider_payment_id=$2
@@ -310,6 +325,7 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
     // change the applied day-count of every later month/6-month/year extension,
     // so never subtract this row's historical purchased_days in isolation.
     const recomputed=await recomputeActivePurchasedDaysTx(client,extension.subscription_id,extension.customer_id);
+    await shiftQueuedPurchases(client,extension.subscription_id,parent?.service_extension_days);
     await client.query(`
       INSERT INTO audit_log(action,entity_type,entity_id,metadata)
       VALUES('subscription.access_extension.revoke','subscription',$1,$2::jsonb)

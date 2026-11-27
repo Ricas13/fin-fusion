@@ -13,6 +13,7 @@ const intents=require('../payments/checkout-intents');
 const discounts=require('../payments/discounts');
 const zeroValueCheckout=require('../payments/zero-value-checkout');
 const planChange=require('../payments/customer-plan-change');
+const samePlanRepurchase=require('../payments/same-plan-repurchase');
 const serviceScope=require('../entitlements/service-scope');
 const commerce=require('../payments/commerce-control');
 const serviceCreditReservations=require('../payments/service-credit-reservations');
@@ -100,6 +101,29 @@ async function existingRecurringReplacementOption(req,provider,planCode,currency
   const kind=planChange.normalizedKind(target,mapping),requestedQuantity=planChange.mappingQuantity(target,mapping,quantity),currentQuantity=planChange.subscriptionAccessQuantity(current,kind);
   return requestedQuantity<=currentQuantity?mapping:null;
 }
+function wantsServiceCredit(req){return['on','true','1','yes'].includes(String(req.body.applyServiceCredit||'').toLowerCase());}
+// A one-off repurchase of the current plan is normally just queued behind the
+// remaining paid time. It becomes an extension only when queueing cannot do it:
+// the current row would not be queued behind (so the new purchase would run on
+// top of it), or the plan is full and only the holder's own place can be used.
+// Anything uncertain keeps the direct purchase; this must never refuse one.
+async function repurchaseAsExtension(req,provider,planCode,quantity,requested,options){
+ try{
+  const customerId=req.session?.customerId;
+  if(!customerId||String(req.body.discountCode||'').trim()||wantsServiceCredit(req))return null;
+  const payable=options.find(option=>option.checkout_mode==='payment');
+  const oneOff=requested==='payment'||(!requested&&options.length===1&&Boolean(payable));
+  if(!oneOff)return null;
+  const found=await query('SELECT * FROM plans WHERE code=$1 LIMIT 1',[planCode]);
+  const assessment=found.rowCount?await samePlanRepurchase.assessRepurchase(customerId,found.rows[0]):null;
+  if(!assessment||(payable&&assessment.queueProtects))return null;
+  let option=payable||null;
+  if(!option&&!options.length)option=(await providerPricing.getExtensionOptions(planCode,provider,quantity)).find(row=>row.checkout_mode==='payment')||null;
+  if(!option)return null;
+  await validateExtensionChoice(customerId,assessment.subscriptionId,option,option);
+  return{subscriptionId:assessment.subscriptionId,option};
+ }catch(error){console.warn('Same-plan repurchase stays a direct purchase:',error.message);return null;}
+}
 async function withMediaLocation(req,choice){
  if(choice.extensionSubscriptionId)return choice;
  const requested=String(req.body.mediaLocation||'').trim()||null;
@@ -117,8 +141,11 @@ async function chooseOrResolve(req,res,provider){
  if(!csrf.verify(req))throw new Error('Invalid or expired security token');
  await commerce.assertOpen();
  const planCode=String(req.body.planCode||'').trim();if(!planCode)throw new Error('Plan is required');
- const currency=await requestedCurrency(req),quantity=requestedAccessQuantity(req),extensionSubscriptionId=String(req.body.extensionSubscriptionId||'').trim()||null,requested=extensionSubscriptionId?'payment':(['payment','subscription'].includes(req.body.checkoutMode)?req.body.checkoutMode:null);
+ const currency=await requestedCurrency(req),quantity=requestedAccessQuantity(req);
+ let extensionSubscriptionId=String(req.body.extensionSubscriptionId||'').trim()||null,requested=extensionSubscriptionId?'payment':(['payment','subscription'].includes(req.body.checkoutMode)?req.body.checkoutMode:null);
  let options=await providerPricing.getProviderOptions(planCode,provider,currency,quantity);
+ if(extensionSubscriptionId&&!options.length)options=await providerPricing.getExtensionOptions(planCode,provider,quantity);
+ if(!extensionSubscriptionId){const repurchase=await repurchaseAsExtension(req,provider,planCode,quantity,requested,options);if(repurchase){extensionSubscriptionId=repurchase.subscriptionId;requested='payment';options=[repurchase.option];}}
  if(extensionSubscriptionId&&options.length&&!options.some(option=>option.checkout_mode==='payment')){
    const priced=options[0];
    options=[{...priced,checkout_mode:'payment',external_id:null,provider_mapping_id:null}];
@@ -192,7 +219,7 @@ async function begin(req,res,provider){
  const choice=await chooseOrResolve(req,res,provider);if(!choice||res.headersSent)return null;
  if(choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim())throw new Error('Promo codes are not available for subscription extensions.');
  const resumed=await resumeExistingCheckout(req.session.customerId,provider,choice);if(resumed)return resumed;
- const wantsCredit=['on','true','1','yes'].includes(String(req.body.applyServiceCredit||'').toLowerCase());
+ const wantsCredit=wantsServiceCredit(req);
  if(choice.extensionSubscriptionId&&wantsCredit)throw new Error('Service credit cannot be used for a same-plan access extension.');
  if(wantsCredit&&provider==='paypal'&&choice.mode==='subscription')throw new Error('Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.');
  if(wantsCredit&&provider==='plisio')throw new Error('Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.');
