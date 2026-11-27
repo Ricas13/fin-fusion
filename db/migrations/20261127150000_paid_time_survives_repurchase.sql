@@ -293,11 +293,8 @@ BEGIN
     RETURN 0;
   END IF;
 
-  -- Same order as an insert: customer row, then the stacking lock. NO KEY
-  -- UPDATE serialises with every FOR UPDATE holder, but not with the key-share
-  -- lock a foreign key takes: a refund incident already holds that when its
-  -- trigger gets here, and two of them must not deadlock upgrading it.
-  PERFORM 1 FROM customers WHERE id=p_customer FOR NO KEY UPDATE;
+  -- Same order as an insert: customer row, then the stacking lock.
+  PERFORM 1 FROM customers WHERE id=p_customer FOR UPDATE;
   PERFORM pg_advisory_xact_lock(hashtextextended(p_customer::text,0));
 
   FOR queued IN
@@ -407,7 +404,7 @@ BEGIN
     );
   END IF;
 
-  PERFORM 1 FROM customers WHERE id=anchor.customer_id FOR NO KEY UPDATE;
+  PERFORM 1 FROM customers WHERE id=anchor.customer_id FOR UPDATE;
   PERFORM pg_advisory_xact_lock(hashtextextended(anchor.customer_id::text,0));
   moved_ids:=ARRAY[anchor.id];
 
@@ -477,7 +474,9 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- One lock order everywhere: the customer, then the subscription.
+  -- One lock order everywhere: the customer, then the subscription. Already
+  -- held since the before-insert guard below ran; repeated so that this function
+  -- does not depend on it.
   PERFORM 1 FROM customers
    WHERE id=(
      SELECT s.customer_id FROM subscriptions s
@@ -488,7 +487,7 @@ BEGIN
       ORDER BY s.created_at DESC
       LIMIT 1
    )
-   FOR NO KEY UPDATE;
+   FOR UPDATE;
 
   SELECT s.* INTO refunded
   FROM subscriptions s
@@ -525,6 +524,72 @@ BEGIN
   );
 
   RETURN NEW;
+END;
+$$;
+
+-- The cash-basis guard of 20260829201000, which is the one BEFORE INSERT
+-- trigger on payment_incidents, now takes the customer lock first. A full refund
+-- of a one-off payment must lock the customer before the row exists: its foreign
+-- key takes a key-share lock on the customer, the reconciler then rewrites live
+-- subscriptions, and aa_serialize_customer_commercial_activation asks for FOR
+-- UPDATE. Two refund events each holding the key-share lock deadlock there.
+-- Updates need no lock: the reconciler runs after INSERT only. Everything after
+-- the lock block is unchanged. Replacing the function needs no trigger DDL and
+-- also covers the previous web generation as soon as this commits.
+CREATE OR REPLACE FUNCTION enforce_provider_refund_cash_basis()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    provider_paid_text text;
+    provider_paid bigint;
+BEGIN
+    -- lock-before-insert begin
+    IF TG_OP='INSERT' AND NEW.incident_type='refund' THEN
+        IF COALESCE((NEW.metadata->>'fullRefund')::boolean,FALSE)
+           AND NEW.provider_subscription_id IS NOT NULL
+           AND NOT (NEW.provider='stripe' AND NEW.provider_subscription_id ~* '^sub_')
+           AND NOT (NEW.provider='paypal' AND NEW.provider_subscription_id ~* '^I-') THEN
+            PERFORM 1 FROM public.customers
+             WHERE id IN (
+               SELECT NEW.customer_id
+               UNION
+               SELECT s.customer_id FROM public.subscriptions s
+                WHERE s.source=NEW.provider
+                  AND s.provider_subscription_id=NEW.provider_subscription_id
+             )
+             ORDER BY id
+             FOR UPDATE;
+        END IF;
+    END IF;
+    -- lock-before-insert end
+
+    IF NEW.incident_type <> 'refund' OR NEW.amount_minor IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    provider_paid_text := COALESCE(
+        NEW.metadata->>'providerPaidMinor',
+        NEW.metadata->>'originalAmountMinor'
+    );
+
+    IF provider_paid_text IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    IF provider_paid_text !~ '^[0-9]+$' THEN
+        RAISE EXCEPTION 'Refund provider-paid amount must be a non-negative integer';
+    END IF;
+
+    provider_paid := provider_paid_text::bigint;
+    IF NEW.amount_minor < 0 THEN
+        RAISE EXCEPTION 'Refund amount cannot be negative';
+    END IF;
+    IF NEW.amount_minor > provider_paid THEN
+        RAISE EXCEPTION 'Cash refund (%) exceeds money paid through provider (%); affiliate/service credit is not cash-refundable', NEW.amount_minor, provider_paid;
+    END IF;
+
+    RETURN NEW;
 END;
 $$;
 

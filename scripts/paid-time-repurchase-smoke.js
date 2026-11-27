@@ -457,11 +457,36 @@ function schemaGuard(){
   check('docs/paid-time-overlap-report.sql',{s:['subscriptions'],p:['plans'],pi:['payment_incidents'],al:['audit_log'],c:['customers']});
 }
 
+const CASH_BASIS='20260829201000_provider_refund_cash_basis.sql';
+function cashBasisFunction(sql){
+  const found=sql.replace(/\r\n/g,'\n').match(/CREATE OR REPLACE FUNCTION (?:public\.)?enforce_provider_refund_cash_basis\(\)[\s\S]*?\n\$\$;/);
+  assert(found,'cash-basis function not found');
+  return found[0];
+}
+// A full-refund incident must hold the customer lock before its foreign key
+// takes a key-share lock on the same row, or two of them deadlock.
+function refundInsertLocksTheCustomerFirst(source){
+  const migration=source.replace(/\r\n/g,'\n');
+  const replaced=cashBasisFunction(migration),original=cashBasisFunction(read('db/migrations/'+CASH_BASIS));
+  const lock=replaced.match(/ {4}-- lock-before-insert begin\n([\s\S]*?) {4}-- lock-before-insert end\n\n/);
+  assert(lock,'lock block not found');
+  assert.equal(replaced.replace(lock[0],'').replace('FUNCTION enforce_','FUNCTION public.enforce_'),original,'the cash-basis rules must stay exactly as they were');
+  assert(replaced.indexOf(lock[0])<replaced.indexOf('NEW.amount_minor IS NULL'),'the lock comes before every early return');
+  assert(/TG_OP='INSERT' AND NEW\.incident_type='refund'/.test(lock[1])&&/ORDER BY id\s+FOR UPDATE;/.test(lock[1]));
+  for(const part of ["~* '^sub_'","~* '^I-'",'SELECT NEW.customer_id','s.provider_subscription_id=NEW.provider_subscription_id'])assert(lock[1].includes(part),part);
+  const customerLocks=migration.match(/FROM (?:public\.)?customers\b[^;]*?FOR [A-Z ]*(?:UPDATE|SHARE);/g)||[];
+  assert.equal(customerLocks.length,4);
+  assert(customerLocks.every(text=>/(?<!KEY )FOR UPDATE;$/.test(text)),'a weaker customer lock is upgraded by the activation trigger');
+  // The repeatable migration is skipped once applied, so a later definition of
+  // this function would silently drop the lock.
+  const definers=fs.readdirSync(path.join(__dirname,'..','db','migrations')).sort()
+    .filter(file=>/FUNCTION\s+(?:public\.)?enforce_provider_refund_cash_basis\s*\(\)\s*RETURNS/i.test(read('db/migrations/'+file)));
+  assert.deepStrictEqual(definers,[CASH_BASIS,MIGRATION]);
+}
+
 function contracts(){
   const migration=read(`db/migrations/${MIGRATION}`),report=read('docs/paid-time-overlap-report.sql');
-  const customerLocks=migration.match(/FROM customers\s+WHERE[\s\S]*?FOR [A-Z ]*UPDATE;/g)||[];
-  assert.equal(customerLocks.length,3);
-  assert(customerLocks.every(lock=>lock.endsWith('FOR NO KEY UPDATE;')),'trigger paths must not upgrade the foreign-key lock to FOR UPDATE');
+  refundInsertLocksTheCustomerFirst(migration);
   assert(compatibility.isRepeatableCompatibilityMigration(MIGRATION),'the migration must stay rolling-compatible');
   assert(/^BEGIN;$/m.test(migration)&&/^COMMIT;$/m.test(migration));
   const statementsOnly=migration.replace(/--.*$/gm,'');
@@ -473,10 +498,12 @@ function contracts(){
   // migrations that every fresh install applies first.
   for(const [file,trigger,call] of [
     ['20260829202000_prepaid_access_stacking.sql','trg_stack_prepaid_subscription_window','BEFORE INSERT ON subscriptions\nFOR EACH ROW\nEXECUTE FUNCTION stack_prepaid_subscription_window();'],
-    ['20260829212000_prepaid_refund_reconciliation.sql','trg_reconcile_future_prepaid_full_refund','AFTER INSERT ON payment_incidents\nFOR EACH ROW\nEXECUTE FUNCTION reconcile_future_prepaid_full_refund();']
+    ['20260829212000_prepaid_refund_reconciliation.sql','trg_reconcile_future_prepaid_full_refund','AFTER INSERT ON payment_incidents\nFOR EACH ROW\nEXECUTE FUNCTION reconcile_future_prepaid_full_refund();'],
+    [CASH_BASIS,'payment_incidents_provider_refund_cash_basis','BEFORE INSERT OR UPDATE OF amount_minor, metadata, incident_type\nON payment_incidents\nFOR EACH ROW\nEXECUTE FUNCTION public.enforce_provider_refund_cash_basis();']
   ])assert(read('db/migrations/'+file).includes('CREATE TRIGGER '+trigger+'\n'+call),trigger+' must still be installed by '+file);
   assert(migration.includes('pg_advisory_xact_lock(hashtextextended(NEW.customer_id::text,0))'),'stacking keeps the same serialization lock');
-  assert(!/RAISE\s+EXCEPTION/i.test(migration),'nothing here may start refusing a paid activation');
+  // The only refusals are the refund cash-basis ones, copied unchanged.
+  assert(!/RAISE\s+EXCEPTION/i.test(migration.replace(cashBasisFunction(migration),'')),'nothing here may start refusing a paid activation');
   assert(migration.includes("'fully_discounted_local'"));
   // Stacking, pulling and pushing share one anchor definition.
   assert.equal((migration.match(/FROM public\.prepaid_stack_anchors\(/g)||[]).length,3);
