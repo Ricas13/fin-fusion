@@ -1,9 +1,15 @@
 BEGIN;
 
+-- Nothing here changes a table or a trigger. Give up quickly rather than queue
+-- behind (and in front of) live traffic if any catalog lock is unavailable.
+SET LOCAL lock_timeout = '5s';
+
 -- A new one-off purchase must not run on top of paid time the customer still
 -- holds, and moving queued purchases (refunds, bought extensions) must never
 -- create such an overlap either.
--- Rolling-compatible and repeatable: functions only, no table changes.
+-- Rolling-compatible and repeatable: functions only. The stacking and refund
+-- triggers created by 20260829202000 and 20260829212000 call the replaced
+-- functions, so no trigger is dropped or created on a live table.
 
 CREATE OR REPLACE FUNCTION public.prepaid_lanes_overlap(p_left text,p_right text)
 RETURNS boolean
@@ -84,8 +90,8 @@ AS $$
   ,FALSE)
 $$;
 
--- Runs after the snapshot, billing-mode, free-tier and money-loss triggers
--- (BEFORE triggers fire in name order). Keep the trigger name.
+-- Called by trg_stack_prepaid_subscription_window, which runs after the
+-- snapshot, billing-mode, free-tier and money-loss triggers (name order).
 -- This runs at activation, after payment: it only moves the window, never refuses.
 CREATE OR REPLACE FUNCTION stack_prepaid_subscription_window()
 RETURNS trigger
@@ -171,12 +177,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
-DROP TRIGGER IF EXISTS trg_stack_prepaid_subscription_window ON subscriptions;
-CREATE TRIGGER trg_stack_prepaid_subscription_window
-BEFORE INSERT ON subscriptions
-FOR EACH ROW
-EXECUTE FUNCTION stack_prepaid_subscription_window();
 
 -- Move queued purchases earlier after paid time ahead of them was removed.
 -- Each row moves by at most the removed span, and never to before now, before

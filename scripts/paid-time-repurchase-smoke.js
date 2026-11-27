@@ -306,8 +306,17 @@ function contracts(){
   const migration=read(`db/migrations/${MIGRATION}`),report=read('docs/paid-time-overlap-report.sql');
   assert(compatibility.isRepeatableCompatibilityMigration(MIGRATION),'the migration must stay rolling-compatible');
   assert(/^BEGIN;$/m.test(migration)&&/^COMMIT;$/m.test(migration));
-  assert(!/\b(ALTER TABLE|DROP TABLE|CREATE TABLE|DROP FUNCTION)\b/i.test(migration),'functions and one trigger only, safe to re-run');
-  assert(migration.includes('CREATE TRIGGER trg_stack_prepaid_subscription_window'),'trigger name fixes its order after the normalising triggers');
+  const statementsOnly=migration.replace(/--.*$/gm,'');
+  assert(!/\b(ALTER|DROP|CREATE)\s+(TABLE|TRIGGER|INDEX)\b/i.test(statementsOnly),'no table or trigger DDL: it would lock live tables');
+  assert(!/\bDROP FUNCTION\b/i.test(statementsOnly),'functions only, safe to re-run');
+  const timeout=migration.indexOf("SET LOCAL lock_timeout = '5s';");
+  assert(timeout>0&&timeout<migration.indexOf('CREATE OR REPLACE FUNCTION'),'a blocked migration must give up before touching anything');
+  // The triggers that call the replaced functions come from the older, immutable
+  // migrations that every fresh install applies first.
+  for(const [file,trigger,call] of [
+    ['20260829202000_prepaid_access_stacking.sql','trg_stack_prepaid_subscription_window','BEFORE INSERT ON subscriptions\nFOR EACH ROW\nEXECUTE FUNCTION stack_prepaid_subscription_window();'],
+    ['20260829212000_prepaid_refund_reconciliation.sql','trg_reconcile_future_prepaid_full_refund','AFTER INSERT ON payment_incidents\nFOR EACH ROW\nEXECUTE FUNCTION reconcile_future_prepaid_full_refund();']
+  ])assert(read('db/migrations/'+file).includes('CREATE TRIGGER '+trigger+'\n'+call),trigger+' must still be installed by '+file);
   assert(migration.includes('pg_advisory_xact_lock(hashtextextended(NEW.customer_id::text,0))'),'stacking keeps the same serialization lock');
   assert(!/RAISE\s+EXCEPTION/i.test(migration),'nothing here may start refusing a paid activation');
   assert(migration.includes("'fully_discounted_local'"));
