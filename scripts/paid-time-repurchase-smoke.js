@@ -166,6 +166,7 @@ async function queueMovementCallSites(){
   await operatorEditsMoveTheQueue();
   await resumeRenewalIsBlocked();
   await convertedSettlementFailures();
+  await providerUpdatesLockTheCustomerFirst();
 
   const calls=[];
   const end=new Date(Date.now()+10*DAY);
@@ -252,6 +253,15 @@ async function resumeRenewalIsBlocked(){
   assert(require('../src/platform/customer-subscription-actions').SUBSCRIPTION_ACTION_SAFE.includes(queued.RESUME_BLOCKED),'the customer sees why');
   const control=read('src/payments/billing-control.js'),recovery=control.slice(control.indexOf('async function recoverProviderOperation'));
   assert(recovery.indexOf('hasPurchaseQueuedBehind')>0&&recovery.indexOf('hasPurchaseQueuedBehind')<recovery.indexOf('remoteAdapter.resumeRenewal'),'recovery does not resume over a queued purchase either');
+}
+
+async function providerUpdatesLockTheCustomerFirst(){
+  const primitives=require('../src/payments/lifecycle-primitives'),seen=[];
+  transactionClient={query:async(sql,params)=>{seen.push({sql,params});return{rows:[],rowCount:0};}};
+  assert.equal(await primitives.updateProviderSubscription({provider:'stripe',providerSubscriptionId:'sub_1',providerStatus:'active'}),null);
+  assert(/^SELECT id FROM customers WHERE id IN \(SELECT customer_id FROM subscriptions .*ORDER BY id FOR UPDATE$/.test(seen[0].sql),'the customer is locked before the subscription');
+  assert.deepStrictEqual(seen[0].params,['stripe','sub_1']);
+  assert(seen[1].sql.startsWith('UPDATE subscriptions SET status'));
 }
 
 // What happens when a paid repurchase can no longer be applied as an extension.

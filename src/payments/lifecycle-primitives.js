@@ -617,6 +617,10 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
     const status = mapProviderStatus(provider, providerStatus);
     if (!status) console.warn(`Ignoring unknown ${provider} subscription status without changing access state:`, String(providerStatus || 'unknown').slice(0, 120));
     const row = await transaction(async client => {
+        // One lock order everywhere: the customer, then the subscription. The
+        // update alone would lock the row first and the activation trigger the
+        // customer second.
+        await client.query(`SELECT id FROM customers WHERE id IN (SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2) ORDER BY id FOR UPDATE`, [provider, providerSubscriptionId]);
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
         let updated = result.rows[0];
