@@ -150,7 +150,7 @@ async function createIntent({
             // the page and here can sell a purchase that runs over paid time.
             await samePlanRepurchase.assertPurchaseKeepsPaidTime(
                 { customerId, planId, kind: snapshot.kind },
-                { db: (sql, params) => client.query(sql, params) }
+                { db: (sql, params) => client.query(sql, params), transactional: true }
             );
         }
         if (snapshot.kind === 'subscription_extension') {

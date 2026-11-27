@@ -51,7 +51,7 @@ async function activateFullyDiscountedPayment({customerId,intentId,nonce,provide
             // No money has moved, so a purchase that would run over paid time is
             // still refused here (a renewal may have resumed since the intent).
             await samePlanRepurchase.assertPurchaseKeepsPaidTime(
-                {customerId,planId:plan.id,kind:snapshot.kind},{db:(sql,params)=>client.query(sql,params)}
+                {customerId,planId:plan.id,kind:snapshot.kind},{db:(sql,params)=>client.query(sql,params),transactional:true}
             );
             await capacity.lockAndAssert(client,plan.id,snapshot.planName||plan.name||'This plan',{
                 excludeCheckoutIntentId:intent.id,

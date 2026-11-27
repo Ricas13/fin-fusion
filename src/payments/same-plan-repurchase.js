@@ -61,12 +61,69 @@ async function assessHolding(customerId,planId,{db=query}={}){
   };
 }
 
+// Only for when the assessment itself failed: does the buyer have anything to
+// lose? Plain SQL without the paid-time functions, whose absence is a likely
+// reason for that failure. A direct purchase is refused when there is live paid
+// time on this plan, an extension only when that access never ends, and anybody
+// else is not refused. If even this cannot be answered, nothing is sold.
+async function assertNothingToProtect(customerId,planId,kind,{db=query}={}){
+  let rows;
+  try{
+    rows=(await db(`
+      SELECT (s.current_period_end>=NOW()+INTERVAL '20 years' OR o.subscription_id IS NOT NULL) AS lifetime
+        FROM subscriptions s
+        JOIN plans p ON p.id=s.plan_id
+        LEFT JOIN customer_entitlement_overrides o
+          ON o.customer_id=s.customer_id AND o.subscription_id=s.id AND o.permanent_access=TRUE AND o.revoked_at IS NULL
+       WHERE s.customer_id=$1 AND s.plan_id=$2
+         AND s.superseded_by IS NULL AND s.refund_terminated_at IS NULL
+         AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(p.is_free_tier,FALSE)=FALSE
+         AND p.price_minor>0 AND p.billing_interval<>'trial'
+         AND s.starts_at<=NOW()
+         AND (
+           o.subscription_id IS NOT NULL
+           OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+           OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+               AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW())
+         )
+         -- A renewal that is not being paid is not paid time.
+         AND NOT (
+           s.status IN('past_due','paused','trialing')
+           AND COALESCE(
+             (s.source IN ('stripe','paypal') AND s.billing_mode='subscription')
+             OR (s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_')
+             OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-')
+           ,FALSE)
+         )
+    `,[customerId,planId])).rows;
+  }catch(error){
+    console.warn('Current paid time could not be checked:',error.message);
+    throw refusal('UNVERIFIED');
+  }
+  if(kind==='direct_plan'?rows.length:rows.some(row=>row.lifetime))throw refusal('UNVERIFIED');
+}
+
 // The last word before money: a direct one-off purchase may not be created over
 // time it cannot be queued behind. Extensions add to that time and are allowed.
 // Neither buys anything for somebody whose access to the plan never ends.
-async function assertPurchaseKeepsPaidTime({customerId,planId,kind},{db=query}={}){
+// transactional: db runs inside an open transaction, which a failed statement
+// would otherwise leave unusable for the checkout that may still go ahead.
+async function assertPurchaseKeepsPaidTime({customerId,planId,kind},{db=query,transactional=false}={}){
   if(kind!=='direct_plan'&&kind!=='subscription_extension')return;
-  const holding=await assessHolding(customerId,planId,{db});
+  let holding;
+  try{
+    if(transactional)await db('SAVEPOINT paid_time_check');
+    holding=await assessHolding(customerId,planId,{db});
+    if(transactional)await db('RELEASE SAVEPOINT paid_time_check');
+  }catch(error){
+    console.warn('Current access could not be assessed before checkout:',error.message);
+    if(transactional){
+      try{await db('ROLLBACK TO SAVEPOINT paid_time_check');}
+      catch(_){throw refusal('UNVERIFIED');}
+    }
+    await assertNothingToProtect(customerId,planId,kind,{db});
+    return;
+  }
   if(holding.lifetime)throw refusal('LIFETIME');
   if(kind==='direct_plan'&&holding.unprotectedIds.length)throw refusal('UNPROTECTED');
 }
@@ -122,4 +179,4 @@ async function extensionTarget(customerId,plan){
   return{subscriptionId};
 }
 
-module.exports={MESSAGES,refusal,assessHolding,assertPurchaseKeepsPaidTime,currentPaidSubscription,extensionTarget};
+module.exports={MESSAGES,refusal,assessHolding,assertNothingToProtect,assertPurchaseKeepsPaidTime,currentPaidSubscription,extensionTarget};

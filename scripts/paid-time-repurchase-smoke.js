@@ -82,7 +82,43 @@ async function currentHolderRules(){
     await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'subscription_extension'},{db});
     await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db:async()=>({rows:[rows[0]]})});
     await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db:async()=>({rows:[]})});
+    await failedAssessmentRefusesOnlyHolders();
   }finally{subscriptionState.effectiveSubscription=original;}
+}
+
+// An assessment that errors refuses only a buyer with live paid time on the plan.
+async function failedAssessmentRefusesOnlyHolders(){
+  const warn=console.warn;
+  let probe,statements;
+  const db=async sql=>{
+    statements.push(sql);
+    if(sql.includes('public.prepaid_'))throw new Error('function public.prepaid_paid_time(uuid) does not exist');
+    if(sql.includes('SAVEPOINT'))return{rows:[]};
+    assert(sql.includes('customer_entitlement_overrides')&&!sql.includes('public.'),'the probe needs no database function');
+    if(probe instanceof Error)throw probe;
+    return{rows:probe};
+  };
+  const check=(kind,transactional=false)=>{statements=[];return samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind},{db,transactional});};
+  const unverified={code:'SAME_PLAN_PURCHASE_UNVERIFIED'};
+  try{
+    console.warn=()=>{};
+    probe=[];
+    for(const kind of ['direct_plan','subscription_extension'])await check(kind);
+    await check('direct_plan',true);
+    assert.deepStrictEqual(statements.map(sql=>sql.includes('SAVEPOINT')?sql:sql.includes('public.prepaid_')?'assess':'probe'),
+      ['SAVEPOINT paid_time_check','assess','ROLLBACK TO SAVEPOINT paid_time_check','probe'],'the transaction stays usable for the checkout');
+    probe=[{lifetime:false}];
+    await assert.rejects(check('direct_plan'),unverified,'a real holder is not charged unverified');
+    await assert.rejects(check('direct_plan',true),unverified);
+    await check('subscription_extension');
+    probe=[{lifetime:true}];
+    await assert.rejects(check('subscription_extension'),unverified);
+    probe=new Error('connection lost');
+    for(const kind of ['direct_plan','subscription_extension'])await assert.rejects(check(kind),unverified,'nothing is sold when nothing can be checked');
+    const healthy=[];
+    await samePlanRepurchase.assertPurchaseKeepsPaidTime({customerId:'cust-1',planId:'plan-1',kind:'direct_plan'},{db:async sql=>{healthy.push(sql);return{rows:[]};},transactional:true});
+    assert.equal(healthy.length,3);assert.equal(healthy[2],'RELEASE SAVEPOINT paid_time_check');
+  }finally{console.warn=warn;}
 }
 
 async function repurchaseDecision(){
@@ -123,6 +159,15 @@ async function repurchaseDecision(){
     samePlanRepurchase.extensionTarget=async()=>target;
     samePlanRepurchase.assessHolding=async()=>{throw new Error('function does not exist');};
     await assert.rejects(decide([payment]),{code:'SAME_PLAN_PURCHASE_UNVERIFIED'},'an unverifiable holder is refused before money');
+    const lookups=queryHandler;
+    let probed=[{lifetime:false}];
+    queryHandler=async(sql,params)=>sql.includes('customer_entitlement_overrides')?{rows:probed,rowCount:probed.length}:lookups(sql,params);
+    await assert.rejects(decide([payment]),{code:'SAME_PLAN_PURCHASE_UNVERIFIED'},'a real holder is refused');
+    probed=[];
+    assert.equal(await decide([payment]),null,'a buyer with nothing to lose is not refused because the assessment failed');
+    queryHandler=async()=>{throw new Error('database unavailable');};
+    assert.equal(await decide([payment]),null,'a failed plan lookup is left to checkout creation');
+    queryHandler=lookups;
     samePlanRepurchase.assessHolding=async()=>holding;
 
     // Protected holders and buyers without current time are never refused.

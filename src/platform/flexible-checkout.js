@@ -125,11 +125,16 @@ async function repurchaseAsExtension(req,provider,planCode,quantity,requested,op
  const payable=options.find(option=>option.checkout_mode==='payment');
  if(!(requested==='payment'||(!requested&&options.length===1&&Boolean(payable))))return null;
  let plan,holding;
- try{
-  plan=(await query('SELECT * FROM plans WHERE code=$1 LIMIT 1',[planCode])).rows[0];
-  if(!plan)return null;
-  holding=await samePlanRepurchase.assessHolding(customerId,plan.id);
- }catch(error){console.warn('Current access could not be checked before checkout:',error.message);throw samePlanRepurchase.refusal('UNVERIFIED');}
+ // A failed lookup is not a refusal: checkout creation checks again under the customer lock.
+ try{plan=(await query('SELECT * FROM plans WHERE code=$1 LIMIT 1',[planCode])).rows[0];}
+ catch(error){console.warn('Plan could not be read before checkout:',error.message);return null;}
+ if(!plan)return null;
+ try{holding=await samePlanRepurchase.assessHolding(customerId,plan.id);}
+ catch(error){
+  console.warn('Current access could not be assessed before checkout:',error.message);
+  await samePlanRepurchase.assertNothingToProtect(customerId,plan.id,'direct_plan');
+  return null;
+ }
  if(holding.lifetime)throw samePlanRepurchase.refusal('LIFETIME');
  if(!holding.current)return null;
  const mustProtect=holding.unprotectedIds.length>0;
