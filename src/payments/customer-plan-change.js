@@ -147,6 +147,7 @@ async function beginImmediatePlanOperation(customerId,subscriptionId,request){
 }
 async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null,mediaLocation=null,mediaServer=null}={}){
     mapping=mapping||await replacementMapping(current,target,'stripe',currency,accessQuantity);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
+    if(billingMode.currencyOf(current)&&!billingMode.sameCurrency(current,mapping))throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
     const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),targetKind=normalizedKind(target,mapping),targetQuantity=mappingQuantity(target,mapping,accessQuantity),currentQuantity=subscriptionAccessQuantity(current,targetKind),samePlan=String(current.plan_id)===String(target.id),reserveCapacity=!samePlan||(targetKind==='households'&&targetQuantity>currentQuantity);
     const op=await beginImmediatePlanOperation(current.customer_id,subscriptionId,{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity,targetVariantKind:targetKind,targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration),targetMediaLocation:mediaLocation||null,targetMediaServerId:mediaServer?.id||null});
     let providerMutationAttempted=false,placementReservation=null;
@@ -212,7 +213,7 @@ async function createLocalChange(customerId,current,target,provider,actorUserId=
 // Stripe cannot schedule two different currencies on one Customer. A fresh
 // customer-authorized checkout after the existing paid term is the safe path.
 async function recordStripeCurrencyChange(customerId,current,target,mapping,actorUserId=null,options={}){
-    if(billingMode.sameCurrency(current,target)||!current.cancel_at_period_end||!mapping?.external_id||current.source!=='stripe'||!billingMode.validRecurringProviderReference(current))throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
+    if(billingMode.sameCurrency(current,target)||!current.cancel_at_period_end||!mapping?.external_id||!billingMode.sameCurrency(target,mapping)||current.source!=='stripe'||!billingMode.validRecurringProviderReference(current))throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
     const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);
     const item=remote.items?.data?.[0],end=Number(item?.current_period_end)*1000;
     if(remote.id!==current.provider_subscription_id||remote.status!=='active'||remote.cancel_at_period_end!==true||remote.schedule||remote.items?.data?.length!==1||!Number.isFinite(end)||end!==+new Date(current.current_period_end))throw planChangeRefusal('Stripe has not confirmed the end of your current paid period. Synchronise billing before switching currency.');

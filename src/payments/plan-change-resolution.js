@@ -13,7 +13,7 @@ async function resolveAwaitingCheckout({ customerId, planId, provider = null, pr
                    updated_at=NOW()
              WHERE customer_id=$1
                AND target_plan_id=$2
-               AND (provider='paypal' OR (provider='stripe' AND $3='stripe' AND provider_action_required AND target_price_id=$4 AND EXISTS(
+               AND ((provider='paypal' AND $3='paypal') OR (provider='stripe' AND $3='stripe' AND provider_action_required AND target_price_id=$4 AND EXISTS(
                     SELECT 1 FROM subscriptions s WHERE s.customer_id=$1 AND s.plan_id=$2 AND s.source='stripe'
                     AND s.provider_subscription_id=$5 AND s.status='active' AND s.superseded_by IS NULL
                     AND s.provider_price_id_snapshot=$4 AND s.starts_at>=customer_plan_changes.effective_at)))
