@@ -15,6 +15,7 @@ async function activateOrRollback({
   pendingMessage = 'Access setup has not finished yet.',
   pendingCode = 'UNPAID_ACTIVATION_PENDING',
   onPending = null,
+  retainOnFailure = false,
   isLockTimeout = isLockTimeoutError
 }) {
   // "Pending" means we could not find out whether this access works, so the
@@ -48,11 +49,13 @@ async function activateOrRollback({
     reconcileError = error;
   }
 
-  const ready = await verify(customerId, subscriptionId);
+  let ready;
+  try { ready = await verify(customerId, subscriptionId); }
+  catch (error) { if (retainOnFailure) return pending(error); throw error; }
   if (ready) return { ready, reconcileError: null };
 
   // The reconcile never ran. A missing account proves nothing.
-  if (isLockTimeout(reconcileError)) return pending(reconcileError);
+  if (retainOnFailure || isLockTimeout(reconcileError)) return pending(reconcileError || new Error(missingReason));
 
   const reason = reconcileError?.message || missingReason;
   let outcome;
