@@ -88,7 +88,7 @@ function automationSnapshot(rows) {
     return { ...row, job_key: key, state, intentionallyDisabled };
   });
 
-  const warningStates = new Set(['failed', 'degraded', 'stale', 'missing', 'never_run']);
+  const warningStates = new Set(['failed', 'degraded', 'stale', 'stuck', 'missing', 'never_run']);
   const warnings = critical.filter(row => warningStates.has(row.state) || (row.state === 'disabled' && !row.intentionallyDisabled));
   const healthy = critical.filter(row => row.state === 'healthy').length;
   const running = critical.filter(row => row.state === 'running').length;
@@ -244,7 +244,7 @@ async function freeSnapshot(jobRows) {
       ? '/admin/servers'
       : policy.configurationMissing
         ? '/admin/settings/jellyfin-lifecycle'
-        : (policy.enabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(inactivityState))
+        : (policy.enabled && ['failed','degraded','stale','stuck','missing','unavailable','disabled','never_run'].includes(inactivityState))
           ? '/admin/automation'
           : (cfg.discordFreePlacesDigestEnabled && advertProblemHref)
             ? advertProblemHref
@@ -454,7 +454,7 @@ function freeCard(data = {}) {
     ? `${data.available ?? '—'} available`
     : `${data.used == null ? Math.max(0, Number(data.limit || 0) - Number(data.available || 0) - Number(data.reserved || 0)) : Number(data.used)} / ${data.limit}`;
   const inactivityBad = data.inactivityConfigurationMissing || (
-    data.inactivityEnabled && ['failed','degraded','stale','missing','unavailable','disabled','never_run'].includes(data.inactivityState)
+    data.inactivityEnabled && ['failed','degraded','stale','stuck','missing','unavailable','disabled','never_run'].includes(data.inactivityState)
   );
   const tone = inactivityBad || data.advertConfigurationProblem || data.capacityConfigurationProblem
     ? 'warn'
