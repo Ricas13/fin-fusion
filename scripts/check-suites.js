@@ -268,6 +268,7 @@ module.exports = {
       "node scripts/refund-cash-basis-smoke.js",
       "node scripts/paid-value-preview-smoke.js",
       "node scripts/paid-value-conversion-smoke.js",
+      "node scripts/paid-value-transfer-smoke.js",
       "node scripts/refund-queue-timezone-db-smoke.js",
       "node scripts/provider-financial-state-db-smoke.js",
       "node scripts/payment-history-coverage-timezone-db-smoke.js",
