@@ -59,7 +59,9 @@ async function readEvidence(client,subscriptionId){
        WHEN 'year' THEN (s.starts_at AT TIME ZONE 'UTC')+INTERVAL '1 year'
        ELSE NULL END AS term_matches,
     EXISTS(SELECT 1 FROM customer_entitlement_overrides o WHERE o.customer_id=s.customer_id AND o.subscription_id=s.id AND o.revoked_at IS NULL AND o.permanent_access=TRUE)
-      OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id) AS permanent_or_operator_present,
+      OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+      OR public.subscription_admin_present(s.customer_id,'emby',s.id)
+      OR public.subscription_admin_present(s.customer_id,'stremio',s.id) AS permanent_or_operator_present,
     EXISTS(SELECT 1 FROM subscription_access_extensions e WHERE e.subscription_id=s.id) AS has_extension_history,
     EXISTS(SELECT 1 FROM subscription_time_carryovers c WHERE c.source_subscription_id=s.id OR c.target_subscription_id=s.id) AS has_carry_history,
     EXISTS(SELECT 1 FROM customer_plan_changes pc WHERE pc.current_subscription_id=s.id AND pc.state='pending') AS has_open_plan_change,
@@ -82,13 +84,14 @@ async function readEvidence(client,subscriptionId){
       AND t.metadata->>'providerAuthoritative'='true'
       AND ((s.source='stripe' AND t.provider_reference_id=s.provider_subscription_id
              AND t.transaction_type='charge' AND t.transaction_status IN ('available','pending')
-             AND t.metadata->>'liveStripeSync'='true')
+             AND t.metadata->>'liveStripeSync'='true' AND t.metadata->>'checkoutIntentId'=i.id::text)
         OR (s.source='paypal' AND t.provider_transaction_id=s.provider_subscription_id
              AND t.transaction_status='S' AND t.metadata->>'livePaypal'='true'
-             AND t.metadata->>'providerCaptureStatus'='COMPLETED')
+             AND t.metadata->>'providerCaptureStatus'='COMPLETED' AND t.provider_reference_id=i.provider_checkout_id)
         OR (s.source='plisio' AND t.provider_transaction_id=s.provider_subscription_id
              AND t.transaction_status='completed' AND t.transaction_type='payment'
-             AND t.metadata->>'providerVerified'='true'))
+             AND t.metadata->>'providerVerified'='true' AND t.metadata->>'checkoutIntentId'=i.id::text
+             AND t.provider_transaction_id=i.provider_checkout_id))
   ) pay ON TRUE WHERE s.id=$1
  `,[subscriptionId]);
  return result.rows[0]||null;
