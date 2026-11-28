@@ -20,7 +20,7 @@ assert.deepStrictEqual(contract.capabilities('plisio'), {
   provider: 'plisio',
   recurringLifecycle: false,
   refunds: false,
-  oneTimeRemoteLookup: true
+  oneTimeRemoteLookup: false
 });
 
 assert.deepStrictEqual(contract.state('stripe', 'active'), {

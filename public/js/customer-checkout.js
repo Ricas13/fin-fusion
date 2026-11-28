@@ -5,7 +5,7 @@
       const response=await fetch('/account/checkout/readiness',{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'});
       if(!response.ok)return;
       const readiness=await response.json();
-      for(const provider of ['stripe','paypal','plisio']){
+      for(const provider of ['stripe','paypal']){
         if(readiness?.[provider])continue;
         const elements=new Set([
           ...document.querySelectorAll(`form.checkoutForm[action="/account/checkout/${provider}"]`),
@@ -104,7 +104,7 @@
     previewTimers.set(input,setTimeout(()=>preview(input),350));
   }
 
-  function providerLabel(provider){return provider==='stripe'?'Stripe':provider==='paypal'?'PayPal':'Plisio';}
+  function providerLabel(provider){return provider==='stripe'?'Stripe':provider==='paypal'?'PayPal':'Payment';}
   function buttonClass(provider){return provider==='stripe'?'stripe':provider==='paypal'?'paypal':'primary';}
   function accessLabel(kind,quantity){return kind==='households'?`${quantity} household connection${quantity===1?'':'s'} · unlimited streams & devices`:`${quantity} concurrent stream${quantity===1?'':'s'}`;}
   function checkoutForm(plan,variant,provider,mode,label,separate=false){const card=cardForPlanCode(plan.code),promo=promoCodeForCard(card),mediaLocation=mediaLocationForCard(card);return `<form class="plainForm checkoutForm"${separate?' data-separate-purchase':''} method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(promo)}"><input type="hidden" name="mediaLocation" value="${esc(mediaLocation)}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
@@ -124,7 +124,7 @@
     const unavailable='<span class="button secondary full" aria-disabled="true">Current access allowance</span>';
     if(plan.separatePurchaseSafe!==true||plan.currentProvider)return unavailable;
     if(variant.soldOut)return '<span class="button secondary full" aria-disabled="true">Currently full for this allowance</span>';
-    const providers=['stripe','paypal','plisio'].filter(provider=>availableModes(variant,provider).includes('payment'));
+    const providers=['stripe','paypal'].filter(provider=>availableModes(variant,provider).includes('payment'));
     if(!providers.length)return unavailable;
     return `<div class="paymentNote">Separate purchase: it starts after your current paid time ends. Eligible promo codes can apply to either purchase option.</div>${providers.map(provider=>checkoutForm(plan,variant,provider,'payment',`Buy separately with ${providerLabel(provider)}`,true)).join('')}`;
   }
@@ -138,8 +138,8 @@
       const label=provider==='stripe'?'Update with Stripe':'Record PayPal change';
       return checkoutForm(plan,variant,provider,'subscription',label);
     }
-    const providers=['stripe','paypal','plisio'],parts=[];
-    for(const provider of providers){const modes=availableModes(variant,provider);if(!modes.length)continue;const unique=Array.from(new Set(modes)),mode=unique.length===1?unique[0]:null,label=provider==='plisio'?'Plisio · One-off payment':`Continue with ${providerLabel(provider)}`;parts.push(checkoutForm(plan,variant,provider,mode,label));}
+    const providers=['stripe','paypal'],parts=[];
+    for(const provider of providers){const modes=availableModes(variant,provider);if(!modes.length)continue;const unique=Array.from(new Set(modes)),mode=unique.length===1?unique[0]:null,label=`Continue with ${providerLabel(provider)}`;parts.push(checkoutForm(plan,variant,provider,mode,label));}
     return parts.join('')||'<span class="button secondary full" aria-disabled="true">No payment method available</span>';
   }
   function applyVariant(plan,card,select){

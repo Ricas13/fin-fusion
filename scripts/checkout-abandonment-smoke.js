@@ -63,7 +63,7 @@ async function main() {
     expect(!providerSettings.checkoutReady('stripe', { enabled:false, restrictedKey:'rk_test_example', webhookSecret:'whsec_test' }), 'An explicitly disabled Stripe provider must remain unavailable.');
     expect(providerSettings.checkoutReady('paypal', { enabled:true, clientId:'client', clientSecret:'secret', webhookId:'WH-test' }), 'PayPal should be checkout-ready with credentials and webhook ID.');
     expect(!providerSettings.checkoutReady('paypal', { enabled:true, clientId:'client', clientSecret:'secret', webhookId:'' }), 'PayPal checkout must fail closed without a webhook ID.');
-    expect(providerSettings.checkoutReady('plisio', { enabled:true, secretKey:'secret' }), 'Plisio merchant secret authenticates both checkout and signed callbacks.');
+    expect(!providerSettings.PROVIDERS.includes('plisio'), 'The retired Plisio gateway must not be a configurable provider.');
 
     await intents.consume({ intentId: retried.id, nonce: retried.nonce, state: 'cancelled', scope: 'customer', provider: 'stripe', ownerId: customer.id });
 
@@ -122,7 +122,7 @@ async function main() {
     const stripeWebhook = webhookSource.match(/router\.post\('\/webhooks\/stripe'[\s\S]*?router\.post\('\/webhooks\/paypal'/)?.[0] || '';
     expect(stripeWebhook.includes('stripe.processWebhook(req.body,signature)'), 'Stripe webhook must delegate fulfillment to the Stripe adapter.');
     expect(!stripeWebhook.includes('completeCheckoutOrIncident'), 'Stripe webhook must not run a second local checkout-completion pass.');
-    const paypalWebhook = webhookSource.match(/router\.post\('\/webhooks\/paypal'[\s\S]*?router\.post\('\/webhooks\/plisio'/)?.[0] || '';
+    const paypalWebhook = webhookSource.match(/router\.post\('\/webhooks\/paypal'[\s\S]*?router\.post\('\/webhooks\/jellyfin/)?.[0] || '';
     expect(paypalWebhook.includes('paypal.processWebhook(req.body,req.headers)'), 'PayPal webhook must delegate fulfillment to the PayPal adapter.');
     expect(!paypalWebhook.includes('completeCheckoutOrIncident'), 'PayPal webhook must not run a second local checkout-completion pass.');
     const paypalSource = fs.readFileSync(path.join(root, 'src', 'payments', 'paypal.js'), 'utf8');

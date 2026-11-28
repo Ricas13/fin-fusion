@@ -115,7 +115,7 @@ assert(onboarding.includes('@media(max-width:700px){.stepStrip{grid-template-col
 assert(onboarding.includes('All paid prices use <strong><%=')&&onboarding.includes('The payment provider confirms the final amount before access starts.'),'onboarding must disclose the single portal currency and provider-confirmed final amount');
 assert(onboarding.includes('>Continue with Stripe</button>')&&onboarding.includes('>Continue with PayPal</button>'),'Stripe and PayPal onboarding must stay provider-first');
 assert(!onboarding.includes('Stripe · One-off payment')&&!onboarding.includes('Stripe · Subscription')&&!onboarding.includes('PayPal · One-off payment')&&!onboarding.includes('PayPal · Subscription'),'provider-first onboarding must not restore separate Stripe/PayPal payment-mode buttons');
-assert(onboarding.includes('name="checkoutMode" value="payment"')&&onboarding.includes('Plisio · One-off payment'),'Plisio onboarding must remain explicitly one-off');
+assert(!/plisio/i.test(onboarding),'onboarding must not offer the retired crypto gateway');
 assert(onboarding.includes('data-plan-promo')&&onboarding.includes('data-promo-target'),'promo entry must remain scoped to individual paid plan cards and flow into checkout');
 
 for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans','Other Plans'])assert(dashboard.includes(group),`dashboard Plans & payments grouping missing ${group}`);

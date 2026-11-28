@@ -44,7 +44,7 @@ A normal singleton deployment should show one non-stale, non-draining live insta
 
 ## Payment-provider HTTP deadlines
 
-Native PayPal OAuth and API requests use `src/payments/provider-http.js`. Stripe's SDK client is configured with the same application-level timeout source. Plisio retains its existing explicit 15-second `AbortController` deadline.
+Native PayPal OAuth and API requests use `src/payments/provider-http.js`. Stripe's SDK client is configured with the same application-level timeout source.
 
 The default shared Stripe/PayPal deadline is **15 seconds**. It can be changed globally with `PAYMENT_PROVIDER_HTTP_TIMEOUT_MS` or per provider with `PAYPAL_HTTP_TIMEOUT_MS` / `STRIPE_HTTP_TIMEOUT_MS`. Values are bounded to 50 ms–120 seconds. Provider HTTP responses handled by the shared transport are limited to 1 MiB before JSON parsing.
 

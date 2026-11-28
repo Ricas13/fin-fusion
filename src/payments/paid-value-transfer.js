@@ -73,10 +73,7 @@ async function verifySource(row,evidence,adapters={stripeClient,paypalRequest}){
      order.id===row.intent_provider_checkout_id&&order.status==='COMPLETED'&&captures.length===1&&captures[0].id===ref&&captures[0].status==='COMPLETED',
      'Original PayPal capture is not conclusively paid and unreversed.');
  }else if(row.source==='plisio'){
-   const plisio=require('./plisio');
-   const op=plisio.operationFields(await plisio.getOperation(ref));
-   invariant(op.id===ref&&op.orderNumber===row.intent_id&&op.status==='completed'&&minor(op.sourceAmount)===paid&&currency(op.sourceCurrency)===c,
-     'Original Plisio payment is not conclusively paid and unreversed.');
+   invariant(false,'Original payment was made through a retired crypto provider and can no longer be verified.');
  }else invariant(false,'Unsupported source payment provider.');
 }
 async function candidates(client,customerId,planId,exclude=null){

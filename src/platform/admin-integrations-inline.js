@@ -8,7 +8,7 @@ const operations = require('./operations-settings');
 const runtimeSettings = require('./runtime-settings');
 const { esc } = require('./admin-html');
 
-const PAYMENT_PROVIDERS = Object.freeze(['stripe', 'paypal', 'plisio']);
+const PAYMENT_PROVIDERS = Object.freeze(['stripe', 'paypal']);
 
 function csrfInput(req) {
     return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
@@ -17,7 +17,7 @@ function checked(value) {
     return value === 'on' || value === '1' || value === true;
 }
 function providerLabel(provider) {
-    return ({ stripe: 'Stripe', paypal: 'PayPal', plisio: 'Plisio' })[provider] || 'Payment provider';
+    return ({ stripe: 'Stripe', paypal: 'PayPal' })[provider] || 'Payment provider';
 }
 function returnUrl(message = '', error = '', anchor = '') {
     const params = new URLSearchParams();
@@ -32,29 +32,24 @@ function copyField(value, label, id) {
     return `<label class="integrationInlineField"><span>${esc(label)}</span><div class="copyField"><input id="${esc(id)}" class="input" value="${esc(value)}" readonly><button class="button secondary btn-sm" type="button" data-copy-value="${esc(value)}">Copy</button></div></label>`;
 }
 async function webhookUrls(req) {
-    const [stripe, paypal, plisio] = await Promise.all([
+    const [stripe, paypal] = await Promise.all([
         operations.absoluteUrl(req, '/webhooks/stripe', { requireCanonical: false }),
-        operations.absoluteUrl(req, '/webhooks/paypal', { requireCanonical: false }),
-        operations.absoluteUrl(req, '/webhooks/plisio?json=true', { requireCanonical: false })
+        operations.absoluteUrl(req, '/webhooks/paypal', { requireCanonical: false })
     ]);
-    return { stripe, paypal, plisio };
+    return { stripe, paypal };
 }
 function providerForm(req, provider, status, callbackUrl) {
     const label = providerLabel(provider);
-    const callbackLabel = provider === 'plisio' ? 'Callback URL' : 'Webhook URL';
+    const callbackLabel = 'Webhook URL';
     let fields = '';
     if (provider === 'stripe') {
         fields = `${secretField('restrictedKey', 'Restricted key', status.credentialsConfigured, 'Preferred server credential.')}${secretField('apiKey', 'Secret API key fallback', status.credentialsConfigured, 'Optional fallback credential.')}${secretField('webhookSecret', 'Webhook signing secret', status.webhookConfigured, 'Stripe whsec_… signing secret.')}`;
     } else if (provider === 'paypal') {
         fields = `<label class="integrationInlineField"><span>Environment</span><select class="input" name="environment"><option value="sandbox" ${status.environment !== 'live' ? 'selected' : ''}>Sandbox</option><option value="live" ${status.environment === 'live' ? 'selected' : ''}>Live</option></select></label>${secretField('clientId', 'Client ID', status.credentialsConfigured)}${secretField('clientSecret', 'Client secret', status.credentialsConfigured)}${secretField('webhookId', 'Webhook ID', status.webhookConfigured)}`;
-    } else {
-        fields = secretField('secretKey', 'Merchant SECRET_KEY', status.credentialsConfigured, 'Used for Plisio API calls and signed callback verification.');
     }
-    const callbackHelp = provider === 'plisio'
-        ? 'CAPTAiNFiN verifies the signed callback and then fetches the transaction independently before granting access.'
-        : 'The public provider callback must remain configured for verified payment lifecycle events.';
+    const callbackHelp = 'The public provider callback must remain configured for verified payment lifecycle events.';
     return `<div class="integrationInlinePanel">
-        <div class="integrationInlinePanelHead"><div><strong>${esc(label)} settings</strong><span>Credentials and ${provider === 'plisio' ? 'signed callback' : 'webhook'} stay inside this Connections card.</span></div><form method="post" action="/admin/settings/integrations/payments/${esc(provider)}/test" data-native-submit="true">${csrfInput(req)}<button class="button secondary btn-sm" type="submit" ${status.credentialsConfigured ? '' : 'disabled'}>Test connection</button></form></div>
+        <div class="integrationInlinePanelHead"><div><strong>${esc(label)} settings</strong><span>Credentials and webhook stay inside this Connections card.</span></div><form method="post" action="/admin/settings/integrations/payments/${esc(provider)}/test" data-native-submit="true">${csrfInput(req)}<button class="button secondary btn-sm" type="submit" ${status.credentialsConfigured ? '' : 'disabled'}>Test connection</button></form></div>
         ${copyField(callbackUrl, `${label} ${callbackLabel}`, `connections-${provider}-callback`)}
         <div class="integrationInlineHelp">${esc(callbackHelp)}</div>
         <form class="integrationInlineForm" method="post" action="/admin/settings/integrations/payments/${esc(provider)}" data-native-submit="true">
@@ -133,9 +128,7 @@ function registerRoutes(router) {
             }
             const input = provider === 'stripe'
                 ? { enabled: checked(req.body.enabled), restrictedKey: req.body.restrictedKey, apiKey: req.body.apiKey, webhookSecret: req.body.webhookSecret, clearRestrictedKey: checked(req.body.clear_restrictedKey), clearApiKey: checked(req.body.clear_apiKey), clearWebhookSecret: checked(req.body.clear_webhookSecret) }
-                : provider === 'plisio'
-                    ? { enabled: checked(req.body.enabled), secretKey: req.body.secretKey, clearSecretKey: checked(req.body.clear_secretKey) }
-                    : { enabled: checked(req.body.enabled), environment: req.body.environment, clientId: req.body.clientId, clientSecret: req.body.clientSecret, webhookId: req.body.webhookId, clearClientId: checked(req.body.clear_clientId), clearClientSecret: checked(req.body.clear_clientSecret), clearWebhookId: checked(req.body.clear_webhookId) };
+                : { enabled: checked(req.body.enabled), environment: req.body.environment, clientId: req.body.clientId, clientSecret: req.body.clientSecret, webhookId: req.body.webhookId, clearClientId: checked(req.body.clear_clientId), clearClientSecret: checked(req.body.clear_clientSecret), clearWebhookId: checked(req.body.clear_webhookId) };
             const status = await providerSettings.save(provider, input, req.session.authUserId);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.update','payment_provider',$2,$3::jsonb)`, [req.session.authUserId, provider, JSON.stringify({ enabled: status.enabled, configured: status.configured, webhookConfigured: status.webhookConfigured, environment: status.environment })]);
             return res.redirect(returnUrl(`${providerLabel(provider)} settings saved securely.`, '', `integration-${provider}`));

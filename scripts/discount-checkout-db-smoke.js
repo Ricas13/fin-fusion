@@ -131,7 +131,7 @@ async function extensionPromoInvariant(){
     await query('UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb WHERE id=$1',[intent.id,JSON.stringify(frozen)]);
     return {intent,reservation};
   }
-  for(const provider of ['stripe','paypal','plisio']){
+  for(const provider of ['stripe','paypal','stripe']){
     const {intent,reservation}=await prepare(promo,provider);
     assert.strictEqual(reservation.discountedMinor,750);
     const paymentId=unique(provider==='stripe'?'pi':'capture');
@@ -139,7 +139,7 @@ async function extensionPromoInvariant(){
     await intents.attachProviderCheckout(intent.id,checkoutId);
     const verified=await intents.verifiedProviderContract({provider,providerCheckoutId:checkoutId,ownerId:owner.id,planId:p.id,checkoutMode:'payment',amountMinor:750,currency:'GBP'});
     await intents.completeVerifiedProvider(provider,checkoutId,'completed');
-    const activate=()=>lifecycle.activatePurchase({customerId:owner.id,planId:p.id,provider,providerSubscriptionId:paymentId,providerStatus:provider==='plisio'?'completed':'active',commercialSnapshot:verified.snapshot});
+    const activate=()=>lifecycle.activatePurchase({customerId:owner.id,planId:p.id,provider,providerSubscriptionId:paymentId,providerStatus:'active',commercialSnapshot:verified.snapshot});
     await activate(); await activate();
     const ledger=(await query('SELECT * FROM subscription_access_extensions WHERE checkout_intent_id=$1',[intent.id])).rows;
     assert.strictEqual(ledger.length,1);
@@ -153,8 +153,8 @@ async function extensionPromoInvariant(){
   assert.strictEqual((await query('SELECT redemption_count FROM discount_codes WHERE id=$1',[promo.id])).rows[0].redemption_count,4);
   assert.strictEqual((await query('SELECT COUNT(*)::int n FROM discount_redemptions WHERE subscription_id=$1',[sub.id])).rows[0].n,1);
   await assert.rejects(()=>discounts.validateForCheckout({code:promo.code,planId:p.id,planCode:p.code,customerId:owner.id,currency:'GBP'}),/redemption limit/);
-  const {intent,reservation}=await prepare(free,'plisio');
-  await zeroValue.activateFullyDiscountedPayment({customerId:owner.id,intentId:intent.id,nonce:intent.nonce,provider:'plisio'});
+  const {intent,reservation}=await prepare(free,'paypal');
+  await zeroValue.activateFullyDiscountedPayment({customerId:owner.id,intentId:intent.id,nonce:intent.nonce,provider:'paypal'});
   const all=(await query('SELECT purchased_days FROM subscription_access_extensions WHERE subscription_id=$1 ORDER BY created_at,id',[sub.id])).rows;
   assert.strictEqual(all.length,4);
   assert.deepStrictEqual(all.map(e=>e.purchased_days),[28,28,31,30],'full calendar terms irrespective of promo');

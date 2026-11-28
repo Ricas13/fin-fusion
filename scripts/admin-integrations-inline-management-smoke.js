@@ -12,7 +12,7 @@ const inline = read('src/platform/admin-integrations-inline.js');
 const css = read('public/css/admin-integrations-inline.css');
 const capability = read('public/css/admin-capability.css');
 
-for (const provider of ['stripe', 'paypal', 'plisio']) {
+for (const provider of ['stripe', 'paypal']) {
     assert(overview.includes(`item('${provider}'`), `${provider} must remain visible in the core Connections catalogue`);
 }
 assert(overview.includes("item('email','Transactional email'"), 'Transactional email must remain a core Connections integration');
@@ -30,7 +30,7 @@ for (const route of [
     '/admin/settings/integrations/email/send-test'
 ]) assert(inline.includes(route), `Connections inline route missing: ${route}`);
 
-assert(inline.includes("PAYMENT_PROVIDERS = Object.freeze(['stripe', 'paypal', 'plisio'])"), 'Connections payment management must cover Stripe, PayPal and Plisio uniformly');
+assert(inline.includes("PAYMENT_PROVIDERS = Object.freeze(['stripe', 'paypal'])"), 'Connections payment management must cover Stripe and PayPal uniformly');
 assert(inline.includes('Test connection'), 'Core payment/email panels must expose connection tests inline');
 assert(inline.includes('Send test email'), 'Transactional email must expose a test-email action inline');
 assert(inline.includes('data-native-submit="true"'), 'Sensitive inline configuration forms must preserve normal browser POST/redirect behavior');

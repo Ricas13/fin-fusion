@@ -12,6 +12,6 @@ Overlapping duplicate paid/recurring subscriptions for the same service remain b
 
 The customer home is the canonical place to see all active access, each Jellyfin server, and the Stremio installation action. Setup and Plan & Billing are not separate customer navigation destinations.
 
-The plan chooser exposes one shared promo-code field. The value is passed to the selected Stripe, PayPal, or Plisio checkout. PayPal recurring Billing Plans cannot safely change their configured recurring price, so a promo-carrying PayPal checkout offers the one-time PayPal option instead of silently changing an automatic-renewal contract.
+The plan chooser exposes one shared promo-code field. The value is passed to the selected Stripe or PayPal checkout. PayPal recurring Billing Plans cannot safely change their configured recurring price, so a promo-carrying PayPal checkout offers the one-time PayPal option instead of silently changing an automatic-renewal contract.
 
 Customer Help is `/account/docs`; administrator Help is `/admin/docs`.

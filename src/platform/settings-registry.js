@@ -65,7 +65,7 @@ const SETTINGS=Object.freeze([
 
   {key:'commerce.orders',owner:'commerce',label:'Orders and renewals',href:'/admin/commerce/orders',keywords:'purchases order renewals expiry revenue'},
   {key:'commerce.billing',owner:'commerce',label:'Billing integrity',href:'/admin/billing',keywords:'missing provider link recurring subscription past due discovery reconcile'},
-  {key:'commerce.providers',owner:'commerce',label:'Payment provider settings',href:'/admin/payments',keywords:'stripe paypal plisio webhook callback checkout credentials gateway'},
+  {key:'commerce.providers',owner:'commerce',label:'Payment provider settings',href:'/admin/payments',keywords:'stripe paypal webhook callback checkout credentials gateway'},
   {key:'commerce.transactions',owner:'commerce',label:'Provider transaction ledger',href:'/admin/payments/transactions',keywords:'transaction history stripe paypal fees provider id archive'},
   {key:'commerce.reconciliation',owner:'commerce',label:'Unmapped provider payments',href:'/admin/payments/reconciliation',keywords:'missing payment unmapped stripe paypal reconciliation money'},
   {key:'commerce.expenses',owner:'commerce',label:'Expenses and profitability',href:'/admin/expenses',keywords:'profit loss costs hosting software expenses finance'},

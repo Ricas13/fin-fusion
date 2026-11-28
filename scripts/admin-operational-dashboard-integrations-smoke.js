@@ -172,7 +172,8 @@ assert(rendered.includes('integrationCard')&&rendered.includes('Connected')&&ren
 assert(cardCss.includes('.integrationCardGrid')&&cardCss.includes('.integrationDetails')&&cardCss.includes('.integrationConfig'),'Shared integration styles must live outside individual page templates');
 
 assert(paymentSource.includes("require('./admin-integration-card')"),'Payments must use the shared integration-card renderer');
-for(const provider of ['stripe','paypal','plisio'])assert(paymentSource.includes(`providerHealthCard(req,'${provider}'`),`${provider} must use the same provider health-card path`);
+for(const provider of ['stripe','paypal'])assert(paymentSource.includes(`providerHealthCard(req,'${provider}'`),`${provider} must use the same provider health-card path`);
+assert(!/providerHealthCard\(req,'plisio'/.test(paymentSource),'the retired Plisio gateway must not have a provider health card');
 assert(paymentSource.includes("providerEvents=(events||[]).filter(event=>event.provider===provider)"),'Payment working state must be derived from existing provider events');
 assert(paymentSource.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"),'Payment last verification must use a successfully processed provider event');
 assert(paymentSource.includes('Test connection')&&paymentSource.includes('Configure ${esc(label)}'),'Payment cards must provide test and inline configure actions');
