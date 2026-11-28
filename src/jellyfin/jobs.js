@@ -214,11 +214,35 @@ async function dueCustomers(limit = 250) {
 async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
     // The reconcile never ran: nothing is stranded, only busy. Retry via backoff.
     if (isLockTimeoutError(originalError)) return false;
-    const result = await accessRepair.repairUnpaidTrial(customerId, {
-        reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account',
-        cause: originalError
-    });
-    return result.status === 'removed';
+    const detail = originalError?.message || originalError || null;
+    // This worker is also the owner of unpaid Emby-only and Stremio-only trials:
+    // the integrity scanner only reports Jellyfin and Free access.
+    const repairs = [
+        () => accessRepair.repairUnpaidTrial(customerId, {
+            reason: detail || 'Legacy unpaid Jellyfin trial had no enabled server account',
+            cause: originalError
+        }),
+        ...['emby', 'stremio'].map(service => () => accessRepair.repairUnpaidServiceTrial(customerId, service, {
+            reason: detail,
+            cause: originalError
+        }))
+    ];
+    let removed = false;
+    let failure = null;
+    for (const repair of repairs) {
+        // One lane failing must not stop another lane's repair.
+        try {
+            if ((await repair()).status === 'removed') removed = true;
+        } catch (error) {
+            if (failure) console.error(`Additional unpaid trial repair failed for ${customerId}:`, error.message);
+            failure = failure || error;
+        }
+    }
+    if (failure) {
+        if (!removed) throw failure;
+        console.error(`Unpaid trial repair failed for ${customerId}:`, failure.message);
+    }
+    return removed;
 }
 
 async function ensureFailureBackoff(customerId, error) {

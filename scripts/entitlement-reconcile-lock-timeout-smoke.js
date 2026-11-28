@@ -54,6 +54,10 @@ stub('src/access/access-repair.js', {
   repairUnpaidTrial: async (customerId, options) => {
     world.repairs.push({ lane: 'jellyfin', customerId, options });
     return world.repair('jellyfin');
+  },
+  repairUnpaidServiceTrial: async (customerId, lane, options) => {
+    world.repairs.push({ lane, customerId, options });
+    return world.repair(lane);
   }
 });
 
@@ -88,11 +92,51 @@ async function testRealFailureStillRepairs() {
   assert.strictEqual(world.repairs[0].options.reason, 'no eligible server');
   assert.strictEqual(result.failed, 1);
   assert.strictEqual(world.problems.length, 1);
+  assert.deepStrictEqual(world.repairs.map(call => call.lane), ['jellyfin', 'emby', 'stremio'],
+    'every unpaid lane must have the worker as its repair owner');
+  assert(world.repairs.every(call => call.options.cause === error && call.customerId === CUSTOMER));
+}
+
+async function testAnyRemovedLaneSucceeds() {
+  for (const lane of ['jellyfin', 'emby', 'stremio']) {
+    reset({
+      reconcileError: failure('no eligible server'),
+      repair: async current => ({ status: current === lane ? 'removed' : 'skipped' })
+    });
+    const result = await jobs.reconcileActiveEntitlements({ limit: 10, concurrency: 1 });
+    assert.strictEqual(result.succeeded, 1, `${lane} removal`);
+    assert.deepStrictEqual(world.problems, [], `${lane}: a removed trial needs no backoff`);
+  }
+}
+
+async function testDeferredOrFailedRepairKeepsBackoff() {
+  reset({
+    reconcileError: failure('no eligible server'),
+    repair: async () => ({ status: 'deferred', reason: 'activation_grace' })
+  });
+  let result = await jobs.reconcileActiveEntitlements({ limit: 10, concurrency: 1 });
+  assert.strictEqual(result.failed, 1);
+  assert.strictEqual(world.problems.length, 1, 'a deferred trial must stay in the retry queue');
+
+  const original = failure('no eligible server');
+  reset({
+    reconcileError: original,
+    repair: async lane => {
+      if (lane === 'jellyfin') throw failure('repair read failed');
+      return { status: 'skipped' };
+    }
+  });
+  result = await jobs.reconcileActiveEntitlements({ limit: 10, concurrency: 1 });
+  assert.strictEqual(world.repairs.length, 3, 'one failing lane must not stop the others');
+  assert.strictEqual(result.failed, 1);
+  assert.strictEqual(world.problems[0].error, original, 'backoff must record the original failure');
 }
 
 (async () => {
   await testLockTimeoutNeverRepairs();
   await testRealFailureStillRepairs();
+  await testAnyRemovedLaneSucceeds();
+  await testDeferredOrFailedRepairKeepsBackoff();
   console.log('entitlement reconcile lock timeout smoke: ok');
 })().catch(error => {
   console.error('entitlement reconcile lock timeout smoke failed:', error);
