@@ -209,8 +209,9 @@ function accessState({ free = [], primary = [] } = {}) {
       })
     });
     const result = await repair.repairUnpaidTrial('customer');
-    assert.strictEqual(result.status, 'removed');
-    assert.strictEqual(trialRollbacks, 1);
+    assert.strictEqual(result.status, 'deferred');
+    assert.strictEqual(result.reason, 'manual_review_required');
+    assert.strictEqual(trialRollbacks, 0);
   }
 
   {
@@ -425,7 +426,7 @@ function accessState({ free = [], primary = [] } = {}) {
       lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { throw lockError(); } })
     });
     const result = await repair.repairUnpaidTrial('customer');
-    assert.strictEqual(result.status, 'deferred', 'a rollback lock timeout must not be reported as removed');
+    assert.strictEqual(result.status, 'deferred', 'a failed trial must be retained without invoking rollback');
   }
 
   // Free repair: neither a busy reconcile nor a busy rollback removes the claim.
@@ -472,8 +473,8 @@ function accessState({ free = [], primary = [] } = {}) {
       })
     });
     const result = await repair.repairUnpaidTrial('customer');
-    assert.deepStrictEqual(result, { status, reason, subscriptionId: 'trial-skip' });
-    assert.strictEqual(options.retainBlocked, true, 'background repair must keep blocked trials');
+    assert.deepStrictEqual(result, { status: 'deferred', reason: 'manual_review_required', subscriptionId: 'trial-skip' });
+    assert.strictEqual(options, null, 'background repair never invokes trial rollback');
 
     const missing = { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-skip' } };
     const free = createAccessRepair({
@@ -495,7 +496,7 @@ function accessState({ free = [], primary = [] } = {}) {
   const minutesAgo = minutes => new Date(NOW - minutes * 60 * 1000);
 
   // A young Jellyfin trial is left for activation and the worker to finish.
-  for (const [age, status] of [[5, 'deferred'], [16, 'removed']]) {
+  for (const [age, status] of [[5, 'deferred'], [16, 'deferred'], [1440, 'deferred']]) {
     let rollbacks = 0;
     const repair = createAccessRepair({
       now: () => NOW,
@@ -514,8 +515,8 @@ function accessState({ free = [], primary = [] } = {}) {
       lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { rollbacks += 1; } })
     });
     const result = await repair.repairUnpaidTrial('customer');
-    assert.strictEqual(result.status, status, `age ${age}; a failed cleanup reconcile must still report removal`);
-    assert.strictEqual(rollbacks, status === 'removed' ? 1 : 0);
+    assert.strictEqual(result.status, status, `age ${age}; no age permits automatic trial cancellation`);
+    assert.strictEqual(rollbacks, 0);
   }
 
   // Unpaid Emby-only, Stremio-only and bundle trials.
@@ -590,19 +591,11 @@ function accessState({ free = [], primary = [] } = {}) {
     assert.strictEqual(busy.calls.reads, 0, 'a lock-timeout cause must defer before any read');
 
     const stranded = serviceRepair({ lane });
-    const removed = await stranded.run({ reason: 'provisioning failed' });
-    assert.strictEqual(removed.status, 'removed', `${lane} stranded trial`);
-    assert.strictEqual(stranded.calls.rollbacks.length, 1);
-    assert.strictEqual(stranded.calls.rollbacks[0].name, lane);
-    assert.strictEqual(stranded.calls.rollbacks[0].subscriptionId, 'service-trial');
-    assert.strictEqual(stranded.calls.rollbacks[0].options.retainBlocked, true);
-
-    const lockedRollback = serviceRepair({ lane, rollback: async () => { throw lockError(); } });
-    assert.strictEqual((await lockedRollback.run()).status, 'deferred', `${lane} busy rollback`);
-
-    const skipped = serviceRepair({ lane, rollback: async () => ({ rolledBack: false, reason: 'ready' }) });
-    assert.strictEqual((await skipped.run()).status, 'ready');
-    assert.strictEqual(skipped.calls.reconciles, 0, 'no cleanup reconcile after a skipped rollback');
+    const result = await stranded.run({ reason: 'provisioning failed' });
+    assert.strictEqual(result.status, 'deferred', `${lane} stranded trial`);
+    assert.strictEqual(result.reason, 'manual_review_required');
+    assert.deepStrictEqual(stranded.calls.rollbacks, []);
+    assert.strictEqual(stranded.calls.reconciles, 0);
   }
 
   {
@@ -615,9 +608,9 @@ function accessState({ free = [], primary = [] } = {}) {
     assert.deepStrictEqual(busy.calls.rollbacks, []);
 
     const failed = serviceRepair({ lane: 'emby', converge: async () => { throw new Error('no Emby capacity'); } });
-    assert.strictEqual((await failed.run()).status, 'removed');
-    assert.strictEqual(failed.calls.rollbacks[0].options.reason, 'no Emby capacity');
-    assert.strictEqual(failed.calls.reconciles, 1);
+    assert.strictEqual((await failed.run()).status, 'deferred');
+    assert.deepStrictEqual(failed.calls.rollbacks, []);
+    assert.strictEqual(failed.calls.reconciles, 0);
 
     const pinned = serviceRepair({
       lane: 'emby',
@@ -637,10 +630,8 @@ function accessState({ free = [], primary = [] } = {}) {
     const missingBoth = serviceRepair({
       lane: 'stremio', entitlement, primary: jellyfin(STATES.INCONSISTENT_UNPAID)
     });
-    assert.strictEqual((await missingBoth.run()).status, 'removed');
-    assert.strictEqual(missingBoth.calls.rollbacks[0].name, 'bundle');
-    assert.strictEqual(missingBoth.calls.rollbacks[0].options.mediaType, 'jellyfin');
-    assert.strictEqual(missingBoth.calls.rollbacks[0].options.requireStremioInstall, false);
+    assert.strictEqual((await missingBoth.run()).status, 'deferred');
+    assert.deepStrictEqual(missingBoth.calls.rollbacks, []);
 
     const kept = [
       [jellyfin(STATES.ACTIVE_READY), 'media_account_ready'],
