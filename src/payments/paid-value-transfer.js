@@ -53,6 +53,10 @@ function metadataMatches(meta,row){return meta?.internal_checkout_intent_id===ro
 async function verifySource(row,evidence,adapters={stripeClient,paypalRequest}){
  const ref=row.provider_subscription_id;
  const paid=evidence.providerPaidMinor,c=evidence.currency;
+ if(row.source==='service_credit'){
+   invariant(evidence.verified&&paid==='0'&&BigInt(evidence.serviceCreditPaidMinor)>0n&&!ref,'Pure-credit source lacks verified local debit evidence.');
+   return;
+ }
  if(row.source==='stripe'){
    const stripe=await adapters.stripeClient();
    const pi=await stripe.paymentIntents.retrieve(ref,{expand:['latest_charge']});

@@ -8,6 +8,8 @@ const provisioning=require('../src/jellyfin/resilient-provisioning');
 provisioning.reconcileCustomer=async()=>({active:true,smoke:true});
 const referrals=require('../src/referrals');
 const credits=require('../src/affiliate-credits');
+const {readEvidence,previewFromEvidence}=require('./paid-value-preview');
+const {verifySource}=require('../src/payments/paid-value-transfer');
 const {encryptWithEnv}=require('../src/security/purpose-crypto');
 
 // Fleet capacity fails closed for any jellyfin premium/free plan with no
@@ -98,6 +100,12 @@ async function main(){
   assert.equal(serviceSub.status,'active');
   assert.equal(Number(serviceSub.price_minor_snapshot),600);
   assert.equal(serviceSub.currency_snapshot,'GBP');
+  const creditSource=await readEvidence({query},redeemed.subId);
+  const value=previewFromEvidence(creditSource);
+  assert(value.verified,JSON.stringify(value));
+  assert.equal(value.providerPaidMinor,'0');assert.equal(value.serviceCreditPaidMinor,'600');
+  await verifySource(creditSource,value,{}); // no remote payment or refund exists
+  assert.equal(previewFromEvidence({...creditSource,pure_credit_records:[]}).verified,false,'missing pure-credit debit cannot create value');
   balance=(await credits.balances(affiliate.id)).find(x=>x.currency==='GBP');
   assert.equal(balance?.available_minor,0,'Redeemed credit was not deducted exactly once.');
 
