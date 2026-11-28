@@ -33,18 +33,19 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
    await assert.rejects(()=>verifySource(row,e,{stripeClient:async()=>({paymentIntents:{retrieve:async()=>({...payment,latest_charge:{...payment.latest_charge,amount_refunded:100}})}})}),/unreversed/);
  };
  const deps={sourceVerifier,rateFetcher:async(from,to)=>{rateChecks++;assert.equal(from,'GBP');assert.equal(to,'USD');const now=new Date();return {source:'frankfurter',base:from,quote:to,date:now.toISOString().slice(0,10),observedAt:now.toISOString(),rate:'1.25'};},targetVerifier:async(row,intent,prepared)=>{targetChecks++;assert.equal(row.plan_id,boughtPlan.id);
-   const sub={id:row.provider_subscription_id,status:'active',metadata:{internal_checkout_intent_id:intent.id,internal_customer_id:row.customer_id,internal_plan_id:row.plan_id},items:{data:[{quantity:1,price:{id:prepared.providerMappingId,unit_amount:Number(prepared.target.normalPriceMinor),currency:'usd'},current_period_start:+new Date(row.starts_at)/1000,current_period_end:+new Date(row.current_period_end)/1000}]},latest_invoice:{status:'paid',billing_reason:'subscription_create',amount_paid:row.commercial_snapshot.discountedMinor,currency:'usd'}};
-   const session={id:intent.provider_checkout_id,mode:'subscription',status:'complete',payment_status:'paid',subscription:sub.id,amount_total:row.commercial_snapshot.discountedMinor,currency:'usd'};
+   const sub={id:row.provider_subscription_id,status:'active',metadata:{internal_checkout_intent_id:intent.id,internal_customer_id:row.customer_id,internal_plan_id:row.plan_id},items:{data:[{quantity:1,price:{id:prepared.providerMappingId,unit_amount:Number(prepared.target.normalPriceMinor),currency:'usd'},current_period_start:+new Date(row.starts_at)/1000,current_period_end:+new Date(row.current_period_end)/1000}]},latest_invoice:{status:'paid',billing_reason:'subscription_create',amount_paid:11000,currency:'usd'}};
+   const session={id:intent.provider_checkout_id,mode:'subscription',status:'complete',payment_status:'paid',subscription:sub.id,amount_total:11000,currency:'usd'};
    const adapter=async()=>({subscriptions:{retrieve:async()=>sub},checkout:{sessions:{retrieve:async()=>session}}});
-   await verifyTarget(row,intent,prepared,adapter);
+   const positiveRow={...row,commercial_snapshot:{...row.commercial_snapshot,discountedMinor:11000,serviceCreditMinor:1000,grossDiscountedMinor:12000}};
+   await verifyTarget(positiveRow,intent,prepared,adapter);
    const zeroRow={...row,commercial_snapshot:{...row.commercial_snapshot,discountedMinor:0,serviceCreditMinor:12000,grossDiscountedMinor:12000}};
    const zeroSub={...sub,default_payment_method:'pm_test',latest_invoice:{...sub.latest_invoice,amount_paid:0,total:0,amount_due:0,amount_remaining:0}};
    const zeroSession={...session,payment_status:'no_payment_required',amount_total:0,amount_subtotal:12000,total_details:{amount_discount:12000}};
    const zeroAdapter=async()=>({subscriptions:{retrieve:async()=>zeroSub},checkout:{sessions:{retrieve:async()=>zeroSession}}});
-   await verifyTarget(zeroRow,intent,prepared,zeroAdapter);
+   await verifyTarget(row,intent,prepared,zeroAdapter);
    await assert.rejects(()=>verifyTarget(zeroRow,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...zeroSub,default_payment_method:null})},checkout:{sessions:{retrieve:async()=>zeroSession}}})),/not conclusively verified/);
    await assert.rejects(()=>verifyTarget(zeroRow,intent,prepared,async()=>({subscriptions:{retrieve:async()=>zeroSub},checkout:{sessions:{retrieve:async()=>({...zeroSession,total_details:{amount_discount:0}})}}})),/not conclusively verified/);
-   await assert.rejects(()=>verifyTarget(row,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...sub,latest_invoice:{...sub.latest_invoice,amount_paid:0}})},checkout:{sessions:{retrieve:async()=>session}}})),/not conclusively verified/);
+   await assert.rejects(()=>verifyTarget(positiveRow,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...sub,latest_invoice:{...sub.latest_invoice,amount_paid:0}})},checkout:{sessions:{retrieve:async()=>session}}})),/not conclusively verified/);
  }};
  const variantContract={...targetContract,accessVariantId:variant.id,accessVariantKind:'streams',accessQuantity:4,streams:4,priceMinor:18000,discountedMinor:18000,providerMappingRecordId:mapping.id,providerMappingId:mapping.external_id};
  const variantPrepared=await prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:variantContract},deps);
@@ -74,7 +75,7 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  assert.equal(prepared.preview.sourceProviderPaidMinor,'4500');
  assert.equal(prepared.preview.sourceServiceCreditPaidMinor,'1000');
  assert(prepared.preview.addedDays>0);assert.equal(sourceChecks,1);
- const receivingContract={...targetContract,discountedMinor:11000,grossDiscountedMinor:12000,serviceCreditMinor:1000,serviceCreditCurrency:'USD'};
+ const receivingContract={...targetContract,discountedMinor:0,grossDiscountedMinor:12000,serviceCreditMinor:12000,serviceCreditCurrency:'USD'};
  const intent=(await client.query(`INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,state,nonce_hash,expires_at,commercial_snapshot,provider_checkout_id,paid_value_transfer_snapshot)
  VALUES('customer',$1,$2,$3,'stripe','subscription','open',$4,NOW()+INTERVAL '1 hour',$5::jsonb,$6,$7::jsonb) RETURNING id`,[customer.id,boughtPlan.id,price.id,unique('nonce'),JSON.stringify(receivingContract),'cs_'+unique('target'),JSON.stringify(prepared)])).rows[0];
  const begin=new Date(Math.floor(Date.now()/1000)*1000),finish=addPlanDuration(boughtPlan,begin);
@@ -83,21 +84,21 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  await assert.rejects(()=>settlePrepared(client,receiver,deps),/service-credit reservation/);
  assert.equal((await client.query('SELECT superseded_by FROM subscriptions WHERE id=$1',[source.id])).rows[0].superseded_by,null,'missing receiving credit cannot consume original value');
  const usdGrant=(await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id)
- VALUES($1,'USD',1200,'earned','available',$2) RETURNING id`,[customer.id,unique('usd-grant')])).rows[0];
+ VALUES($1,'USD',12200,'earned','available',$2) RETURNING id`,[customer.id,unique('usd-grant')])).rows[0];
  await client.query(`INSERT INTO affiliate_credit_checkout_reservations(customer_id,checkout_intent_id,currency,amount_minor,state,expires_at)
- VALUES($1,$2,'USD',1000,'reserved',NOW()+INTERVAL '1 hour')`,[customer.id,intent.id]);
+ VALUES($1,$2,'USD',12000,'reserved',NOW()+INTERVAL '1 hour')`,[customer.id,intent.id]);
  targetChecks=0;
  const outcome=await settlePrepared(client,receiver,deps);
  const receivingDebit=(await client.query("SELECT * FROM affiliate_credit_ledger WHERE entry_type='redeemed' AND reference_id=$1",['mixed-checkout:'+intent.id])).rows[0];
- assert.equal(receivingDebit.amount_minor,-1000);
- assert.equal((await client.query('SELECT amount_minor FROM affiliate_credit_allocations WHERE debit_ledger_id=$1 AND grant_ledger_id=$2',[receivingDebit.id,usdGrant.id])).rows[0].amount_minor,1000);
+ assert.equal(receivingDebit.amount_minor,-12000);
+ assert.equal((await client.query('SELECT amount_minor FROM affiliate_credit_allocations WHERE debit_ledger_id=$1 AND grant_ledger_id=$2',[receivingDebit.id,usdGrant.id])).rows[0].amount_minor,12000);
  const days=outcome.row.service_extension_days;assert(days>0);assert.equal(sourceChecks,2);assert.equal(targetChecks,1);
  assert.equal((await client.query('SELECT superseded_by FROM subscriptions WHERE id=$1',[source.id])).rows[0].superseded_by,receiver.id);
  const ledger=(await client.query('SELECT * FROM subscription_time_carryovers WHERE target_subscription_id=$1',[receiver.id])).rows[0];
  assert.equal(ledger.applied_days,days);assert.equal(ledger.reason,'monetary_plan_transfer');
  assert.equal(ledger.value_transfer_quote.sourceProviderPaidMinor,'4500');
  assert.equal(ledger.value_transfer_quote.sourceServiceCreditPaidMinor,'1000');
- assert.deepEqual(ledger.value_transfer_quote.receivingFunding,{cash:11000,credit:1000,gross:12000});
+ assert.deepEqual(ledger.value_transfer_quote.receivingFunding,{cash:0,credit:12000,gross:12000});
  const q=ledger.value_transfer_quote;
  assert.equal(BigInt(q.destinationRemainingCashValueMinor.numerator)+BigInt(q.destinationRemainingServiceCreditValueMinor.numerator),BigInt(q.destinationRemainingValueMinor.numerator));
  assert.equal(q.destinationRemainingCashValueMinor.denominator,q.destinationRemainingValueMinor.denominator);
