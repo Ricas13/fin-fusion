@@ -16,7 +16,7 @@ runDbSmoke('paid value preview DB smoke',()=>withRollback(async client=>{
  assert.strictEqual((await read()).reason,'payment_missing_or_ambiguous');
  const txn=unique('balance');
  await client.query(`INSERT INTO payment_history_transactions(provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,net_amount_minor,provider_reference_id,provider_source_id,customer_id,metadata)
- VALUES('stripe',$1,'charge','available',NOW(),'GBP',4500,150,4350,$2,$3,$4,'{"providerAuthoritative":true,"liveStripeSync":true}'::jsonb)`,[txn,ref,unique('charge'),customer.id]);
+ VALUES('stripe',$1,'charge','available',NOW(),'GBP',4500,150,4350,$2,$3,$4,$5::jsonb)`,[txn,ref,unique('charge'),customer.id,JSON.stringify({providerAuthoritative:true,liveStripeSync:true,checkoutIntentId:intent.id})]);
  const verified=await read();assert(verified.verified,JSON.stringify(verified));assert.strictEqual(verified.providerPaidMinor,'4500');
  await client.query(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,customer_id,provider_subscription_id,amount_minor,currency,access_action,metadata)
  VALUES('stripe',$1,$2,'refund','recorded','direct',$3,$4,100,'GBP','preserve','{"fullRefund":false}'::jsonb)`,[unique('evt'),unique('refund'),customer.id,ref]);
