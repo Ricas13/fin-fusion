@@ -3,6 +3,10 @@
 const moneyFormat=require('./money-format');
 
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
+// The persistent /admin mutation limiter also applies; this route-specific
+// limiter makes the protection explicit for security analysis and defense in depth.
+const discountEditLimit = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false, message: 'Too many promotion changes. Try again shortly.' });
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const runtimeSettings = require('./runtime-settings');
@@ -342,7 +346,7 @@ function createAdminDiscountsRouter() {
         }
     });
 
-    router.post('/admin/discounts/:id/limit', async (req, res) => {
+    router.post('/admin/discounts/:id/limit', discountEditLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             await discountCommands.updatePerCustomerLimit({
