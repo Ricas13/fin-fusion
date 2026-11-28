@@ -551,7 +551,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             if (!isAccessExtension) await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
-            if (effectiveDiscountCodeId && !historicalCheckoutReplay) {
+            if (effectiveDiscountCodeId && !historicalCheckoutReplay && !isAccessExtension) {
                 await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
             }
             if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
