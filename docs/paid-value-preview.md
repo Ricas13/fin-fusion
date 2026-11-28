@@ -13,8 +13,8 @@ docker exec captainfin npm run billing:paid-value -- SUBSCRIPTION_UUID
 The preview requires a completed immutable one-off checkout, exactly one
 matching positive provider-authoritative payment record, identical currency and
 cash amount, and a calendar term that matches the original purchase contract.
-It refuses ambiguous, imported, recurring, mixed-credit, operator-granted,
-refunded, disputed, extended, carried or open-plan-change cases. A Stripe
+It refuses ambiguous, imported, recurring, operator-granted,
+refunded, disputed, extended, carried or open-plan-change cases. Mixed one-off cash/service-credit purchases are supported only if the completed checkout has a matching applied reservation, a redeemed debit and complete valid funding allocations with no disputed reward or recovery history. Cash and credit components are reported separately. A Stripe
 settlement in a different currency is deliberately not inferred to be the
 customer's original payment amount. It reports an exact numerator/denominator
 in minor currency units, so no rounding is selected yet.
@@ -50,6 +50,6 @@ This fetches a rate only if currencies differ. The normal calendar term
 is measured from the source snapshot time for this preview; the final
 settlement must use the verified destination term anchor and freeze the
 rate, timestamps, source allocation and target price. Variant pricing,
-mixed credit, carried/extension allocations, recurring provider mutations,
+credit-only purchases, carried/extension allocations, recurring provider mutations,
 and the transfer/refund ledger are not implemented by this diagnostic.
 No customer balance or entitlement is changed.

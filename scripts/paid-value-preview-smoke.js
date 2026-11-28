@@ -19,6 +19,25 @@ assert(!quote({term_matches:false}).verified);
 assert(!quote({commercial_snapshot:{...contract,serviceCreditMinor:100}}).verified);
 assert(!quote({intent_state:'open'}).verified);
 assert(!quote({intent_snapshot:{...contract,discountedMinor:6000}}).verified);
+const mixed={...contract,serviceCreditMinor:1000,serviceCreditCurrency:'GBP',grossDiscountedMinor:5500};
+const applied={reserved_minor:'1000',debited_minor:'1000',allocated_minor:'1000',exact_identity:true,funding_verified:true};
+const mix=overrides=>quote({as_of:new Date(start+15*day),commercial_snapshot:mixed,intent_snapshot:mixed,credit_records:[applied],...overrides});
+const funded=mix({});
+assert(funded.verified,JSON.stringify(funded));
+assert.equal(funded.providerPaidMinor,'4500');
+assert.equal(funded.serviceCreditPaidMinor,'1000');
+const value=f=>BigInt(f.numerator)/BigInt(f.denominator);
+assert.equal(value(funded.remainingCashValueMinor),2250n);
+assert.equal(value(funded.remainingServiceCreditValueMinor),500n);
+assert.equal(value(funded.remainingValueMinor),2750n);
+for(const bad of [{...applied,allocated_minor:'999'},{...applied,debited_minor:'999'},{...applied,exact_identity:false},{...applied,funding_verified:false}]){
+ assert.equal(mix({credit_records:[bad]}).reason,'service_credit_evidence_unverified');
+}
+assert(!mix({credit_records:[]}).verified);
+assert(!mix({credit_records:[applied,applied]}).verified);
+assert(!mix({intent_snapshot:{...mixed,grossDiscountedMinor:6000}}).verified);
+assert(!mix({payment_records:[{gross_amount_minor:'5500',currency:'GBP'}]}).verified,'service credit never masquerades as cash');
+assert(!quote({credit_records:[applied]}).verified,'unexpected credit settlement must not be silently ignored');
 const partial=quote({as_of:new Date(start+1)});
 assert(BigInt(partial.remainingValueMinor.numerator)%BigInt(partial.remainingValueMinor.denominator)!==0n,'retain fraction until rounding policy is approved');
 console.log('paid value preview smoke: exact cash basis and refusal invariants ok');
