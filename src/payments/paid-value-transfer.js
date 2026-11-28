@@ -10,9 +10,10 @@ const creditReservations=require('./service-credit-reservations');
 const DAY=86400000;
 function enabled(){return process.env.PAID_VALUE_TRANSFER_ENABLED==='true';}
 function invariant(ok,message){if(!ok){const e=new Error(message);e.code='PAID_VALUE_TRANSFER_SETTLEMENT_CONFLICT';throw e;}}
-const CHARGE_UNSUPPORTED='This monetary plan transfer requires a verifiable positive first payment. Your existing access is unchanged. You have not been charged.';
-function assertChargeSupported({providerDue,serviceCreditMinor=0,grossDue=providerDue}){
- if(!Number.isSafeInteger(providerDue)||providerDue<50||!Number.isSafeInteger(serviceCreditMinor)||serviceCreditMinor<0||
+const CHARGE_UNSUPPORTED='This monetary plan transfer requires a verifiable first billing period. Your existing access is unchanged. You have not been charged.';
+function assertChargeSupported({providerDue,serviceCreditMinor=0,grossDue=providerDue,discountCodeId=null}){
+ const zero=providerDue===0&&(serviceCreditMinor>0||Boolean(discountCodeId));
+ if(!Number.isSafeInteger(providerDue)||(!zero&&providerDue<50)||!Number.isSafeInteger(serviceCreditMinor)||serviceCreditMinor<0||
     !Number.isSafeInteger(grossDue)||grossDue!==providerDue+serviceCreditMinor){
    const error=new Error(CHARGE_UNSUPPORTED);
    error.expose=true;error.code='PAID_VALUE_TRANSFER_PAYMENT_UNSUPPORTED';throw error;
@@ -20,7 +21,7 @@ function assertChargeSupported({providerDue,serviceCreditMinor=0,grossDue=provid
 }
 function targetFunding(snapshot){
  const cash=snapshot?.discountedMinor,credit=snapshot?.serviceCreditMinor??0,gross=snapshot?.grossDiscountedMinor??cash;
- invariant(Number.isSafeInteger(cash)&&cash>=50&&Number.isSafeInteger(credit)&&credit>=0&&
+ invariant(Number.isSafeInteger(cash)&&(cash>=50||(cash===0&&(credit>0||Boolean(snapshot.discountCodeId))))&&Number.isSafeInteger(credit)&&credit>=0&&
    Number.isSafeInteger(gross)&&gross===cash+credit&&gross<=snapshot.priceMinor&&
    (!credit||currency(snapshot.serviceCreditCurrency)===currency(snapshot.currency)),
    'Receiving checkout funding does not match the frozen commercial contract.');
@@ -72,10 +73,7 @@ async function verifySource(row,evidence,adapters={stripeClient,paypalRequest}){
      order.id===row.intent_provider_checkout_id&&order.status==='COMPLETED'&&captures.length===1&&captures[0].id===ref&&captures[0].status==='COMPLETED',
      'Original PayPal capture is not conclusively paid and unreversed.');
  }else if(row.source==='plisio'){
-   const plisio=require('./plisio');
-   const op=plisio.operationFields(await plisio.getOperation(ref));
-   invariant(op.id===ref&&op.orderNumber===row.intent_id&&op.status==='completed'&&minor(op.sourceAmount)===paid&&currency(op.sourceCurrency)===c,
-     'Original Plisio payment is not conclusively paid and unreversed.');
+   invariant(false,'Original payment was made through a retired crypto provider and can no longer be verified.');
  }else invariant(false,'Unsupported source payment provider.');
 }
 async function candidates(client,customerId,planId,exclude=null){
@@ -148,10 +146,13 @@ async function verifyTarget(row,intent,prepared,adapter=stripeClient){
    currency(item.price.currency)===prepared.target.currency&&item.quantity===1&&
    sub.metadata?.internal_checkout_intent_id===intent.id&&sub.metadata?.internal_customer_id===row.customer_id&&sub.metadata?.internal_plan_id===row.plan_id&&
    session.id===intent.provider_checkout_id&&session.mode==='subscription'&&session.status==='complete'&&
-   session.payment_status==='paid'&&stripeId(session.subscription)===sub.id&&session.amount_total>0&&currency(session.currency)===prepared.target.currency&&
+   (funding.cash>0?session.payment_status==='paid':session.payment_status==='no_payment_required')&&stripeId(session.subscription)===sub.id&&currency(session.currency)===prepared.target.currency&&
    invoice&&typeof invoice==='object'&&invoice.status==='paid'&&invoice.billing_reason==='subscription_create'&&
-   Number.isInteger(invoice.amount_paid)&&invoice.amount_paid>0&&invoice.amount_paid===session.amount_total&&currency(invoice.currency)===prepared.target.currency&&
+   Number.isInteger(invoice.amount_paid)&&invoice.amount_paid===session.amount_total&&currency(invoice.currency)===prepared.target.currency&&
    session.amount_total===funding.cash&&
+   (funding.cash>0||(session.amount_subtotal===Number(prepared.target.normalPriceMinor)&&session.total_details?.amount_discount===session.amount_subtotal&&
+      invoice.total===0&&invoice.amount_due===0&&invoice.amount_remaining===0&&
+      !sub.trial_end&&Boolean(stripeId(sub.default_payment_method)||stripeId(sub.default_source))))&&
    Number(item.current_period_start)*1000===time(row.starts_at)&&Number(item.current_period_end)*1000===time(row.current_period_end)&&
    time(addPlanDuration(prepared.target,row.starts_at))===time(row.current_period_end),
    'New recurring payment or initial billing period is not conclusively verified.');

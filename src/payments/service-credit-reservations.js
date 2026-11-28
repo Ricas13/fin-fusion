@@ -20,7 +20,7 @@ async function availableMinor(customerId, currency) {
   return transaction(client => availableMinorForClient(client, customerId, currency));
 }
 
-async function reserveForIntent({ customerId, checkoutIntentId, currency, maxAmountMinor, expiresAt }) {
+async function reserveForIntent({ customerId, checkoutIntentId, currency, maxAmountMinor, expiresAt, minimumCashMinor=0 }) {
   const wanted = cleanCurrency(currency), maximum = Math.max(0, int(maxAmountMinor));
   if (!checkoutIntentId || maximum <= 0) return { amountMinor: 0, currency: wanted, reserved: false };
   return transaction(async client => {
@@ -38,7 +38,9 @@ async function reserveForIntent({ customerId, checkoutIntentId, currency, maxAmo
       [checkoutIntentId]
     )).rows[0];
     if (existing) return { amountMinor: int(existing.amount_minor), currency: existing.currency, reserved: existing.state === 'reserved' };
-    const available = await availableMinorForClient(client, customerId, wanted), amount = Math.min(available, maximum);
+    const available = await availableMinorForClient(client, customerId, wanted);
+    const minimum=Math.max(0,int(minimumCashMinor));
+    const amount=available>=maximum?maximum:Math.min(available,Math.max(0,maximum-minimum));
     if (amount <= 0) return { amountMinor: 0, currency: wanted, reserved: false };
     const expiry = expiresAt instanceof Date ? expiresAt : new Date(expiresAt || Date.now() + 60 * 60 * 1000);
     const saved = (await client.query(`

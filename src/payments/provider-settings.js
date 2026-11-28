@@ -3,7 +3,7 @@
 const { query } = require('../db');
 const { encryptString, decryptString } = require('../crypto');
 
-const PROVIDERS = ['stripe', 'paypal', 'plisio'];
+const PROVIDERS = ['stripe', 'paypal'];
 const cache = new Map();
 let loaded = false;
 let loading = null;
@@ -14,11 +14,6 @@ function envConfig(provider) {
         cfg.enabled = process.env.STRIPE_ENABLED === 'false' ? false : Boolean(cfg.restrictedKey || cfg.apiKey);
         return cfg;
     }
-    if (provider === 'plisio') {
-        const cfg = { source:'environment', secretKey:process.env.PLISIO_SECRET_KEY||process.env.PLISIO_API_KEY||'' };
-        cfg.enabled = process.env.PLISIO_ENABLED === 'false' ? false : Boolean(cfg.secretKey);
-        return cfg;
-    }
     const cfg = { source:'environment', environment:process.env.PAYPAL_ENV==='live'?'live':'sandbox', clientId:process.env.PAYPAL_CLIENT_ID||'', clientSecret:process.env.PAYPAL_CLIENT_SECRET||'', webhookId:process.env.PAYPAL_WEBHOOK_ID||'' };
     cfg.enabled = process.env.PAYPAL_ENABLED === 'false' ? false : Boolean(cfg.clientId && cfg.clientSecret);
     return cfg;
@@ -26,13 +21,11 @@ function envConfig(provider) {
 
 function credentialsConfigured(provider, cfg) {
     if (provider === 'stripe') return Boolean(cfg?.restrictedKey || cfg?.apiKey);
-    if (provider === 'plisio') return Boolean(cfg?.secretKey);
     return Boolean(cfg?.clientId && cfg?.clientSecret);
 }
 function configured(provider, cfg) { return Boolean(cfg?.enabled && credentialsConfigured(provider, cfg)); }
 function webhookConfigured(provider, cfg) {
     if (provider === 'stripe') return Boolean(cfg?.webhookSecret);
-    if (provider === 'plisio') return Boolean(cfg?.secretKey);
     return Boolean(cfg?.webhookId);
 }
 function checkoutReady(provider,cfg){return Boolean(configured(provider,cfg)&&webhookConfigured(provider,cfg));}
@@ -55,7 +48,6 @@ function raw(provider){return cache.get(provider)||envConfig(provider);}
 function effective(provider,cfg){
     if(cfg?.enabled!==false)return cfg;
     if(provider==='stripe')return{...cfg,restrictedKey:'',apiKey:'',webhookSecret:''};
-    if(provider==='plisio')return{...cfg,secretKey:''};
     return{...cfg,clientId:'',clientSecret:'',webhookId:''};
 }
 function peek(provider){return effective(provider,raw(provider));}
@@ -73,8 +65,6 @@ async function save(provider,input,actorUserId=null){
     const current=await getRaw(provider);let secrets;let settings={enabled:input.enabled!==false};
     if(provider==='stripe'){
         secrets={restrictedKey:input.clearRestrictedKey?'':(clean(input.restrictedKey)||current.restrictedKey||''),apiKey:input.clearApiKey?'':(clean(input.apiKey)||current.apiKey||''),webhookSecret:input.clearWebhookSecret?'':(clean(input.webhookSecret)||current.webhookSecret||'')};
-    }else if(provider==='plisio'){
-        secrets={secretKey:input.clearSecretKey?'':(clean(input.secretKey,2000)||current.secretKey||'')};
     }else{
         secrets={clientId:input.clearClientId?'':(clean(input.clientId)||current.clientId||''),clientSecret:input.clearClientSecret?'':(clean(input.clientSecret)||current.clientSecret||''),webhookId:input.clearWebhookId?'':(clean(input.webhookId)||current.webhookId||'')};
         settings={...settings,environment:input.environment==='live'?'live':'sandbox'};
@@ -107,13 +97,6 @@ async function testPayPal(cfg){
     if(!response.ok||!body?.access_token)throw new Error(body?.error_description||body?.message||`PayPal returned HTTP ${response.status}.`);
     return{ok:true,limited:false,message:`PayPal ${cfg.environment==='live'?'Live':'Sandbox'} connection successful. Client credentials were accepted.`};
 }
-async function testPlisio(cfg){
-    if(!cfg.secretKey)throw new Error('Plisio secret key is not configured.');
-    const url=new URL('https://api.plisio.net/api/v1/currencies');url.searchParams.set('api_key',cfg.secretKey);
-    const response=await fetchWithTimeout(url,{method:'GET',headers:{Accept:'application/json'}}),body=await response.json().catch(()=>({}));
-    if(!response.ok||body?.status==='error')throw new Error(body?.data?.message||body?.message||`Plisio returned HTTP ${response.status}.`);
-    return{ok:true,limited:false,message:'Plisio connection successful. The merchant secret key was accepted.'};
-}
-async function testConnection(provider){const cfg=await getRaw(provider);if(provider==='stripe')return testStripe(cfg);if(provider==='paypal')return testPayPal(cfg);if(provider==='plisio')return testPlisio(cfg);throw new Error('Unsupported payment provider');}
+async function testConnection(provider){const cfg=await getRaw(provider);if(provider==='stripe')return testStripe(cfg);if(provider==='paypal')return testPayPal(cfg);throw new Error('Unsupported payment provider');}
 
 module.exports={PROVIDERS,ensureLoaded,get,getRaw,peek,status,checkoutStatus,save,remove,configured,credentialsConfigured,webhookConfigured,checkoutReady,testConnection};

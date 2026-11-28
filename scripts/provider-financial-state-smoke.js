@@ -71,8 +71,8 @@ assert(stripeHistory.includes('financialState.resolveCustomerId'),
 assert(paypal.includes('financialState.recordTransaction')&&paypal.includes('recordPaypalLivePayment')&&paypal.includes('recordPaypalLiveRefund'),
   'PayPal webhook payments and refunds must enter the canonical customer financial ledger');
 
-assert(reconciliation.includes("liveStripeHistory.syncRecent")&&reconciliation.includes("syncRecentPayPalHistory")&&reconciliation.includes("syncFeeData({limit:25})")&&reconciliation.includes('reconcileLocalEvidence'),
-  'unified reconciliation must converge Stripe, PayPal and Plisio fee evidence');
+assert(reconciliation.includes("liveStripeHistory.syncRecent")&&reconciliation.includes("syncRecentPayPalHistory")&&!reconciliation.includes('plisio')&&reconciliation.includes('reconcileLocalEvidence'),
+  'unified reconciliation must converge Stripe and PayPal history and no longer call the retired Plisio gateway');
 assert(jobs.includes('provider_financial_reconciliation:{defaultIntervalSeconds:300'),
   'unified provider financial reconciliation must remain scheduled every five minutes');
 assert(compact.includes('Open Stripe ↗')&&compact.includes('provider_customer_id'),

@@ -392,7 +392,7 @@ function parseForms(html){
 
 async function clientCards(){
   const variantPlan={planId:'plan-1',code:'monthly',kind:'streams',preferredQuantity:1,currentPlan:true,currentQuantity:1,currentProvider:null,
-    extension:{subscriptionId:'sub-1',quantity:1,durationLabel:'Monthly',providers:['stripe','paypal','plisio']},
+    extension:{subscriptionId:'sub-1',quantity:1,durationLabel:'Monthly',providers:['stripe','paypal']},
     variants:[1,2].map(quantity=>({quantity,priceMinor:600*quantity,currency:'GBP',priceLabel:'price',soldOut:quantity===1,paymentOptions:[{provider:'stripe',checkoutMode:'payment'}]}))};
 
   async function run(planState){
@@ -434,7 +434,7 @@ async function clientCards(){
   const page=await run(variantPlan);
   let forms=parseForms(page.actions.innerHTML);
   assert(page.actions.innerHTML.includes('Current access allowance'));
-  assert.deepStrictEqual(forms.map(form=>form.action),['/account/checkout/stripe','/account/checkout/paypal','/account/checkout/plisio'],'a one-off holder keeps every Extend button, even when the held allowance is full');
+  assert.deepStrictEqual(forms.map(form=>form.action),['/account/checkout/stripe','/account/checkout/paypal'],'a one-off holder keeps every Extend button, even when the held allowance is full');
   assert(forms.every(form=>form.inputs.extensionSubscriptionId==='sub-1'&&form.inputs.checkoutMode==='payment'&&form.inputs.accessQuantity==='1'));
 
   // Equivalent to the server-rendered forms: same fields, labels and data attributes.
@@ -442,7 +442,7 @@ async function clientCards(){
   const end=new Date(Date.now()+10*DAY);
   const current={...plan,id:'sub-1',plan_id:'plan-1',subscription_id:'sub-1',status:'active',source:'stripe',current_period_end:end,commercial_snapshot:{streams:1}};
   const html=ejs.render(view,{siteName:'Test',currency:'GBP',portal:{customer:{login_username:'viewer'},subscriptions:[current],accounts:[],providers:[]},currentPlan:current,freePlan:null,stremioPlan:null,embyPlan:null,
-    plans:[{...plan,payment_options:[{provider:'stripe'},{provider:'paypal'},{provider:'plisio'}]}],stripeEnabled:true,paypalEnabled:true,plisioEnabled:true,csrfToken:'csrf',message:null,error:null,openCheckout:null,openPlanChange:null,renewalSubscription:null,
+    plans:[{...plan,payment_options:[{provider:'stripe'},{provider:'paypal'}]}],stripeEnabled:true,paypalEnabled:true,csrfToken:'csrf',message:null,error:null,openCheckout:null,openPlanChange:null,renewalSubscription:null,
     overseerrUrl:null,requestAccess:null,requestSyncConfigured:false,provisioningState:null,hasJellyfin:true,hasStremio:false,hasEmby:false,jellyfinAccounts:[],embyAccounts:[]},{filename:path.join(root,'views','customer','dashboard.ejs')});
   const server=parseForms(html).filter(form=>'extensionSubscriptionId' in form.inputs);
   assert.deepStrictEqual(forms,server,'browser-built Extend forms must match the server-rendered ones');
@@ -452,29 +452,29 @@ async function clientCards(){
   page.choose(2);
   forms=parseForms(page.actions.innerHTML);
   assert(forms.some(form=>!('extensionSubscriptionId' in form.inputs)&&form.inputs.accessQuantity==='2'),'another allowance can still be bought');
-  assert.equal(forms.filter(form=>form.inputs.extensionSubscriptionId==='sub-1').length,3,'choosing another allowance must not wipe Extend forms');
+  assert.equal(forms.filter(form=>form.inputs.extensionSubscriptionId==='sub-1').length,2,'choosing another allowance must not wipe Extend forms');
   assert(page.appended().length>0,'purchase forms still receive the server location');
   assert(page.appended().every(entry=>!('extensionSubscriptionId' in entry.form.inputs)),'Extend forms never pick a server location');
 
   const recurring=await run({...variantPlan,currentProvider:'stripe'});
-  assert.equal(parseForms(recurring.actions.innerHTML).filter(form=>form.inputs.extensionSubscriptionId).length,3,'recurring payers who can extend keep Extend');
+  assert.equal(parseForms(recurring.actions.innerHTML).filter(form=>form.inputs.extensionSubscriptionId).length,2,'recurring payers who can extend keep Extend');
 
   // A holder whose time the purchase would wait behind can also buy separately,
   // Both purchase paths can carry an eligible promo code.
-  const mixed=[{provider:'stripe',checkoutMode:'subscription'},{provider:'stripe',checkoutMode:'payment'},{provider:'paypal',checkoutMode:'subscription'},{provider:'plisio',checkoutMode:'payment'}];
+  const mixed=[{provider:'stripe',checkoutMode:'subscription'},{provider:'stripe',checkoutMode:'payment'},{provider:'paypal',checkoutMode:'subscription'},{provider:'paypal',checkoutMode:'payment'}];
   const offer=(changes={},variant={})=>({...variantPlan,separatePurchaseSafe:true,...changes,
     variants:[1,2].map(quantity=>({quantity,priceMinor:600*quantity,currency:'GBP',priceLabel:'price',soldOut:false,paymentOptions:mixed,...(quantity===1?variant:{})}))});
   const separate=view=>parseForms(view.actions.innerHTML).filter(form=>!('extensionSubscriptionId' in form.inputs));
   const extending=view=>parseForms(view.actions.innerHTML).filter(form=>form.inputs.extensionSubscriptionId);
   const safe=await run(offer());
-  assert.deepStrictEqual(separate(safe).map(form=>form.action),['/account/checkout/stripe','/account/checkout/plisio'],'only providers with a one-off option');
+  assert.deepStrictEqual(separate(safe).map(form=>form.action),['/account/checkout/stripe','/account/checkout/paypal'],'only providers with a one-off option');
   assert(separate(safe).every(form=>form.inputs.checkoutMode==='payment'&&form.inputs.accessQuantity==='1'&&'discountCode' in form.inputs&&'mediaLocation' in form.inputs),'one-off only, with the held allowance');
   const markup=safe.actions.innerHTML;
   assert.equal((markup.match(/<form class="plainForm checkoutForm" data-separate-purchase /g)||[]).length,2);
-  assert.equal((markup.match(/data-promo-target/g)||[]).length,5,'separate and Extend forms receive the promo code');
+  assert.equal((markup.match(/data-promo-target/g)||[]).length,4,'separate and Extend forms receive the promo code');
   assert(markup.includes('Separate purchase: it starts after your current paid time ends. Eligible promo codes can apply to either purchase option.'));
   assert(markup.includes('Buy separately with Stripe')&&!markup.includes('Current access allowance'));
-  assert.equal(extending(safe).length,3,'Extend stays beside it');
+  assert.equal(extending(safe).length,2,'Extend stays beside it');
   assert.equal(safe.appended().length,2,'only the separate purchases pick a server location');
 
   for(const [label,planState] of [
@@ -486,12 +486,12 @@ async function clientCards(){
     const view=await run(planState);
     assert.deepStrictEqual(separate(view),[],label+': no direct purchase of the held allowance');
     assert(view.actions.innerHTML.includes('Current access allowance'),label);
-    assert.equal(extending(view).length,3,label);
+    assert.equal(extending(view).length,2,label);
   }
   const full=await run(offer({},{soldOut:true}));
   assert.deepStrictEqual(separate(full),[],'a full allowance is not sold again');
   assert(full.actions.innerHTML.includes('Currently full for this allowance'));
-  assert.equal(extending(full).length,3);
+  assert.equal(extending(full).length,2);
   safe.choose(2);
   assert(separate(safe).length&&separate(safe).every(form=>form.inputs.accessQuantity==='2'),'a different allowance keeps its ordinary forms');
   assert(!safe.actions.innerHTML.includes('data-separate-purchase')&&!safe.actions.innerHTML.includes('Separate purchase:'));
@@ -525,7 +525,7 @@ async function separatePurchaseFlag(){
     stub(require('../src/platform/product-readiness'),'context',async()=>({}));
     stub(require('../src/platform/product-readiness'),'evaluatePlan',async()=>({sellable:true}));
     stub(require('../src/payments/access-variant-capacity'),'decoratePlans',async plans=>plans);
-    for(const provider of ['stripe','paypal','plisio'])stub(require('../src/payments/'+provider),'enabled',()=>true);
+    for(const provider of ['stripe','paypal'])stub(require('../src/payments/'+provider),'enabled',()=>true);
     let recurring=async()=>null,holder=held(),assessed=0,verdict=true;
     stub(planChange,'currentRecurring',(...args)=>recurring(...args));
     stub(samePlanRepurchase,'currentPaidSubscription',async()=>holder);
@@ -567,7 +567,7 @@ async function pastAccessResubscribe(){
   }
   const extend={action:'/account/checkout/stripe',extension:true},buy={action:'/account/checkout/paypal',extension:false};
   assert.deepStrictEqual((await run([extend,buy])).map(item=>item.action),['/account/checkout/paypal'],'Re-subscribe never clones an Extend form');
-  const again={action:'/account/checkout/plisio',separate:true};
+  const again={action:'/account/checkout/stripe',separate:true};
   assert.deepStrictEqual((await run([extend,again,buy])).map(item=>item.action),['/account/checkout/paypal'],'nor a separate purchase offered beside current access');
   assert.equal((await run([again,extend]))[0].href,'/account?skipRestore=1#plans');
   const onlyExtend=await run([extend]);

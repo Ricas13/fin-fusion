@@ -4,9 +4,8 @@ const { query } = require('../db');
 const lifecycle = require('./lifecycle');
 const stripe = require('./stripe');
 const paypal = require('./paypal');
-const plisio = require('./plisio');
 
-const PROVIDERS = { stripe, paypal, plisio };
+const PROVIDERS = { stripe, paypal };
 const RETRYABLE_PROVIDERS = Object.freeze(Object.keys(PROVIDERS));
 
 function cleanError(value) {

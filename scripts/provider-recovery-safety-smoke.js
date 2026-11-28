@@ -33,13 +33,11 @@ assert.throws(()=>providerLifecycleState.normalizeStatus('unknown','active'),/Un
 
 const stripeSource=read('src/payments/stripe.js');
 const paypalSource=read('src/payments/paypal.js');
-const plisioSource=read('src/payments/plisio.js');
 const billingControlSource=read('src/payments/billing-control.js');
 const checkoutRecoverySource=read('src/payments/provider-checkout-recovery.js');
 for(const [name,source] of [
     ['Stripe',stripeSource],
     ['PayPal',paypalSource],
-    ['Plisio',plisioSource],
     ['checkout recovery',checkoutRecoverySource]
 ]){
     assert(source.includes("provider-lifecycle-state"),`${name} must consume the canonical provider lifecycle state contract`);

@@ -127,7 +127,7 @@
         form.querySelectorAll('input[name="discountCode"], [data-promo-target]').forEach(input=>input.remove());
         const button=form.querySelector('button');
         if(button){
-          const provider=String(form.action||'').includes('/stripe')?'Stripe':String(form.action||'').includes('/paypal')?'PayPal':String(form.action||'').includes('/plisio')?'Plisio':'payment';
+          const provider=String(form.action||'').includes('/stripe')?'Stripe':String(form.action||'').includes('/paypal')?'PayPal':'payment';
           button.textContent=`Re-subscribe with ${provider}`;
         }
         container.append(form);

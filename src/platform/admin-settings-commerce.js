@@ -17,10 +17,9 @@ function settingsCard(title,description,actions,statusHtml=''){
 }
 async function page(){
   await Promise.all([runtimeSettings.ensureLoaded(),providerSettings.ensureLoaded()]);
-  const [stripe,paypal,plisio]=await Promise.all([
+  const [stripe,paypal]=await Promise.all([
     providerSettings.status('stripe'),
-    providerSettings.status('paypal'),
-    providerSettings.status('plisio')
+    providerSettings.status('paypal')
   ]);
   const body=`<div class="statusBanner"><strong>Commerce settings stay in Settings.</strong> Use this page as the stable configuration directory; open the operational control rooms below only when you need to manage live plans, orders, providers or customer billing.</div><div class="settings-grid settingsCommerceGrid">
     ${settingsCard('Plans & storefront','Products, access policy and the way plans are presented to customers',[
@@ -29,11 +28,11 @@ async function page(){
       ['Access rules','/admin/plans/access-rules','Advanced trial, free-access and delivery rules']
     ])}
     ${settingsCard('Payments & billing','Provider credentials, webhook health and recurring billing controls',[
-      ['Payment providers','/admin/payments','Stripe, PayPal and Plisio credentials, callbacks and tests'],
+      ['Payment providers','/admin/payments','Stripe and PayPal credentials, callbacks and tests'],
       ['Billing','/admin/billing','Recurring subscription and customer billing operations'],
       ['Provider mappings','/admin/provider-mappings','Map CAPTAiNFiN plans to provider-side products'],
       ['Payment risk','/admin/payments/risk-policy','Refund, dispute and chargeback access behaviour']
-    ],`<div class="settingsCommerceProviderState">${providerState('Stripe',stripe)}${providerState('PayPal',paypal)}${providerState('Plisio',plisio)}</div>`)}
+    ],`<div class="settingsCommerceProviderState">${providerState('Stripe',stripe)}${providerState('PayPal',paypal)}</div>`)}
     ${settingsCard('Orders & growth','Purchase history, revenue reporting and commercial growth tools',[
       ['Orders','/admin/commerce/orders','Trace Stripe and PayPal purchases back to customers'],
       ['Commerce analytics','/admin/commerce','Revenue, MRR, churn and upcoming access risk'],

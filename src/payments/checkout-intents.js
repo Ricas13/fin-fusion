@@ -9,8 +9,8 @@ const customerServerChoice = require('../jellyfin/customer-server-choice');
 const carriedTime = require('./carried-time');
 const samePlanRepurchase = require('./same-plan-repurchase');
 
-const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
-const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
+const CHECKOUT_PROVIDERS = ['stripe', 'paypal'];
+const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420 });
 const CUSTOMER_CHECKOUT_LOCK_MINUTES = 2;
 
 function hash(raw) { return crypto.createHash('sha256').update(String(raw)).digest('hex'); }
@@ -125,7 +125,7 @@ async function settleReservation(client, intentId, state) {
     }
 }
 
-function providerMaxTtl(provider) { return provider === 'plisio' ? 180 : 60; }
+function providerMaxTtl(_provider) { return 60; }
 
 async function createIntent({
     scope, customerId = null, planId = null, planPriceId = null, provider,
@@ -440,24 +440,6 @@ async function completeVerifiedProvider(provider, providerCheckoutId, state = 'c
     });
 }
 
-// Closes an invoice nobody paid, with no operator. It is the same record an operator "dismiss" writes (so the Orders queue
-// drops it and capacity is already released by hold expiry) but it is deliberately NOT provider-terminal, and it records no
-// actor: the recovery worker keeps re-checking the invoice, so a late payment is still found and activates without a callback.
-async function autoCloseUnpaid(intentId, note) {
-    return transaction(async client => {
-        const claimed = await client.query(`
-            UPDATE billing_checkout_intents
-            SET operator_resolved_at=NOW(),operator_resolution='dismissed',operator_resolution_note=$2,updated_at=NOW()
-            WHERE id=$1 AND provider='plisio' AND operator_resolved_at IS NULL AND state IN('open','failed','expired','cancelled')
-              AND provider_terminal_at IS NULL
-            RETURNING id`, [intentId, String(note || 'Closed automatically.').slice(0, 500)]);
-        if (claimed.rowCount !== 1) return false;
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'billing.checkout.auto_closed','billing_checkout_intent',$1,$2::jsonb)`,
-            [intentId, JSON.stringify({ reason: String(note || '').slice(0, 500), automatic: true })]);
-        return true;
-    });
-}
-
 async function findProviderIntent(provider, providerCheckoutId) {
     if (!CHECKOUT_PROVIDERS.includes(provider)) return null;
     const externalId = String(providerCheckoutId || '').trim().slice(0, 300);
@@ -659,7 +641,6 @@ async function cancelForOwner(scope, ownerId) {
 }
 
 module.exports = {
-    autoCloseUnpaid,
     CHECKOUT_PROVIDERS,
     PROVIDER_CAPACITY_HOLD_MINUTES,
     CUSTOMER_CHECKOUT_LOCK_MINUTES,

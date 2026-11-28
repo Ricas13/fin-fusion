@@ -5,7 +5,6 @@ const express=require('express');
 const customers=require('../customers');
 const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
-const plisio=require('../payments/plisio');
 const providerPricing=require('../payments/provider-plan-pricing');
 const planPricing=require('../payments/plan-pricing');
 const providerSettings=require('../payments/provider-settings');
@@ -35,10 +34,9 @@ const CHECKOUT_SAFE=[
  'Another media account placement is still being completed on this server. Try this checkout again shortly.',
  'Invalid or expired security token','Plan is required',
  /^This plan is not configured for .+ in .+$/,/^That payment type is not available for this plan in .+$/,
- /^(Stripe|PayPal|Plisio) checkout is temporarily unavailable until its payment callback is configured\.$/,
+ /^(Stripe|PayPal) checkout is temporarily unavailable until its payment callback is configured\.$/,
  'PayPal discount codes currently apply only to one-time payments',
  'Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.',
- 'Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.',
  'Service credit cannot be used for a same-plan access extension.',
  paidValueTransfer.CHARGE_UNSUPPORTED,
  'This win-back code is only available for a new subscription.',
@@ -59,17 +57,19 @@ const CHECKOUT_SAFE=[
  'Provider checkout does not match the local checkout intent.','Checkout intent belongs to a different billing scope.',
  'Checkout intent belongs to a different provider.','Checkout intent belongs to a different account.','Invalid checkout completion state.',
  /^A checkout is already in progress\./,
- /^An existing (Stripe|PayPal|Plisio) checkout is still awaiting completion\./,
- /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
+ /^An existing (Stripe|PayPal) checkout is still awaiting completion\./,
+ /^An existing (Stripe|PayPal) checkout has already been created with the payment provider\./,
  'A plan change is already open for this subscription. Complete or resolve it before buying extra time.',
  planChange.PLAN_CHANGE_PROCESSING,
+ planChange.STRIPE_CURRENCY_REAUTHORIZE,
+ 'Stripe has not confirmed the end of your current paid period. Synchronise billing before switching currency.',
  'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.',
  ...Object.values(samePlanRepurchase.MESSAGES),
  ...Object.values(carriedTime.MESSAGES)
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
-function providerLabel(provider){return({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio'})[provider]||'Payment provider';}
+function providerLabel(provider){return({stripe:'Stripe',paypal:'PayPal'})[provider]||'Payment provider';}
 function priceLabel(plan){return moneyFormat.formatMinor(plan.price_minor,plan.currency||'GBP');}
 function requestedAccessQuantity(req){const n=Number(req.body.accessQuantity);return Number.isInteger(n)&&n>0?n:null;}
 function choiceQuantity(plan){return Number(plan?.access_quantity||plan?.quantity||(plan?.variant_kind==='households'?plan?.stremio_household_network_limit:plan?.streams)||1);}
@@ -254,7 +254,6 @@ async function begin(req,res,provider){
  const wantsCredit=wantsServiceCredit(req);
  if(choice.extensionSubscriptionId&&wantsCredit)throw new Error('Service credit cannot be used for a same-plan access extension.');
  if(wantsCredit&&provider==='paypal'&&choice.mode==='subscription')throw new Error('Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.');
- if(wantsCredit&&provider==='plisio')throw new Error('Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.');
  let creditTransferRequired=false;
  const creditConflictMessage=`Mixed service-credit checkout is for activating a new ${serviceScope.label(choice.plan)} service. End the current overlapping service before applying credit to a new provider checkout.`;
  if(wantsCredit){
@@ -272,9 +271,10 @@ async function begin(req,res,provider){
   let reservation=null;
   if(req.body.discountCode)reservation=await discounts.reserveForIntent({code:req.body.discountCode,planCode:choice.planCode,customerId:req.session.customerId,checkoutIntentId:intent.id,baseMinor:Number(choice.plan.price_minor||0),currency:choice.currency,ttlMinutes:checkoutTtlMinutes});
   let snapshot={...commercialSnapshot(choice,provider,reservation),mediaServerId:intent.commercial_snapshot?.mediaServerId||null},grossDue=Number((snapshot.discountedMinor??snapshot.priceMinor)||0),serviceCreditMinor=0;
-  if(wantsCredit&&grossDue>50){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:grossDue-50,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
+  const preparedStripeTransfer=Boolean(intent.paid_value_transfer_snapshot)&&provider==='stripe'&&choice.mode==='subscription';
+  if(wantsCredit&&(grossDue>50||(preparedStripeTransfer&&grossDue>0))){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:preparedStripeTransfer?grossDue:grossDue-50,minimumCashMinor:preparedStripeTransfer?50:0,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
   const providerDue=Math.max(0,grossDue-serviceCreditMinor);
-  if(intent.paid_value_transfer_snapshot)paidValueTransfer.assertChargeSupported({providerDue,serviceCreditMinor,grossDue});
+  if(intent.paid_value_transfer_snapshot)paidValueTransfer.assertChargeSupported({providerDue,serviceCreditMinor,grossDue,discountCodeId:snapshot.discountCodeId});
   snapshot={...snapshot,grossDiscountedMinor:grossDue,serviceCreditMinor,serviceCreditCurrency:serviceCreditMinor?choice.currency:null,discountedMinor:providerDue};
   const updated=await query(`UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING commercial_snapshot,expires_at`,[intent.id,JSON.stringify(snapshot)]);intent.commercial_snapshot=updated.rows[0]?.commercial_snapshot||snapshot;intent.expires_at=updated.rows[0]?.expires_at||intent.expires_at;
 
@@ -284,12 +284,8 @@ async function begin(req,res,provider){
   }
   if(provider==='stripe'){
    const portal=await customers.getCustomerPortal(req.session.customerId);
-   const stripeFinalAmount=providerDue===0&&choice.mode==='subscription'&&req.body.discountCode?null:providerDue;
-   const checkout=await stripe.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,email:portal?.customer?.login_email||portal?.customer?.email,discountCode:req.body.discountCode||null,successUrl:await stripeSuccessUrl(req,intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:stripeFinalAmount,checkoutExpiresAt:intent.expires_at});
-   await intents.attachProviderCheckout(intent.id,checkout.id);return checkout;
-  }
-  if(provider==='plisio'){
-   const checkout=await plisio.createCheckout({intentId:intent.id,resolvedPlan:choice.plan,finalAmountMinor:providerDue,callbackUrl:await operations.absoluteUrl(req,'/webhooks/plisio'),successUrl:await stateUrl(req,'/account/plisio/return',intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent)});
+   const stripeFinalAmount=providerDue===0&&choice.mode==='subscription'&&req.body.discountCode&&!preparedStripeTransfer?null:providerDue;
+   const checkout=await stripe.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,email:portal?.customer?.login_email||portal?.customer?.email,discountCode:req.body.discountCode||null,successUrl:await stripeSuccessUrl(req,intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:stripeFinalAmount,allowZeroInitialRecurring:preparedStripeTransfer,checkoutExpiresAt:intent.expires_at});
    await intents.attachProviderCheckout(intent.id,checkout.id);return checkout;
   }
   const checkout=await paypal.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,discountCode:req.body.discountCode||null,returnUrl:await stateUrl(req,'/account/paypal/return',intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,checkoutIntentId:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:providerDue});
@@ -297,5 +293,5 @@ async function begin(req,res,provider){
  }catch(error){await intents.consume({intentId:intent.id,nonce:intent.nonce,state:'failed',scope:'customer',provider,ownerId:req.session.customerId}).catch(()=>{});throw error;}
 }
 async function finish(req,res,provider){const checkout=await begin(req,res,provider);if(!checkout||res.headersSent)return;if(checkout.internal)return res.redirect('/account?message='+encodeURIComponent(checkout.message));return res.redirect(303,checkout.url);}
-function createFlexibleCheckoutRouter(){const router=express.Router();router.use(async(_req,_res,next)=>{try{await providerSettings.ensureLoaded();return next();}catch(error){return next(error);}});router.get('/account/checkout/readiness',checkoutReadLimit,requireCustomer,async(_req,res)=>{try{return res.json(await checkoutReadiness());}catch(_){return res.status(503).json({stripe:false,paypal:false,plisio:false});}});router.post('/account/checkout/stripe',checkoutStartLimit,requireCustomer,async(req,res)=>{try{return await finish(req,res,'stripe');}catch(error){return checkoutErrorRedirect(res,error,'Stripe checkout start failed','Stripe checkout could not be started.');}});router.post('/account/checkout/paypal',checkoutStartLimit,requireCustomer,async(req,res)=>{try{return await finish(req,res,'paypal');}catch(error){return checkoutErrorRedirect(res,error,'PayPal checkout start failed','PayPal checkout could not be started.');}});router.post('/account/checkout/plisio',checkoutStartLimit,requireCustomer,async(req,res)=>{try{return await finish(req,res,'plisio');}catch(error){return checkoutErrorRedirect(res,error,'Plisio checkout start failed','Plisio checkout could not be started.');}});router.get('/account/checkout/cancel',checkoutActionLimit,requireCustomer,async(req,res)=>{try{await intents.consume({intentId:String(req.query.checkout_intent||''),nonce:String(req.query.checkout_state||''),state:'cancelled',scope:'customer',ownerId:req.session.customerId});return res.redirect('/account?error='+encodeURIComponent('Checkout cancelled.'));}catch(error){return checkoutErrorRedirect(res,error,'Checkout cancel failed','Checkout could not be cancelled.');}});router.post('/account/checkout/cancel-open',checkoutActionLimit,requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const open=await intents.getOutstandingForOwner('customer',req.session.customerId);if(open?.provider_checkout_id&&!open?.provider_terminal_at){if(open.provider==='stripe'){const abandoned=await stripe.abandonCheckout(open.provider_checkout_id);if(abandoned?.internal)return res.redirect('/account?message='+encodeURIComponent(abandoned.message));if(abandoned?.terminal)return res.redirect('/account?message='+encodeURIComponent('Your in-progress Stripe checkout was cancelled. You can start again below.'));}throw new Error(`An existing ${providerLabel(open.provider)} checkout has already been created with the payment provider. Continue that checkout instead of cancelling it locally.`);}const cancelled=await intents.cancelForOwner('customer',req.session.customerId);return res.redirect('/account?message='+encodeURIComponent(cancelled?'Your in-progress checkout was cancelled. You can start again below.':'No in-progress checkout was found.'));}catch(error){return checkoutErrorRedirect(res,error,'Checkout cancel-open failed','Your in-progress checkout could not be cancelled.');}});return router;}
+function createFlexibleCheckoutRouter(){const router=express.Router();router.use(async(_req,_res,next)=>{try{await providerSettings.ensureLoaded();return next();}catch(error){return next(error);}});router.get('/account/checkout/readiness',checkoutReadLimit,requireCustomer,async(_req,res)=>{try{return res.json(await checkoutReadiness());}catch(_){return res.status(503).json({stripe:false,paypal:false});}});router.post('/account/checkout/stripe',checkoutStartLimit,requireCustomer,async(req,res)=>{try{return await finish(req,res,'stripe');}catch(error){return checkoutErrorRedirect(res,error,'Stripe checkout start failed','Stripe checkout could not be started.');}});router.post('/account/checkout/paypal',checkoutStartLimit,requireCustomer,async(req,res)=>{try{return await finish(req,res,'paypal');}catch(error){return checkoutErrorRedirect(res,error,'PayPal checkout start failed','PayPal checkout could not be started.');}});router.get('/account/checkout/cancel',checkoutActionLimit,requireCustomer,async(req,res)=>{try{await intents.consume({intentId:String(req.query.checkout_intent||''),nonce:String(req.query.checkout_state||''),state:'cancelled',scope:'customer',ownerId:req.session.customerId});return res.redirect('/account?error='+encodeURIComponent('Checkout cancelled.'));}catch(error){return checkoutErrorRedirect(res,error,'Checkout cancel failed','Checkout could not be cancelled.');}});router.post('/account/checkout/cancel-open',checkoutActionLimit,requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const open=await intents.getOutstandingForOwner('customer',req.session.customerId);if(open?.provider_checkout_id&&!open?.provider_terminal_at){if(open.provider==='stripe'){const abandoned=await stripe.abandonCheckout(open.provider_checkout_id);if(abandoned?.internal)return res.redirect('/account?message='+encodeURIComponent(abandoned.message));if(abandoned?.terminal)return res.redirect('/account?message='+encodeURIComponent('Your in-progress Stripe checkout was cancelled. You can start again below.'));}throw new Error(`An existing ${providerLabel(open.provider)} checkout has already been created with the payment provider. Continue that checkout instead of cancelling it locally.`);}const cancelled=await intents.cancelForOwner('customer',req.session.customerId);return res.redirect('/account?message='+encodeURIComponent(cancelled?'Your in-progress checkout was cancelled. You can start again below.':'No in-progress checkout was found.'));}catch(error){return checkoutErrorRedirect(res,error,'Checkout cancel-open failed','Your in-progress checkout could not be cancelled.');}});return router;}
 module.exports={repurchaseAsExtension,withMediaLocation,createFlexibleCheckoutRouter,providerLabel,priceLabel,requireCustomer,stateUrl,stripeSuccessUrl,commercialSnapshot,requestedCurrency,requestedAccessQuantity,choiceQuantity,checkoutReadiness,assertProviderCheckoutReady,existingRecurringReplacementOption,livePrimaryRows,overlappingRecurring,CHECKOUT_SAFE};

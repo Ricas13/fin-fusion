@@ -28,7 +28,7 @@ function capabilities(provider) {
     provider: name,
     recurringLifecycle: name === 'stripe' || name === 'paypal',
     refunds: name === 'stripe' || name === 'paypal',
-    oneTimeRemoteLookup: name === 'plisio'
+    oneTimeRemoteLookup: false
   });
 }
 

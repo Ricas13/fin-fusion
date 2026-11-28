@@ -47,27 +47,9 @@ assert(expireScope.indexOf('recordExpiryVerificationFailure(row, verificationErr
 assert(expirySource.includes("kind: 'failed_renewal'") && expirySource.includes("reason: 'expiry_provider_verification_exhausted'"),
   'provider-verification exhaustion must use the canonical payment incident surface');
 
-const plisio = read('src/payments/plisio.js');
-const loss = section(plisio, 'async function recordActivatedProviderLoss', 'async function applyRemoteOperation');
-assert(loss.includes("incidents.identityFromProviderSubscription('plisio', fields.id)"),
-  'Plisio loss handling must bind to the exact previously activated transaction before removing access');
-assert(loss.includes("if (identity.scope === 'unresolved' || !identity.customerId) return { matched: false }"),
-  'a never-activated failed Plisio checkout must not manufacture a money-loss incident');
-assert(loss.includes("kind: 'chargeback'") && loss.includes("status: 'lost'") && loss.includes('providerSubscriptionId: fields.id'),
-  'provider-confirmed post-activation Plisio loss must enter the existing terminal money-loss state machine');
-const apply = section(plisio, 'async function applyRemoteOperation', 'async function processClaimedCallback');
-for (const terminal of ["['expired', 'cancelled', 'cancelled duplicate']", "['error', 'mismatch']"]) {
-  assert(apply.includes(terminal), `Plisio terminal set ${terminal} is missing`);
-}
-assert((apply.match(/recordActivatedProviderLoss\(fields/g) || []).length >= 2,
-  'both cancelled/expired and error/mismatch Plisio terminal states must check for previously activated access');
-const stored = section(plisio, 'async function reconcileStoredPaymentEvent', 'async function retryPaymentEvent');
-assert(stored.includes('const loss = await recordActivatedProviderLoss(fields, { eventId: eventRow.provider_event_id })'),
-  'durable Plisio recovery must terminate already-activated access even after the checkout intent was cleaned up');
-
 const incidents = read('src/payments/incidents.js');
 assert(incidents.includes("const confirmedLostChargeback=kind==='chargeback'&&(status==='lost'||incident.incident_status==='lost')"),
-  'Plisio loss regression depends on the canonical confirmed-lost chargeback terminal rule');
+  'provider loss regression depends on the canonical confirmed-lost chargeback terminal rule');
 assert(incidents.includes('subscriptionTermination.terminateForRefund'),
   'confirmed provider loss must continue through the canonical subscription termination owner');
 

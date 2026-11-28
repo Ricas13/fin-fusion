@@ -77,7 +77,7 @@ assert(!pageKeys('settings').includes('settings-commerce')&&nav.hiddenPages['set
 assert(/Settings · Commerce/.test(settingsCommerce)&&/\/admin\/plans/.test(settingsCommerce)&&/\/admin\/payments/.test(settingsCommerce)&&/\/admin\/commerce\/orders/.test(settingsCommerce),'Settings Commerce must remain a stable directory for plans, payments and orders/growth');
 assert(/router\.get\('\/admin\/settings\/commerce'/.test(settingsCommerce)&&!/router\.get\('\/admin\/settings',/.test(settingsCommerce),'Settings Commerce must use a unique canonical route rather than shadow the existing Settings owner');
 assert(/createAdminSettingsCommerceRouter/.test(routeComposition),'Admin route composition must mount the Settings Commerce owner');
-assert(/providerSettings\.status\('plisio'\)/.test(integrationsOverview)&&/item\('plisio','Plisio'/.test(integrationsOverview),'Connections overview must include Plisio alongside Stripe and PayPal');
+assert(!/status\('plisio'\)|item\('plisio'/.test(integrationsOverview),'Connections overview must list only the supported payment providers');
 assert(/integrationOverviewGrid/.test(integrationsOverview),'Connections overview must use the settings-style integration grid');
 assert(/function enforceSidebarOnlyNavigation\(\)/.test(navigationCoherence)&&/nav\.workflowCardGrid,nav\.operatorTabs/.test(navigationCoherence),'shared navigation coherence must enforce the left sidebar as the single navigation hierarchy');
 assert(/function movePageActionsToHeading\(\)/.test(navigationCoherence)&&/topStatusWrap,.topHelpLink,.topHeaderMetrics/.test(navigationCoherence),'navigation coherence must keep top utilities global while moving page actions beside the heading');

@@ -54,7 +54,6 @@
               const opts=Array.isArray(p.payment_options)?p.payment_options:[];
               const stripeOpt=opts.find(o=>o.provider==='stripe');
               const paypalOpt=opts.find(o=>o.provider==='paypal');
-              const plisioOpt=opts.find(o=>o.provider==='plisio');
               const isTrial=p.billing_interval==='trial';
               const isFreePlan=Number(p.price_minor||0)===0&&!isTrial;
               const soldOut=Boolean(p.capacity&&p.capacity.soldOut);
@@ -83,8 +82,8 @@
                   <% } else { %>
                     <% if(stripeEnabled&&stripeOpt){ %><div class="paymentNote">Starts after Stripe confirms payment.</div><form class="plainForm checkoutForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="discountCode" data-promo-target><button class="button stripe full" type="submit">Continue with Stripe</button></form><% } %>
                     <% if(paypalEnabled&&paypalOpt){ %><form class="plainForm checkoutForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="discountCode" data-promo-target><button class="button paypal full" type="submit">Continue with PayPal</button></form><% } %>
-                    <% if(plisioEnabled&&plisioOpt){ %><form class="plainForm checkoutForm" method="post" action="/account/checkout/plisio"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="checkoutMode" value="payment"><input type="hidden" name="discountCode" data-promo-target><button class="button primary full" type="submit">Plisio · One-off payment</button></form><% } %>
-                    <% if(!(stripeEnabled&&stripeOpt)&&!(paypalEnabled&&paypalOpt)&&!(plisioEnabled&&plisioOpt)){ %><div class="paymentNote">No payment method is currently configured for this plan.</div><% } %>
+                    
+                    <% if(!(stripeEnabled&&stripeOpt)&&!(paypalEnabled&&paypalOpt)){ %><div class="paymentNote">No payment method is currently configured for this plan.</div><% } %>
                   <% } %>
                 </div>
               </article>
