@@ -16,8 +16,9 @@ async function resolveAwaitingCheckout({ customerId, planId, provider = null, pr
                AND ((provider='paypal' AND $3='paypal') OR (provider='stripe' AND $3='stripe' AND provider_action_required AND target_price_id=$4 AND EXISTS(
                     SELECT 1 FROM subscriptions s WHERE s.customer_id=$1 AND s.plan_id=$2 AND s.source='stripe'
                     AND s.provider_subscription_id=$5 AND s.status='active' AND s.superseded_by IS NULL
-                    AND s.provider_price_id_snapshot=$4 AND s.starts_at>=customer_plan_changes.effective_at)))
-               AND state='awaiting_checkout'
+                    AND s.id<>customer_plan_changes.current_subscription_id AND s.provider_price_id_snapshot=$4 AND s.starts_at>=customer_plan_changes.effective_at
+                    AND EXISTS(SELECT 1 FROM subscriptions old WHERE old.id=customer_plan_changes.current_subscription_id AND old.customer_id=s.customer_id AND old.current_period_end<=s.starts_at))))
+               AND (state='awaiting_checkout' OR (provider='stripe' AND provider_action_required AND state='pending' AND effective_at<=NOW()))
              RETURNING *
         `, [customerId, planId, provider, providerMappingId, providerSubscriptionId]);
         const change = result.rows[0] || null;

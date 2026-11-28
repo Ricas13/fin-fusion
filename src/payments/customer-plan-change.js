@@ -411,7 +411,7 @@ async function advanceManualChange(change){
     // terminal at Stripe AND its recorded paid period has actually elapsed.
     if(change.provider==='stripe'){
         const current=(await query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2',[change.current_subscription_id,change.customer_id])).rows[0];
-        if(!current||current.source!=='stripe'||!current.cancel_at_period_end||current.superseded_by||!billingMode.validRecurringProviderReference(current)||+new Date(current.current_period_end)>Date.now())return false;
+        if(!current||current.source!=='stripe'||(!current.cancel_at_period_end&&!['cancelled','expired'].includes(current.status))||current.superseded_by||!billingMode.validRecurringProviderReference(current)||+new Date(current.current_period_end)>Date.now())return false;
         const client=await stripeClient();
         let remote;
         try{remote=await client.subscriptions.retrieve(current.provider_subscription_id);}
@@ -423,7 +423,7 @@ async function advanceManualChange(change){
         const updated=await client.query(`UPDATE customer_plan_changes pc SET state='awaiting_checkout',updated_at=NOW()
             WHERE pc.id=$1 AND pc.state='pending' AND pc.effective_at<=NOW()
             AND (pc.provider='paypal' OR (pc.provider='stripe' AND pc.provider_action_required
-              AND EXISTS(SELECT 1 FROM subscriptions s WHERE s.id=pc.current_subscription_id AND s.customer_id=pc.customer_id AND s.cancel_at_period_end AND s.current_period_end<=NOW() AND s.superseded_by IS NULL))) RETURNING id`,[change.id]);
+              AND EXISTS(SELECT 1 FROM subscriptions s WHERE s.id=pc.current_subscription_id AND s.customer_id=pc.customer_id AND (s.cancel_at_period_end OR s.status IN ('cancelled','expired')) AND s.current_period_end<=NOW() AND s.superseded_by IS NULL))) RETURNING id`,[change.id]);
         if(!updated.rowCount)return false;
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.plan_change.awaiting_checkout','customer',$1,$2::jsonb)`,[change.customer_id,JSON.stringify({changeId:change.id,targetPlanId:change.target_plan_id,targetPlanCode:change.target_code,targetAccessQuantity:change.target_access_quantity,targetVariantKind:change.target_variant_kind,effectiveAt:change.effective_at,provider:change.provider})]);
         return true;

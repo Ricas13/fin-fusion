@@ -187,6 +187,7 @@ async function recoverProviderOperation(op) {
     await providerOps.observed(op.id, { result:{cancelAtPeriodEnd:remote.cancelAtPeriodEnd,remoteStatus:remote.remoteStatus || remote.status || null} });
     if (remote.cancelAtPeriodEnd !== desired) {
         if (['provider_applied','local_applied'].includes(op.state)) throw recoveryManual('Provider no longer reflects the already-applied renewal decision; refusing to overwrite a later remote decision.');
+        if(!desired&&(await query("SELECT id FROM customer_plan_changes WHERE current_subscription_id=$1 AND provider='stripe' AND provider_action_required AND state IN ('pending','awaiting_checkout') LIMIT 1",[row.id])).rowCount)throw recoveryManual('Cancel your pending currency change before resuming automatic renewal.');
         if (!desired && await queuedPurchases.hasPurchaseQueuedBehind(row.id)) throw recoveryManual(queuedPurchases.RESUME_BLOCKED);
         if (desired) await remoteAdapter.stopRenewal(row, { idempotencyKey:op.idempotency_key }); else await remoteAdapter.resumeRenewal(row, { idempotencyKey:op.idempotency_key });
         remote = remoteStateForPolicy(row, await remoteAdapter.fetchRemote(row));

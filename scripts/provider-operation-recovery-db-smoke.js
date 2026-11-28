@@ -539,7 +539,8 @@ async function testRStripeCurrencyReplacement(){
     await query("UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1",[sub.id]);
     assert.equal(await planChange.advanceManualChange(recorded),false,'provider has not terminated');
     remoteSubscriptions.get(ref).status='canceled';
-    assert.equal(await planChange.advanceManualChange(recorded),true);
+    await query("UPDATE subscriptions SET status='cancelled',cancel_at_period_end=FALSE WHERE id=$1",[sub.id]);
+    assert.equal(await planChange.advanceManualChange(recorded),true,'terminal provider sync may clear the prior cancel flag');
     assert.equal((await row('customer_plan_changes',recorded.id)).state,'awaiting_checkout');
     assert.equal(await planChange.advanceManualChange(recorded),false,'manual transition must be replay safe');
     const resolver=require('../src/payments/plan-change-resolution');

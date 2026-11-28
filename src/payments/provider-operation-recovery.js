@@ -8,6 +8,7 @@ const providerSettings = require('./provider-settings');
 const providerPricing = require('./provider-plan-pricing');
 const providerHttp = require('./provider-http');
 const billingControl = require('./billing-control');
+const billingMode = require('./subscription-billing-mode');
 const planCapacity = require('../entitlements/plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
 const customerPlanChange = require('./customer-plan-change');
@@ -194,6 +195,8 @@ async function recoverImmediate(op) {
   let observedPrice = stripePriceId(remote);
   await providerOps.observed(op.id, { result:{observedPrice,status:remote.status||null} });
   if (observedPrice !== request.targetPriceId) {
+    const sourceCurrency=String(remote.items?.data?.[0]?.price?.currency||billingMode.currencyOf(subscription)).toUpperCase();
+    if(sourceCurrency&&sourceCurrency!==String(mapping.currency||request.currency||'').toUpperCase())throw manual(customerPlanChange.STRIPE_CURRENCY_REAUTHORIZE);
     if (['provider_applied','local_applied'].includes(op.state)) throw manual('Stripe no longer reflects the already-applied target price; refusing to overwrite a later provider decision.');
     // Provider has not changed yet. Re-win logical/physical admission before
     // making any billable mutation after a crash that occurred before the
@@ -249,6 +252,8 @@ async function matchingSchedule(client, remote, op, request) {
 async function ensureScheduleRemote(op, request) {
   const client = await stripeClient();
   let remote = await client.subscriptions.retrieve(request.subscriptionId, { expand:['items.data.price','schedule'] });
+  const sourceCurrency=String(remote.items?.data?.[0]?.price?.currency||'').toUpperCase();
+  if(sourceCurrency&&request.currency&&sourceCurrency!==String(request.currency).toUpperCase())throw manual(customerPlanChange.STRIPE_CURRENCY_REAUTHORIZE);
   let schedule = await matchingSchedule(client, remote, op, request);
   if (schedule) {
     await providerOps.observed(op.id, { result:{scheduleId:schedule.id,scheduleStatus:schedule.status||null,targetPrice:scheduleTargetPrice(schedule)} });
@@ -281,6 +286,7 @@ async function recoverSchedule(op) {
   if (!request.changeId || !request.subscriptionId || !request.targetPlanId || !request.targetPriceId) throw manual('Scheduled plan-change recovery snapshot is incomplete.');
   const change = (await query('SELECT * FROM customer_plan_changes WHERE id=$1 AND customer_id=$2', [request.changeId,op.owner_id])).rows[0];
   if (!change) throw manual('Scheduled local plan-change record no longer exists.');
+  if(change.provider_action_required)throw manual('Fresh-authorization currency changes must not create Stripe schedules.');
   const remote = await ensureScheduleRemote(op, request);
   const schedule = remote.schedule;
   if (!schedule?.id) throw manual('Stripe schedule could not be recovered.');
