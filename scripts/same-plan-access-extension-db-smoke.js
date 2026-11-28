@@ -9,6 +9,7 @@ const checkoutIntents=require('../src/payments/checkout-intents');
 const planCapacity=require('../src/entitlements/plan-capacity');
 const termination=require('../src/payments/subscription-termination');
 const subscriptionState=require('../src/entitlements/subscription-state');
+const historicalRecovery=require('../src/payments/historical-extension-recovery');
 
 async function main(){
   const suffix=Date.now().toString(36);
@@ -331,6 +332,31 @@ async function main(){
   await extensions.revokeByProviderPayment({provider:'stripe',providerPaymentId:recoveryRequest.providerPaymentId,customerId:recoveredCustomer.id});
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[independent.subscription.id])).rows[0].service_extension_days),0,'only the extension reversal removes the recovered access');
   await query('DELETE FROM customers WHERE id=$1',[recoveredCustomer.id]);
+
+  // Simulate old deployment history: the refunded base is terminal, but its
+  // independently paid extension has not been recovered yet.
+  const oldCustomer=(await query("INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *",['Historical '+suffix,'historical-'+suffix+'@example.invalid'])).rows[0];
+  const oldBase=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end)
+    VALUES($1,$2,'active','stripe','payment',$3,NOW()-INTERVAL '5 days',NOW()+INTERVAL '20 days') RETURNING *`,
+    [oldCustomer.id,plan.id,'pi_historical_base_'+suffix])).rows[0];
+  const oldSnapshot={...snapshot,extensionSubscriptionId:oldBase.id,discountedMinor:600};
+  const oldIntent=(await query(`INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,provider,checkout_mode,state,nonce_hash,expires_at,commercial_snapshot,provider_checkout_id)
+     VALUES('customer',$1,$2,'stripe','payment','completed',$3,NOW()+INTERVAL '1 hour',$4::jsonb,$5) RETURNING id`,
+     [oldCustomer.id,plan.id,'historical-nonce-'+suffix,JSON.stringify(oldSnapshot),'cs_historical_'+suffix])).rows[0];
+  const oldPurchase=await transaction(client=>extensions.applyPurchase(client,{customerId:oldCustomer.id,subscriptionId:oldBase.id,planId:plan.id,provider:'stripe',
+    providerPaymentId:'pi_historical_extension_'+suffix,checkoutIntentId:oldIntent.id,commercialSnapshot:{...oldSnapshot,checkoutIntentId:oldIntent.id}}));
+  await query("UPDATE subscriptions SET refund_terminated_at=NOW(),status='cancelled',current_period_end=NOW(),service_extension_days=0 WHERE id=$1",[oldBase.id]);
+  const candidate={id:oldBase.id,customer_id:oldCustomer.id};
+  assert((await historicalRecovery.candidates({limit:100})).some(x=>x.id===oldBase.id),'verified old paid extension is discoverable');
+  await query("UPDATE billing_checkout_intents SET state='failed' WHERE id=$1",[oldIntent.id]);
+  assert.equal((await transaction(client=>historicalRecovery.recoverOne(client,candidate))).status,'stale','unverified checkout cannot be recovered');
+  await query("UPDATE billing_checkout_intents SET state='completed' WHERE id=$1",[oldIntent.id]);
+  const historical=await transaction(client=>historicalRecovery.recoverOne(client,candidate));
+  assert.equal(historical.status,'recovered');
+  const repaired=(await query('SELECT * FROM subscriptions WHERE id=$1',[historical.subscriptionId])).rows[0];
+  assert.equal(Number(repaired.service_extension_days),Number(oldPurchase.extension.applied_days),'recover exactly the historical paid days');
+  assert.equal((await transaction(client=>historicalRecovery.recoverOne(client,candidate))).status,'stale','historical worker is replay safe');
+  await query('DELETE FROM customers WHERE id=$1',[oldCustomer.id]);
 
   console.log('same-plan access extension smoke: ok — additive, no capacity subscription duplication, replay-safe and refund-safe');
 }

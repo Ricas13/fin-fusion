@@ -6,6 +6,7 @@ const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioni
 const{notifyExpiringSubscriptions}=require('../entitlements/subscription-expiry');
 const{reconcileActiveEntitlements,healthcheckAllServers}=require('../jellyfin/jobs');
 const automaticFreeDowngradeRetry=require('../entitlements/automatic-free-downgrade-retry');
+const historicalExtensionRecovery=require('../payments/historical-extension-recovery');
 const drift=require('../jellyfin/drift-control');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const requestUserSync=require('../integrations/request-user-sync');
@@ -186,7 +187,7 @@ async function revenueIntegrityWithPayPal(){
 
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
- async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0),blockedCount=Number(active.blocked||0);return{...active,blocked:blockedCount,expired:expiredCount,expiryFailed,downgradeRetries,warnings,serviceEndEmails:serviceEnd,processed:Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
+ async entitlements(){const historicalExtensions=await historicalExtensionRecovery.run({limit:25}),downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),serviceEnd=await serviceEndEmails.run(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0),serviceEndFailed=Number(serviceEnd.failed||0),blockedCount=Number(active.blocked||0);return{...active,blocked:blockedCount,expired:expiredCount,expiryFailed,downgradeRetries,historicalExtensions,warnings,serviceEndEmails:serviceEnd,processed:Number(historicalExtensions.processed||0)+Number(downgradeRetries.total||0)+expiredCount+Number(serviceEnd.processed||0)+Number(active.total||0),failed:Number(historicalExtensions.failed||0)+Number(active.failed||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed+serviceEndFailed}},
  async free_capacity_backfill(){return freeCapacityBackfill.run({limit:100})},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
