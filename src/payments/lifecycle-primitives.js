@@ -276,7 +276,9 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
             metadata=payment_incidents.metadata || EXCLUDED.metadata
         RETURNING *
     `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
-        reason: error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
+        reason: error?.code === 'RECURRING_SUBSCRIPTION_CONFLICT'
+            ? 'overlapping_recurring_subscription_after_provider_settlement'
+            : error?.code === 'SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'
             ? 'service_credit_unavailable_after_provider_settlement'
             : ['MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
                 ? 'media_server_unavailable_after_provider_settlement'
@@ -569,13 +571,19 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
     } catch (error) {
         const extensionFulfillmentFailure = (contract?.kind === 'subscription_extension' || Boolean(contract?.repurchaseFallback))
             && error?.code !== 'ACCESS_EXTENSION_MONEY_LOSS';
+        // Approval-pending/trialing agreements are not proof of a payment.
+        const recurringSettlementConflict = error?.code === 'RECURRING_SUBSCRIPTION_CONFLICT'
+            && mapProviderStatus(provider, providerStatus) === 'active';
         if (settlementCheckoutIntentId && (
+            recurringSettlementConflict ||
             ['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
             || extensionFulfillmentFailure
         )) {
             try {
                 await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error,
-                    repair: extensionFulfillmentFailure ? repurchaseRepair(contract, error) : null });
+                    repair: recurringSettlementConflict ? {
+                        operatorAction: 'A second recurring agreement was confirmed but conflicts with existing access. Verify both provider agreements and their payments; cancel or refund the unintended agreement and restore any paid time owed. Do not activate overlapping renewals automatically.'
+                    } : extensionFulfillmentFailure ? repurchaseRepair(contract, error) : null });
                 error.paidButUnfulfilled = true;
             } catch (incidentError) {
                 console.error('Paid-but-unfulfilled checkout incident could not be recorded:', incidentError.message);

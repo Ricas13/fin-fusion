@@ -243,14 +243,19 @@ async function effectiveAddons(customerId,{client=null,includeBlocked=false}={})
  WHERE a.customer_id=$1 AND ($2::boolean OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
  ORDER BY a.access_expires_at DESC,s.created_at DESC
  `,[customerId,Boolean(includeBlocked)]);return result.rows}
+function recurringConflict(message){
+ const error=new Error(message);
+ error.code='RECURRING_SUBSCRIPTION_CONFLICT';
+ return error;
+}
 async function assertNoOtherLiveRecurring(client,customerId,excludeId=null,targetPlanId=null){
  const base=`s.customer_id=$1 AND s.superseded_by IS NULL AND s.id<>COALESCE($2::uuid,'00000000-0000-0000-0000-000000000000'::uuid) AND s.source IN('stripe','paypal') AND s.billing_mode='subscription' AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW()`;
- if(!targetPlanId){const result=await client.query(`SELECT s.id FROM subscriptions s WHERE ${base} LIMIT 1 FOR UPDATE`,[customerId,excludeId]);if(result.rowCount)throw new Error('A recurring subscription is already active for this customer. Change or cancel it instead of creating another one.');return;}
+ if(!targetPlanId){const result=await client.query(`SELECT s.id FROM subscriptions s WHERE ${base} LIMIT 1 FOR UPDATE`,[customerId,excludeId]);if(result.rowCount)throw recurringConflict('A recurring subscription is already active for this customer. Change or cancel it instead of creating another one.');return;}
  const target=await client.query('SELECT id,is_addon,service_type FROM plans WHERE id=$1',[targetPlanId]);if(!target.rowCount)throw new Error('Plan not found.');
- if(target.rows[0].is_addon){const result=await client.query(`SELECT s.id FROM subscriptions s WHERE ${base} AND s.plan_id=$3 LIMIT 1 FOR UPDATE`,[customerId,excludeId,targetPlanId]);if(result.rowCount)throw new Error('This customer already has an active recurring subscription for this add-on.');return;}
+ if(target.rows[0].is_addon){const result=await client.query(`SELECT s.id FROM subscriptions s WHERE ${base} AND s.plan_id=$3 LIMIT 1 FOR UPDATE`,[customerId,excludeId,targetPlanId]);if(result.rowCount)throw recurringConflict('This customer already has an active recurring subscription for this add-on.');return;}
  const result=await client.query(`SELECT s.id,s.service_type_snapshot,p.service_type,p.name FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE ${base} AND COALESCE(p.is_addon,FALSE)=FALSE FOR UPDATE OF s`,[customerId,excludeId]);
  const conflict=result.rows.find(row=>serviceScope.overlaps(row,target.rows[0]));
- if(conflict)throw new Error(`A recurring ${serviceScope.label(conflict)} subscription is already active for this customer. Change or cancel that service instead of creating another overlapping subscription.`);
+ if(conflict)throw recurringConflict(`A recurring ${serviceScope.label(conflict)} subscription is already active for this customer. Change or cancel that service instead of creating another overlapping subscription.`);
 }
 async function markSuperseded(client,{subscriptionId,replacementId,reason='plan_change'}){await client.query(`UPDATE subscriptions SET superseded_by=$2,replaced_at=NOW(),replacement_reason=$3,updated_at=NOW() WHERE id=$1 AND superseded_by IS NULL`,[subscriptionId,replacementId,String(reason||'').slice(0,200)])}
 module.exports={LIVE_STATUSES,recurringProvider,audienceAllows,assertAudience,effectiveSubscription,livePrimarySubscription,effectiveStremioSubscription,effectiveEmbySubscription,liveFreeJellyfinSubscription,lockLiveFreeClaimSubscriptions,effectiveAddons,assertNoOtherLiveRecurring,markSuperseded};
