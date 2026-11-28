@@ -147,7 +147,7 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))',[row.customer_id]);
  // A replay must acknowledge the original transfer, even if the source was
  // later refunded. Never create a second ledger entry or restore reversed days.
- const previous=await client.query(`SELECT id,source_subscription_id,value_transfer_quote FROM subscription_time_carryovers WHERE target_subscription_id=$1 AND reason='monetary_plan_transfer'`,[row.id]);
+ const previous=await client.query(`SELECT id,source_subscription_id,value_transfer_quote FROM subscription_time_carryovers WHERE target_subscription_id=$1 AND value_transfer_quote IS NOT NULL`,[row.id]);
  if(previous.rowCount){
    invariant(previous.rowCount===1&&previous.rows[0].source_subscription_id===prepared.sourceId&&previous.rows[0].value_transfer_quote?.checkoutIntentId===id,'Existing transfer does not match the prepared checkout.');
    const current=(await client.query('SELECT * FROM subscriptions WHERE id=$1',[row.id])).rows[0];
