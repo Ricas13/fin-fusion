@@ -326,6 +326,10 @@ async function checkoutContract(session) {
 // Authoritative evidence that a recurring Stripe checkout both matches the frozen commercial contract and was actually
 // paid (or is a legitimate zero-cost checkout). An active agreement alone is not proof of payment.
 function verifyStripeRecurringSettlement({session,subscription,snapshot,storedProviderCustomerId=null}){
+    const reviewReasons=[];
+    // Ownership/identity mismatches stay hard failures (they would give one customer another customer's purchase). Payment-evidence
+    // mismatches never withhold access from a customer Stripe reports as paid: they are recorded for operator review instead.
+    const soft=message=>{reviewReasons.push(message);};
     const fail=message=>{const error=new Error(message);error.code='STRIPE_RECURRING_SETTLEMENT_UNVERIFIED';return error;};
     const subscriptionId=stripeObjectId(session.subscription);
     if(!subscription||!subscriptionId||subscription.id!==subscriptionId)throw fail('Stripe subscription does not belong to this Checkout session.');
@@ -338,33 +342,33 @@ function verifyStripeRecurringSettlement({session,subscription,snapshot,storedPr
     const metadataCustomer=String(subscription.metadata?.internal_customer_id||'');
     if(metadataCustomer&&String(session.metadata?.internal_customer_id||'')&&metadataCustomer!==String(session.metadata.internal_customer_id))throw fail('Stripe subscription metadata customer does not match the Checkout session.');
     const items=subscription.items?.data||[];
-    if(items.length!==1||Number(items[0].quantity||1)!==1)throw fail('Stripe subscription does not contain exactly the purchased plan item.');
-    const price=items[0].price&&typeof items[0].price==='object'?items[0].price:null;
-    if(snapshot.providerMappingId&&String(price?.id||'')!==String(snapshot.providerMappingId))throw fail('Stripe subscription price does not match the checkout contract.');
+    if(items.length!==1||Number(items[0].quantity||1)!==1)soft('Stripe subscription does not contain exactly the purchased plan item.');
+    const price=items[0]?.price&&typeof items[0].price==='object'?items[0].price:null;
+    if(snapshot.providerMappingId&&String(price?.id||'')!==String(snapshot.providerMappingId))soft('Stripe subscription price does not match the checkout contract.');
     if(price){
-        if(Number.isInteger(price.unit_amount)&&Number.isInteger(Number(snapshot.priceMinor))&&price.unit_amount!==Number(snapshot.priceMinor))throw fail('Stripe recurring price amount does not match the checkout contract.');
-        if(price.currency&&snapshot.currency&&String(price.currency).toUpperCase()!==String(snapshot.currency).toUpperCase())throw fail('Stripe recurring price currency does not match the checkout contract.');
+        if(Number.isInteger(price.unit_amount)&&Number.isInteger(Number(snapshot.priceMinor))&&price.unit_amount!==Number(snapshot.priceMinor))soft('Stripe recurring price amount does not match the checkout contract.');
+        if(price.currency&&snapshot.currency&&String(price.currency).toUpperCase()!==String(snapshot.currency).toUpperCase())soft('Stripe recurring price currency does not match the checkout contract.');
         const frequency=mappingVerification.expectedFrequency({billing_interval:snapshot.billingInterval});
         if(frequency&&price.recurring){
             const count=Number(price.recurring.interval_count||1);
-            if(price.recurring.interval!==frequency.interval||count!==frequency.count)throw fail('Stripe recurring billing frequency does not match the purchased plan.');
+            if(price.recurring.interval!==frequency.interval||count!==frequency.count)soft('Stripe recurring billing frequency does not match the purchased plan.');
         }
     }
     const expectedMinor=Number(snapshot.discountedMinor??snapshot.priceMinor),net=sessionNetMinor(session);
-    if(!Number.isInteger(expectedMinor)||expectedMinor<0||net!==expectedMinor)throw fail('Stripe Checkout amount does not match the checkout contract.');
-    if(String(session.currency||'').toUpperCase()!==String(snapshot.currency||'').toUpperCase())throw fail('Stripe Checkout currency does not match the checkout contract.');
+    if(!Number.isInteger(expectedMinor)||expectedMinor<0||net!==expectedMinor)soft('Stripe Checkout amount does not match the checkout contract.');
+    if(String(session.currency||'').toUpperCase()!==String(snapshot.currency||'').toUpperCase())soft('Stripe Checkout currency does not match the checkout contract.');
     const invoice=subscription.latest_invoice&&typeof subscription.latest_invoice==='object'?subscription.latest_invoice:null;
     if(session.payment_status==='paid'){
-        if(expectedMinor<=0)throw fail('Stripe reports a payment for a checkout that should have cost nothing.');
-        if(!invoice||invoice.status!=='paid'||invoice.billing_reason!=='subscription_create'||String(invoice.currency||'').toUpperCase()!==String(snapshot.currency||'').toUpperCase()||!Number.isInteger(invoice.amount_paid)||invoice.amount_paid<=0||invoice.amount_paid!==session.amount_total)throw fail('The first Stripe invoice is not paid for the checkout amount, so the agreement is not proof of payment.');
-        if(!['active','trialing'].includes(String(subscription.status||'')))throw fail(`Stripe subscription is ${subscription.status||'unknown'}, not active.`);
-        return{paymentVerified:true,zeroCost:false};
+        if(expectedMinor<=0)soft('Stripe reports a payment for a checkout that should have cost nothing.');
+        if(!invoice||invoice.status!=='paid'||invoice.billing_reason!=='subscription_create'||String(invoice.currency||'').toUpperCase()!==String(snapshot.currency||'').toUpperCase()||!Number.isInteger(invoice.amount_paid)||invoice.amount_paid<=0||invoice.amount_paid!==session.amount_total)soft('The first Stripe invoice is not paid for the checkout amount, so the agreement is not proof of payment.');
+        if(!['active','trialing'].includes(String(subscription.status||'')))soft(`Stripe subscription is ${subscription.status||'unknown'}, not active.`);
+        return{paymentVerified:!reviewReasons.length,zeroCost:false,reviewReasons};
     }
     // no_payment_required: only a checkout the contract itself made free (promo or service credit covering the whole price).
     const legitimateZero=expectedMinor===0&&net===0&&(Number(snapshot.serviceCreditMinor||0)>0||Boolean(snapshot.discountCodeId));
-    if(!legitimateZero)throw fail('Stripe reports no payment was required, but the checkout contract is not a zero-cost checkout.');
-    if(invoice&&((Number.isInteger(invoice.amount_paid)&&invoice.amount_paid!==0)||(Number.isInteger(invoice.amount_due)&&invoice.amount_due!==0)))throw fail('Stripe zero-cost checkout carries a non-zero first invoice.');
-    return{paymentVerified:false,zeroCost:true};
+    if(!legitimateZero)soft('Stripe reports no payment was required, but the checkout contract is not a zero-cost checkout.');
+    if(invoice&&((Number.isInteger(invoice.amount_paid)&&invoice.amount_paid!==0)||(Number.isInteger(invoice.amount_due)&&invoice.amount_due!==0)))soft('Stripe zero-cost checkout carries a non-zero first invoice.');
+    return{paymentVerified:false,zeroCost:!reviewReasons.length,reviewReasons};
 }
 async function activateCheckoutSession(session) {
     if(!['paid','no_payment_required'].includes(session.payment_status))return null;
@@ -375,6 +379,7 @@ async function activateCheckoutSession(session) {
         const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price','latest_invoice']}),period=subscriptionPeriod(subscription);
         const storedCustomer=await lifecycle.findPaymentCustomer(customerId,'stripe');
         const settlement=verifyStripeRecurringSettlement({session:verified,subscription,snapshot:contract.snapshot,storedProviderCustomerId:storedCustomer?.provider_customer_id||null});
+        if(settlement.reviewReasons?.length)await require('./settlement-review').flagForReview({provider:'stripe',customerId,providerReference:subscription.id,checkoutIntentId:contract.snapshot.checkoutIntentId,reasons:settlement.reviewReasons,detail:{sessionId:verified.id}});
         const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot,providerPaymentVerified:settlement.paymentVerified});
         await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');
         if(activated?.status==='active')await require('./plan-change-resolution').resolveAwaitingCheckout({customerId,planId,provider:'stripe',providerSubscriptionId:subscription.id,providerMappingId:contract.snapshot.providerMappingId});

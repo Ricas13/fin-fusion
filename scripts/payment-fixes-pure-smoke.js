@@ -59,50 +59,51 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 1000, amount_due: 0 }, ...over
   });
   const verify = (session, sub, snap = snapshot, stored = 'cus_1') => stripe.verifyStripeRecurringSettlement({ session, subscription: sub, snapshot: snap, storedProviderCustomerId: stored });
+  const flags = (fn, pattern, label) => { const result = fn(); assert(result.reviewReasons.some(reason => pattern.test(reason)), `${label}: expected a review flag matching ${pattern}, got ${JSON.stringify(result.reviewReasons)}`); return result; };
   const refuses = (fn, pattern, label) => assert.throws(fn, error => error.code === 'STRIPE_RECURRING_SETTLEMENT_UNVERIFIED' && pattern.test(error.message), label);
 
-  assert.deepStrictEqual(verify(goodSession(), goodSub()), { paymentVerified: true, zeroCost: false }, 'a fully matching paid checkout verifies');
+  assert.deepStrictEqual(verify(goodSession(), goodSub()), { paymentVerified: true, zeroCost: false, reviewReasons: [] }, 'a fully matching paid checkout verifies');
 
   // An active agreement alone is never proof of payment.
-  refuses(() => verify(goodSession(), goodSub({ latest_invoice: { status: 'open', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 0, amount_due: 1000 } })), /not paid/, 'unpaid first invoice');
-  refuses(() => verify(goodSession(), goodSub({ latest_invoice: null })), /not paid/, 'no invoice evidence');
-  refuses(() => verify(goodSession(), goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_cycle', currency: 'gbp', amount_paid: 1000 } })), /not paid/, 'wrong invoice reason');
-  refuses(() => verify(goodSession(), goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 500 } })), /not paid/, 'amount paid differs from the checkout');
-  refuses(() => verify(goodSession(), goodSub({ status: 'past_due' })), /not active/, 'past_due agreement');
+  flags(() => verify(goodSession(), goodSub({ latest_invoice: { status: 'open', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 0, amount_due: 1000 } })), /not paid/, 'unpaid first invoice');
+  flags(() => verify(goodSession(), goodSub({ latest_invoice: null })), /not paid/, 'no invoice evidence');
+  flags(() => verify(goodSession(), goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_cycle', currency: 'gbp', amount_paid: 1000 } })), /not paid/, 'wrong invoice reason');
+  flags(() => verify(goodSession(), goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 500 } })), /not paid/, 'amount paid differs from the checkout');
+  flags(() => verify(goodSession(), goodSub({ status: 'past_due' })), /not active/, 'past_due agreement');
 
   // Contract: amount, currency, plan price, frequency, identity.
-  refuses(() => verify(goodSession({ amount_subtotal: 900, amount_total: 900 }), goodSub()), /amount/, 'underpaid checkout');
-  refuses(() => verify(goodSession({ currency: 'usd' }), goodSub()), /currency/, 'wrong currency');
-  refuses(() => verify(goodSession(), goodSub({ items: { data: [{ quantity: 1, price: { id: 'price_other', unit_amount: 1000, currency: 'gbp', recurring: { interval: 'month', interval_count: 1 } } }] } })), /price does not match/, 'wrong price id');
-  refuses(() => verify(goodSession(), goodSub({ items: { data: [{ quantity: 1, price: { id: 'price_monthly', unit_amount: 700, currency: 'gbp', recurring: { interval: 'month', interval_count: 1 } } }] } })), /price amount/, 'wrong unit amount');
-  refuses(() => verify(goodSession(), goodSub({ items: { data: [{ quantity: 1, price: { id: 'price_monthly', unit_amount: 1000, currency: 'gbp', recurring: { interval: 'month', interval_count: 3 } } }] } })), /frequency/, 'wrong billing frequency');
+  flags(() => verify(goodSession({ amount_subtotal: 900, amount_total: 900 }), goodSub()), /amount/, 'underpaid checkout');
+  flags(() => verify(goodSession({ currency: 'usd' }), goodSub()), /currency/, 'wrong currency');
+  flags(() => verify(goodSession(), goodSub({ items: { data: [{ quantity: 1, price: { id: 'price_other', unit_amount: 1000, currency: 'gbp', recurring: { interval: 'month', interval_count: 1 } } }] } })), /price does not match/, 'wrong price id');
+  flags(() => verify(goodSession(), goodSub({ items: { data: [{ quantity: 1, price: { id: 'price_monthly', unit_amount: 700, currency: 'gbp', recurring: { interval: 'month', interval_count: 1 } } }] } })), /price amount/, 'wrong unit amount');
+  flags(() => verify(goodSession(), goodSub({ items: { data: [{ quantity: 1, price: { id: 'price_monthly', unit_amount: 1000, currency: 'gbp', recurring: { interval: 'month', interval_count: 3 } } }] } })), /frequency/, 'wrong billing frequency');
   refuses(() => verify(goodSession(), goodSub({ customer: 'cus_other' })), /customer/, 'subscription customer differs from the session');
   refuses(() => verify(goodSession(), goodSub(), snapshot, 'cus_known_for_account'), /customer/, 'customer differs from the one the account checked out under');
   refuses(() => verify(goodSession(), goodSub({ id: 'sub_2' })), /does not belong/, 'subscription is not the session subscription');
   refuses(() => verify(goodSession(), goodSub({ metadata: { internal_checkout_intent_id: '22222222-2222-4222-8222-222222222222' } })), /different checkout intent/, 'another intent');
-  refuses(() => verify(goodSession(), goodSub({ items: { data: [] } })), /exactly the purchased plan/, 'no plan item');
+  flags(() => verify(goodSession(), goodSub({ items: { data: [] } })), /exactly the purchased plan/, 'no plan item');
 
   // Tax added by the Stripe account is not part of the frozen contract and must not block a genuine payment.
   assert.deepStrictEqual(
     verify(goodSession({ amount_total: 1200, total_details: { amount_discount: 0, amount_tax: 200 } }), goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 1200 } })),
-    { paymentVerified: true, zeroCost: false });
+    { paymentVerified: true, zeroCost: false, reviewReasons: [] });
   assert.strictEqual(stripe.sessionNetMinor({ amount_subtotal: 1000, total_details: { amount_discount: 400 }, amount_total: 600 }), 600);
 
   // Promo / service credit: discounted first invoice verifies against the discounted contract amount.
   const discounted = { ...snapshot, discountedMinor: 700, serviceCreditMinor: 0, discountCodeId: 'd1' };
   assert.strictEqual(verify(goodSession({ amount_subtotal: 1000, amount_total: 700, total_details: { amount_discount: 300 } }),
     goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 700 } }), discounted).paymentVerified, true);
-  refuses(() => verify(goodSession(), goodSub(), discounted), /amount/, 'full price paid against a discounted contract is still a mismatch');
+  flags(() => verify(goodSession(), goodSub(), discounted), /amount/, 'full price paid against a discounted contract is still a mismatch');
 
   // Zero-cost: legitimate only when the contract itself made it free.
   const free = { ...snapshot, discountedMinor: 0, serviceCreditMinor: 1000, discountCodeId: null };
   const zeroSession = goodSession({ payment_status: 'no_payment_required', amount_subtotal: 1000, amount_total: 0, total_details: { amount_discount: 1000 } });
   const zeroSub = goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 0, amount_due: 0 } });
-  assert.deepStrictEqual(verify(zeroSession, zeroSub, free), { paymentVerified: false, zeroCost: true }, 'service-credit-funded zero cost');
-  assert.deepStrictEqual(verify(zeroSession, zeroSub, { ...free, serviceCreditMinor: 0, discountCodeId: 'd1' }), { paymentVerified: false, zeroCost: true }, 'promo-funded zero cost');
-  refuses(() => verify(zeroSession, zeroSub, snapshot), /no payment was required|not a zero-cost|amount does not match/, 'a paid-price contract may not be satisfied by "no payment required"');
-  refuses(() => verify(zeroSession, goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 300, amount_due: 0 } }), free), /non-zero/, 'zero checkout with a charged invoice');
-  refuses(() => verify(goodSession({ amount_subtotal: 1000, amount_total: 0, total_details: { amount_discount: 1000 } }), goodSub(), free), /should have cost nothing/, 'a payment reported for a free contract');
+  assert.deepStrictEqual(verify(zeroSession, zeroSub, free), { paymentVerified: false, zeroCost: true, reviewReasons: [] }, 'service-credit-funded zero cost');
+  assert.deepStrictEqual(verify(zeroSession, zeroSub, { ...free, serviceCreditMinor: 0, discountCodeId: 'd1' }), { paymentVerified: false, zeroCost: true, reviewReasons: [] }, 'promo-funded zero cost');
+  flags(() => verify(zeroSession, zeroSub, snapshot), /no payment was required|not a zero-cost|amount does not match/, 'a paid-price contract may not be satisfied by "no payment required"');
+  flags(() => verify(zeroSession, goodSub({ latest_invoice: { status: 'paid', billing_reason: 'subscription_create', currency: 'gbp', amount_paid: 300, amount_due: 0 } }), free), /non-zero/, 'zero checkout with a charged invoice');
+  flags(() => verify(goodSession({ amount_subtotal: 1000, amount_total: 0, total_details: { amount_discount: 1000 } }), goodSub(), free), /should have cost nothing/, 'a payment reported for a free contract');
 
   // Source: the verification gates activation and the exact intent id is what binds the session.
   const stripeSource = read('src/payments/stripe.js');
@@ -130,7 +131,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
   assert.strictEqual(pending.retryable, true, 'pending payment is retryable, never terminal');
 
   const paypalSource = read('src/payments/paypal.js');
-  assert(/if\(!alreadySettled&&!verifiedRecurringPayment\(subscription,snapshot\)\)throw firstPaymentPending\(\)/.test(paypalSource), 'first activation requires collected payment');
+  assert(/if\(!alreadySettled&&!verifiedRecurringPayment\(subscription,snapshot\)\)await require\('\.\/settlement-review'\)\.flagForReview/.test(paypalSource) && !/throw firstPaymentPending\(\)/.test(paypalSource), 'an unconfirmed first payment is flagged for review and never withholds access');
   assert(/reference_id:String\(checkoutIntentId\)/.test(paypalSource) && /checkoutIntentId:uuidOrNull\(unit\?\.reference_id\)/.test(paypalSource), 'one-time order carries and reads the exact intent id');
   assert(/PAYPAL_FIRST_PAYMENT_PENDING/.test(read('src/platform/customer-payment-return.js')), 'return page explains a pending first payment');
   const recovery = read('src/payments/provider-checkout-recovery.js');
