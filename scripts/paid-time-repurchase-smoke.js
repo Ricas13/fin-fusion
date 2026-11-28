@@ -255,9 +255,12 @@ async function queueMovementCallSites(){
   assert.deepStrictEqual(refundCalls[0].params,['cust-1']);
   const migrationSql=read(`db/migrations/${MIGRATION}`),reconciler=migrationSql.slice(migrationSql.indexOf('FUNCTION reconcile_future_prepaid_full_refund'));
   assert(reconciler.indexOf('PERFORM 1 FROM customers')>0&&reconciler.indexOf('PERFORM 1 FROM customers')<reconciler.indexOf('SELECT s.* INTO refunded'),'the refund trigger uses the same order');
-  assert.equal(pull.params[3],result.removedMs);
-  assert.equal(pull.params[4],7,'extension days removed with the row are part of the vacated slot');
+  assert(result.removedMs>0);
+  assert.equal(+new Date(pull.params[2]),+originalEnd,'queue reduction starts from the original base end');
+  assert.equal(pull.params[3],7,'previous extension days are included in the original access end');
+  assert.equal(pull.params[4],'sub-1','the surviving holder determines the new access end');
   assert.equal(pull.params[5],'sub-1','the refunded row never blocks its own queue');
+  assert(pull.sql.includes('current_period_end+make_interval(days=>service_extension_days)'),'queue compaction subtracts the actual surviving access window');
 }
 
 // Every operator write to a paid end locks the customer first and then moves the

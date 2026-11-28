@@ -15,7 +15,7 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
     // One lock order everywhere: the customer, then the subscription.
     await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
     const result = await client.query(`
-      SELECT s.*,p.service_type
+      SELECT s.*,s.current_period_end::text AS period_end_exact,p.service_type
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
       WHERE s.id=$1 AND s.customer_id=$2
@@ -102,7 +102,7 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
           $6,
           (SELECT current_period_end+make_interval(days=>service_extension_days) FROM subscriptions WHERE id=$5)
         )
-      `, [row.customer_id, effectiveServiceType, observedEndDate, Math.max(0, Number(row.service_extension_days || 0)), holder.id, row.id]);
+      `, [row.customer_id, effectiveServiceType, row.period_end_exact || observedEndDate, Math.max(0, Number(row.service_extension_days || 0)), holder.id, row.id]);
     }
 
     return { row, removedMs, cutoffAt:cutoffDate, observedEnd:observedEndDate, serviceType:effectiveServiceType };
