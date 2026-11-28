@@ -11,6 +11,7 @@ const { sendCsv } = require('./export');
 const marketing = require('./admin-marketing');
 const campaigns = require('../marketing/campaigns');
 const marketingSegments = require('../marketing/segments');
+const discountCommands = require('../payments/discounts');
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -93,7 +94,11 @@ function discountRow(req, row, campaignsByCode) {
         <td data-label="Value">${esc(amountLabel(row))}</td>
         <td data-label="Plans">${Array.isArray(row.plan_codes) && row.plan_codes.length ? esc(row.plan_codes.join(', ')) : 'Any plan'}</td>
         <td data-label="Redemptions">${esc(usage)}</td>
-        <td data-label="Per customer">${esc(row.per_customer_limit)}</td>
+        <td data-label="Per customer">${row.winback_kind ? esc(row.per_customer_limit) : `<form class="plainForm" method="post" action="/admin/discounts/${esc(row.id)}/limit">
+            ${csrfInput(req)}
+            <input class="input" type="number" min="1" max="1000" step="1" required name="perCustomerLimit" aria-label="Per-customer limit for ${esc(row.code)}" value="${esc(row.per_customer_limit)}">
+            <button class="button btn-sm" type="submit">Save limit</button>
+        </form>`}</td>
         <td data-label="Expires">${esc(expiry)}</td>
         <td data-label="Status"><div class="metaStack">${pill(row.active ? 'Active' : 'Disabled', row.active ? 'good' : 'bad')}${usedBy.length ? `<a class="usedByLink" href="/admin/marketing/${esc(usedBy[0].id)}">Used in ${esc(usedBy[0].name)}${usedBy.length>1?` +${usedBy.length-1} more`:''}</a>` : ''}</div></td>
         <td data-label="">
@@ -334,6 +339,23 @@ function createAdminDiscountsRouter() {
             console.error('Discount create failed:', error.message);
             const msg = error.code === '23505' ? 'That code already exists.' : error.message;
             return res.redirect('/admin/discounts?error=' + encodeURIComponent(msg));
+        }
+    });
+
+    router.post('/admin/discounts/:id/limit', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        try {
+            await discountCommands.updatePerCustomerLimit({
+                discountCodeId: req.params.id,
+                limit: req.body.perCustomerLimit,
+                actorUserId: req.session.authUserId
+            });
+            return res.redirect('/admin/discounts?message=' + encodeURIComponent('Per-customer limit saved.'));
+        } catch (error) {
+            console.error('Discount limit update failed:', error.message);
+            const message = ['Enter a per-customer limit between 1 and 1000.', 'Discount code not found.', 'Customer-specific winback offers cannot be edited here.', 'The limit cannot be lower than existing redemptions and active reservations for a customer.'].includes(error.message)
+                ? error.message : 'Discount limit could not be updated.';
+            return res.redirect('/admin/discounts?error=' + encodeURIComponent(message));
         }
     });
 
