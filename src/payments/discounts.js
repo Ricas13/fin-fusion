@@ -207,4 +207,42 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
     return result;
 }
 
-module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, redeemForExtensionTx, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
+// Administrative edits serialize against checkout reservations and redemption.
+async function updatePerCustomerLimit({ discountCodeId, limit, actorUserId }) {
+    if (!actorUserId) throw new Error('An administrator is required.');
+    if ((typeof limit !== 'string' && typeof limit !== 'number') || !/^[0-9]{1,4}$/.test(String(limit)) ||
+        !Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 1000) {
+        throw new Error('Enter a per-customer limit between 1 and 1000.');
+    }
+    const next = Number(limit);
+    return transaction(async client => {
+        const current = (await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE', [discountCodeId])).rows[0];
+        if (!current) throw new Error('Discount code not found.');
+        if (current.winback_kind) throw new Error('Customer-specific winback offers cannot be edited here.');
+        if (next === Number(current.per_customer_limit)) return current;
+        if (next < Number(current.per_customer_limit)) {
+            const committed = (await client.query(`
+                SELECT COALESCE(MAX(uses),0)::int AS maximum FROM (
+                    SELECT customer_id, COUNT(*) AS uses FROM (
+                        SELECT customer_id FROM discount_redemptions WHERE discount_code_id=$1
+                        UNION ALL
+                        SELECT customer_id FROM discount_checkout_reservations
+                        WHERE discount_code_id=$1 AND state='reserved' AND expires_at>NOW()
+                    ) committed_rows GROUP BY customer_id
+                ) per_customer
+            `, [discountCodeId])).rows[0];
+            if (next < Number(committed.maximum)) throw new Error('The limit cannot be lower than existing redemptions and active reservations for a customer.');
+        }
+        const updated = (await client.query(
+            'UPDATE discount_codes SET per_customer_limit=$2,updated_at=NOW() WHERE id=$1 RETURNING *',
+            [discountCodeId, next]
+        )).rows[0];
+        await client.query(`
+            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+            VALUES($1,'admin.discount.limit.update','discount_code',$2,$3::jsonb)
+        `, [actorUserId, discountCodeId, JSON.stringify({ code: current.code, previousLimit: Number(current.per_customer_limit), newLimit: next })]);
+        return updated;
+    });
+}
+
+module.exports = { updatePerCustomerLimit, normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, redeemForExtensionTx, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };

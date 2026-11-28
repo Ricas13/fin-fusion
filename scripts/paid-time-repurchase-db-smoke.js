@@ -120,6 +120,12 @@ async function queueing(){
     const first=await insert(customer,plan,{status,start:-20,end:status==='active'?10:-2,ext:15});
     const next=await insert(customer,plan);
     same(next.starts_at,first.access_end,`G1/G6 ${status}: a repurchase starts after the extension days`);
+    const visible=await queuedPurchases.listForCustomer(customer.id);
+    assert.deepStrictEqual(visible.map(row=>row.subscription_id),[next.id],'only the confirmed future purchase appears');
+    same(visible[0].starts_at,next.starts_at,'portal uses stored queue start');
+    same(visible[0].access_expires_at,next.access_end,'portal uses stored queue end');
+    const outsider=await makeCustomer('queue-private');
+    assert.deepStrictEqual(await queuedPurchases.listForCustomer(outsider.id),[],'queued purchases are customer scoped');
     const expected=(await query(`SELECT $1::timestamptz+INTERVAL '1 month' AS t`,[next.starts_at])).rows[0].t;
     same(next.current_period_end,expected,'the queued purchase keeps its full calendar term');
   }

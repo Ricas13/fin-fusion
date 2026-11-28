@@ -1,6 +1,9 @@
 'use strict';
 
 const { query, getPool } = require('../db');
+const MAX_RUN_SECONDS = require('./job-run-limits');
+
+const STUCK_MIN_SECONDS = 30 * 60;
 
 function countFromResult(result) {
     if (typeof result === 'number') return result;
@@ -49,16 +52,32 @@ async function intervalMs(jobKey, fallbackMs) {
     return row.enabled === false ? Math.max(60000, row.intervalMs || fallbackMs) : (row.intervalMs || fallbackMs);
 }
 
-async function runSingleton(jobKey, fn, { force = false } = {}) {
+async function runSingleton(jobKey, fn, { force = false, hostLocks = false } = {}) {
     const pool = getPool();
     const client = await pool.connect();
     const startedAt = Date.now();
     let locked = false;
     let priorFailures = 0;
     let intervalSeconds = 300;
+    let discardClient = false;
+    // A hosted session that cannot be handed back cleanly records its outcome
+    // through the pool, because this client may no longer be usable.
+    const record = (sql, params) => (discardClient ? query(sql, params) : client.query(sql, params));
+    // This client stays idle while the job runs (the job queries through the
+    // pool), so a hostLocks job can hold its operation locks on it instead of
+    // occupying a reconciliation slot for the whole run.
+    const execute = hostLocks
+        ? () => require('../jellyfin/reconciliation-lock').runWithLockSession(client, fn, {
+            onUnsafe: () => { discardClient = true; }
+        })
+        : fn;
     try {
         const cfg = await client.query('SELECT * FROM automation_job_state WHERE job_key=$1', [jobKey]);
-        if (cfg.rowCount && cfg.rows[0].enabled === false && !force) return { skipped: true, reason: 'disabled' };
+        // A forced run of a disabled job is honoured only while the request is
+        // still pending; disabling the job withdraws it.
+        if (cfg.rowCount && cfg.rows[0].enabled === false && !(force && cfg.rows[0].force_run_requested)) {
+            return { skipped: true, reason: 'disabled' };
+        }
         priorFailures = Number(cfg.rows[0]?.consecutive_failures || 0);
         intervalSeconds = Math.max(30, Math.min(86400, Number(cfg.rows[0]?.interval_seconds) || 300));
         const lock = await client.query(`SELECT pg_try_advisory_lock(hashtext($1)) AS locked`, [`captainfin:${jobKey}`]);
@@ -68,7 +87,7 @@ async function runSingleton(jobKey, fn, { force = false } = {}) {
             VALUES($1,TRUE,300,NOW(),FALSE,NOW()) ON CONFLICT(job_key) DO UPDATE
             SET last_started_at=NOW(),force_run_requested=FALSE,updated_at=NOW()`, [jobKey]);
         try {
-            const value = await fn();
+            const value = await execute();
             const duration = Date.now() - startedAt;
             const processed = countFromResult(value);
             const failed = failedCountFromResult(value);
@@ -76,13 +95,13 @@ async function runSingleton(jobKey, fn, { force = false } = {}) {
                 const attempt = priorFailures + 1;
                 const retrySeconds = retryDelaySeconds(intervalSeconds, attempt);
                 const warning = warningFromResult(value, failed);
-                await client.query(`UPDATE automation_job_state SET last_completed_at=NOW(),last_outcome='degraded',last_error=NULL,
+                await record(`UPDATE automation_job_state SET last_completed_at=NOW(),last_outcome='degraded',last_error=NULL,
                     last_warning=$4,last_duration_ms=$2,last_processed_count=$3,last_failed_count=$5,
                     consecutive_failures=consecutive_failures+1,next_run_at=NOW()+($6*INTERVAL '1 second'),updated_at=NOW()
                     WHERE job_key=$1`, [jobKey, duration, processed, warning, failed, retrySeconds]);
                 return { ok: true, degraded: true, outcome: 'degraded', retrySeconds, value };
             }
-            await client.query(`UPDATE automation_job_state SET last_success_at=NOW(),last_completed_at=NOW(),last_outcome='success',
+            await record(`UPDATE automation_job_state SET last_success_at=NOW(),last_completed_at=NOW(),last_outcome='success',
                 last_error=NULL,last_warning=NULL,last_duration_ms=$2,last_processed_count=$3,last_failed_count=0,
                 consecutive_failures=0,next_run_at=NOW()+(interval_seconds*INTERVAL '1 second'),updated_at=NOW()
                 WHERE job_key=$1`, [jobKey, duration, processed]);
@@ -91,7 +110,7 @@ async function runSingleton(jobKey, fn, { force = false } = {}) {
             const duration = Date.now() - startedAt;
             const attempt = priorFailures + 1;
             const retrySeconds = retryDelaySeconds(intervalSeconds, attempt);
-            await client.query(`UPDATE automation_job_state SET last_completed_at=NOW(),last_outcome='failed',last_error=$2,last_warning=NULL,
+            await record(`UPDATE automation_job_state SET last_completed_at=NOW(),last_outcome='failed',last_error=$2,last_warning=NULL,
                 last_duration_ms=$3,last_failed_count=1,consecutive_failures=consecutive_failures+1,
                 next_run_at=NOW()+($4*INTERVAL '1 second'),updated_at=NOW()
                 WHERE job_key=$1`, [jobKey, String(error?.message || error).slice(0,1500), duration, retrySeconds]);
@@ -100,7 +119,8 @@ async function runSingleton(jobKey, fn, { force = false } = {}) {
         }
     } finally {
         if (locked) await client.query(`SELECT pg_advisory_unlock(hashtext($1))`, [`captainfin:${jobKey}`]).catch(() => {});
-        client.release();
+        // Destroying the session releases any lock it could not hand back cleanly.
+        client.release(discardClient);
     }
 }
 
@@ -139,7 +159,8 @@ async function list() {
 async function update(jobKey, { enabled, intervalSeconds }) {
     const seconds = Math.max(30, Math.min(86400, Number(intervalSeconds) || 300));
     const result = await query(`UPDATE automation_job_state SET enabled=$2,interval_seconds=$3,
-        next_run_at=CASE WHEN $2 THEN COALESCE(next_run_at,NOW()) ELSE next_run_at END,updated_at=NOW()
+        next_run_at=CASE WHEN $2 THEN COALESCE(next_run_at,NOW()) ELSE next_run_at END,
+        force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
         WHERE job_key=$1 RETURNING *`, [jobKey, Boolean(enabled), seconds]);
     if (!result.rowCount) throw new Error('Automation job not found.');
     return result.rows[0];
@@ -164,12 +185,22 @@ async function applyImportedState(client, { jobKey, enabled, intervalSeconds }) 
     return result.rows[0] || null;
 }
 
-async function requestRun(jobKey) {
+// enabledOnly is for automated callers: it returns null instead of queueing a
+// run of a job the operator has disabled.
+async function requestRun(jobKey, { enabledOnly = false } = {}) {
     const result = await query(`UPDATE automation_job_state
         SET next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()
-        WHERE job_key=$1 RETURNING *`, [jobKey]);
-    if (!result.rowCount) throw new Error('Automation job not found.');
+        WHERE job_key=$1${enabledOnly ? ' AND enabled=TRUE' : ''} RETURNING *`, [jobKey]);
+    if (!result.rowCount) {
+        if (enabledOnly) return null;
+        throw new Error('Automation job not found.');
+    }
     return result.rows[0];
+}
+
+function stuckAfterSeconds(row) {
+    const interval = Math.max(30, Number(row?.interval_seconds || 300));
+    return Math.max(interval * 3, STUCK_MIN_SECONDS, Number(MAX_RUN_SECONDS[row?.job_key] || 0));
 }
 
 function healthState(row, now = Date.now()) {
@@ -179,7 +210,9 @@ function healthState(row, now = Date.now()) {
     const completedAt = row.last_completed_at
         ? new Date(row.last_completed_at).getTime()
         : (row.last_success_at ? new Date(row.last_success_at).getTime() : 0);
-    if (startedAt && (!completedAt || startedAt > completedAt)) return 'running';
+    if (startedAt && (!completedAt || startedAt > completedAt)) {
+        return now - startedAt > stuckAfterSeconds(row) * 1000 ? 'stuck' : 'running';
+    }
     if (row.last_outcome === 'failed' || row.last_error) return 'failed';
     if (row.last_outcome === 'degraded') return 'degraded';
     if (!startedAt && !completedAt) return 'never_run';
@@ -201,5 +234,6 @@ module.exports = {
     failedCountFromResult,
     retryDelaySeconds,
     warningFromResult,
+    stuckAfterSeconds,
     healthState
 };
