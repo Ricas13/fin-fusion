@@ -33,8 +33,8 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
    await assert.rejects(()=>verifySource(row,e,{stripeClient:async()=>({paymentIntents:{retrieve:async()=>({...payment,latest_charge:{...payment.latest_charge,amount_refunded:100}})}})}),/unreversed/);
  };
  const deps={sourceVerifier,rateFetcher:async(from,to)=>{rateChecks++;assert.equal(from,'GBP');assert.equal(to,'USD');const now=new Date();return {source:'frankfurter',base:from,quote:to,date:now.toISOString().slice(0,10),observedAt:now.toISOString(),rate:'1.25'};},targetVerifier:async(row,intent,prepared)=>{targetChecks++;assert.equal(row.plan_id,boughtPlan.id);
-   const sub={id:row.provider_subscription_id,status:'active',metadata:{internal_checkout_intent_id:intent.id,internal_customer_id:row.customer_id,internal_plan_id:row.plan_id},items:{data:[{quantity:1,price:{id:prepared.providerMappingId,unit_amount:Number(prepared.target.normalPriceMinor),currency:'usd'},current_period_start:+new Date(row.starts_at)/1000,current_period_end:+new Date(row.current_period_end)/1000}]},latest_invoice:{status:'paid',billing_reason:'subscription_create',amount_paid:12000,currency:'usd'}};
-   const session={id:intent.provider_checkout_id,mode:'subscription',status:'complete',payment_status:'paid',subscription:sub.id,amount_total:12000,currency:'usd'};
+   const sub={id:row.provider_subscription_id,status:'active',metadata:{internal_checkout_intent_id:intent.id,internal_customer_id:row.customer_id,internal_plan_id:row.plan_id},items:{data:[{quantity:1,price:{id:prepared.providerMappingId,unit_amount:Number(prepared.target.normalPriceMinor),currency:'usd'},current_period_start:+new Date(row.starts_at)/1000,current_period_end:+new Date(row.current_period_end)/1000}]},latest_invoice:{status:'paid',billing_reason:'subscription_create',amount_paid:row.commercial_snapshot.discountedMinor,currency:'usd'}};
+   const session={id:intent.provider_checkout_id,mode:'subscription',status:'complete',payment_status:'paid',subscription:sub.id,amount_total:row.commercial_snapshot.discountedMinor,currency:'usd'};
    const adapter=async()=>({subscriptions:{retrieve:async()=>sub},checkout:{sessions:{retrieve:async()=>session}}});
    await verifyTarget(row,intent,prepared,adapter);
    await assert.rejects(()=>verifyTarget(row,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...sub,latest_invoice:{...sub.latest_invoice,amount_paid:0}})},checkout:{sessions:{retrieve:async()=>session}}})),/not conclusively verified/);
@@ -67,18 +67,30 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  assert.equal(prepared.preview.sourceProviderPaidMinor,'4500');
  assert.equal(prepared.preview.sourceServiceCreditPaidMinor,'1000');
  assert(prepared.preview.addedDays>0);assert.equal(sourceChecks,1);
+ const receivingContract={...targetContract,discountedMinor:11000,grossDiscountedMinor:12000,serviceCreditMinor:1000,serviceCreditCurrency:'USD'};
  const intent=(await client.query(`INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,state,nonce_hash,expires_at,commercial_snapshot,provider_checkout_id,paid_value_transfer_snapshot)
- VALUES('customer',$1,$2,$3,'stripe','subscription','open',$4,NOW()+INTERVAL '1 hour',$5::jsonb,$6,$7::jsonb) RETURNING id`,[customer.id,boughtPlan.id,price.id,unique('nonce'),JSON.stringify(targetContract),'cs_'+unique('target'),JSON.stringify(prepared)])).rows[0];
+ VALUES('customer',$1,$2,$3,'stripe','subscription','open',$4,NOW()+INTERVAL '1 hour',$5::jsonb,$6,$7::jsonb) RETURNING id`,[customer.id,boughtPlan.id,price.id,unique('nonce'),JSON.stringify(receivingContract),'cs_'+unique('target'),JSON.stringify(prepared)])).rows[0];
  const begin=new Date(Math.floor(Date.now()/1000)*1000),finish=addPlanDuration(boughtPlan,begin);
  const receiver=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,currency_snapshot,commercial_snapshot,service_type_snapshot)
- VALUES($1,$2,'active','stripe','subscription',$3,$4,$5,'USD',$6::jsonb,'jellyfin') RETURNING *`,[customer.id,boughtPlan.id,'sub_'+unique('target'),begin,finish,JSON.stringify({...targetContract,checkoutIntentId:intent.id})])).rows[0];
+ VALUES($1,$2,'active','stripe','subscription',$3,$4,$5,'USD',$6::jsonb,'jellyfin') RETURNING *`,[customer.id,boughtPlan.id,'sub_'+unique('target'),begin,finish,JSON.stringify({...receivingContract,checkoutIntentId:intent.id})])).rows[0];
+ await assert.rejects(()=>settlePrepared(client,receiver,deps),/service-credit reservation/);
+ assert.equal((await client.query('SELECT superseded_by FROM subscriptions WHERE id=$1',[source.id])).rows[0].superseded_by,null,'missing receiving credit cannot consume original value');
+ const usdGrant=(await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id)
+ VALUES($1,'USD',1200,'earned','available',$2) RETURNING id`,[customer.id,unique('usd-grant')])).rows[0];
+ await client.query(`INSERT INTO affiliate_credit_checkout_reservations(customer_id,checkout_intent_id,currency,amount_minor,state,expires_at)
+ VALUES($1,$2,'USD',1000,'reserved',NOW()+INTERVAL '1 hour')`,[customer.id,intent.id]);
+ targetChecks=0;
  const outcome=await settlePrepared(client,receiver,deps);
+ const receivingDebit=(await client.query("SELECT * FROM affiliate_credit_ledger WHERE entry_type='redeemed' AND reference_id=$1",['mixed-checkout:'+intent.id])).rows[0];
+ assert.equal(receivingDebit.amount_minor,-1000);
+ assert.equal((await client.query('SELECT amount_minor FROM affiliate_credit_allocations WHERE debit_ledger_id=$1 AND grant_ledger_id=$2',[receivingDebit.id,usdGrant.id])).rows[0].amount_minor,1000);
  const days=outcome.row.service_extension_days;assert(days>0);assert.equal(sourceChecks,2);assert.equal(targetChecks,1);
  assert.equal((await client.query('SELECT superseded_by FROM subscriptions WHERE id=$1',[source.id])).rows[0].superseded_by,receiver.id);
  const ledger=(await client.query('SELECT * FROM subscription_time_carryovers WHERE target_subscription_id=$1',[receiver.id])).rows[0];
  assert.equal(ledger.applied_days,days);assert.equal(ledger.reason,'monetary_plan_transfer');
  assert.equal(ledger.value_transfer_quote.sourceProviderPaidMinor,'4500');
  assert.equal(ledger.value_transfer_quote.sourceServiceCreditPaidMinor,'1000');
+ assert.deepEqual(ledger.value_transfer_quote.receivingFunding,{cash:11000,credit:1000,gross:12000});
  const q=ledger.value_transfer_quote;
  assert.equal(BigInt(q.destinationRemainingCashValueMinor.numerator)+BigInt(q.destinationRemainingServiceCreditValueMinor.numerator),BigInt(q.destinationRemainingValueMinor.numerator));
  assert.equal(q.destinationRemainingCashValueMinor.denominator,q.destinationRemainingValueMinor.denominator);
@@ -87,6 +99,7 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  const replay=await settlePrepared(client,outcome.row,deps);
  assert.equal(replay.row.service_extension_days,days,'replay leaves original grant intact');
  assert.equal(targetChecks,1,'replay performs no second provider mutation or verification');
+ assert.equal((await client.query("SELECT COUNT(*)::int AS n FROM affiliate_credit_ledger WHERE entry_type='redeemed' AND reference_id=$1",['mixed-checkout:'+intent.id])).rows[0].n,1,'replay must not debit destination credit twice');
  const removed=(await client.query('SELECT public.reverse_carried_paid_time($1,$2) AS removed',[source.id,'test_refund'])).rows[0].removed;
  assert.equal(Number(removed),days);
  assert.equal((await client.query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[receiver.id])).rows[0].service_extension_days,0);

@@ -9,6 +9,7 @@ assert.equal(q.addedDays,15);
 assert.deepEqual(ratio(q,e),{numerator:'1',denominator:'1'});
 assert.equal(minor('12.50'),'1250');assert.equal(minor('12.501'),null);assert.equal(minor('-12.50'),null);
 assert.doesNotThrow(()=>assertChargeSupported({providerDue:50}));
+assert.doesNotThrow(()=>assertChargeSupported({providerDue:600,serviceCreditMinor:100,grossDue:700}));
 for(const input of [{providerDue:0},{providerDue:49},{providerDue:600,serviceCreditMinor:100}])assert.throws(()=>assertChargeSupported(input),{code:'PAID_VALUE_TRANSFER_PAYMENT_UNSUPPORTED'});
 const prev=process.env.PAID_VALUE_TRANSFER_ENABLED;
 delete process.env.PAID_VALUE_TRANSFER_ENABLED;assert.equal(enabled(),false);

@@ -6,14 +6,44 @@ const {previewFromEvidence,readEvidence}=require('../../scripts/paid-value-previ
 const {fetchRate,quoteConversion}=require('./paid-value-conversion');
 const {stripeClient,paypalRequest}=require('./provider-refund-adapters');
 const {addPlanDuration}=require('./billing-periods');
+const creditReservations=require('./service-credit-reservations');
 const DAY=86400000;
 function enabled(){return process.env.PAID_VALUE_TRANSFER_ENABLED==='true';}
 function invariant(ok,message){if(!ok){const e=new Error(message);e.code='PAID_VALUE_TRANSFER_SETTLEMENT_CONFLICT';throw e;}}
-function assertChargeSupported({providerDue,serviceCreditMinor=0}){
- if(!Number.isInteger(providerDue)||providerDue<50||Number(serviceCreditMinor)!==0){
-   const error=new Error('This monetary plan transfer requires a positive first payment without mixed service credit. Your existing access is unchanged. You have not been charged.');
+const CHARGE_UNSUPPORTED='This monetary plan transfer requires a verifiable positive first payment. Your existing access is unchanged. You have not been charged.';
+function assertChargeSupported({providerDue,serviceCreditMinor=0,grossDue=providerDue}){
+ if(!Number.isSafeInteger(providerDue)||providerDue<50||!Number.isSafeInteger(serviceCreditMinor)||serviceCreditMinor<0||
+    !Number.isSafeInteger(grossDue)||grossDue!==providerDue+serviceCreditMinor){
+   const error=new Error(CHARGE_UNSUPPORTED);
    error.expose=true;error.code='PAID_VALUE_TRANSFER_PAYMENT_UNSUPPORTED';throw error;
  }
+}
+function targetFunding(snapshot){
+ const cash=snapshot?.discountedMinor,credit=snapshot?.serviceCreditMinor??0,gross=snapshot?.grossDiscountedMinor??cash;
+ invariant(Number.isSafeInteger(cash)&&cash>=50&&Number.isSafeInteger(credit)&&credit>=0&&
+   Number.isSafeInteger(gross)&&gross===cash+credit&&gross<=snapshot.priceMinor&&
+   (!credit||currency(snapshot.serviceCreditCurrency)===currency(snapshot.currency)),
+   'Receiving checkout funding does not match the frozen commercial contract.');
+ return {cash,credit,gross};
+}
+// Settle the receiving earned-credit reservation in the same transaction as
+// transferring old access. The ordinary activation path also calls settle;
+// it is idempotent, and a late/unfunded reservation aborts all local changes.
+async function settleTargetCredit(client,row,intent){
+ const {credit}=targetFunding(row.commercial_snapshot);
+ const reservation=(await client.query('SELECT * FROM affiliate_credit_checkout_reservations WHERE checkout_intent_id=$1 FOR UPDATE',[intent.id])).rows[0];
+ invariant(credit?reservation&&reservation.customer_id===row.customer_id&&Number(reservation.amount_minor)===credit&&currency(reservation.currency)===currency(row.commercial_snapshot.currency):!reservation,
+   'Receiving service-credit reservation does not match the paid checkout.');
+ if(!credit)return;
+ const applied=await creditReservations.settle(client,intent.id,'completed');
+ invariant(applied?.state==='applied'&&applied.customer_id===row.customer_id&&Number(applied.amount_minor)===credit&&currency(applied.currency)===currency(row.commercial_snapshot.currency),
+   'Receiving service credit was not settled.');
+ const debit=(await client.query(`SELECT d.id FROM affiliate_credit_ledger d
+   WHERE d.customer_id=$1 AND d.currency=$2 AND d.entry_type='redeemed' AND d.state='available'
+     AND d.reference_id=$3 AND d.amount_minor=$4 AND d.metadata->>'checkoutIntentId'=$5 AND d.metadata->>'reservationId'=$6
+     AND (SELECT COALESCE(SUM(a.amount_minor),0) FROM affiliate_credit_allocations a WHERE a.debit_ledger_id=d.id AND a.customer_id=d.customer_id AND a.currency=d.currency)=$7`,
+   [row.customer_id,currency(row.commercial_snapshot.currency),'mixed-checkout:'+intent.id,-credit,intent.id,applied.id,credit])).rows[0];
+ invariant(debit,'Receiving service-credit debit or allocation is missing.');
 }
 function currency(v){return String(v||'').trim().toUpperCase();}
 function minor(v){const m=/^(\d+)(?:\.(\d{1,2}))?$/.exec(String(v??''));return m?(BigInt(m[1])*100n+BigInt((m[2]||'').padEnd(2,'0'))).toString():null;}
@@ -104,6 +134,7 @@ async function prepare(client,{customerId,planId,snapshot},{sourceVerifier=verif
  return {version:1,sourceId:held[0].id,planId,target,providerMappingId:snapshot.providerMappingId,preview:{...quote,...fundingBreakdown(e,quote)}};
 }
 async function verifyTarget(row,intent,prepared,adapter=stripeClient){
+ const funding=targetFunding(row.commercial_snapshot);
  const stripe=await adapter();
  const sub=await stripe.subscriptions.retrieve(row.provider_subscription_id,{expand:['latest_invoice','items.data.price']});
  const session=await stripe.checkout.sessions.retrieve(intent.provider_checkout_id);
@@ -116,8 +147,7 @@ async function verifyTarget(row,intent,prepared,adapter=stripeClient){
    session.payment_status==='paid'&&stripeId(session.subscription)===sub.id&&session.amount_total>0&&currency(session.currency)===prepared.target.currency&&
    invoice&&typeof invoice==='object'&&invoice.status==='paid'&&invoice.billing_reason==='subscription_create'&&
    Number.isInteger(invoice.amount_paid)&&invoice.amount_paid>0&&invoice.amount_paid===session.amount_total&&currency(invoice.currency)===prepared.target.currency&&
-   Number.isInteger(row.commercial_snapshot?.discountedMinor)&&session.amount_total===row.commercial_snapshot.discountedMinor&&
-   Number(row.commercial_snapshot?.serviceCreditMinor||0)===0&&
+   session.amount_total===funding.cash&&
    Number(item.current_period_start)*1000===time(row.starts_at)&&Number(item.current_period_end)*1000===time(row.current_period_end)&&
    time(addPlanDuration(prepared.target,row.starts_at))===time(row.current_period_end),
    'New recurring payment or initial billing period is not conclusively verified.');
@@ -171,6 +201,7 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  }
  invariant(Number(row.service_extension_days||0)===0,'Receiving entitlement already has extension time.');
  await targetVerifier(row,intent,prepared);
+ await settleTargetCredit(client,row,intent);
  const held=await candidates(client,row.customer_id,row.plan_id,row.id);
  invariant(held.length<=1&&(!held.length||(held[0].id===prepared.sourceId&&held[0].service_type===held[0].destination_service)),
    'Remaining access changed after checkout preparation.');
@@ -183,7 +214,7 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  const rate=await rateFetcher(e.currency,prepared.target.currency);
  const quote=quoteConversion(e,prepared.target,{rate,termStart:row.starts_at});
  const fraction=ratio(quote,e),from=new Date(Math.max(time(e.startsAt),time(e.asOf))).toISOString();
- const audit={...quote,quoteOnly:false,ratio:fraction,...fundingBreakdown(e,quote),sourceIntentId:source.intent_id,checkoutIntentId:id};
+ const audit={...quote,quoteOnly:false,ratio:fraction,...fundingBreakdown(e,quote),sourceIntentId:source.intent_id,checkoutIntentId:id,receivingFunding:targetFunding(row.commercial_snapshot)};
  invariant(quote.addedDays>0&&quote.addedDays<=3650,'Converted value is outside the supported limit.');
  const ledger=await client.query(`
  INSERT INTO subscription_time_carryovers(customer_id,target_subscription_id,source_subscription_id,source_provider,source_payment_ref,
@@ -202,4 +233,4 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  [row.id,JSON.stringify({customerId:row.customer_id,sourceSubscriptionId:source.id,ledgerId:ledger.rows[0].id,quote:audit})]);
  return {row:updated.rows[0],problem:null};
 }
-module.exports={enabled,prepare,settlePrepared,verifySource,verifyTarget,ratio,minor,assertChargeSupported};
+module.exports={enabled,prepare,settlePrepared,verifySource,verifyTarget,ratio,minor,assertChargeSupported,CHARGE_UNSUPPORTED};
