@@ -242,8 +242,7 @@ async function pastDue(){
 async function purchasedExtensionsAfterUnpaidRenewal(){
   for(const provider of ['stripe','paypal']){
     const customer=await makeCustomer('bought-extension-unpaid-'+provider);
-    const bought=await renewing(customer,year,{provider,periodEnd:fromNow(365)});
-    const original=(await get(bought.row.id)).current_period_end;
+    const bought=await renewing(customer,year,{provider,ref:provider==='paypal'?`I-EXT-${suffix}-${++sequence}`:`sub_ext_${suffix}_${++sequence}`,periodEnd:fromNow(0.01)});
     await extend(customer,year,bought.row);
     const before=await get(bought.row.id);
     assert(Number(before.service_extension_days)>0,'fixture has independently purchased extension time');
@@ -251,18 +250,18 @@ async function purchasedExtensionsAfterUnpaidRenewal(){
     const ref=bought.ref;
     // The provider has advanced the date for a renewal that did not settle.
     // A terminal event must not grant that unpaid year before the extension.
-    await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:ref,providerStatus:'past_due',periodEnd:fromNow(730)});
+    await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:ref,providerStatus:'past_due',periodEnd:fromNow(365)});
     for(let delivery=0;delivery<2;delivery++){
-      await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:ref,providerStatus:'cancelled',periodEnd:fromNow(730)});
+      await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:ref,providerStatus:'cancelled',periodEnd:fromNow(365)});
       const row=await get(bought.row.id);
       assert(Math.abs(ms(row.access_end)-(Date.now()+Number(row.service_extension_days)*DAY))<DAY,'paid extension begins at the failed-renewal hold, not after the unpaid year');
       assert(Number(row.service_extension_days)>0,'purchased extension survives cancellation');
     }
     const paid=await makeCustomer('bought-extension-paid-'+provider);
-    const healthy=await renewing(paid,year,{provider,periodEnd:fromNow(365)});
+    const healthy=await renewing(paid,year,{provider,ref:provider==='paypal'?`I-EXT-${suffix}-${++sequence}`:`sub_ext_${suffix}_${++sequence}`,periodEnd:fromNow(365)});
     await extend(paid,year,healthy.row);
     const end=(await get(healthy.row.id)).current_period_end;
-    await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:healthy.ref,providerStatus:'paused',periodEnd:end});
+    await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:healthy.ref,providerStatus:provider==='paypal'?'suspended':'paused',periodEnd:end});
     await lifecycle.updateProviderSubscription({provider,providerSubscriptionId:healthy.ref,providerStatus:'cancelled',periodEnd:end});
     same((await get(healthy.row.id)).current_period_end,end,'suspension without payment-failure evidence preserves the paid base term');
   }
@@ -492,7 +491,7 @@ async function main(){
     await sourceExtensions();
     await firstTermAndLater();
     await pastDue();
-  await purchasedExtensionsAfterUnpaidRenewal();
+    await purchasedExtensionsAfterUnpaidRenewal();
     await selection();
     await overlaps();
     await reversedCannotBeRefundedAgain();
