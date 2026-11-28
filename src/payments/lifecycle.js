@@ -773,7 +773,9 @@ async function activatePurchase(input) {
     if(!same.rowCount&&!isAccessExtension)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
     const mode=checkoutBillingMode(input);
     if (!isAccessExtension&&billingMode.isRecurring({ source: input.provider, billing_mode: mode })) {
-        if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
+        // Matched checkouts must reach the locked primitive: its authoritative
+        // conflict guard records verified paid-but-unfulfilled incidents.
+        if (!same.rowCount && !(input.checkoutIntentId || input.commercialSnapshot?.checkoutIntentId)) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
     const activated=await primitives.activatePurchase(input);
     const released=await inactivityHolds.releaseObsoleteForCustomer(input.customerId);
