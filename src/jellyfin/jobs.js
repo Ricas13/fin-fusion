@@ -267,9 +267,8 @@ async function reconcileActiveEntitlements(options = {}) {
             await provisioning.reconcileCustomer(row.customer_id);
             return { status: 'succeeded' };
         } catch (error) {
-            // The only supported non-paid Jellyfin states are plan+server or
-            // no-plan+no-server. Repair legacy/unexpected trial rows here rather
-            // than letting them enter the paid-style provisioning retry queue.
+            // Retain failed trials. Secondary service repair can verify readiness,
+            // but unresolved provisioning remains in the durable retry queue.
             try {
                 if (await rollbackStrandedUnpaidJellyfinTrial(row.customer_id, error)) {
                     return { status: 'succeeded', repaired: 'trial_rolled_back' };
