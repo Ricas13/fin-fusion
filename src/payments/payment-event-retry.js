@@ -41,6 +41,8 @@ async function claimSupportedRetryablePaymentEvents({ limit = 25 } = {}) {
             WHERE provider=ANY($2::text[])
               AND processed_at IS NULL
               AND (
+                (processing_started_at IS NULL AND processing_token IS NULL)
+                OR
                 (processing_error IS NOT NULL AND processing_token IS NULL
                  AND processing_started_at < NOW() - ($3::int * INTERVAL '1 minute'))
                 OR
