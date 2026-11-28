@@ -7,6 +7,15 @@ const PROVIDERS = ['stripe', 'paypal'];
 const cache = new Map();
 let loaded = false;
 let loading = null;
+let loadedAt = 0;
+// Every process (web, webhooks, automation worker) keeps its own copy of the provider credentials. The database is the
+// source of truth, so each process re-reads it at this interval instead of holding the first value it saw until restart.
+const DEFAULT_REFRESH_MS = 15000;
+function refreshMs() {
+    const parsed = Number(process.env.PAYMENT_PROVIDER_SETTINGS_REFRESH_MS);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_REFRESH_MS;
+    return Math.min(300000, Math.round(parsed));
+}
 
 function envConfig(provider) {
     if (provider === 'stripe') {
@@ -38,20 +47,40 @@ async function load() {
     loading = (async()=>{
         const result=await query('SELECT provider,secrets_encrypted,settings,updated_at FROM payment_provider_credentials WHERE provider=ANY($1::text[])',[PROVIDERS]);
         const rows=new Map(result.rows.map(row=>[row.provider,row]));
-        for (const provider of PROVIDERS) cache.set(provider, rows.has(provider)?decodeRow(rows.get(provider)):envConfig(provider));
+        const next = new Map();
+        for (const provider of PROVIDERS) next.set(provider, rows.has(provider)?decodeRow(rows.get(provider)):envConfig(provider));
+        // Replace only after every provider decoded: a partial refresh must never mix old and new credentials.
+        for (const [provider, config] of next) cache.set(provider, config);
         loaded=true;
+        loadedAt=Date.now();
     })().finally(()=>{loading=null;});
     return loading;
 }
-async function ensureLoaded(){if(!loaded)await load();return true;}
+async function ensureLoaded(){
+    if (loaded && Date.now() - loadedAt < refreshMs()) return true;
+    try { await load(); }
+    catch (error) {
+        // A transient database or decrypt failure must not stop payment processing that can still use the last good
+        // credentials. The first load has nothing to fall back to, so it still fails loudly.
+        if (!loaded) throw error;
+        loadedAt = Date.now() - Math.max(0, refreshMs() - 5000);
+        console.error('Payment provider settings refresh failed; continuing with the last loaded values:', error.message);
+    }
+    return true;
+}
 function raw(provider){return cache.get(provider)||envConfig(provider);}
 function effective(provider,cfg){
     if(cfg?.enabled!==false)return cfg;
     if(provider==='stripe')return{...cfg,restrictedKey:'',apiKey:'',webhookSecret:''};
     return{...cfg,clientId:'',clientSecret:'',webhookId:''};
 }
+// "enabled" means the operator allows NEW checkouts. peek() is that view: a disabled provider has its credentials blanked.
+// Everything that settles or maintains money that was already taken (webhooks, refunds, renewal sync, payment recovery,
+// plan changes) uses the operational view instead, so switching a provider off for new sales never strands existing customers.
 function peek(provider){return effective(provider,raw(provider));}
-async function get(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return peek(provider);}
+function peekOperational(provider){return raw(provider);}
+async function get(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return peekOperational(provider);}
+async function getForCheckout(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return peek(provider);}
 async function getRaw(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return raw(provider);}
 async function status(provider){
     const cfg=await getRaw(provider),credentials=credentialsConfigured(provider,cfg),webhook=webhookConfigured(provider,cfg),ready=checkoutReady(provider,cfg);
@@ -70,11 +99,11 @@ async function save(provider,input,actorUserId=null){
         settings={...settings,environment:input.environment==='live'?'live':'sandbox'};
     }
     await query(`INSERT INTO payment_provider_credentials(provider,secrets_encrypted,settings,updated_by) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(provider) DO UPDATE SET secrets_encrypted=EXCLUDED.secrets_encrypted,settings=EXCLUDED.settings,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[provider,encryptString(JSON.stringify(secrets)),JSON.stringify(settings),actorUserId]);
-    cache.set(provider,{...secrets,...settings,source:'database',updatedAt:new Date()});loaded=true;return status(provider);
+    cache.set(provider,{...secrets,...settings,source:'database',updatedAt:new Date()});loaded=true;loadedAt=Date.now();return status(provider);
 }
 async function remove(provider,actorUserId=null){
     if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');
-    await query('DELETE FROM payment_provider_credentials WHERE provider=$1',[provider]);cache.set(provider,envConfig(provider));loaded=true;
+    await query('DELETE FROM payment_provider_credentials WHERE provider=$1',[provider]);cache.set(provider,envConfig(provider));loaded=true;loadedAt=Date.now();
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.use_environment','payment_provider',$2,'{}'::jsonb)`,[actorUserId,provider]);
 }
 async function fetchWithTimeout(url,options,timeoutMs=10000){
@@ -99,4 +128,5 @@ async function testPayPal(cfg){
 }
 async function testConnection(provider){const cfg=await getRaw(provider);if(provider==='stripe')return testStripe(cfg);if(provider==='paypal')return testPayPal(cfg);throw new Error('Unsupported payment provider');}
 
-module.exports={PROVIDERS,ensureLoaded,get,getRaw,peek,status,checkoutStatus,save,remove,configured,credentialsConfigured,webhookConfigured,checkoutReady,testConnection};
+function _resetForTests(){cache.clear();loaded=false;loading=null;loadedAt=0;}
+module.exports={PROVIDERS,ensureLoaded,get,getForCheckout,getRaw,peek,peekOperational,status,checkoutStatus,save,remove,configured,credentialsConfigured,webhookConfigured,checkoutReady,testConnection,_resetForTests};

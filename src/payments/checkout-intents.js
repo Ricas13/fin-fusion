@@ -453,13 +453,25 @@ async function findProviderIntent(provider, providerCheckoutId) {
     return r.rows[0] || null;
 }
 
+// A provider checkout that is not yet bound locally may only ever be bound to the EXACT local intent that created it.
+// That intent id is written into the provider object at creation (Stripe metadata, PayPal reference_id), so it is durable
+// evidence. Matching on customer + plan + mode is deliberately not done: two checkouts for the same plan are
+// indistinguishable that way, and a wrong match would settle money against the wrong checkout.
 async function findOrAttachProviderIntent({
     provider, providerCheckoutId, scope = 'customer', ownerId = null,
-    planId = null, checkoutMode = null
+    planId = null, checkoutMode = null, checkoutIntentId = null
 }) {
     const externalId = cleanProviderCheckoutId(providerCheckoutId);
     let row = await findProviderIntent(provider, externalId);
-    if (row || !ownerId || !planId || !checkoutMode) return row;
+    if (row) {
+        if (checkoutIntentId && String(row.id) !== String(checkoutIntentId)) {
+            throw identityError('Provider checkout is bound to a different local checkout intent than the one that created it.');
+        }
+        return row;
+    }
+    const exactId = String(checkoutIntentId || '').trim();
+    if (!exactId || !ownerId || !planId || !checkoutMode) return null;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exactId)) return null;
 
     return transaction(async client => {
         const existing = await client.query(`
@@ -469,34 +481,41 @@ async function findOrAttachProviderIntent({
             ORDER BY created_at DESC LIMIT 1
             FOR UPDATE
         `, [provider, externalId]);
-        if (existing.rowCount) return existing.rows[0];
+        if (existing.rowCount) {
+            if (String(existing.rows[0].id) !== exactId) throw identityError('Provider checkout is bound to a different local checkout intent than the one that created it.');
+            return existing.rows[0];
+        }
 
         const candidate = await client.query(`
             SELECT *
             FROM billing_checkout_intents
-            WHERE provider=$1 AND scope=$2 AND customer_id=$3 AND plan_id=$4
-              AND checkout_mode=$5 AND state='open' AND expires_at>NOW()
-              AND provider_checkout_id IS NULL
-            ORDER BY created_at DESC LIMIT 2
+            WHERE id=$1 AND provider=$2 AND scope=$3 AND customer_id=$4 AND plan_id=$5 AND checkout_mode=$6
             FOR UPDATE
-        `, [provider, scope, ownerId, planId, checkoutMode]);
-        if (candidate.rowCount !== 1) return null;
-
+        `, [exactId, provider, scope, ownerId, planId, checkoutMode]);
+        if (!candidate.rowCount) return null;
+        const intent = candidate.rows[0];
+        // The exact intent may already have been closed locally (for example a lost response marked it failed) while the
+        // provider checkout it created went on to be paid. A paid provider checkout is authoritative, so it is bound to the
+        // intent that created it whatever its local state; it can never be bound to a different one.
+        if (intent.provider_checkout_id && String(intent.provider_checkout_id) !== externalId) {
+            throw identityError('Checkout intent is already bound to a different provider checkout.');
+        }
         const collision = await client.query(`
             SELECT id FROM billing_checkout_intents
             WHERE provider=$1 AND provider_checkout_id=$2 AND id<>$3
             LIMIT 1 FOR SHARE
-        `, [provider, externalId, candidate.rows[0].id]);
+        `, [provider, externalId, intent.id]);
         if (collision.rowCount) throw identityError('Provider checkout is already bound to a different local checkout intent.');
 
         try {
             const attached = await client.query(`
                 UPDATE billing_checkout_intents
                 SET provider_checkout_id=$2,provider_terminal_at=NULL,updated_at=NOW()
-                WHERE id=$1 AND state='open' AND provider_checkout_id IS NULL
+                WHERE id=$1 AND provider_checkout_id IS NULL
                 RETURNING *
-            `, [candidate.rows[0].id, externalId]);
-            return attached.rowCount ? extendAttachedCapacityHold(client, attached.rows[0]) : null;
+            `, [intent.id, externalId]);
+            if (!attached.rowCount) return null;
+            return extendAttachedCapacityHold(client, attached.rows[0]);
         } catch (error) {
             if (error?.code === '23505') throw identityError('Provider checkout is already bound to a different local checkout intent.');
             throw error;
@@ -513,10 +532,10 @@ function normalizeCurrency(value) { return String(value || '').trim().toUpperCas
 async function verifiedProviderContract({
     provider, providerCheckoutId, scope = 'customer', ownerId = null,
     planId = null, checkoutMode = null, providerMappingId = null,
-    amountMinor = null, currency = null
+    amountMinor = null, currency = null, checkoutIntentId = null
 }) {
     const row = await findOrAttachProviderIntent({
-        provider, providerCheckoutId, scope, ownerId, planId, checkoutMode
+        provider, providerCheckoutId, scope, ownerId, planId, checkoutMode, checkoutIntentId
     });
     if (!row) throw new Error('Verified provider checkout has no matching local checkout intent.');
     if (row.provider !== provider) throw new Error('Provider checkout belongs to a different provider.');

@@ -248,6 +248,12 @@ async function run({ limit = DEFAULT_LIMIT, handlers = null, checkoutIntentIds =
                 : await recoverPayPal(row, activeHandlers);
             summary[result.state] = Number(summary[result.state] || 0) + 1;
         } catch (error) {
+            // An approved/active PayPal agreement whose first payment is not visible yet is waiting, not failing: the next
+            // recovery pass activates it once the collected payment appears.
+            if (error?.code === 'PAYPAL_FIRST_PAYMENT_PENDING') {
+                summary.waiting += 1;
+                continue;
+            }
             summary.failed += 1;
             summary.failures.push({
                 checkoutIntentId: row.id,

@@ -9,6 +9,7 @@ const failedRenewals = require('./failed-renewals');
 const checkoutIntents = require('./checkout-intents');
 const renewalCredits = require('./service-credit-renewals');
 const providerSettings = require('./provider-settings');
+const mappingVerification = require('./provider-mapping-verification');
 const providerHttp = require('./provider-http');
 const providerLifecycleState = require('./provider-lifecycle-state');
 const financialState = require('./provider-financial-state');
@@ -18,7 +19,11 @@ const { query } = require('../db');
 let stripeClient;
 let stripeClientKey = null;
 function apiKeyFrom(config) { return config?.restrictedKey || config?.apiKey || ''; }
+// enabled(): may this provider start NEW checkouts (credentials present and not switched off).
 function enabled() { return Boolean(apiKeyFrom(providerSettings.peek('stripe'))); }
+// operational(): can this provider still be used to settle, refund, sync and recover money that already moved.
+// Switching Stripe off for new sales must never stop webhook processing for existing customers.
+function operational() { return Boolean(apiKeyFrom(providerSettings.peekOperational('stripe'))); }
 function classifyStripeError(error) { const details=providerHttp.classifySdkError('stripe',error);if(error&&typeof error==='object'){error.provider='stripe';error.retryable=details.retryable;error.requestId=details.requestId;error.status=details.status;}return error; }
 async function getStripe() {
     const config = await providerSettings.get('stripe'), key = apiKeyFrom(config);
@@ -71,6 +76,35 @@ async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,di
     if(checkoutExpiresAt){const epoch=Math.floor(new Date(checkoutExpiresAt).getTime()/1000),now=Math.floor(Date.now()/1000);if(Number.isFinite(epoch)&&epoch>=now+30*60&&epoch<=now+24*60*60)params.expires_at=epoch;}
     if(mode==='subscription')params.subscription_data={metadata};else params.payment_intent_data={metadata};
     const session=idempotencyKey?await stripe.checkout.sessions.create(params,{idempotencyKey:`checkout-${String(idempotencyKey)}`}):await stripe.checkout.sessions.create(params);return{id:session.id,url:session.url,mode};
+}
+// Find the Checkout Session that a local intent created, by the exact intent id written into its metadata at creation.
+// Used when the create call's outcome was lost (timeout/network/5xx): the session may or may not exist. Returns
+//  - {session}     an open session for this intent (safe to attach and redirect to),
+//  - {none:true}   no session for this intent exists or all were expired (nothing can be paid),
+//  - {unconfirmed:true,reason} provider state could not be established (callers must keep reservations),
+//  - {completed:true,sessionId} the session was already paid (callers must not release anything; the webhook binds it).
+async function recoverUnattachedCheckout({customerId,intentId}) {
+    try {
+        const mapping=await lifecycle.findPaymentCustomer(customerId,'stripe');
+        if(!mapping)return{none:true};
+        const stripe=await getStripe();
+        let startingAfter=null,open=null;
+        for(let page=0;page<4;page+=1){
+            const list=await stripe.checkout.sessions.list({customer:mapping.provider_customer_id,limit:50,...(startingAfter?{starting_after:startingAfter}:{})});
+            for(const session of list.data||[]){
+                if(String(session.metadata?.internal_checkout_intent_id||'')!==String(intentId))continue;
+                if(session.status==='complete')return{completed:true,sessionId:session.id};
+                if(session.status==='open'&&!open)open=session;
+            }
+            if(!list.has_more||!(list.data||[]).length)break;
+            startingAfter=list.data[list.data.length-1].id;
+        }
+        if(open&&open.url)return{session:{id:open.id,url:open.url,mode:open.mode==='subscription'?'subscription':'payment'}};
+        if(open){await stripe.checkout.sessions.expire(open.id);}
+        return{none:true};
+    }catch(error){
+        return{unconfirmed:true,reason:String(error?.message||error).slice(0,300)};
+    }
 }
 async function resumeCheckout(sessionId) {
     const id=String(sessionId||'').trim();
@@ -267,6 +301,15 @@ async function settlePaidServiceCreditInvoice(invoice,stripe){
     }
     return renewalCredits.consumeStripeInvoice({providerInvoiceId:invoice.id,providerAdjustmentId:adjustmentId});
 }
+// Amount actually owed for the checkout before tax: line items minus discounts. Recurring Checkout carries the first
+// invoice only, and the adjustment/discount coupons we create make this exact. Tax (if the Stripe account adds any) is
+// not part of the frozen commercial contract, so it is excluded rather than rejected.
+function sessionNetMinor(session){
+    const subtotal=Number(session?.amount_subtotal),discount=Number(session?.total_details?.amount_discount||0);
+    if(Number.isInteger(subtotal)&&subtotal>=0&&Number.isInteger(discount)&&discount>=0)return Math.max(0,subtotal-discount);
+    const total=Number(session?.amount_total);
+    return Number.isInteger(total)&&total>=0?total:null;
+}
 async function checkoutContract(session) {
     const customerId=session.metadata?.internal_customer_id,planId=session.metadata?.internal_plan_id;
     if(!customerId||!planId)throw new Error('Stripe Checkout session is missing internal metadata');
@@ -274,8 +317,54 @@ async function checkoutContract(session) {
     const verified=await stripe.checkout.sessions.retrieve(session.id,{expand:['line_items.data.price']});
     if(!['paid','no_payment_required'].includes(verified.payment_status))throw new Error('Stripe Checkout session is not paid');
     const price=verified.line_items?.data?.[0]?.price||null,priceId=price?.id||null;
-    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:verified.mode==='subscription'?priceId:null,amountMinor:verified.mode==='payment'?verified.amount_total:null,currency:verified.mode==='payment'?verified.currency:price?.currency});
+    // The exact local intent that created this session; never inferred from customer/plan/mode.
+    const intentId=String(verified.metadata?.internal_checkout_intent_id||session.metadata?.internal_checkout_intent_id||'').trim()||null;
+    const recurring=verified.mode==='subscription';
+    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:recurring?priceId:null,checkoutIntentId:intentId,amountMinor:recurring?sessionNetMinor(verified):verified.amount_total,currency:recurring?(verified.currency||price?.currency):verified.currency});
     return{session:verified,customerId,planId,priceId,...contract};
+}
+// Authoritative evidence that a recurring Stripe checkout both matches the frozen commercial contract and was actually
+// paid (or is a legitimate zero-cost checkout). An active agreement alone is not proof of payment.
+function verifyStripeRecurringSettlement({session,subscription,snapshot,storedProviderCustomerId=null}){
+    const fail=message=>{const error=new Error(message);error.code='STRIPE_RECURRING_SETTLEMENT_UNVERIFIED';return error;};
+    const subscriptionId=stripeObjectId(session.subscription);
+    if(!subscription||!subscriptionId||subscription.id!==subscriptionId)throw fail('Stripe subscription does not belong to this Checkout session.');
+    const sessionCustomer=stripeObjectId(session.customer),subscriptionCustomer=stripeObjectId(subscription.customer);
+    if(!sessionCustomer||sessionCustomer!==subscriptionCustomer)throw fail('Stripe subscription customer does not match the Checkout session customer.');
+    if(storedProviderCustomerId&&String(storedProviderCustomerId)!==String(subscriptionCustomer))throw fail('Stripe customer does not match the customer this account was checked out under.');
+    const intentId=String(snapshot.checkoutIntentId||'');
+    const metadataIntent=String(subscription.metadata?.internal_checkout_intent_id||'');
+    if(metadataIntent&&intentId&&metadataIntent!==intentId)throw fail('Stripe subscription belongs to a different checkout intent.');
+    const metadataCustomer=String(subscription.metadata?.internal_customer_id||'');
+    if(metadataCustomer&&String(session.metadata?.internal_customer_id||'')&&metadataCustomer!==String(session.metadata.internal_customer_id))throw fail('Stripe subscription metadata customer does not match the Checkout session.');
+    const items=subscription.items?.data||[];
+    if(items.length!==1||Number(items[0].quantity||1)!==1)throw fail('Stripe subscription does not contain exactly the purchased plan item.');
+    const price=items[0].price&&typeof items[0].price==='object'?items[0].price:null;
+    if(snapshot.providerMappingId&&String(price?.id||'')!==String(snapshot.providerMappingId))throw fail('Stripe subscription price does not match the checkout contract.');
+    if(price){
+        if(Number.isInteger(price.unit_amount)&&Number.isInteger(Number(snapshot.priceMinor))&&price.unit_amount!==Number(snapshot.priceMinor))throw fail('Stripe recurring price amount does not match the checkout contract.');
+        if(price.currency&&snapshot.currency&&String(price.currency).toUpperCase()!==String(snapshot.currency).toUpperCase())throw fail('Stripe recurring price currency does not match the checkout contract.');
+        const frequency=mappingVerification.expectedFrequency({billing_interval:snapshot.billingInterval});
+        if(frequency&&price.recurring){
+            const count=Number(price.recurring.interval_count||1);
+            if(price.recurring.interval!==frequency.interval||count!==frequency.count)throw fail('Stripe recurring billing frequency does not match the purchased plan.');
+        }
+    }
+    const expectedMinor=Number(snapshot.discountedMinor??snapshot.priceMinor),net=sessionNetMinor(session);
+    if(!Number.isInteger(expectedMinor)||expectedMinor<0||net!==expectedMinor)throw fail('Stripe Checkout amount does not match the checkout contract.');
+    if(String(session.currency||'').toUpperCase()!==String(snapshot.currency||'').toUpperCase())throw fail('Stripe Checkout currency does not match the checkout contract.');
+    const invoice=subscription.latest_invoice&&typeof subscription.latest_invoice==='object'?subscription.latest_invoice:null;
+    if(session.payment_status==='paid'){
+        if(expectedMinor<=0)throw fail('Stripe reports a payment for a checkout that should have cost nothing.');
+        if(!invoice||invoice.status!=='paid'||invoice.billing_reason!=='subscription_create'||String(invoice.currency||'').toUpperCase()!==String(snapshot.currency||'').toUpperCase()||!Number.isInteger(invoice.amount_paid)||invoice.amount_paid<=0||invoice.amount_paid!==session.amount_total)throw fail('The first Stripe invoice is not paid for the checkout amount, so the agreement is not proof of payment.');
+        if(!['active','trialing'].includes(String(subscription.status||'')))throw fail(`Stripe subscription is ${subscription.status||'unknown'}, not active.`);
+        return{paymentVerified:true,zeroCost:false};
+    }
+    // no_payment_required: only a checkout the contract itself made free (promo or service credit covering the whole price).
+    const legitimateZero=expectedMinor===0&&net===0&&(Number(snapshot.serviceCreditMinor||0)>0||Boolean(snapshot.discountCodeId));
+    if(!legitimateZero)throw fail('Stripe reports no payment was required, but the checkout contract is not a zero-cost checkout.');
+    if(invoice&&((Number.isInteger(invoice.amount_paid)&&invoice.amount_paid!==0)||(Number.isInteger(invoice.amount_due)&&invoice.amount_due!==0)))throw fail('Stripe zero-cost checkout carries a non-zero first invoice.');
+    return{paymentVerified:false,zeroCost:true};
 }
 async function activateCheckoutSession(session) {
     if(!['paid','no_payment_required'].includes(session.payment_status))return null;
@@ -283,10 +372,10 @@ async function activateCheckoutSession(session) {
     const providerCustomerId=typeof verified.customer==='string'?verified.customer:verified.customer?.id;
     if(verified.mode==='subscription'){
         const subscriptionId=typeof verified.subscription==='string'?verified.subscription:verified.subscription?.id;if(!subscriptionId)throw new Error('Stripe Checkout subscription ID is missing');
-        const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price']}),period=subscriptionPeriod(subscription);
-        const subscriptionPrice=subscription.items?.data?.[0]?.price?.id||null;
-        if(contract.snapshot.providerMappingId&&subscriptionPrice&&String(contract.snapshot.providerMappingId)!==String(subscriptionPrice))throw new Error('Stripe subscription price does not match the checkout contract.');
-        const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot,providerPaymentVerified:verified.payment_status==='paid'&&Number.isInteger(verified.amount_total)&&verified.amount_total>0});
+        const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price','latest_invoice']}),period=subscriptionPeriod(subscription);
+        const storedCustomer=await lifecycle.findPaymentCustomer(customerId,'stripe');
+        const settlement=verifyStripeRecurringSettlement({session:verified,subscription,snapshot:contract.snapshot,storedProviderCustomerId:storedCustomer?.provider_customer_id||null});
+        const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot,providerPaymentVerified:settlement.paymentVerified});
         await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');
         if(activated?.status==='active')await require('./plan-change-resolution').resolveAwaitingCheckout({customerId,planId,provider:'stripe',providerSubscriptionId:subscription.id,providerMappingId:contract.snapshot.providerMappingId});
         return activated;
@@ -418,4 +507,4 @@ async function processWebhook(rawBody,signature) {
     const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:event.type,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};
 }
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='stripe')throw new Error('Stripe retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored Stripe payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,resumeCheckout,abandonCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};
+module.exports={enabled,operational,recoverUnattachedCheckout,createCheckout,resumeCheckout,abandonCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,sessionNetMinor,verifyStripeRecurringSettlement,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};

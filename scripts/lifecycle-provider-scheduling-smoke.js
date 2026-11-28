@@ -26,7 +26,7 @@ assert(!/processed:Number\(stripe\.succeeded\|\|0\)\+Number\(stripe\.pending\|\|
 assert(/waiting:Number\(stripe\.pending\|\|0\)/.test(jobs),'Stripe plan changes still waiting at the provider must be reported separately');
 
 const paypal=read('src/payments/paypal.js'),stripe=read('src/payments/stripe.js'),lifecycle=read('src/payments/lifecycle-primitives.js'),paymentRetry=read('src/payments/payment-event-retry.js'),returns=read('src/platform/customer-payment-return.js'),checkout=read('src/platform/flexible-checkout.js'),subscriptions=read('src/subscriptions.js');
-assert(/case 'BILLING\.SUBSCRIPTION\.ACTIVATED':await activateSubscription/.test(paypal),'PayPal activation events must use the first-purchase activation path');
+assert(/case 'BILLING\.SUBSCRIPTION\.ACTIVATED':try\{await activateSubscription/.test(paypal),'PayPal activation events must use the first-purchase activation path');
 assert(/case 'BILLING\.SUBSCRIPTION\.UPDATED':await syncSubscription/.test(paypal),'PayPal subscription updates must sync existing provider state instead of replaying purchase activation');
 assert(/case 'PAYMENT\.SALE\.COMPLETED'[\s\S]*await syncCurrentSubscription\(subscriptionId\)/.test(paypal),'PayPal renewal sales must read current provider subscription state instead of replaying purchase activation');
 assert(/if\(intent&&activateMissing\)\{const activated=await activateSubscription\(subscription\.id\)/.test(paypal),'an out-of-order first positive PayPal update may activate only when a matching local checkout intent exists and the caller permits missing activation');
