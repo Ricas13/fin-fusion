@@ -26,6 +26,10 @@ function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
 }
 function permanentEnd() { return planExpiry.freeTierEnd(); }
+// Shown to customers when we could not yet tell whether new unpaid access works.
+// State only what is known: no promise of a retry or of automatic removal.
+const TRIAL_ACTIVATION_PENDING_MESSAGE='Your trial was created, but setup has not finished yet. Check your account again in a few minutes. If your access is still not ready, contact support.';
+const FREE_CLAIM_ACTIVATION_PENDING_MESSAGE='Your Free Access claim was saved, but setup has not finished yet. Check your account again in a few minutes. If your Free Server account is still not ready, contact support.';
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
 function checkoutBillingMode(input){return billingMode.normalize(input?.commercialSnapshot?.checkoutMode);}
 function validRemoteRecurringId(provider,value){
@@ -512,8 +516,12 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
                 }
             }
             if(linkFailed){
+                console.error('Stremio trial installation link could not be created.',{
+                    customerId,subscriptionId:created.id,error:error.message
+                });
                 const failure=new Error('The Stremio trial could not be activated because its installation link could not be created. No trial plan was retained.');
                 failure.code='TRIAL_STREMIO_INSTALL_FAILED';
+                failure.expose=true;
                 failure.cause=error;
                 throw failure;
             }
@@ -521,6 +529,7 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
     }
     const pendingActivation={
         pendingCode:'TRIAL_ACTIVATION_PENDING',
+        pendingMessage:TRIAL_ACTIVATION_PENDING_MESSAGE,
         onPending:customer=>provisioning.control.requestCustomerReconcile(customer)
     };
     const mediaType=customerServerChoice.mediaServerType(plan);
@@ -732,10 +741,13 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
 
     // A Free claim is complete only when the exact subscription owns an
-    // enabled Free-lane Jellyfin account on the correct placement. We never
-    // retain a live Free plan in a "deployment pending" state.
+    // enabled Free-lane Jellyfin account on the correct placement. A claim that
+    // cannot meet that is rolled back. The one exception is a lock timeout or a
+    // skipped rollback, where its state is unknown or already changed: it is
+    // kept, reported as pending and checked again.
     await unpaidAccessActivation.activateOrRollback({
         pendingCode:'FREE_CLAIM_ACTIVATION_PENDING',
+        pendingMessage:FREE_CLAIM_ACTIVATION_PENDING_MESSAGE,
         onPending:customer=>provisioning.control.requestCustomerReconcile(customer),
         customerId,
         subscriptionId:created.id,

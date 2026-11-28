@@ -17,6 +17,8 @@ const TRIAL_CLAIM_SAFE = [
     'Choose a server location before continuing.',
     'That server location is no longer available. Choose another location.'
 ];
+// Not failures: the access exists but has not been verified yet.
+const PENDING_ACTIVATION_CODES = new Set(['TRIAL_ACTIVATION_PENDING', 'FREE_CLAIM_ACTIVATION_PENDING']);
 const { createPublicHelpRouter } = require('./public-help');
 const { createPublicPagesRouter } = require('./public-pages');
 const { createAdminAutomationRouter } = require('./admin-automation');
@@ -147,7 +149,8 @@ function createRouter() {
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free trial start failed', fallback: 'Your trial could not be started.', safe: TRIAL_CLAIM_SAFE });
-            return res.redirect('/account?error=' + encodeURIComponent(message));
+            const notice = PENDING_ACTIVATION_CODES.has(error?.code) ? 'message' : 'error';
+            return res.redirect(`/account?${notice}=` + encodeURIComponent(message));
         }
     });
 
@@ -159,7 +162,8 @@ function createRouter() {
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your Jellyfin account is ready.'));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free plan claim failed', fallback: 'Free Access could not be claimed.', safe: TRIAL_CLAIM_SAFE });
-            return res.redirect('/account?error=' + encodeURIComponent(message));
+            const notice = PENDING_ACTIVATION_CODES.has(error?.code) ? 'message' : 'error';
+            return res.redirect(`/account?${notice}=` + encodeURIComponent(message));
         }
     });
 

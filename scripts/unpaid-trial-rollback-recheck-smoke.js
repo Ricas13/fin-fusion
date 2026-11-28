@@ -60,6 +60,8 @@ async function runQuery(sql, params = []) {
     world.writes.push({ sql: text, params, locked: world.lockDepth > 0 });
   }
   if (/FROM plans p WHERE p\.code=\$1/.test(text)) return { rows: [world.plan], rowCount: 1 };
+  if (/^SELECT code FROM plans/.test(text)) return { rows: [{ code: 'free' }], rowCount: 1 };
+  if (/^SELECT 1 FROM subscriptions WHERE customer_id=\$1 AND plan_id=\$2/.test(text)) return { rows: [], rowCount: 0 };
   if (/FROM platform_settings/.test(text)) return { rows: [], rowCount: 0 };
   if (/^SELECT s\.service_type_snapshot,p\.service_type,p\.name FROM subscriptions/.test(text)) return { rows: [], rowCount: 0 };
   if (/^SELECT id FROM customers/.test(text)) return { rows: [{ id: CUSTOMER }], rowCount: 1 };
@@ -160,8 +162,23 @@ stub('src/stremio/managed-entitlements.js', {
   revokeCustomerInactiveMappings: async () => { world.revoked.push('mappings'); }
 });
 stub('src/payments/subscription-access-extensions.js', {});
+// Only needed to load the registration module around activateRequestedFreeAccess.
+let registrationClaim = null;
+stub('src/customers.js', {});
+stub('src/referrals.js', {});
+stub('src/auth/customer-session.js', { establish: async () => {}, destroy: async () => {} });
+stub('src/auth/csrf.js', { verify: () => true, token: () => 'token' });
+stub('src/security/pending-registration.js', { consume: async () => registrationClaim });
+stub('src/jellyfin/free-claim-provisioning.js', { ensureFreeClaimProvisioned: async () => ({ ready: true }) });
+stub('src/integrations/email-settings.js', { status: async () => ({ configured: false }) });
+stub('src/integrations/email-outbox.js', {});
+stub('src/integrations/notification-dispatch.js', { dispatch: async () => {} });
+stub('src/platform/runtime-settings.js', { ensureLoaded: async () => {}, siteName: () => 'Site' });
+stub('src/platform/operations-settings.js', {});
 
 const lifecycle = require('../src/payments/lifecycle');
+const publicError = require('../src/platform/public-error');
+const publicAuth = require('../src/platform/customer-public-auth');
 
 function trialPlan(serviceType) {
   return { id: 'plan-1', code: 'trial', name: 'Trial', billing_interval: 'trial', service_type: serviceType };
@@ -451,7 +468,71 @@ async function testActivationSucceedsWhenAccessAppearsBeforeRollback() {
   }
 }
 
+function freePlan() {
+  return { id: 'free-plan', code: 'free', name: 'Free', billing_interval: 'month', price_minor: 0, is_free_tier: true, service_type: 'jellyfin' };
+}
+
+function customerCopy(error) {
+  return publicError.present(error, { context: 'smoke', fallback: 'Your trial could not be started.' });
+}
+
+async function testCustomerMessages() {
+  reset({ plan: trialPlan('jellyfin'), jellyfin: entitlement(), reconcile: async () => { throw lockTimeout(); } });
+  await assert.rejects(lifecycle.startFreeTrial(CUSTOMER, 'trial'), error => {
+    const shown = customerCopy(error);
+    assert(shown.exposed, 'a pending trial must be readable');
+    assert(/trial was created, but setup has not finished/.test(shown.message));
+    assert(!/retry|retrying|removed automatically|Reference/i.test(shown.message),
+      'the pending message must not promise a retry or removal');
+    return true;
+  });
+
+  reset({ plan: trialPlan('jellyfin'), jellyfin: entitlement(), reconcile: async () => { throw new Error('upstream 500 secret'); } });
+  await assert.rejects(lifecycle.startFreeTrial(CUSTOMER, 'trial'), error => {
+    const shown = customerCopy(error);
+    assert(shown.exposed);
+    assert.strictEqual(shown.message,
+      'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.');
+    return true;
+  });
+
+  reset({ plan: trialPlan('stremio'), stremio: entitlement(), ensureInstallation: async () => { throw new Error('secret'); } });
+  await assert.rejects(lifecycle.startFreeTrial(CUSTOMER, 'trial'),
+    error => customerCopy(error).exposed && !/secret/.test(error.message));
+
+  reset({ plan: freePlan(), free: entitlement(), reconcile: async () => { throw lockTimeout(); } });
+  await assert.rejects(lifecycle.claimFreePlan(CUSTOMER, 'free'), error => {
+    assert.strictEqual(error.code, 'FREE_CLAIM_ACTIVATION_PENDING');
+    assert(customerCopy(error).exposed);
+    // These phrases make other callers treat the claim as expired or already settled.
+    assert(!/hold has expired|already have free access|already been claimed|retry/i.test(error.message));
+    return true;
+  });
+  assert.deepStrictEqual(cancelled(), []);
+
+  const created = { freeAccessRequested: true, customer: { id: CUSTOMER }, user: {} };
+  reset({ plan: freePlan(), free: entitlement(), reconcile: async () => { throw lockTimeout(); } });
+  const outcome = await publicAuth.activateRequestedFreeAccess(created);
+  assert.strictEqual(outcome.pending, true);
+  assert.strictEqual(outcome.activated, false);
+  assert(/claim was saved, but setup has not finished/.test(outcome.error));
+
+  reset({ plan: freePlan(), free: entitlement(), reconcile: async () => { throw lockTimeout(); } });
+  registrationClaim = created;
+  const route = publicAuth.createCustomerPublicAuthRouter().stack.find(layer =>
+    layer.route?.path === '/account/verify-registration' && layer.route.methods.post).route.stack[0].handle;
+  let location = null;
+  await route({ body: { token: 't' }, session: {} }, { redirect: url => { location = url; } }, error => { throw error; });
+  assert(location.startsWith('/account?message='), `pending registration must be shown as information: ${location}`);
+  assert(/claim was saved/.test(decodeURIComponent(location)));
+
+  const router = require('fs').readFileSync(path.join(root, 'src/platform/router.js'), 'utf8');
+  assert.strictEqual(router.split("PENDING_ACTIVATION_CODES.has(error?.code) ? 'message' : 'error'").length - 1, 2,
+    'both customer activation routes must show a pending outcome as information');
+}
+
 (async () => {
+  await testCustomerMessages();
   await testReadyUnderLockIsKept();
   await testUnreadyStillRollsBack();
   await testOnlyOwnLaneAccountsAreDeleted();

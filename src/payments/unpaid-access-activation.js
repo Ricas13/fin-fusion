@@ -29,8 +29,13 @@ async function activateOrRollback({
         });
       }
     }
+    console.warn('Unpaid activation is pending.', {
+      customerId, subscriptionId, code: pendingCode, error: cause?.message
+    });
     const error = new Error(pendingMessage);
     error.code = pendingCode;
+    // Curated by the caller, so the customer may read it.
+    error.expose = true;
     error.retryable = true;
     error.cause = cause || undefined;
     throw error;
@@ -65,8 +70,14 @@ async function activateOrRollback({
     if (outcome.reason !== 'not_current') return pending(reconcileError);
   }
 
+  // The exposed message skips the customer-error reference log, so record the
+  // underlying cause here.
+  console.error('Unpaid activation failed.', {
+    customerId, subscriptionId, code: failureCode, error: reconcileError?.message || missingReason
+  });
   const error = new Error(failureMessage);
   error.code = failureCode;
+  error.expose = true;
   error.cause = reconcileError || undefined;
   throw error;
 }
