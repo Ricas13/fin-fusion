@@ -495,7 +495,7 @@ async function testCustomerMessages() {
     const shown = customerCopy(error);
     assert(shown.exposed);
     assert.strictEqual(shown.message,
-      'The Jellyfin trial could not be activated because a server account could not be created. No trial plan was retained.');
+      'Your trial was created, but setup has not finished yet. Check your account again in a few minutes. If your access is still not ready, contact support.');
     return true;
   });
 
