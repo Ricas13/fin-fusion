@@ -3,7 +3,9 @@ require('dotenv').config();
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { query, getPool } = require('../src/db');
+const { query, transaction, getPool } = require('../src/db');
+const extensions = require('../src/payments/subscription-access-extensions');
+const subscriptionState = require('../src/entitlements/subscription-state');
 const refunds = require('../src/payments/prorata-refunds');
 const refundLifecycle = require('../src/payments/lifecycle-prepaid-refunds');
 
@@ -58,6 +60,36 @@ async function main() {
   const laterAfterRecovery = (await query('SELECT starts_at,current_period_end FROM subscriptions WHERE id=$1',[futureLater.id])).rows[0];
   assert.equal(new Date(laterAfterRecovery.starts_at).getTime(),new Date(laterAfterWebhook.starts_at).getTime(),'webhook-first recovery must not shift later prepaid starts twice');
   assert.equal(new Date(laterAfterRecovery.current_period_end).getTime(),new Date(laterAfterWebhook.current_period_end).getTime(),'webhook-first recovery must not shift later prepaid ends twice');
+
+  // A separately funded extension must remain live after the base-only
+  // pro-rata refund and be independently refundable without moving the queue twice.
+  const extCustomer=(await query('INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *',[`Prorata extension ${suffix}`,`prorata-extension-${suffix}@example.invalid`])).rows[0];
+  const extBase=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,service_type_snapshot,commercial_snapshot)
+    VALUES($1,$2,'active','stripe','payment',$3,NOW()-INTERVAL '15 days',NOW()+INTERVAL '30 days','jellyfin',$4::jsonb) RETURNING *`,
+    [extCustomer.id,plan.id,`pi_prorata_ext_base_${suffix}`,JSON.stringify({discountedMinor:5000,currency:'GBP',checkoutMode:'payment'})])).rows[0];
+  const extRef=`pi_prorata_ext_bought_${suffix}`;
+  await transaction(client=>extensions.applyPurchase(client,{customerId:extCustomer.id,subscriptionId:extBase.id,planId:plan.id,provider:'stripe',providerPaymentId:extRef,
+    commercialSnapshot:{kind:'subscription_extension',extensionSubscriptionId:extBase.id,planId:plan.id,priceMinor:5000,discountedMinor:5000,currency:'GBP',billingInterval:'year',durationDays:365,streams:1,accessVariantKind:'streams',accessQuantity:1,provider:'stripe',checkoutMode:'payment'}}));
+  const beforeExtension=(await query('SELECT current_period_end+make_interval(days=>service_extension_days) AS access_end FROM subscriptions WHERE id=$1',[extBase.id])).rows[0];
+  const extQueue=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,service_type_snapshot,commercial_snapshot)
+    VALUES($1,$2,'active','stripe','payment',$3,$4,$4::timestamptz+INTERVAL '30 days','jellyfin',$5::jsonb) RETURNING *`,
+    [extCustomer.id,plan.id,`pi_prorata_ext_queue_${suffix}`,beforeExtension.access_end,JSON.stringify({discountedMinor:5000,currency:'GBP',checkoutMode:'payment'})])).rows[0];
+  const extRequest={subscriptionId:extBase.id,customerId:extCustomer.id,originalEnd:extBase.current_period_end,cutoffAt:new Date(),serviceType:'jellyfin'};
+  await refundLifecycle.applyPrepaidRefund(extRequest);
+  const extAfter=(await query('SELECT *,current_period_end+make_interval(days=>service_extension_days) AS access_end FROM subscriptions WHERE id=$1',[extBase.id])).rows[0];
+  const queueAfter=(await query('SELECT starts_at,current_period_end FROM subscriptions WHERE id=$1',[extQueue.id])).rows[0];
+  assert.equal(extAfter.status,'expired');
+  assert(Number(extAfter.service_extension_days)>=365,'base pro-rata refund must keep the separate yearly extension');
+  const effective=await subscriptionState.effectiveSubscription(extCustomer.id,{includeBlocked:true});
+  assert.equal(String(effective?.subscription_id||effective?.id),extBase.id,'the independently purchased access must remain usable');
+  assert(Math.abs(+new Date(queueAfter.starts_at)-+new Date(extAfter.access_end))<1000,'queue must follow surviving extension, not the base refund cutoff');
+  assert.equal((await refundLifecycle.applyPrepaidRefund(extRequest)).removedMs,0,'base refund replay must not shorten the extension');
+  const queueReplay=(await query('SELECT starts_at FROM subscriptions WHERE id=$1',[extQueue.id])).rows[0];
+  assert.equal(+new Date(queueReplay.starts_at),+new Date(queueAfter.starts_at));
+  await extensions.revokeByProviderPayment({provider:'stripe',providerPaymentId:extRef,customerId:extCustomer.id,reason:'separate extension refund'});
+  const afterExtensionLoss=(await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[extBase.id])).rows[0];
+  assert.equal(Number(afterExtensionLoss.service_extension_days),0,'the extension is removed only by its own reversal');
+  await query('DELETE FROM customers WHERE id=$1',[extCustomer.id]);
 
   const recurring = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,starts_at,current_period_end,price_minor_snapshot,currency_snapshot,commercial_snapshot)
     VALUES($1,$2,'active','stripe',$3,NOW(),NOW()+INTERVAL '1 month',5000,'GBP',$4::jsonb) RETURNING id`, [customer.id,plan.id,`sub_prorata_${suffix}`,JSON.stringify({discountedMinor:5000,currency:'GBP',checkoutMode:'subscription'})])).rows[0];

@@ -2,6 +2,7 @@
 
 const { transaction } = require('../db');
 const carriedTime = require('./carried-time');
+const accessExtensions = require('./subscription-access-extensions');
 
 function dateMs(value, label) {
   const ms = new Date(value).getTime();
@@ -14,7 +15,7 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
     // One lock order everywhere: the customer, then the subscription.
     await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
     const result = await client.query(`
-      SELECT s.*,p.service_type
+      SELECT s.*,s.current_period_end::text AS period_end_exact,p.service_type
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
       WHERE s.id=$1 AND s.customer_id=$2
@@ -83,16 +84,25 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
         WHERE id=$1
       `, [row.id, cutoffDate]);
 
-      // Later purchases were queued behind the whole access slot, extension days
-      // included. The database owner moves them without creating any overlap.
+      // A pro-rata refund pays back the base contract, not separately bought
+      // extensions. Rebase only active purchase records from the new base end;
+      // the reset above deliberately excludes unrelated/manual extra days.
+      const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client,row.id,row.customer_id);
+      const holder = rebased.subscription || row;
+      // Later purchases move by the net reduction in the full access window,
+      // never into an independently funded extension that survives this refund.
+      // Keep exact SQL timestamps rather than losing queue boundaries in JS.
       await client.query(`
         SELECT public.pull_prepaid_queue(
           $1,$2,$3::timestamptz,
-          $4::bigint/1000.0
-            +EXTRACT(EPOCH FROM (($3::timestamptz+(($5::int||' days')::interval))-$3::timestamptz))::numeric,
-          $6
+          GREATEST(0,EXTRACT(EPOCH FROM (
+            ($3::timestamptz+make_interval(days=>$4::int))-
+            (SELECT current_period_end+make_interval(days=>service_extension_days) FROM subscriptions WHERE id=$5)
+          ))::numeric),
+          $6,
+          (SELECT current_period_end+make_interval(days=>service_extension_days) FROM subscriptions WHERE id=$5)
         )
-      `, [row.customer_id, effectiveServiceType, observedEndDate, removedMs, Math.max(0, Number(row.service_extension_days || 0)), row.id]);
+      `, [row.customer_id, effectiveServiceType, row.period_end_exact || observedEndDate, Math.max(0, Number(row.service_extension_days || 0)), holder.id, row.id]);
     }
 
     return { row, removedMs, cutoffAt:cutoffDate, observedEnd:observedEndDate, serviceType:effectiveServiceType };
