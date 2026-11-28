@@ -344,7 +344,7 @@ async function main(){
      VALUES('customer',$1,$2,'stripe','payment','completed',$3,NOW()+INTERVAL '1 hour',$4::jsonb,$5) RETURNING id`,
      [oldCustomer.id,plan.id,'historical-nonce-'+suffix,JSON.stringify(oldSnapshot),'cs_historical_'+suffix])).rows[0];
   const oldPurchase=await transaction(client=>extensions.applyPurchase(client,{customerId:oldCustomer.id,subscriptionId:oldBase.id,planId:plan.id,provider:'stripe',
-    providerPaymentId:'pi_historical_extension_'+suffix,checkoutIntentId:oldIntent.id,commercialSnapshot:oldSnapshot}));
+    providerPaymentId:'pi_historical_extension_'+suffix,checkoutIntentId:oldIntent.id,commercialSnapshot:{...oldSnapshot,checkoutIntentId:oldIntent.id}}));
   await query("UPDATE subscriptions SET refund_terminated_at=NOW(),status='cancelled',current_period_end=NOW(),service_extension_days=0 WHERE id=$1",[oldBase.id]);
   const candidate={id:oldBase.id,customer_id:oldCustomer.id};
   assert((await historicalRecovery.candidates({limit:100})).some(x=>x.id===oldBase.id),'verified old paid extension is discoverable');

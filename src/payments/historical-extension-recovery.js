@@ -24,7 +24,7 @@ const ELIGIBLE=`
      OR i.provider_checkout_id IS NULL
      OR i.commercial_snapshot->>'kind' IS DISTINCT FROM 'subscription_extension'
      OR i.commercial_snapshot->>'extensionSubscriptionId' IS DISTINCT FROM s.id::text
-     OR i.commercial_snapshot IS DISTINCT FROM e.commercial_snapshot
+     OR (i.commercial_snapshot||jsonb_build_object('checkoutIntentId',i.id)) IS DISTINCT FROM e.commercial_snapshot
      OR CASE WHEN COALESCE(i.commercial_snapshot->>'discountedMinor','')~'^[0-9]{1,10}$'
        THEN (i.commercial_snapshot->>'discountedMinor')::bigint<=0 ELSE TRUE END
      OR EXISTS(SELECT 1 FROM payment_incidents pi WHERE pi.provider=e.provider
