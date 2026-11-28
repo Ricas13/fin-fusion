@@ -56,6 +56,7 @@ const targetMappings = new Map();
 providerPricing.getProviderPlanByExternalId = async (provider, externalId) => provider === 'stripe' ? targetMappings.get(externalId) || null : null;
 billingControl.syncSubscription = async subscriptionId => ({ ok: true, subscriptionId, provider: 'stripe', remote: { status: 'active' } });
 const recovery = require('../src/payments/provider-operation-recovery');
+const planChange = require('../src/payments/customer-plan-change');
 
 function suffix() { return crypto.randomBytes(6).toString('hex'); }
 async function forceDue(id) { await query(`UPDATE provider_operations SET next_attempt_at=NOW()-INTERVAL '1 second' WHERE id=$1`, [id]); }
@@ -492,6 +493,31 @@ async function testPUnadmittedRecoveryCannotChargePastCapacity() {
     assert(result.failed>0||result.retryable>0||result.manual>0,'P: lost capacity must remain visible/retryable instead of being silently treated as success');
 }
 
+async function testQRepeatPlanChangesAndUnresolvedOperation(){
+    const tag=suffix(),c=await customer('q-'+tag),p=await plan('recovery-q-'+tag,'Repeat plan',1000);
+    const ref='sub_recovery_q_'+tag,a='price_q_a_'+tag,b='price_q_b_'+tag;
+    const sub=await subscription(c.id,p.id,ref);
+    remote(ref,a);
+    const mapping=(price,quantity)=>({id:p.id,plan_price_id:null,provider_mapping_id:null,external_id:price,
+      checkout_mode:'subscription',price_minor:quantity*1000,currency:'GBP',variant_kind:'streams',quantity,streams:quantity});
+    const decide=async(price,quantity)=>planChange.withPlanChangeLock(c.id,async()=>{
+      const current=await row('subscriptions',sub.id);
+      return planChange.setStripePlan(current,p,{proration:true,currency:'GBP',mapping:mapping(price,quantity),accessQuantity:quantity});
+    });
+    const prior=await immediateOp({customerId:c.id,subscriptionId:sub.id,targetPlanId:p.id,targetPriceId:b,key:'recovery-q-pending-'+tag});
+    const before=providerMutationCount;
+    await assert.rejects(()=>decide(b,2),/previous plan change is still being verified/);
+    assert.equal(providerMutationCount,before,'an unresolved operation cannot trigger a second provider mutation');
+    await providerOps.markSuperseded(prior.id,'test previous decision retired');
+    const first=await decide(b,2),second=await decide(a,1),third=await decide(b,2);
+    assert.equal(providerMutationCount,before+3,'three deliberate plan changes must each execute once');
+    assert.equal(new Set([first.providerOperationId,second.providerOperationId,third.providerOperationId]).size,3);
+    const firstOp=await providerOps.get(first.providerOperationId),thirdOp=await providerOps.get(third.providerOperationId);
+    assert.notEqual(firstOp.idempotency_key,thirdOp.idempotency_key,'repeating a prior target requires a fresh provider idempotency key');
+    assert.equal(firstOp.state,'reconciled');
+    assert.equal(thirdOp.state,'reconciled');
+    assert.equal(remoteSubscriptions.get(ref).items.data[0].price.id,b);
+}
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -508,6 +534,7 @@ async function main() {
     await testNOrphanedIncidentMetadataCustomer();
     await testOScheduledStripeMediaCapacityReservation();
     await testPUnadmittedRecoveryCannotChargePastCapacity();
+    await testQRepeatPlanChangesAndUnresolvedOperation();
     console.log('provider operation recovery DB smoke: A-O ok');
 }
 

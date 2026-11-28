@@ -121,10 +121,33 @@ async function replacementMapping(current,target,provider,currency,quantity){
     return providerPricing.getProviderPlan(target.code,provider,'subscription',currency,requested);
 }
 
+const PLAN_CHANGE_PROCESSING='A previous plan change is still being verified. Your existing access remains protected. Please check your account again shortly.';
+async function assertNoUnresolvedPlanOperation(customerId,{db=query}={}){
+    const outstanding=await db(`SELECT id FROM provider_operations WHERE scope='customer' AND owner_id=$1
+      AND operation_type IN ('plan_change_immediate','plan_change_schedule')
+      AND (state IN ('planned','provider_applied','local_applied')
+           OR (state='failed' AND manual_review_required=TRUE))
+      ORDER BY created_at DESC,id DESC LIMIT 1`,[customerId]);
+    if(outstanding.rowCount)throw planChangeRefusal(PLAN_CHANGE_PROCESSING);
+}
+async function beginImmediatePlanOperation(customerId,subscriptionId,request){
+    return transaction(async db=>{
+        await db.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
+        const read=(sql,params)=>db.query(sql,params);
+        await assertNoOutstandingExtensionCheckout(customerId,subscriptionId,{db:read});
+        await assertNoUnresolvedPlanOperation(customerId,{db:read});
+        const pending=await read("SELECT id FROM customer_plan_changes WHERE customer_id=$1 AND state IN ('pending','awaiting_checkout') LIMIT 1",[customerId]);
+        if(pending.rowCount)throw planChangeRefusal('A plan change is already open. Cancel or complete it before requesting another one.');
+        // A fresh deliberate commercial decision needs a fresh key. The
+        // durable operation keeps that key for all retries and recovery.
+        // Do not key forever on the target price: A->B->A->B is valid.
+        return providerOps.begin({provider:'stripe',scope:'customer',ownerId:customerId,operationType:'plan_change_immediate',localReference:subscriptionId,request},{db:read});
+    });
+}
 async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null,mediaLocation=null,mediaServer=null}={}){
     mapping=mapping||await replacementMapping(current,target,'stripe',currency,accessQuantity);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
-    const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),targetKind=normalizedKind(target,mapping),targetQuantity=mappingQuantity(target,mapping,accessQuantity),currentQuantity=subscriptionAccessQuantity(current,targetKind),samePlan=String(current.plan_id)===String(target.id),reserveCapacity=!samePlan||(targetKind==='households'&&targetQuantity>currentQuantity),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_immediate',localReference:subscriptionId,idempotencyKey:`customer-plan-immediate:${subscriptionId}:${target.id}:${identity}:${proration?'prorate':'no-prorate'}`,request:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity,targetVariantKind:targetKind,targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration),targetMediaLocation:mediaLocation||null,targetMediaServerId:mediaServer?.id||null}});
-    await assertNoOutstandingExtensionCheckout(current.customer_id,subscriptionId);
+    const subscriptionId=current.subscription_id||current.id,identity=mappingIdentity(mapping),targetKind=normalizedKind(target,mapping),targetQuantity=mappingQuantity(target,mapping,accessQuantity),currentQuantity=subscriptionAccessQuantity(current,targetKind),samePlan=String(current.plan_id)===String(target.id),reserveCapacity=!samePlan||(targetKind==='households'&&targetQuantity>currentQuantity);
+    const op=await beginImmediatePlanOperation(current.customer_id,subscriptionId,{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity,targetVariantKind:targetKind,targetPriceId:mapping.external_id,currency:mapping.currency,proration:Boolean(proration),targetMediaLocation:mediaLocation||null,targetMediaServerId:mediaServer?.id||null});
     let providerMutationAttempted=false,placementReservation=null;
     try{
         if(reserveCapacity){
@@ -148,12 +171,11 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
         await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity}});
         return{provider:'stripe',target,mapping,providerOperationId:op.id};
     }catch(error){
-        const recorded=await providerOps.recordError(
-            op.id,
-            error,
-            !providerMutationAttempted ? {terminal:true,ambiguous:false} : {}
-        ).catch(()=>null);
-        const terminal=recorded?.state==='failed'&&recorded?.failure_kind==='terminal';
+        // We know no provider call was attempted. Retire that unused decision
+        // so recovery cannot charge later and the customer can retry normally.
+        const recorded=await (providerMutationAttempted?providerOps.recordError(op.id,error):
+            providerOps.markSuperseded(op.id,error,{result:{providerMutationAttempted:false}})).catch(()=>null);
+        const terminal=recorded?.state==='failed'&&['terminal','superseded'].includes(recorded?.failure_kind);
         if((!providerMutationAttempted||terminal)&&placementReservation?.placement_lease_id&&mediaServer?.id){
             await provisioningHelpers.releaseDefinitivePlacementFailure(current.customer_id,mediaServer.id,placementReservation.placement_lease_id).catch(()=>{});
         }
@@ -169,6 +191,7 @@ async function createLocalChange(customerId,current,target,provider,actorUserId=
     return transaction(async client=>{
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         await assertNoOutstandingExtensionCheckout(customerId,current.subscription_id||current.id,{db:(sql,params)=>client.query(sql,params)});
+        await assertNoUnresolvedPlanOperation(customerId,{db:(sql,params)=>client.query(sql,params)});
         const samePlan=String(current.plan_id)===String(target.id);
         const currentQuantity=subscriptionAccessQuantity(current,targetVariantKind||accessVariants.variantKind(target));
         const householdIncrease=targetVariantKind==='households'&&Number(targetAccessQuantity||0)>currentQuantity;
@@ -234,6 +257,7 @@ async function requestChangeUnlocked({customerId,targetPlanCode,targetCurrency='
     const baseTarget=targetResult.rows[0],price=await query(`SELECT * FROM plan_prices WHERE plan_id=$1 AND currency=$2 AND active=TRUE LIMIT 1`,[baseTarget.id,String(targetCurrency||'').toUpperCase()]);if(!price.rowCount)throw new Error(`Target plan is not available in ${targetCurrency}.`);
     let target={...baseTarget,price_minor:Number(price.rows[0].price_minor),currency:price.rows[0].currency,plan_price_id:price.rows[0].id},current=await currentRecurring(customerId,target);if(!current)return{handled:false};
     await assertNoOutstandingExtensionCheckout(customerId,current.subscription_id||current.id);
+    await assertNoUnresolvedPlanOperation(customerId);
     if(Number(current.service_extension_days||0)>0)throw planChangeRefusal('This subscription has prepaid extension time remaining. Use that paid time before changing plan, currency or access allowance.');
     const provider=current.source;if(!['stripe','paypal'].includes(provider))return{handled:false};
     const mapping=await replacementMapping(current,target,provider,target.currency,targetAccessQuantity);if(!mapping)throw new Error(`The selected access option is not configured for ${provider==='stripe'?'Stripe':'PayPal'} recurring billing in ${target.currency}.`);
@@ -371,4 +395,4 @@ async function cancelPendingChange(customerId,actorUserId=null){return withPlanC
 
 async function pendingForCustomer(customerId){const result=await query(`SELECT pc.*,p.name target_plan_name,p.code target_plan_code FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id WHERE pc.customer_id=$1 AND pc.state IN ('pending','awaiting_checkout') ORDER BY pc.created_at DESC LIMIT 1`,[customerId]);return result.rows[0]||null;}
 
-module.exports={requestChange,requestChangeUnlocked,withPlanChangeLock,planChangeLockKey,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment,cancelPendingChangeUnlocked,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};
+module.exports={PLAN_CHANGE_PROCESSING,assertNoUnresolvedPlanOperation,beginImmediatePlanOperation,requestChange,requestChangeUnlocked,withPlanChangeLock,planChangeLockKey,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment,cancelPendingChangeUnlocked,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};
