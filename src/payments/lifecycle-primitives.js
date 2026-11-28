@@ -500,7 +500,8 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     row = updated.rows[0];
                     if (row) {
                         const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, row.id, row.customer_id);
-                        row = rebased.subscription || row;
+                        // Recovery may create a new local entitlement; provider identity still belongs to the original contract.
+                        if (rebased.subscription?.id === row.id) row = rebased.subscription;
                     }
                 }
             } else if (activationSuppressedByMoneyLoss) {
@@ -676,7 +677,8 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
             carryIssue = carried.problem;
         }
         const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, updated.id, updated.customer_id);
-        updated = rebased.subscription || updated;
+        // Never return a local recovery entitlement as the provider's subscription.
+        if (rebased.subscription?.id === updated.id) updated = rebased.subscription;
         if (status) await syncProviderAccessState({ customerId: updated.customer_id, provider, providerSubscriptionId, status: updated.status, billingMode: updated.billing_mode }, client);
         return updated;
     });

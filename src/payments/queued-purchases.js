@@ -15,7 +15,7 @@ async function hasPurchaseQueuedBehind(subscriptionId,{db=query}={}){
       JOIN plans p ON p.id=s.plan_id
       WHERE renewing.id=$1 AND COALESCE(renewing_plan.is_addon,FALSE)=FALSE
         AND s.superseded_by IS NULL AND s.refund_terminated_at IS NULL AND COALESCE(p.is_addon,FALSE)=FALSE
-        AND s.starts_at>NOW() AND s.status IN('active','trialing','past_due','paused')
+        AND s.starts_at>NOW() AND (s.status IN('active','trialing','past_due','paused') OR (s.extension_recovery_of IS NOT NULL AND s.status='cancelled'))
         AND public.prepaid_row_is_queueable(s.source,s.provider_subscription_id,s.billing_mode,s.commercial_snapshot)
         AND public.prepaid_lanes_overlap(
           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin'),
@@ -51,8 +51,8 @@ async function listForCustomer(customerId,{db=query}={}){
            s.starts_at,
            s.current_period_end+make_interval(days=>COALESCE(s.service_extension_days,0)) AS access_expires_at
     FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-    WHERE s.customer_id=$1 AND s.status='active' AND s.starts_at>NOW()
-      AND s.current_period_end>s.starts_at
+    WHERE s.customer_id=$1 AND (s.status='active' OR (s.extension_recovery_of IS NOT NULL AND s.status='cancelled')) AND s.starts_at>NOW()
+      AND s.current_period_end+make_interval(days=>s.service_extension_days)>s.starts_at
       AND s.superseded_by IS NULL AND s.refund_terminated_at IS NULL
       AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(p.is_free_tier,FALSE)=FALSE
       AND public.prepaid_row_is_queueable(s.source,s.provider_subscription_id,s.billing_mode,s.commercial_snapshot)
