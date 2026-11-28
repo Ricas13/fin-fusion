@@ -9,6 +9,12 @@ const {addPlanDuration}=require('./billing-periods');
 const DAY=86400000;
 function enabled(){return process.env.PAID_VALUE_TRANSFER_ENABLED==='true';}
 function invariant(ok,message){if(!ok){const e=new Error(message);e.code='PAID_VALUE_TRANSFER_SETTLEMENT_CONFLICT';throw e;}}
+function assertChargeSupported({providerDue,serviceCreditMinor=0}){
+ if(!Number.isInteger(providerDue)||providerDue<50||Number(serviceCreditMinor)!==0){
+   const error=new Error('This monetary plan transfer requires a positive first payment without mixed service credit. Your existing access is unchanged. You have not been charged.');
+   error.expose=true;error.code='PAID_VALUE_TRANSFER_PAYMENT_UNSUPPORTED';throw error;
+ }
+}
 function currency(v){return String(v||'').trim().toUpperCase();}
 function minor(v){const m=/^(\d+)(?:\.(\d{1,2}))?$/.exec(String(v??''));return m?(BigInt(m[1])*100n+BigInt((m[2]||'').padEnd(2,'0'))).toString():null;}
 function time(v){return new Date(v).getTime();}
@@ -180,4 +186,4 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  [row.id,JSON.stringify({customerId:row.customer_id,sourceSubscriptionId:source.id,ledgerId:ledger.rows[0].id,quote:audit})]);
  return {row:updated.rows[0],problem:null};
 }
-module.exports={enabled,prepare,settlePrepared,verifySource,verifyTarget,ratio,minor};
+module.exports={enabled,prepare,settlePrepared,verifySource,verifyTarget,ratio,minor,assertChargeSupported};

@@ -262,6 +262,7 @@ async function begin(req,res,provider){
   let snapshot={...commercialSnapshot(choice,provider,reservation),mediaServerId:intent.commercial_snapshot?.mediaServerId||null},grossDue=Number((snapshot.discountedMinor??snapshot.priceMinor)||0),serviceCreditMinor=0;
   if(wantsCredit&&grossDue>50){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:grossDue-50,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
   const providerDue=Math.max(0,grossDue-serviceCreditMinor);
+  if(intent.paid_value_transfer_snapshot)require('../payments/paid-value-transfer').assertChargeSupported({providerDue,serviceCreditMinor});
   snapshot={...snapshot,grossDiscountedMinor:grossDue,serviceCreditMinor,serviceCreditCurrency:serviceCreditMinor?choice.currency:null,discountedMinor:providerDue};
   const updated=await query(`UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING commercial_snapshot,expires_at`,[intent.id,JSON.stringify(snapshot)]);intent.commercial_snapshot=updated.rows[0]?.commercial_snapshot||snapshot;intent.expires_at=updated.rows[0]?.expires_at||intent.expires_at;
 
