@@ -12,6 +12,7 @@ const cleanupReturn = require('../src/entitlements/jellyfin-cleanup-return');
 const discordRoles = require('../src/integrations/discord-roles');
 const lifecycle = require('../src/payments/lifecycle');
 const customerAccessState = require('../src/access/customer-access-state');
+const stremioInstallRecovery = require('../src/stremio/install-credential-recovery');
 
 const suffix = crypto.randomBytes(5).toString('hex');
 const created = { customers: [], plans: [], servers: [], discordRoles: [] };
@@ -685,6 +686,53 @@ async function testSupersededTrialIsNotRewritten() {
   assert.strictEqual(await rollbackAuditCount(old.id), 0);
 }
 
+async function testStremioTrialRollbackHonoursReadiness() {
+  const customerId = await customer('stremio-trial-rollback');
+  const planId = await plan('stremio-trial-rollback', {
+    billingInterval: 'trial',
+    priceMinor: 0,
+    serviceType: 'stremio'
+  });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  // The reconciliation request raised by the insert is never run here, so the
+  // installation link below is the only one.
+  const entitlement = (await query(`
+    INSERT INTO stremio_entitlements(customer_id,subscription_id,status,stream_limit,token_hash,token_hint)
+    VALUES($1,$2,'active',1,$3,'smoke')
+    RETURNING *
+  `, [customerId, subscription.id, crypto.randomBytes(32).toString('hex')])).rows[0];
+  await stremioInstallRecovery.save({ customerId, entitlement, credential: `state-machine-${suffix}` });
+  assert(await lifecycle.readyStremioInstallForSubscription(customerId, subscription.id),
+    'fixture must be a ready Stremio trial before the rollback is attempted');
+
+  const kept = await lifecycle.rollbackUnprovisionedStremioTrial(customerId, subscription.id, {
+    reason: 'stale view of a Stremio trial that is ready'
+  });
+  assert.strictEqual(kept.rolledBack, false, 'a ready Stremio trial must not be rolled back');
+  assert.strictEqual(kept.reason, 'ready');
+  let row = (await query('SELECT status FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing');
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 0);
+
+  await query('DELETE FROM stremio_install_credential_recovery WHERE entitlement_id=$1', [entitlement.id]);
+  const ended = await lifecycle.rollbackUnprovisionedStremioTrial(customerId, subscription.id, {
+    reason: 'state-machine Stremio trial rollback fixture'
+  });
+  assert.strictEqual(ended.rolledBack, true, 'an unready Stremio trial must still be rolled back');
+  assert.strictEqual(String(ended.id), String(subscription.id));
+  row = (await query('SELECT status,replacement_reason FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'cancelled');
+  assert.strictEqual(row.replacement_reason, 'trial_activation_failed');
+  const link = (await query('SELECT status,token_hash FROM stremio_entitlements WHERE id=$1', [entitlement.id])).rows[0];
+  assert.strictEqual(link.status, 'revoked');
+  assert.strictEqual(link.token_hash, null);
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 1);
+}
+
 async function testCanonicalLiveFreeClaimLockSelection() {
   const customerId = await customer('free-claim-lock');
   const freePlan = await canonicalFreePlan();
@@ -757,6 +805,7 @@ async function cleanup() {
   await testReadyTrialIsNotRolledBack();
   await testReadyFreeClaimIsNotRolledBack();
   await testSupersededTrialIsNotRewritten();
+  await testStremioTrialRollbackHonoursReadiness();
   await testCanonicalLiveFreeClaimLockSelection();
   console.log('state-machine invariants DB smoke: ok');
 })().finally(async () => {
