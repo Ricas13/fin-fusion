@@ -186,7 +186,10 @@ async function release(jobSpecs,{disableOnSelect=[]}={}){
         if(!row.enabled)return null;
         requests.push(jobKey);
         const updated_at=new Date();
-        reactions.get(jobKey)(row,updated_at.getTime());
+        const react = reactions.get(jobKey);
+        assert.strictEqual(typeof react, 'function', 'requested job must have a registered test reaction');
+        if (typeof react !== 'function') throw new Error('Missing test reaction');
+        react(row,updated_at.getTime());
         return{...row,updated_at};
     };
     jobHealth.list=async()=>[...rows.values()].map(row=>({...row}));
