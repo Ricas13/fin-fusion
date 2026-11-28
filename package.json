@@ -14,6 +14,7 @@
     "db:activity-role": "node scripts/configure-activity-db-role.js",
     "plisio:list-shape": "node scripts/plisio-list-shape.js",
     "plisio:unmatched": "node scripts/plisio-unmatched.js",
+    "billing:paid-value": "node scripts/paid-value-preview.js",
     "db:backup": "node scripts/backup-db.js",
     "db:offsite": "node scripts/offsite-backup.js",
     "db:inspect-backup": "node scripts/inspect-backup.js",
