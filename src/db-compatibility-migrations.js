@@ -16,7 +16,8 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261031233000_playback_progress_reporting.sql',
   '20261105204500_native_playback_accounting_shadow.sql',
   '20261127150000_paid_time_survives_repurchase.sql',
-  '20261128120000_carried_paid_time_on_auto_renewal.sql'
+  '20261128120000_carried_paid_time_on_auto_renewal.sql',
+  '20261128134500_extension_discount_redemptions.sql'
 ]);
 
 // Database functions the application calls that only a repeatable migration

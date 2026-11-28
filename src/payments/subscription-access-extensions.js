@@ -4,6 +4,7 @@ const { transaction } = require('../db');
 const billingPeriods = require('./billing-periods');
 const subscriptionState = require('../entitlements/subscription-state');
 const carriedTime = require('./carried-time');
+const discounts = require('./discounts');
 
 const PROVIDERS=new Set(['stripe','paypal','plisio']);
 const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled','expired']);
@@ -259,6 +260,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8::jsonb)
     RETURNING *
   `,[customerId,subscriptionId,planId,provider,providerPaymentId,checkoutIntentId||null,days,JSON.stringify(commercialSnapshot||{})])).rows[0];
+  await discounts.redeemForExtensionTx(client,inserted);
   const updated=(await client.query(`
     UPDATE subscriptions
        SET service_extension_days=COALESCE(service_extension_days,0)+$2,

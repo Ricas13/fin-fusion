@@ -77,6 +77,7 @@ async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, 
         const used = await client.query('SELECT COUNT(*)::int n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2', [d.id, customerId]);
         if (Number(used.rows[0].n || 0) + Number(totals.customer_total || 0) >= Number(d.per_customer_limit || 1)) throw new Error('You have already used or reserved that discount code');
         if (d.winback_kind) {
+            if (intent.commercial_snapshot?.kind === 'subscription_extension') throw new Error('This win-back code is only available for a new subscription.');
             const planId = intent.commercial_snapshot?.planId;
             if (!planId) throw discountConflict('Checkout contract is missing the authoritative plan identity required by the win-back offer.');
             await winbackOffers.reserveDiscountTx(client, { kind:d.winback_kind, customerId, planId, checkoutIntentId, discountCodeId:d.id });
@@ -127,6 +128,58 @@ async function recordRedemption(client, { discountCodeId, customerId, subscripti
     return { redeemed: true, redemption: inserted.rows[0] };
 }
 
+// Extensions are individual purchases. Their own frozen reservation is the
+// settlement authority; the original subscription redemption is untouched.
+async function redeemForExtensionTx(client, extension) {
+    const snapshot = extension.commercial_snapshot || {};
+    const discountCodeId = snapshot.discountCodeId;
+    if (!discountCodeId && !snapshot.discountReservationId) return { redeemed: false, reason: 'no_code' };
+    if (!discountCodeId || !snapshot.discountReservationId || !extension.checkout_intent_id) {
+        throw discountConflict('Discounted extension is missing its frozen checkout reservation.');
+    }
+    const discount = (await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE', [discountCodeId])).rows[0];
+    if (!discount) throw redemptionDivergence('Extension discount no longer exists.');
+    if (discount.winback_kind) throw discountConflict('Win-back discounts cannot be redeemed for extensions.');
+    const frozen = (await client.query(`
+        SELECT r.* FROM discount_checkout_reservations r
+        JOIN billing_checkout_intents i ON i.id=r.checkout_intent_id
+        WHERE r.id=$1 AND r.discount_code_id=$2 AND r.customer_id=$3 AND r.checkout_intent_id=$4
+          AND i.customer_id=$3 AND i.plan_id=$5 AND i.provider=$6 AND i.checkout_mode='payment'
+          AND i.commercial_snapshot->>'kind'='subscription_extension'
+          AND i.commercial_snapshot->>'extensionSubscriptionId'=$7::text
+          AND i.commercial_snapshot->>'discountReservationId'=r.id::text
+          AND i.commercial_snapshot->>'discountCodeId'=r.discount_code_id::text
+        FOR UPDATE OF r
+    `, [snapshot.discountReservationId, discountCodeId, extension.customer_id, extension.checkout_intent_id,
+         extension.plan_id, extension.provider, extension.subscription_id])).rows[0];
+    const base = Number(snapshot.priceMinor), due = Number(snapshot.discountedMinor);
+    if (!frozen || snapshot.priceMinor == null || snapshot.discountedMinor == null ||
+        !Number.isInteger(base) || !Number.isInteger(due) || due < 0 || due > base ||
+        Number(snapshot.serviceCreditMinor || 0) !== 0 ||
+        Number(frozen.amount_applied_minor) !== base - due) {
+        throw discountConflict('Extension discount does not match its frozen checkout amount.');
+    }
+    const inserted = await client.query(`
+        INSERT INTO discount_redemptions(discount_code_id,customer_id,access_extension_id,amount_applied_minor)
+        VALUES($1,$2,$3,$4)
+        ON CONFLICT (access_extension_id) WHERE access_extension_id IS NOT NULL DO NOTHING
+        RETURNING *
+    `, [discountCodeId, extension.customer_id, extension.id, frozen.amount_applied_minor]);
+    if (!inserted.rowCount) {
+        const existing = (await client.query('SELECT * FROM discount_redemptions WHERE access_extension_id=$1', [extension.id])).rows[0];
+        if (!existing || String(existing.discount_code_id) !== String(discountCodeId) ||
+            String(existing.customer_id) !== String(extension.customer_id) ||
+            Number(existing.amount_applied_minor) !== Number(frozen.amount_applied_minor)) {
+            throw discountConflict('Extension already has a different discount redemption identity.');
+        }
+        return { redeemed: true, alreadyRecorded: true, redemption: existing };
+    }
+    await client.query('UPDATE discount_codes SET redemption_count=redemption_count+1,updated_at=NOW() WHERE id=$1', [discountCodeId]);
+    await client.query(`UPDATE discount_checkout_reservations SET state='consumed',
+        consumed_at=COALESCE(consumed_at,NOW()),updated_at=NOW() WHERE id=$1`, [frozen.id]);
+    return { redeemed: true, redemption: inserted.rows[0] };
+}
+
 async function redeemForSubscriptionTx(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor = 0 }) {
     if (!discountCodeId) return { redeemed: false, reason: 'no_code' };
     const discount = await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE', [discountCodeId]);
@@ -154,4 +207,4 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
     return result;
 }
 
-module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
+module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, redeemForExtensionTx, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
