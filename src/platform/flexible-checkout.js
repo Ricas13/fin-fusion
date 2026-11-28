@@ -63,6 +63,8 @@ const CHECKOUT_SAFE=[
  /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
  'A plan change is already open for this subscription. Complete or resolve it before buying extra time.',
  planChange.PLAN_CHANGE_PROCESSING,
+ planChange.STRIPE_CURRENCY_REAUTHORIZE,
+ 'Stripe has not confirmed the end of your current paid period. Synchronise billing before switching currency.',
  'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.',
  ...Object.values(samePlanRepurchase.MESSAGES),
  ...Object.values(carriedTime.MESSAGES)
@@ -272,9 +274,10 @@ async function begin(req,res,provider){
   let reservation=null;
   if(req.body.discountCode)reservation=await discounts.reserveForIntent({code:req.body.discountCode,planCode:choice.planCode,customerId:req.session.customerId,checkoutIntentId:intent.id,baseMinor:Number(choice.plan.price_minor||0),currency:choice.currency,ttlMinutes:checkoutTtlMinutes});
   let snapshot={...commercialSnapshot(choice,provider,reservation),mediaServerId:intent.commercial_snapshot?.mediaServerId||null},grossDue=Number((snapshot.discountedMinor??snapshot.priceMinor)||0),serviceCreditMinor=0;
-  if(wantsCredit&&grossDue>50){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:grossDue-50,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
+  const preparedStripeTransfer=Boolean(intent.paid_value_transfer_snapshot)&&provider==='stripe'&&choice.mode==='subscription';
+  if(wantsCredit&&(grossDue>50||(preparedStripeTransfer&&grossDue>0))){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:preparedStripeTransfer?grossDue:grossDue-50,minimumCashMinor:preparedStripeTransfer?50:0,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
   const providerDue=Math.max(0,grossDue-serviceCreditMinor);
-  if(intent.paid_value_transfer_snapshot)paidValueTransfer.assertChargeSupported({providerDue,serviceCreditMinor,grossDue});
+  if(intent.paid_value_transfer_snapshot)paidValueTransfer.assertChargeSupported({providerDue,serviceCreditMinor,grossDue,discountCodeId:snapshot.discountCodeId});
   snapshot={...snapshot,grossDiscountedMinor:grossDue,serviceCreditMinor,serviceCreditCurrency:serviceCreditMinor?choice.currency:null,discountedMinor:providerDue};
   const updated=await query(`UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING commercial_snapshot,expires_at`,[intent.id,JSON.stringify(snapshot)]);intent.commercial_snapshot=updated.rows[0]?.commercial_snapshot||snapshot;intent.expires_at=updated.rows[0]?.expires_at||intent.expires_at;
 
@@ -284,8 +287,8 @@ async function begin(req,res,provider){
   }
   if(provider==='stripe'){
    const portal=await customers.getCustomerPortal(req.session.customerId);
-   const stripeFinalAmount=providerDue===0&&choice.mode==='subscription'&&req.body.discountCode?null:providerDue;
-   const checkout=await stripe.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,email:portal?.customer?.login_email||portal?.customer?.email,discountCode:req.body.discountCode||null,successUrl:await stripeSuccessUrl(req,intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:stripeFinalAmount,checkoutExpiresAt:intent.expires_at});
+   const stripeFinalAmount=providerDue===0&&choice.mode==='subscription'&&req.body.discountCode&&!preparedStripeTransfer?null:providerDue;
+   const checkout=await stripe.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,email:portal?.customer?.login_email||portal?.customer?.email,discountCode:req.body.discountCode||null,successUrl:await stripeSuccessUrl(req,intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:stripeFinalAmount,allowZeroInitialRecurring:preparedStripeTransfer,checkoutExpiresAt:intent.expires_at});
    await intents.attachProviderCheckout(intent.id,checkout.id);return checkout;
   }
   if(provider==='plisio'){

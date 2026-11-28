@@ -518,6 +518,38 @@ async function testQRepeatPlanChangesAndUnresolvedOperation(){
     assert.equal(thirdOp.state,'reconciled');
     assert.equal(remoteSubscriptions.get(ref).items.data[0].price.id,b);
 }
+async function testRStripeCurrencyReplacement(){
+    const tag=suffix(),c=await customer('r-'+tag),p=await plan('recovery-r-'+tag,'Currency change',1000);
+    const ref='sub_recovery_r_'+tag,from='price_r_gbp_'+tag,to='price_r_usd_'+tag;
+    const sub=await subscription(c.id,p.id,ref);remote(ref,from);
+    const item=remoteSubscriptions.get(ref).items.data[0],end=new Date(item.current_period_end*1000);
+    await query("UPDATE subscriptions SET currency_snapshot='GBP',current_period_end=$2 WHERE id=$1",[sub.id,end]);
+    const target={...p,currency:'USD'},mapping={external_id:to,currency:'USD',price_minor:1500};
+    const get=()=>row('subscriptions',sub.id);
+    const before=providerMutationCount;
+    await assert.rejects(async()=>planChange.recordStripeCurrencyChange(c.id,await get(),target,mapping),/Stop automatic renewal first/);
+    await query("UPDATE subscriptions SET cancel_at_period_end=TRUE WHERE id=$1",[sub.id]);
+    remoteSubscriptions.get(ref).cancel_at_period_end=true;
+    const recorded=await planChange.recordStripeCurrencyChange(c.id,await get(),target,mapping);
+    assert.equal(recorded.provider_action_required,true);assert.equal(recorded.target_price_id,to);
+    assert.equal(providerMutationCount,before,'cross-currency planning must not modify an active Stripe agreement');
+    assert.equal(await planChange.advanceManualChange(recorded),false,'paid period still active');
+    await assert.rejects(()=>billingControl.setRenewal(sub.id,true),/pending currency change/);
+    await query("UPDATE customer_plan_changes SET effective_at=NOW()-INTERVAL '1 minute' WHERE id=$1",[recorded.id]);
+    await query("UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1",[sub.id]);
+    assert.equal(await planChange.advanceManualChange(recorded),false,'provider has not terminated');
+    remoteSubscriptions.get(ref).status='canceled';
+    await query("UPDATE subscriptions SET status='cancelled',cancel_at_period_end=FALSE WHERE id=$1",[sub.id]);
+    assert.equal(await planChange.advanceManualChange(recorded),true,'terminal provider sync may clear the prior cancel flag');
+    assert.equal((await row('customer_plan_changes',recorded.id)).state,'awaiting_checkout');
+    assert.equal(await planChange.advanceManualChange(recorded),false,'manual transition must be replay safe');
+    const resolver=require('../src/payments/plan-change-resolution');
+    assert.equal(await resolver.resolveAwaitingCheckout({customerId:c.id,planId:p.id,provider:'stripe',providerMappingId:from,providerSubscriptionId:ref}),null,'wrong currency cannot close the decision');
+    const replacement=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,provider_price_id_snapshot,service_type_snapshot)
+       VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '1 month',$3,$4,'jellyfin') RETURNING *`,[c.id,p.id,'sub_new_'+tag,to])).rows[0];
+    assert.equal((await resolver.resolveAwaitingCheckout({customerId:c.id,planId:p.id,provider:'stripe',providerMappingId:to,providerSubscriptionId:replacement.provider_subscription_id})).id,recorded.id);
+    assert.equal((await row('customer_plan_changes',recorded.id)).state,'applied');
+}
 async function main() {
     const columns = await query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_operations' AND column_name IN('attempt_count','next_attempt_at','failure_kind','manual_review_required')`);
     assert.strictEqual(columns.rowCount, 4, 'migration 109 provider recovery columns must be applied');
@@ -535,6 +567,7 @@ async function main() {
     await testOScheduledStripeMediaCapacityReservation();
     await testPUnadmittedRecoveryCannotChargePastCapacity();
     await testQRepeatPlanChangesAndUnresolvedOperation();
+    await testRStripeCurrencyReplacement();
     console.log('provider operation recovery DB smoke: A-O ok');
 }
 
