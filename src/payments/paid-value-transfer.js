@@ -67,20 +67,20 @@ async function destination(client,planId,snapshot){
  invariant(r.rowCount===1&&String(d.normalPriceMinor)===String(snapshot.priceMinor)&&currency(d.currency)===currency(snapshot.currency)&&d.billingInterval===snapshot.billingInterval,'Normal destination price is unverified.');
  return {...d,normalPriceMinor:String(d.normalPriceMinor),currency:currency(d.currency)};
 }
-async function evidenceFor(client,source,customerId){
+async function evidenceFor(client,source,customerId,sourceVerifier=verifySource){
  await client.query('SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[source.id,customerId]);
  const row=await readEvidence(client,source.id),e=previewFromEvidence(row);
  invariant(row?.customer_id===customerId&&e.verified===true&&e.serviceCreditPaidMinor==='0','Original cash purchase cannot be valued conclusively.');
- await verifySource(row,e);
+ await sourceVerifier(row,e);
  return {row,e};
 }
-async function prepare(client,{customerId,planId,snapshot}){
+async function prepare(client,{customerId,planId,snapshot},{sourceVerifier=verifySource,rateFetcher=fetchRate}={}){
  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))',[customerId]);
  const held=await candidates(client,customerId,planId);
  invariant(held.length===1&&held[0].service_type===held[0].destination_service,'Several or different service entitlements require review.');
  const target=await destination(client,planId,snapshot);
- const {e}=await evidenceFor(client,held[0],customerId);
- const rate=await fetchRate(e.currency,target.currency);
+ const {e}=await evidenceFor(client,held[0],customerId,sourceVerifier);
+ const rate=await rateFetcher(e.currency,target.currency);
  const quote=quoteConversion(e,target,{rate});
  return {version:1,sourceId:held[0].id,planId,target,providerMappingId:snapshot.providerMappingId,preview:quote};
 }
@@ -106,7 +106,7 @@ function ratio(quote,e){
  let d=BigInt(quote.exactDays.denominator)*BigInt(e.unusedMilliseconds);
  let a=n,b=d;while(b){const r=a%b;a=b;b=r;}return {numerator:(n/a).toString(),denominator:(d/a).toString()};
 }
-async function settlePrepared(client,row){
+async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVerifier=verifyTarget,rateFetcher=fetchRate}={}){
  const id=row.commercial_snapshot?.checkoutIntentId;
  if(!id)return null;
  const intent=(await client.query('SELECT id,customer_id,plan_id,provider,checkout_mode,provider_checkout_id,paid_value_transfer_snapshot FROM billing_checkout_intents WHERE id=$1 FOR UPDATE',[id])).rows[0];
@@ -121,7 +121,7 @@ async function settlePrepared(client,row){
    currency(snapshot.currency)===prepared.target.currency&&snapshot.billingInterval===prepared.target.billingInterval&&snapshot.providerMappingId===prepared.providerMappingId,
    'The paid checkout differs from the prepared normal price.');
  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))',[row.customer_id]);
- await verifyTarget(row,intent,prepared);
+ await targetVerifier(row,intent,prepared);
  const held=await candidates(client,row.customer_id,row.plan_id,row.id);
  invariant(held.length<=1&&(!held.length||(held[0].id===prepared.sourceId&&held[0].service_type===held[0].destination_service)),
    'Remaining access changed after checkout preparation.');
@@ -130,8 +130,8 @@ async function settlePrepared(client,row){
    invariant(source&&!source.superseded_by&&!source.refund_terminated_at&&Number(source.service_extension_days||0)===0&&time(source.current_period_end)<=Date.now(),'Prepared source is missing or changed.');
    return {row,problem:null};
  }
- const {row:source,e}=await evidenceFor(client,held[0],row.customer_id);
- const rate=await fetchRate(e.currency,prepared.target.currency);
+ const {row:source,e}=await evidenceFor(client,held[0],row.customer_id,sourceVerifier);
+ const rate=await rateFetcher(e.currency,prepared.target.currency);
  const quote=quoteConversion(e,prepared.target,{rate,termStart:row.starts_at});
  const fraction=ratio(quote,e),from=new Date(Math.max(time(e.startsAt),time(e.asOf))).toISOString();
  const audit={...quote,quoteOnly:false,ratio:fraction,sourceProviderPaidMinor:e.providerPaidMinor,sourceIntentId:source.intent_id,checkoutIntentId:id};

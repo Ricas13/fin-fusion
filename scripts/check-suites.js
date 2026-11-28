@@ -278,6 +278,7 @@ module.exports = {
       "node scripts/carried-time-renewal-db-smoke.js",
       "node scripts/prorata-refund-db-smoke.js",
       "node scripts/paid-value-preview-db-smoke.js",
+      "node scripts/paid-value-transfer-db-smoke.js",
       "node scripts/prorata-refund-retry-db-smoke.js",
       "node scripts/affiliate-first-payment-only-db-smoke.js",
       "node scripts/billing-lifecycle-smoke.js",
