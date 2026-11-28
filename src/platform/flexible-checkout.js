@@ -14,6 +14,7 @@ const discounts=require('../payments/discounts');
 const zeroValueCheckout=require('../payments/zero-value-checkout');
 const planChange=require('../payments/customer-plan-change');
 const samePlanRepurchase=require('../payments/same-plan-repurchase');
+const carriedTime=require('../payments/carried-time');
 const serviceScope=require('../entitlements/service-scope');
 const commerce=require('../payments/commerce-control');
 const serviceCreditReservations=require('../payments/service-credit-reservations');
@@ -60,7 +61,8 @@ const CHECKOUT_SAFE=[
  /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
  'A plan change is already open for this subscription. Complete or resolve it before buying extra time.',
  'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.',
- ...Object.values(samePlanRepurchase.MESSAGES)
+ ...Object.values(samePlanRepurchase.MESSAGES),
+ ...Object.values(carriedTime.MESSAGES)
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message));}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}

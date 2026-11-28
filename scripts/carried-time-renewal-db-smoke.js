@@ -304,6 +304,21 @@ async function selection(){
   assert.equal((await get(pending.row.id)).service_extension_days,20);
 
   const check=(held,plan)=>carriedTime.assertCarryPossible({customerId:held.id,planId:plan.id,snapshot:contract(plan,'stripe')});
+  const incompatible=await makeCustomer('incompatible-prepaid');
+  const paid=await insert(incompatible,wider,{source:'stripe',end:60});
+  await assert.rejects(check(incompatible,year),{code:'CARRIED_TIME_VALUE_TRANSFER_REQUIRED'});
+  await check(incompatible,wider);
+  const separateLane=await makePlan('separate-lane',{service:'jellyfin'});
+  await check(incompatible,separateLane);
+  assert.equal((await get(paid.id)).superseded_by,null,'precheck never replaces existing access');
+  const queuedOwner=await makeCustomer('incompatible-future');
+  await insert(queuedOwner,wider,{source:'stripe',start:30,end:60});
+  await assert.rejects(check(queuedOwner,year),{code:'CARRIED_TIME_VALUE_TRANSFER_REQUIRED'});
+  const freeOwner=await makeCustomer('incompatible-free-promo');
+  const free=await insert(freeOwner,wider,{source:'manual',end:30});
+  await query(`UPDATE subscriptions SET commercial_snapshot=commercial_snapshot||'{"settlementKind":"fully_discounted_local","discountedMinor":0}'::jsonb WHERE id=$1`,[free.id]);
+  await assert.rejects(check(freeOwner,year),{code:'CARRIED_TIME_VALUE_TRANSFER_REQUIRED'});
+  await check(freeOwner,wider);
   const lifetime=await makeCustomer('lifetime');
   await insert(lifetime,half,{end:new Date('9999-01-01T00:00:00Z')});
   await assert.rejects(check(lifetime,year),{code:'CARRIED_TIME_LIFETIME'});
