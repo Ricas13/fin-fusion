@@ -19,6 +19,7 @@ const {REQUIRED_FUNCTIONS}=require('../src/db-compatibility-migrations');
 const health=require('../src/platform/health');
 const queuedPurchases=require('../src/payments/queued-purchases');
 const billingControl=require('../src/payments/billing-control');
+const termination=require('../src/payments/subscription-termination');
 const adminActions=require('../src/access/admin-customer-individual-action-service');
 
 const DAY=86400000;
@@ -90,7 +91,7 @@ async function triggerOrder(){
 // Everything, including any role created here, is rolled back.
 async function runtimePrivileges(){
   const roles=['steamfusion_app','steamfusion_automation'];
-  const bodies=['20261127150000_paid_time_survives_repurchase.sql','20261128120000_carried_paid_time_on_auto_renewal.sql']
+  const bodies=['20261127150000_paid_time_survives_repurchase.sql','20261128120000_carried_paid_time_on_auto_renewal.sql','20261128150000_independent_paid_extension_recovery.sql']
     .map(file=>fs.readFileSync(path.join(__dirname,'..','db','migrations',file),'utf8')
       .replace(/^\s*BEGIN\s*;/im,'').replace(/COMMIT\s*;\s*$/i,''));
   const client=await getPool().connect();
@@ -612,6 +613,26 @@ async function cleanup(){
   await query('UPDATE plans SET active=FALSE,visible=FALSE WHERE id=ANY($1::uuid[])',[planIds]).catch(()=>{});
 }
 
+async function earlyTerminationQueue(){
+  const plan=await makePlan('terminate-queue',{service:'jellyfin'});
+  const other=await makePlan('terminate-independent',{service:'emby'});
+  const customer=await makeCustomer('terminate-queue');
+  const current=await insert(customer,plan,{start:-5,end:20,ext:10});
+  const next=await insert(customer,plan),later=await insert(customer,plan);
+  const independent=await insert(customer,other,{start:-5,end:40});
+  const independentNext=await insert(customer,other);
+  same(next.starts_at,current.access_end,'fixture queues behind full paid window');
+  await termination.terminateLocal(current.id,customer.id);
+  const ended=await get(current.id),first=await get(next.id),last=await get(later.id);
+  same(first.starts_at,ended.current_period_end,'early termination immediately starts the next paid purchase');
+  same(last.starts_at,first.access_end,'later paid purchase follows the newly active purchase');
+  assert(Math.abs(duration(first)-duration(next))<2&&Math.abs(duration(last)-duration(later))<2,'termination preserves both purchased durations');
+  same((await get(independentNext.id)).starts_at,independentNext.starts_at,'independent service queue remains unchanged');
+  assert(ms(independent.current_period_end)>Date.now());
+  await termination.terminateLocal(current.id,customer.id);
+  same((await get(next.id)).starts_at,first.starts_at,'termination replay never moves the paid queue twice');
+}
+
 async function main(){
   try{
     await triggerOrder();
@@ -625,6 +646,7 @@ async function main(){
     await refundInsertLock();
     await lockOrder();
     await operatorEdits();
+    await earlyTerminationQueue();
     await resumeRenewal();
     await convertedSettlement();
     await capacityPlacementAndDecisions();

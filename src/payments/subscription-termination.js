@@ -6,6 +6,7 @@ const billingControl=require('./billing-control');
 const permanentAccess=require('../entitlements/permanent-access');
 const subscriptionState=require('../entitlements/subscription-state');
 const carriedTime=require('./carried-time');
+const queuedPurchases=require('./queued-purchases');
 
 const OPERATION_TYPE='subscription_terminate';
 const JELLYFIN_SERVICES=new Set(['jellyfin','bundle']);
@@ -82,6 +83,7 @@ async function releaseCancelledPlanChangeLeases(customerId, serverIds = []) {
 async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason='',providerBillingChanged=false,reference=null}={}){
     const note=reasonText(reason),auditReference=reference?String(reference).slice(0,200):null;
     const result=await transaction(async client=>{
+        await queuedPurchases.lockQueueOwner(client,customerId);
         const row=await client.query(`
             SELECT s.*,p.is_addon,p.is_free_tier,p.service_type,
                    COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
@@ -91,6 +93,12 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
             FOR UPDATE OF s
         `,[subscriptionId,customerId]);
         const subscription=assertJellyfinPrimary(row.rows[0]||null);
+        // Capture the actual paid anchor before terminating it. Free/manual
+        // access and already-ended rows must not advance unrelated purchases.
+        const paidAnchor=(await client.query(
+            'SELECT 1 FROM public.prepaid_paid_time($1) WHERE subscription_id=$2',
+            [customerId,subscription.id])).rowCount>0;
+        const queueBefore=paidAnchor?await queuedPurchases.accessEndBefore(client,subscription.id):null;
         const permanent=await permanentAccess.revokeInTransaction(client,customerId,{actorUserId,reason:`Jellyfin plan ended: ${note}`.slice(0,500),expectedSubscriptionId:subscription.id});
         const permanentOnOtherSubscription=Boolean(permanent.subscriptionMismatch);
         let permanentOnOtherPrimary=false;
@@ -117,6 +125,7 @@ async function terminateLocal(subscriptionId,customerId,{actorUserId=null,reason
             RETURNING id,status,current_period_end,cancel_at_period_end,service_extension_days
         `,[subscription.id,customerId]);
         if(!ended.rowCount)throw new Error('Subscription changed before it could be ended.');
+        await queuedPurchases.moveQueuedPurchases(client,subscription.id,queueBefore);
         const cancelledChanges=await client.query(`
             UPDATE customer_plan_changes
             SET state='cancelled',error=COALESCE(error,'Underlying subscription was terminated.'),updated_at=NOW()
