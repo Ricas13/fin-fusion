@@ -5,8 +5,8 @@ const provisioning = require('../jellyfin/resilient-provisioning');
 const mediaReconciliation = require('../jellyfin/media-service-reconciliation');
 const { isLockTimeoutError } = require('../jellyfin/lock-errors');
 
-// Background repair leaves a new trial alone: activation or the worker may still
-// be provisioning it. The synchronous activation path does not use this.
+// Avoid duplicate secondary-service repair attempts while a new trial is being
+// provisioned. This grace period is never a cancellation deadline.
 const UNPAID_TRIAL_REPAIR_GRACE_MS = 15 * 60 * 1000;
 
 // A lock timeout means the work never ran, so repair has learned nothing about
@@ -152,40 +152,9 @@ function createAccessRepair(deps = {}) {
     if (isOperatorProtected(entitlement)) {
       return { status: 'protected', reason: 'admin_protected', subscriptionId: entitlement.subscription_id };
     }
-    if (startedRecently(entitlement)) {
-      return { status: 'deferred', reason: 'activation_grace', subscriptionId: entitlement.subscription_id };
-    }
-
-    const lifecycle = lifecycleApi();
-    let result;
-    try {
-      result = await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
-        reason: reason || 'Unpaid Jellyfin trial had no enabled server account',
-        retainBlocked: true
-      });
-    } catch (error) {
-      if (isLockTimeoutError(error)) {
-        return { ...DEFERRED_LOCK_TIMEOUT, subscriptionId: entitlement.subscription_id };
-      }
-      throw error;
-    }
-    const skipped = skippedRollbackOutcome(result);
-    if (skipped) return { ...skipped, subscriptionId: entitlement.subscription_id };
-
-    // Converge the now no-plan state so stale provisioning metadata does not
-    // keep advertising a deployment for an entitlement that was rolled back.
-    await convergeAfterRemoval(customerId);
-    return { status: 'removed', subscriptionId: entitlement.subscription_id };
-  }
-
-  // The trial is already closed at this point, so a failed convergence must not
-  // turn the removal into an error. The subscription change queues a retry.
-  async function convergeAfterRemoval(customerId) {
-    try {
-      await provisioningApi.reconcileCustomer(customerId);
-    } catch (error) {
-      console.error('Reconciliation after unpaid trial removal failed.', { customerId, error: error.message });
-    }
+    // Provisioning failure is never authority to cancel an unpaid trial.
+    // The worker retains its backoff and the integrity finding stays visible.
+    return { status: 'deferred', reason: 'manual_review_required', subscriptionId: entitlement.subscription_id };
   }
 
   // Emby and Stremio have no ACTIVE_READY lane state, so each applies the same
@@ -222,20 +191,13 @@ function createAccessRepair(deps = {}) {
     blocker = await blockerFor(after.entitlement);
     if (blocker) return { status: 'protected', reason: blocker };
 
-    const result = await lifecycle.rollbackUnprovisionedEmbyTrial(customerId, subscriptionId, {
-      ...options, reason: convergeError?.message || options.reason
-    });
-    const skipped = skippedRollbackOutcome(result);
-    if (skipped) return skipped;
-    await convergeAfterRemoval(customerId);
-    return { status: 'removed' };
+    return { status: 'deferred', reason: 'manual_review_required', reconcileError: convergeError };
   }
 
   async function repairUnpaidStremioTrial(customerId, entitlement, options) {
     const lifecycle = lifecycleApi();
     const subscriptionId = entitlement.subscription_id;
     const bundle = String(entitlement.service_type_snapshot || entitlement.service_type || '').toLowerCase() === 'bundle';
-    let result;
     if (bundle) {
       if (await lifecycle.readyJellyfinBundleForSubscription(customerId, subscriptionId)) return { status: 'ready' };
       // The Jellyfin half gets the same protections as Jellyfin trial repair.
@@ -250,15 +212,10 @@ function createAccessRepair(deps = {}) {
         if (blocker) return { status: 'protected', reason: blocker };
         if (isOperatorProtected(primary.entitlement)) return { status: 'protected', reason: 'admin_protected' };
       }
-      result = await lifecycle.rollbackUnprovisionedBundleTrial(customerId, subscriptionId, {
-        ...options, mediaType: 'jellyfin', requireStremioInstall: false
-      });
     } else {
       if (await lifecycle.readyStremioInstallForSubscription(customerId, subscriptionId)) return { status: 'ready' };
-      result = await lifecycle.rollbackUnprovisionedStremioTrial(customerId, subscriptionId, options);
     }
-    // Both Stremio rollbacks run their own cleanup reconciliation.
-    return skippedRollbackOutcome(result) || { status: 'removed' };
+    return { status: 'deferred', reason: 'manual_review_required' };
   }
 
   async function repairUnpaidServiceTrial(customerId, service, { reason = null, cause = null } = {}) {
