@@ -68,6 +68,7 @@ module.exports = {
       "node scripts/operational-robustness-smoke.js",
       "node scripts/outbound-policy-smoke.js",
       "node scripts/reschedule-timer-smoke.js",
+      "node scripts/automation-watchdog-smoke.js",
       "node scripts/policy-engine-smoke.js"
     ],
     "check:fast:customer-access": [
