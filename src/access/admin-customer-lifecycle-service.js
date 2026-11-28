@@ -7,6 +7,7 @@ const planExpiry=require('../entitlements/plan-expiry');
 const planChange=require('../payments/customer-plan-change');
 const planPricing=require('../payments/plan-pricing');
 const planCapacity=require('../entitlements/plan-capacity');
+const queuedPurchases=require('../payments/queued-purchases');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const forceMove=require('../jellyfin/admin-force-move');
 const serverMigration=require('../jellyfin/server-migration');
@@ -83,9 +84,11 @@ async function applyLocalPlanContract(sub,target,{allowOverCapacity=false,actorU
   let placementDeferred=false;
   let targetMediaServer=null;
   await transaction(async client=>{
+    await queuedPurchases.lockQueueOwner(client,sub.customer_id);
     const locked=await lockSubscriptionForPlanChange(client,sub,target);
     alreadyApplied=locked.alreadyApplied;
     if(alreadyApplied)return;
+    const before=await queuedPurchases.accessEndBefore(client,locked.subscriptionId);
 
     const capacityState=await planCapacity.lockAndAssert(client,target.id,target.name||'This plan',{allowSoldOut:allowOverCapacity===true});
     capacityOverride=Boolean(allowOverCapacity===true&&capacityState?.soldOut);
@@ -148,6 +151,7 @@ async function applyLocalPlanContract(sub,target,{allowOverCapacity=false,actorU
        target.service_type,JSON.stringify(commercialSnapshot),price.id,periodEnd,freeTier,sub.customer_id,
        targetMediaServer?.id||null,mediaLocation,placementDeferred]);
     if(!updated.rowCount)throw new Error('Subscription changed before the plan update could be applied.');
+    await queuedPurchases.moveQueuedPurchases(client,locked.subscriptionId,before);
     // The sensitive override is audited in the SAME transaction as the change, so it can never apply without a record.
     if(capacityOverride)await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.plan_change.capacity_override','customer',$2,$3::jsonb)`,[actorUserId,String(sub.customer_id),JSON.stringify({subscriptionId:locked.subscriptionId,planId:target.id,planCode:target.code,placementDeferred})]);
   });

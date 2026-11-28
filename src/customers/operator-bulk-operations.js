@@ -6,6 +6,7 @@
 const {query,transaction}=require('../db');
 const bulkOperations=require('./bulk-operations');
 const planExpiry=require('../entitlements/plan-expiry');
+const queuedPurchases=require('../payments/queued-purchases');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const jellyfinAdminControl=require('../jellyfin/admin-control');
@@ -87,13 +88,16 @@ bulkWorker.registerHandler('extend_days',async item=>{
   // changes nothing (including at the cap), and a refund/chargeback termination that commits first
   // makes the event insert fail through the database trigger, so nothing is half-applied.
   const added=await transaction(async client=>{
+    await queuedPurchases.lockQueueOwner(client,item.customer_id);
     const current=await client.query('SELECT service_extension_days,refund_terminated_at FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subId,item.customer_id]);
     if(!current.rowCount)throw new Error('Subscription is no longer available');
+    const before=await queuedPurchases.accessEndBefore(client,subId);
     if(current.rows[0].refund_terminated_at)throw new Error('Subscription was terminated for a refund or chargeback');
     const inserted=await client.query(`INSERT INTO subscription_service_extension_events(subscription_id,customer_id,source,days,reference_id,actor_user_id,metadata) VALUES($1,$2,'admin_bulk',$3,$4,$5,$6::jsonb) ON CONFLICT(source,reference_id) DO NOTHING RETURNING id`,[subId,item.customer_id,days,reference,actor,JSON.stringify({mode:'bulk',reason,jobItemId:item.id})]);
     if(!inserted.rowCount)return 0;
     if(Number(current.rows[0].service_extension_days||0)+days>3650)throw new Error('Extension would exceed the 3,650-day safety limit');
     await client.query('UPDATE subscriptions SET service_extension_days=service_extension_days+$2,updated_at=NOW() WHERE id=$1 AND customer_id=$3',[subId,days,item.customer_id]);
+    await queuedPurchases.moveQueuedPurchases(client,subId,before);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.bulk.extend_days','customer',$2,$3::jsonb)`,[actor,item.customer_id,JSON.stringify({subscriptionId:subId,days,reason,jobItemId:item.id})]);
     return days;
   });

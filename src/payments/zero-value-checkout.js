@@ -9,6 +9,7 @@ const lifecyclePrimitives=require('./lifecycle-primitives');
 const inactivityHolds=require('../entitlements/inactivity-hold-reconciliation');
 const customerServerChoice=require('../jellyfin/customer-server-choice');
 const accessExtensions=require('./subscription-access-extensions');
+const samePlanRepurchase=require('./same-plan-repurchase');
 
 function money(value){const n=Number(value);return Number.isInteger(n)&&n>=0?n:null;}
 function snapshotObject(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
@@ -47,6 +48,11 @@ async function activateFullyDiscountedPayment({customerId,intentId,nonce,provide
             });
             row=applied.subscription;
         }else{
+            // No money has moved, so a purchase that would run over paid time is
+            // still refused here (a renewal may have resumed since the intent).
+            await samePlanRepurchase.assertPurchaseKeepsPaidTime(
+                {customerId,planId:plan.id,kind:snapshot.kind},{db:(sql,params)=>client.query(sql,params),transactional:true}
+            );
             await capacity.lockAndAssert(client,plan.id,snapshot.planName||plan.name||'This plan',{
                 excludeCheckoutIntentId:intent.id,
                 streams:snapshot.streams,

@@ -6,6 +6,7 @@ const billingMode = require('./subscription-billing-mode');
 const providerOps = require('./provider-operations');
 const providerContract = require('./provider-contract');
 const subscriptionState = require('../entitlements/subscription-state');
+const queuedPurchases = require('./queued-purchases');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -152,6 +153,8 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
         `, [row.id]);
         if (pendingChange.rowCount) throw new Error('Cancel the scheduled plan change before stopping automatic renewal.');
     }
+    // Refused before the provider is asked to resume billing.
+    if (enabled && await queuedPurchases.hasPurchaseQueuedBehind(row.id)) throw new Error(queuedPurchases.RESUME_BLOCKED);
     const op = await providerOps.begin({ provider:row.source,scope:'customer',ownerId:row.customer_id,operationType:enabled?'renewal_resume':'renewal_stop',localReference:row.id,request:{subscriptionId:row.id,providerSubscriptionId:row.provider_subscription_id,desiredCancelAtPeriodEnd:!enabled,priorCancelAtPeriodEnd:Boolean(row.cancel_at_period_end)} });
     try {
         const remoteAdapter = adapter || await defaultAdapter(row.source);
@@ -180,6 +183,7 @@ async function recoverProviderOperation(op) {
     await providerOps.observed(op.id, { result:{cancelAtPeriodEnd:remote.cancelAtPeriodEnd,remoteStatus:remote.remoteStatus || remote.status || null} });
     if (remote.cancelAtPeriodEnd !== desired) {
         if (['provider_applied','local_applied'].includes(op.state)) throw recoveryManual('Provider no longer reflects the already-applied renewal decision; refusing to overwrite a later remote decision.');
+        if (!desired && await queuedPurchases.hasPurchaseQueuedBehind(row.id)) throw recoveryManual(queuedPurchases.RESUME_BLOCKED);
         if (desired) await remoteAdapter.stopRenewal(row, { idempotencyKey:op.idempotency_key }); else await remoteAdapter.resumeRenewal(row, { idempotencyKey:op.idempotency_key });
         remote = remoteStateForPolicy(row, await remoteAdapter.fetchRemote(row));
         if (!remote || remote.cancelAtPeriodEnd !== desired) throw new Error('Provider renewal state remains ambiguous after idempotent recovery.');

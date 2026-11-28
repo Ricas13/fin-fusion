@@ -6,6 +6,7 @@ const commerce = require('./commerce-control');
 const serviceCreditReservations = require('./service-credit-reservations');
 const capacity = require('../entitlements/plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
+const samePlanRepurchase = require('./same-plan-repurchase');
 
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
 const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
@@ -144,6 +145,14 @@ async function createIntent({
     const row = await transaction(async client => {
         if (!customerId) throw new Error('Checkout owner is required.');
         await lockCheckoutOwner(client, customerId);
+        if (planId && checkoutMode === 'payment') {
+            // Checked under the customer lock, so no caller and no race between
+            // the page and here can sell a purchase that runs over paid time.
+            await samePlanRepurchase.assertPurchaseKeepsPaidTime(
+                { customerId, planId, kind: snapshot.kind },
+                { db: (sql, params) => client.query(sql, params), transactional: true }
+            );
+        }
         if (snapshot.kind === 'subscription_extension') {
             if (checkoutMode !== 'payment') throw new Error('Subscription extensions must use one-time payment checkout.');
             const extensionSubscriptionId = String(snapshot.extensionSubscriptionId || '').trim();

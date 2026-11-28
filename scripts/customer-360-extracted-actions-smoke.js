@@ -38,6 +38,9 @@ stub('src/db.js',{
     query:async(sql,params=[])=>{
       const compact=String(sql).replace(/\s+/g,' ').trim();
       txQueries.push({sql:compact,params});
+      if(compact.startsWith('SELECT id FROM customers'))return{rows:[{id:customerId}],rowCount:1};
+      if(compact.startsWith('SELECT current_period_end::text'))return{rows:[{period_end:'2026-10-08 00:00:00+00',service_extension_days:3}],rowCount:1};
+      if(compact.startsWith('SELECT public.shift_prepaid_queue_after_end_change'))return{rows:[],rowCount:0};
       if(compact.startsWith('SELECT id FROM subscriptions'))return{rows:[{id:subscriptionId}],rowCount:1};
       if(compact.startsWith('SELECT s.*,p.is_free_tier')&&compact.includes('FOR UPDATE OF s'))return{rows:[{
         ...entitlement,
@@ -87,7 +90,9 @@ const individual=require('../src/access/admin-customer-individual-action-service
   const reset=await individual.resetExpiryToPlan({customerId,actorUserId});
   assert.strictEqual(reset.subscriptionId,subscriptionId,'reset-to-plan expiry must target the canonical effective subscription');
   assert.strictEqual(reset.end.toISOString(),end.toISOString(),'reset-to-plan expiry must use the plan-expiry owner');
-  assert(txQueries[0].sql.includes('FOR UPDATE'),'reset-to-plan expiry must lock the selected subscription before mutation');
+  assert(txQueries[0].sql.startsWith('SELECT id FROM customers')&&txQueries[0].sql.includes('FOR UPDATE'),'reset-to-plan expiry must lock the customer first');
+  assert(txQueries[1].sql.startsWith('SELECT id FROM subscriptions')&&txQueries[1].sql.includes('FOR UPDATE'),'reset-to-plan expiry must lock the selected subscription before mutation');
+  assert(txQueries.findIndex(row=>row.sql.includes('shift_prepaid_queue_after_end_change'))>txQueries.findIndex(row=>row.sql.startsWith('UPDATE subscriptions')),'queued purchases move after the new end is written');
   const update=txQueries.find(row=>row.sql.startsWith('UPDATE subscriptions SET current_period_end='));
   assert(update,'reset-to-plan expiry must update the selected subscription');
   assert.strictEqual(update.params[0],subscriptionId);
