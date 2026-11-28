@@ -153,12 +153,12 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
         `, [row.id]);
         if (pendingChange.rowCount) throw new Error('Cancel the scheduled plan change before stopping automatic renewal.');
     }
+    // Refused before the provider is asked to resume billing.
+    if (enabled && await queuedPurchases.hasPurchaseQueuedBehind(row.id)) throw new Error(queuedPurchases.RESUME_BLOCKED);
     if(enabled){
         const replacement=await query("SELECT id FROM customer_plan_changes WHERE current_subscription_id=$1 AND provider='stripe' AND provider_action_required AND state IN ('pending','awaiting_checkout') LIMIT 1",[row.id]);
         if(replacement.rowCount)throw new Error('Cancel your pending currency change before resuming automatic renewal.');
     }
-    // Refused before the provider is asked to resume billing.
-    if (enabled && await queuedPurchases.hasPurchaseQueuedBehind(row.id)) throw new Error(queuedPurchases.RESUME_BLOCKED);
     const op = await providerOps.begin({ provider:row.source,scope:'customer',ownerId:row.customer_id,operationType:enabled?'renewal_resume':'renewal_stop',localReference:row.id,request:{subscriptionId:row.id,providerSubscriptionId:row.provider_subscription_id,desiredCancelAtPeriodEnd:!enabled,priorCancelAtPeriodEnd:Boolean(row.cancel_at_period_end)} });
     try {
         const remoteAdapter = adapter || await defaultAdapter(row.source);
