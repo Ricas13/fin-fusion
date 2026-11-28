@@ -12,6 +12,7 @@ const cleanupReturn = require('../src/entitlements/jellyfin-cleanup-return');
 const discordRoles = require('../src/integrations/discord-roles');
 const lifecycle = require('../src/payments/lifecycle');
 const customerAccessState = require('../src/access/customer-access-state');
+const stremioInstallRecovery = require('../src/stremio/install-credential-recovery');
 
 const suffix = crypto.randomBytes(5).toString('hex');
 const created = { customers: [], plans: [], servers: [], discordRoles: [] };
@@ -573,6 +574,165 @@ async function testStaleFreeRollbackCannotDeleteReplacementAccount() {
 }
 
 
+async function rollbackAuditCount(subscriptionId) {
+  const found = await query(`
+    SELECT 1 FROM audit_log
+    WHERE entity_type='subscription' AND entity_id=$1
+      AND action IN('subscription.trial.activation_rolled_back','subscription.free.claim_rolled_back')
+  `, [String(subscriptionId)]);
+  return found.rowCount;
+}
+
+async function testReadyTrialIsNotRolledBack() {
+  const customerId = await customer('trial-ready-rollback');
+  const planId = await plan('trial-ready-rollback', { billingInterval: 'trial', priceMinor: 0 });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  const serverId = await server('trial-ready', 'premium');
+  const readyAccount = await account({ customerId, serverId, lane: 'primary', label: 'trial-ready' });
+
+  const before = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(before.state, customerAccessState.ACCESS_STATES.ACTIVE_READY,
+    'fixture must be an ACTIVE_READY trial before the rollback is attempted');
+  assert.strictEqual(String(before.entitlement.subscription_id), String(subscription.id));
+
+  const result = await lifecycle.rollbackUnprovisionedJellyfinTrial(
+    customerId,
+    subscription.id,
+    { reason: 'stale view of a trial that is ready' }
+  );
+  assert.strictEqual(result.rolledBack, false, 'a ready trial must not be rolled back');
+  assert.strictEqual(result.reason, 'ready');
+
+  const row = (await query('SELECT status,current_period_end,replacement_reason FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing', 'a ready trial must keep its entitlement');
+  assert(new Date(row.current_period_end).getTime() > Date.now(), 'a ready trial must keep its access window');
+  assert.strictEqual(row.replacement_reason, null);
+  const kept = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [readyAccount.id]);
+  assert.strictEqual(kept.rowCount, 1, 'a ready trial must keep its account');
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 0, 'a skipped rollback must not be audited as a rollback');
+}
+
+async function testReadyFreeClaimIsNotRolledBack() {
+  const customerId = await customer('free-ready-rollback');
+  const freePlan = await canonicalFreePlan();
+  const subscription = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  const serverId = await server('free-ready', 'free');
+  const readyAccount = await account({ customerId, serverId, lane: 'free', label: 'free-ready' });
+
+  const before = await customerAccessState.freeJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(before.state, customerAccessState.ACCESS_STATES.ACTIVE_READY,
+    'fixture must be an ACTIVE_READY Free claim before the rollback is attempted');
+  assert.strictEqual(String(before.entitlement.subscription_id), String(subscription.id));
+
+  const result = await lifecycle.rollbackUnprovisionedFreeClaim(
+    customerId,
+    subscription.id,
+    { reason: 'stale view of a Free claim that is ready' }
+  );
+  assert.strictEqual(result.rolledBack, false, 'a ready Free claim must not be rolled back');
+  assert.strictEqual(result.reason, 'ready');
+
+  const row = (await query('SELECT status FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'active', 'a ready Free claim must keep its entitlement');
+  const kept = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [readyAccount.id]);
+  assert.strictEqual(kept.rowCount, 1, 'a ready Free claim must keep its account');
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 0);
+}
+
+async function testSupersededTrialIsNotRewritten() {
+  const customerId = await customer('trial-superseded-rollback');
+  const trialPlanId = await plan('trial-superseded-rollback', { billingInterval: 'trial', priceMinor: 0 });
+  const paidPlanId = await plan('trial-superseded-replacement', { priceMinor: 999 });
+  const old = await insertSubscription(customerId, trialPlanId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  const replacement = await insertSubscription(customerId, paidPlanId, {
+    status: 'active',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  await query(
+    "UPDATE subscriptions SET superseded_by=$2,replaced_at=NOW(),replacement_reason='plan_change' WHERE id=$1",
+    [old.id, replacement.id]
+  );
+  const serverId = await server('trial-superseded', 'premium');
+  const replacementAccount = await account({ customerId, serverId, lane: 'primary', label: 'trial-superseded' });
+
+  const result = await lifecycle.rollbackUnprovisionedJellyfinTrial(
+    customerId,
+    old.id,
+    { reason: 'stale rollback of a replaced trial' }
+  );
+  assert.strictEqual(result.rolledBack, false, 'a replaced trial must not be rolled back');
+  assert.strictEqual(result.reason, 'not_current');
+
+  const row = (await query('SELECT status,replacement_reason,superseded_by FROM subscriptions WHERE id=$1', [old.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing', 'a replaced trial row must not be rewritten');
+  assert.strictEqual(row.replacement_reason, 'plan_change',
+    'rewriting the reason would restore trial eligibility');
+  assert.strictEqual(String(row.superseded_by), String(replacement.id));
+  const kept = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [replacementAccount.id]);
+  assert.strictEqual(kept.rowCount, 1, 'the replacement account must survive');
+  assert.strictEqual(await rollbackAuditCount(old.id), 0);
+}
+
+async function testStremioTrialRollbackHonoursReadiness() {
+  const customerId = await customer('stremio-trial-rollback');
+  const planId = await plan('stremio-trial-rollback', {
+    billingInterval: 'trial',
+    priceMinor: 0,
+    serviceType: 'stremio'
+  });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  // The reconciliation request raised by the insert is never run here, so the
+  // installation link below is the only one.
+  const entitlement = (await query(`
+    INSERT INTO stremio_entitlements(customer_id,subscription_id,status,stream_limit,token_hash,token_hint)
+    VALUES($1,$2,'active',1,$3,'smoke')
+    RETURNING *
+  `, [customerId, subscription.id, crypto.randomBytes(32).toString('hex')])).rows[0];
+  await stremioInstallRecovery.save({ customerId, entitlement, credential: `state-machine-${suffix}` });
+  assert(await lifecycle.readyStremioInstallForSubscription(customerId, subscription.id),
+    'fixture must be a ready Stremio trial before the rollback is attempted');
+
+  const kept = await lifecycle.rollbackUnprovisionedStremioTrial(customerId, subscription.id, {
+    reason: 'stale view of a Stremio trial that is ready'
+  });
+  assert.strictEqual(kept.rolledBack, false, 'a ready Stremio trial must not be rolled back');
+  assert.strictEqual(kept.reason, 'ready');
+  let row = (await query('SELECT status FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing');
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 0);
+
+  await query('DELETE FROM stremio_install_credential_recovery WHERE entitlement_id=$1', [entitlement.id]);
+  const ended = await lifecycle.rollbackUnprovisionedStremioTrial(customerId, subscription.id, {
+    reason: 'state-machine Stremio trial rollback fixture'
+  });
+  assert.strictEqual(ended.rolledBack, true, 'an unready Stremio trial must still be rolled back');
+  assert.strictEqual(String(ended.id), String(subscription.id));
+  row = (await query('SELECT status,replacement_reason FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'cancelled');
+  assert.strictEqual(row.replacement_reason, 'trial_activation_failed');
+  const link = (await query('SELECT status,token_hash FROM stremio_entitlements WHERE id=$1', [entitlement.id])).rows[0];
+  assert.strictEqual(link.status, 'revoked');
+  assert.strictEqual(link.token_hash, null);
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 1);
+}
+
 async function testCanonicalLiveFreeClaimLockSelection() {
   const customerId = await customer('free-claim-lock');
   const freePlan = await canonicalFreePlan();
@@ -642,6 +802,10 @@ async function cleanup() {
   await testPermanentAccessBlocksTrialRollback();
   await testPaidProvisioningFailureRetainsEntitlement();
   await testStaleFreeRollbackCannotDeleteReplacementAccount();
+  await testReadyTrialIsNotRolledBack();
+  await testReadyFreeClaimIsNotRolledBack();
+  await testSupersededTrialIsNotRewritten();
+  await testStremioTrialRollbackHonoursReadiness();
   await testCanonicalLiveFreeClaimLockSelection();
   console.log('state-machine invariants DB smoke: ok');
 })().finally(async () => {

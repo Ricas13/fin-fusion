@@ -5,6 +5,7 @@ const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
 const accessRepair = require('../access/access-repair');
 const scanCursor = require('../automation/scan-cursor');
+const { isLockTimeoutError } = require('./lock-errors');
 
 const DEFAULT_RECONCILE_CONCURRENCY = 2;
 const MAX_RECONCILE_CONCURRENCY = 8;
@@ -211,10 +212,37 @@ async function dueCustomers(limit = 250) {
 }
 
 async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
-    const result = await accessRepair.repairUnpaidTrial(customerId, {
-        reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account'
-    });
-    return result.status === 'removed';
+    // The reconcile never ran: nothing is stranded, only busy. Retry via backoff.
+    if (isLockTimeoutError(originalError)) return false;
+    const detail = originalError?.message || originalError || null;
+    // This worker is also the owner of unpaid Emby-only and Stremio-only trials:
+    // the integrity scanner only reports Jellyfin and Free access.
+    const repairs = [
+        () => accessRepair.repairUnpaidTrial(customerId, {
+            reason: detail || 'Legacy unpaid Jellyfin trial had no enabled server account',
+            cause: originalError
+        }),
+        ...['emby', 'stremio'].map(service => () => accessRepair.repairUnpaidServiceTrial(customerId, service, {
+            reason: detail,
+            cause: originalError
+        }))
+    ];
+    let removed = false;
+    let failure = null;
+    for (const repair of repairs) {
+        // One lane failing must not stop another lane's repair.
+        try {
+            if ((await repair()).status === 'removed') removed = true;
+        } catch (error) {
+            if (failure) console.error(`Additional unpaid trial repair failed for ${customerId}:`, error.message);
+            failure = failure || error;
+        }
+    }
+    if (failure) {
+        if (!removed) throw failure;
+        console.error(`Unpaid trial repair failed for ${customerId}:`, failure.message);
+    }
+    return removed;
 }
 
 async function ensureFailureBackoff(customerId, error) {
@@ -239,9 +267,8 @@ async function reconcileActiveEntitlements(options = {}) {
             await provisioning.reconcileCustomer(row.customer_id);
             return { status: 'succeeded' };
         } catch (error) {
-            // The only supported non-paid Jellyfin states are plan+server or
-            // no-plan+no-server. Repair legacy/unexpected trial rows here rather
-            // than letting them enter the paid-style provisioning retry queue.
+            // Retain failed trials. Secondary service repair can verify readiness,
+            // but unresolved provisioning remains in the durable retry queue.
             try {
                 if (await rollbackStrandedUnpaidJellyfinTrial(row.customer_id, error)) {
                     return { status: 'succeeded', repaired: 'trial_rolled_back' };

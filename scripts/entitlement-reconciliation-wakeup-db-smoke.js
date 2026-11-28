@@ -13,7 +13,8 @@ let planId = null;
 async function provisioningState() {
     const result = await query(`
         SELECT status,reconcile_requested_at,last_attempt_at,next_attempt_at,
-               (next_attempt_at IS NULL OR next_attempt_at<=NOW()) AS due
+               (next_attempt_at IS NULL OR next_attempt_at<=NOW()) AS due,
+               (reconcile_requested_at > last_attempt_at) AS request_is_newer
         FROM customer_provisioning_state
         WHERE customer_id=$1
     `, [customerId]);
@@ -63,7 +64,7 @@ async function provisioningState() {
     state = await provisioningState();
     assert.strictEqual(state.status, 'running', 'an in-flight entitlement mutation must not corrupt running state');
     assert(state.reconcile_requested_at, 'an in-flight entitlement mutation must record a newer reconciliation request');
-    assert(new Date(state.reconcile_requested_at) > new Date(state.last_attempt_at), 'the newer request must be distinguishable from the run start');
+    assert(state.request_is_newer === true, 'the newer request must be distinguishable from the run start');
 
     await control.markCustomerHealthy(customerId, { subscriptionId, planId, result: { test: true } });
     state = await provisioningState();
@@ -85,6 +86,31 @@ async function provisioningState() {
     state = await provisioningState();
     assert.strictEqual(state.status, 'pending', 'access-hold insertion must queue reconciliation');
     assert.strictEqual(state.due, true, 'access-hold reconciliation must be immediately due');
+
+    // The application-level request used after a lock timeout must behave like
+    // the database trigger: due immediately, and never clobbering a live run.
+    await control.requestCustomerReconcile(customerId);
+    state = await provisioningState();
+    assert.strictEqual(state.status, 'pending', 'an application request must queue reconciliation');
+    assert.strictEqual(state.due, true);
+    assert(state.reconcile_requested_at, 'an application request must retain a durable request timestamp');
+
+    await control.markCustomerRunning(customerId, { subscription_id: subscriptionId, plan_id: planId });
+    await control.requestCustomerReconcile(customerId);
+    state = await provisioningState();
+    assert.strictEqual(state.status, 'running', 'a request during a run must not corrupt running state');
+    assert.strictEqual(state.due, false, 'a running customer keeps its stale-run deadline');
+    assert(state.request_is_newer === true);
+    await control.markCustomerHealthy(customerId, { subscriptionId, planId, result: { test: true } });
+    state = await provisioningState();
+    assert.strictEqual(state.status, 'pending', 'completion must requeue a request that arrived during the run');
+    assert.strictEqual(state.due, true);
+
+    await query('DELETE FROM customer_provisioning_state WHERE customer_id=$1', [customerId]);
+    await control.requestCustomerReconcile(customerId);
+    state = await provisioningState();
+    assert.strictEqual(state.status, 'pending', 'a request must create missing provisioning state');
+    assert.strictEqual(state.due, true);
 
     console.log('entitlement reconciliation wakeup DB smoke: ok');
 })().finally(async () => {

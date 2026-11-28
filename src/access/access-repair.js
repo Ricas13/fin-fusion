@@ -2,6 +2,22 @@
 
 const customerAccessState = require('./customer-access-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const mediaReconciliation = require('../jellyfin/media-service-reconciliation');
+const { isLockTimeoutError } = require('../jellyfin/lock-errors');
+
+// Avoid duplicate secondary-service repair attempts while a new trial is being
+// provisioned. This grace period is never a cancellation deadline.
+const UNPAID_TRIAL_REPAIR_GRACE_MS = 15 * 60 * 1000;
+
+// A lock timeout means the work never ran, so repair has learned nothing about
+// this customer. Leave everything in place for a later pass.
+const DEFERRED_LOCK_TIMEOUT = Object.freeze({ status: 'deferred', reason: 'lock_timeout' });
+
+// Rollbacks re-check under the customer lock and may decline to change anything.
+function skippedRollbackOutcome(result) {
+  if (result?.rolledBack !== false) return null;
+  return { status: result.reason === 'ready' ? 'ready' : 'skipped', reason: result.reason };
+}
 
 function trialEntitlement(entitlement) {
   return String(entitlement?.contract_billing_interval || entitlement?.billing_interval || '').toLowerCase() === 'trial';
@@ -27,11 +43,26 @@ function automaticRollbackBlocker(access) {
   return null;
 }
 
+// PostgreSQL 'infinity' (permanent or administrator-granted access).
+function neverExpires(value) {
+  return value === Infinity || String(value).toLowerCase() === 'infinity';
+}
+
 function createAccessRepair(deps = {}) {
   const accessState = deps.customerAccessState || customerAccessState;
   const provisioningApi = deps.provisioning || provisioning;
   const lifecycleApi = deps.lifecycle || (() => require('../payments/lifecycle'));
   const isOperatorProtected = deps.operatorProtected || customerAccessState.operatorProtected;
+  const mediaApi = deps.mediaReconciliation || mediaReconciliation;
+  const now = deps.now || Date.now;
+  const graceMs = deps.graceMs ?? UNPAID_TRIAL_REPAIR_GRACE_MS;
+
+  // subscription_created_at/starts_at only: plan columns overwrite created_at in
+  // the entitlement rows.
+  function startedRecently(entitlement) {
+    const started = new Date(entitlement?.subscription_created_at || entitlement?.starts_at || NaN).getTime();
+    return Number.isFinite(started) && now() - started < graceMs;
+  }
 
   async function repairFreeEntitlement(customerId, subscriptionId, { reason = null } = {}) {
     let access = await accessState.freeJellyfin(customerId, { includeBlocked: true });
@@ -54,6 +85,9 @@ function createAccessRepair(deps = {}) {
       await provisioningApi.reconcileCustomer(customerId);
     } catch (error) {
       reconcileError = error;
+    }
+    if (isLockTimeoutError(reconcileError)) {
+      return { ...DEFERRED_LOCK_TIMEOUT, reconcileError };
     }
 
     access = await accessState.freeJellyfin(customerId, { includeBlocked: true });
@@ -84,13 +118,24 @@ function createAccessRepair(deps = {}) {
     }
 
     const lifecycle = lifecycleApi();
-    await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
-      reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account'
-    });
+    let result;
+    try {
+      result = await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
+        reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account',
+        retainBlocked: true
+      });
+    } catch (error) {
+      if (isLockTimeoutError(error)) return { ...DEFERRED_LOCK_TIMEOUT, reconcileError };
+      throw error;
+    }
+    const skipped = skippedRollbackOutcome(result);
+    if (skipped) return { ...skipped, reconcileError };
     return { status: 'removed', reconcileError };
   }
 
-  async function repairUnpaidTrial(customerId, { reason = null } = {}) {
+  async function repairUnpaidTrial(customerId, { reason = null, cause = null } = {}) {
+    if (isLockTimeoutError(cause)) return { ...DEFERRED_LOCK_TIMEOUT };
+
     const access = await accessState.primaryJellyfin(customerId, { includeBlocked: true });
     const entitlement = access.entitlement;
     if (!entitlement
@@ -107,16 +152,108 @@ function createAccessRepair(deps = {}) {
     if (isOperatorProtected(entitlement)) {
       return { status: 'protected', reason: 'admin_protected', subscriptionId: entitlement.subscription_id };
     }
+    // Provisioning failure is never authority to cancel an unpaid trial.
+    // The worker retains its backoff and the integrity finding stays visible.
+    return { status: 'deferred', reason: 'manual_review_required', subscriptionId: entitlement.subscription_id };
+  }
 
+  // Emby and Stremio have no ACTIVE_READY lane state, so each applies the same
+  // readiness check its activation uses.
+  async function repairUnpaidEmbyTrial(customerId, entitlement, options) {
     const lifecycle = lifecycleApi();
-    await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
-      reason: reason || 'Unpaid Jellyfin trial had no enabled server account'
+    const subscriptionId = entitlement.subscription_id;
+    if (await lifecycle.readyEmbyAccountForSubscription(customerId, subscriptionId)) return { status: 'ready' };
+    const blockerFor = async candidate => automaticRollbackBlocker({
+      entitlement: candidate,
+      accounts: await mediaApi.accountsFor(customerId, 'emby')
     });
+    let blocker = await blockerFor(entitlement);
+    if (blocker) return { status: 'protected', reason: blocker };
 
-    // Converge the now no-plan state so stale provisioning metadata does not
-    // keep advertising a deployment for an entitlement that was rolled back.
-    await provisioningApi.reconcileCustomer(customerId);
-    return { status: 'removed', subscriptionId: entitlement.subscription_id };
+    // Reconciliation runs Emby after the Jellyfin lanes, so an earlier failure
+    // can mean Emby was never attempted. Give it its own attempt first.
+    let convergeError = null;
+    try {
+      await provisioningApi.reconciliationLock.withCustomerReconciliationLock(
+        customerId,
+        () => mediaApi.reconcileCustomer(customerId, 'emby')
+      );
+    } catch (error) {
+      if (isLockTimeoutError(error)) return { ...DEFERRED_LOCK_TIMEOUT };
+      convergeError = error;
+    }
+    if (await lifecycle.readyEmbyAccountForSubscription(customerId, subscriptionId)) return { status: 'repaired' };
+
+    const after = await accessState.emby(customerId, { includeBlocked: true });
+    if (String(after.entitlement?.subscription_id || '') !== String(subscriptionId || '')) {
+      return { status: 'skipped', reason: 'subscription_changed_after_reconcile' };
+    }
+    blocker = await blockerFor(after.entitlement);
+    if (blocker) return { status: 'protected', reason: blocker };
+
+    return { status: 'deferred', reason: 'manual_review_required', reconcileError: convergeError };
+  }
+
+  async function repairUnpaidStremioTrial(customerId, entitlement, options) {
+    const lifecycle = lifecycleApi();
+    const subscriptionId = entitlement.subscription_id;
+    const bundle = String(entitlement.service_type_snapshot || entitlement.service_type || '').toLowerCase() === 'bundle';
+    if (bundle) {
+      if (await lifecycle.readyJellyfinBundleForSubscription(customerId, subscriptionId)) return { status: 'ready' };
+      // The Jellyfin half gets the same protections as Jellyfin trial repair.
+      const primary = await accessState.primaryJellyfin(customerId, { includeBlocked: true });
+      if (String(primary.entitlement?.subscription_id || '') === String(subscriptionId || '')) {
+        // A missing installation link never justifies deleting a working account.
+        if (primary.state === accessState.ACCESS_STATES.ACTIVE_READY) {
+          return { status: 'protected', reason: 'media_account_ready' };
+        }
+        if (primary.state === accessState.ACCESS_STATES.ACTIVE_BLOCKED) return { status: 'skipped', reason: 'blocked' };
+        const blocker = automaticRollbackBlocker(primary);
+        if (blocker) return { status: 'protected', reason: blocker };
+        if (isOperatorProtected(primary.entitlement)) return { status: 'protected', reason: 'admin_protected' };
+      }
+    } else {
+      if (await lifecycle.readyStremioInstallForSubscription(customerId, subscriptionId)) return { status: 'ready' };
+    }
+    return { status: 'deferred', reason: 'manual_review_required' };
+  }
+
+  async function repairUnpaidServiceTrial(customerId, service, { reason = null, cause = null } = {}) {
+    const lane = String(service || '').trim().toLowerCase();
+    if (!['emby', 'stremio'].includes(lane)) {
+      throw new Error(`Unsupported unpaid service trial lane: ${lane || '(empty)'}`);
+    }
+    if (isLockTimeoutError(cause)) return { ...DEFERRED_LOCK_TIMEOUT };
+
+    const access = await accessState[lane](customerId, { includeBlocked: true });
+    const entitlement = access.entitlement;
+    // Only locally-started trials: never an add-on or provider-billed access.
+    if (!entitlement
+        || access.state !== accessState.ACCESS_STATES.ACTIVE_ENTITLED
+        || !trialEntitlement(entitlement)
+        || entitlement.is_addon
+        || String(entitlement.source || '') !== 'manual') {
+      return { status: 'skipped' };
+    }
+    const subscriptionId = entitlement.subscription_id;
+    if (isOperatorProtected(entitlement) || neverExpires(entitlement.access_expires_at)) {
+      return { status: 'protected', reason: 'admin_protected', subscriptionId };
+    }
+    if (startedRecently(entitlement)) {
+      return { status: 'deferred', reason: 'activation_grace', subscriptionId };
+    }
+
+    const options = {
+      reason: reason || `Unpaid ${lane === 'emby' ? 'Emby' : 'Stremio'} trial had no working access`,
+      retainBlocked: true
+    };
+    const repairLane = lane === 'emby' ? repairUnpaidEmbyTrial : repairUnpaidStremioTrial;
+    try {
+      return { ...await repairLane(customerId, entitlement, options), subscriptionId };
+    } catch (error) {
+      if (isLockTimeoutError(error)) return { ...DEFERRED_LOCK_TIMEOUT, subscriptionId };
+      throw error;
+    }
   }
 
   async function removeOrphanFreeAccount(customerId) {
@@ -164,6 +301,7 @@ function createAccessRepair(deps = {}) {
   return {
     repairFreeEntitlement,
     repairUnpaidTrial,
+    repairUnpaidServiceTrial,
     removeOrphanFreeAccount,
     repairIntegrityFinding
   };
@@ -172,6 +310,7 @@ function createAccessRepair(deps = {}) {
 const defaultRepair = createAccessRepair();
 
 module.exports = {
+  UNPAID_TRIAL_REPAIR_GRACE_MS,
   trialEntitlement,
   jellyfinEntitlement,
   automaticRollbackBlocker,
