@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   admin-regression:
-    runs-on: ubuntu-latest
+    # Playwright 1.55.0 cannot install Chromium on ubuntu-26.04 (current ubuntu-latest).
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
       postgres:

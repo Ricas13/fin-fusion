@@ -5,6 +5,7 @@
 // simulated Jellyfin server and checks the cases clients and outages produce.
 
 require('dotenv').config();
+process.env.PLAYBACK_ACCOUNTING_SHADOW_ENABLED = 'true';
 const assert = require('assert');
 const crypto = require('crypto');
 const { skipIfNoDatabase } = require('./smoke-db');
@@ -167,6 +168,68 @@ async function main() {
   const parts = (await query(`SELECT playback_key,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)) AS seconds FROM playback_history WHERE server_id=$1 AND item_id=$2 ORDER BY started_at`, [server, itemJ])).rows;
   assert.strictEqual(parts.length, 2, 'a 3 minute interruption starts a new period');
   assert(Number(parts[0].seconds) <= 10 * 60 + 5 && Number(parts[1].seconds) < 60, 'the 3 minute gap is not counted as watching');
+  // 10. An explicit start/progress/pause/resume/stop sequence calculates
+  // viewed time independently of the legacy session wall-clock duration.
+  registry.request = async () => [];
+  const itemNative = `item-native-${tag}`;
+  const began = new Date(Date.now() - 900000);
+  const tick = n => new Date(began.getTime() + n * 1000).toISOString();
+  const shared = {
+    UserId: jfUser, ItemId: itemNative, Name: 'Native evidence', ItemType: 'Movie',
+    ClientName: 'TestClient', DeviceName: 'TV', PlayMethod: 'DirectPlay'
+  };
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackStart', UtcTimestamp: tick(0) });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackProgress', UtcTimestamp: tick(300), IsPaused: true });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackProgress', UtcTimestamp: tick(600), IsPaused: true });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackProgress', UtcTimestamp: tick(610), IsPaused: false });
+  await webhook.ingest(server, { ...shared, NotificationType: 'PlaybackStop', UtcTimestamp: tick(900) });
+  const measured = await row(itemNative);
+  assert(measured, 'native playback history row was written');
+  assert(Math.abs(Number(measured.observed_watch_seconds) - 590) < 3,
+    'native accounting must exclude 310 seconds of pause time');
+  assert.strictEqual(Number(measured.observed_confirmed_seconds), 0,
+    'watch time without advancing position is estimated, not confirmed');
+  assert.strictEqual(Number(measured.observed_sample_count), 5,
+    'each distinct transition is counted once');
+  assert.strictEqual(measured.observed_ended, true,
+    'stop closes the native observation segment');
+  // 11. A stop event can legitimately arrive after polling prematurely
+  // closed the play as missing. Recover the one exact recent play.
+  const recoveredItem = `item-recovered-${tag}`;
+  const endedAt = new Date(Date.now() - 5 * 60 * 1000);
+  const startPayload = {
+    UserId: jfUser, ItemId: recoveredItem, Name: 'Recovered',
+    ItemType: 'Movie', ClientName: 'TestClient', DeviceName: 'TV',
+    PlayMethod: 'DirectPlay'
+  };
+  await webhook.ingest(server, {
+    ...startPayload, NotificationType: 'PlaybackStart',
+    UtcTimestamp: endedAt.toISOString()
+  });
+  await query(`
+    UPDATE active_playback_sessions
+    SET last_seen_at=$3::timestamptz+INTERVAL '1 second'
+    WHERE server_id=$1 AND item_id=$2
+  `, [server, recoveredItem, endedAt]);
+  await query(`
+    UPDATE playback_history
+    SET ended_at=$3,last_seen_at=$3,ended_reason='not_seen'
+    WHERE server_id=$1 AND item_id=$2
+  `, [server, recoveredItem, endedAt]);
+  await query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND item_id=$2`,
+    [server, recoveredItem]);
+  const restored = await webhook.ingest(server, {
+    ...startPayload, NotificationType: 'PlaybackStop',
+    UtcTimestamp: new Date().toISOString()
+  });
+  assert.strictEqual(restored.recovered, true,
+    'delayed stop must reconcile a uniquely matched new play');
+  const repaired = await row(recoveredItem);
+  assert.strictEqual(repaired.ended_reason, 'webhook_stop');
+  assert(Number(repaired.observed_watch_seconds) >= 295,
+    'stop reconciles observed start-to-stop viewing');
+
+
 }
 
 main()

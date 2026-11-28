@@ -33,10 +33,16 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
     const minor = amountMinor(amount);
     const sub = (await query(`
         SELECT s.id,s.customer_id,s.source,s.provider_subscription_id,s.status,
+               -- A replaced payment whose money has already been taken back.
+               (s.superseded_by IS NOT NULL AND (s.refund_terminated_at IS NOT NULL
+                 OR NOT EXISTS(SELECT 1 FROM subscription_time_carryovers l WHERE l.source_subscription_id=s.id AND l.status='active'))) AS already_reversed,
                COALESCE(NULLIF(s.currency_snapshot,''),p.currency,'GBP') AS currency,
                COALESCE(s.price_minor_snapshot,p.price_minor,0)::bigint AS price_minor
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.id=$1 AND s.customer_id=$2 AND s.superseded_by IS NULL
+        WHERE s.id=$1 AND s.customer_id=$2
+          AND (s.superseded_by IS NULL
+            -- A payment whose remaining time moved onto a newer plan can still be refunded.
+            OR EXISTS(SELECT 1 FROM subscription_time_carryovers l WHERE l.source_subscription_id=s.id AND l.status IN ('active','reversed')))
     `, [subscriptionId, customerId])).rows[0];
     if (!sub) throw new Error('Choose one of this customer\'s current plans.');
     const source = String(sub.source || '').toLowerCase();
@@ -99,7 +105,15 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
                 throw new Error(`That would refund more than the plan cost. Already refunded or in progress: ${(already / 100).toFixed(2)} of ${(Number(sub.price_minor) / 100).toFixed(2)} ${currency}.`);
             }
         };
+        // Money already taken back cannot be refunded again. The one exception is
+        // finishing an earlier attempt that itself left the effect behind.
+        const alreadyReversed = () => new Error('This payment has already been refunded or reversed, so another refund cannot be recorded for it.');
         const claimResume = async (resumeSid, resumeEventId) => {
+            if (sub.already_reversed) {
+                const effect = await client.query(`SELECT 1 FROM payment_incidents WHERE provider='plisio' AND provider_event_id=$1
+                    UNION ALL SELECT 1 FROM audit_log WHERE action='billing.refund.recorded_externally_effect' AND metadata->>'submissionId'=$2 LIMIT 1`, [resumeEventId, resumeSid]);
+                if (!effect.rowCount) throw alreadyReversed();
+            }
             await assertCap(resumeSid);
             await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally_resumed','subscription',$2,$3::jsonb)`,
                 [actorUserId, sub.id, JSON.stringify({ submissionId: resumeSid, eventId: resumeEventId, fingerprint })]);
@@ -129,6 +143,7 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
             throw new Error('This refund is already being recorded. Wait a moment and reload.');
         }
 
+        if (sub.already_reversed) throw alreadyReversed();
         await assertCap(null);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.refund.recorded_externally','subscription',$2,$3::jsonb)`,
             [actorUserId, sub.id, JSON.stringify({ customerId, amountMinor: minor, currency, full: Boolean(full), reason: note, submissionId: sid, eventId, fingerprint, source: source || 'manual', plisioBacked })]);

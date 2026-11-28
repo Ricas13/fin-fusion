@@ -103,6 +103,10 @@ const suites = [
     commands: [['node', ['scripts/pending-registration-existing-customer-db-smoke.js']]],
   },
   {
+    name: 'Free Access final-slot reservation conversion',
+    commands: [['node', ['scripts/free-access-registration-reservation-db-smoke.js']]],
+  },
+  {
     name: 'Plan-owned media capacity',
     commands: [['node', ['scripts/plan-media-capacity-db-smoke.js']]],
   },

@@ -35,7 +35,9 @@
   function promoInputForCard(card){return card?.querySelector('[data-promo-input]')||sharedInput();}
   function promoCodeForCard(card){return normalized(promoInputForCard(card));}
   function cardForPlanCode(planCode){return cards().find(card=>String(card.dataset.planCode||'')===String(planCode||''))||null;}
-  function mediaForms(card){return Array.from(card?.querySelectorAll('form')||[]).filter(form=>{const action=String(form.getAttribute('action')||'');return action.startsWith('/account/checkout/')||action==='/account/trial/start'||action.startsWith('/account/claim-free/');});}
+  // An extension adds time to existing access, so it never picks a server.
+  function isExtensionForm(form){return Boolean(form.querySelector('input[name="extensionSubscriptionId"]'));}
+  function mediaForms(card){return Array.from(card?.querySelectorAll('form')||[]).filter(form=>{const action=String(form.getAttribute('action')||'');return(action.startsWith('/account/checkout/')&&!isExtensionForm(form))||action==='/account/trial/start'||action.startsWith('/account/claim-free/');});}
   function ensureMediaLocationInput(form,value){let input=form.querySelector('input[name="mediaLocation"]');if(!input){input=document.createElement('input');input.type='hidden';input.name='mediaLocation';form.appendChild(input);}input.value=value||'';return input;}
   function mediaLocationForCard(card){return String(card?.dataset.mediaLocation||'').trim();}
   function syncMediaLocationTargets(card){const value=mediaLocationForCard(card);for(const form of mediaForms(card))ensureMediaLocationInput(form,value);}
@@ -105,11 +107,29 @@
   function providerLabel(provider){return provider==='stripe'?'Stripe':provider==='paypal'?'PayPal':'Plisio';}
   function buttonClass(provider){return provider==='stripe'?'stripe':provider==='paypal'?'paypal':'primary';}
   function accessLabel(kind,quantity){return kind==='households'?`${quantity} household connection${quantity===1?'':'s'} · unlimited streams & devices`:`${quantity} concurrent stream${quantity===1?'':'s'}`;}
-  function checkoutForm(plan,variant,provider,mode,label){const card=cardForPlanCode(plan.code),promo=promoCodeForCard(card),mediaLocation=mediaLocationForCard(card);return `<form class="plainForm checkoutForm" method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(promo)}"><input type="hidden" name="mediaLocation" value="${esc(mediaLocation)}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
+  function checkoutForm(plan,variant,provider,mode,label,separate=false){const card=cardForPlanCode(plan.code),promo=promoCodeForCard(card),mediaLocation=mediaLocationForCard(card);return `<form class="plainForm checkoutForm"${separate?' data-separate-purchase':''} method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(promo)}"><input type="hidden" name="mediaLocation" value="${esc(mediaLocation)}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
   function availableModes(variant,provider){return(variant.paymentOptions||[]).filter(option=>option.provider===provider).map(option=>option.checkoutMode);}
   function selectedOption(plan,select){return plan.variants.find(variant=>Number(variant.quantity)===Number(select.value))||plan.variants[0];}
-  function actionMarkup(plan,variant){
-    if(plan.currentPlan&&Number(plan.currentQuantity)===Number(variant.quantity))return '<span class="button secondary full" aria-disabled="true">Current access allowance</span>';
+  function extensionForm(plan,provider){const extension=plan.extension;return `<form class="plainForm checkoutForm" method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="checkoutMode" value="payment"><input type="hidden" name="extensionSubscriptionId" value="${esc(extension.subscriptionId)}"><input type="hidden" name="accessQuantity" value="${esc(extension.quantity)}"><input type="hidden" name="discountCode" data-promo-target><button class="button ${buttonClass(provider)} full" type="submit">Extend by ${esc(extension.durationLabel)} with ${esc(providerLabel(provider))}</button></form>`;}
+  function extensionMarkup(plan,variant){
+    const extension=plan.extension;if(!extension||!(extension.providers||[]).length)return'';
+    const other=Number(variant.quantity)===Number(extension.quantity)?'':`<div class="paymentNote">Or extend your current allowance: ${esc(accessLabel(plan.kind,extension.quantity))}.</div>`;
+    return `${other}<div class="paymentNote">Buy more time without losing what remains. The purchased ${esc(String(extension.durationLabel).toLowerCase())} is added to the end of your existing paid access and does not create another server account. Eligible promo codes apply to this one-off extension, not to future renewals.</div>${extension.providers.map(provider=>extensionForm(plan,provider)).join('')}`;
+  }
+  function actionMarkup(plan,variant){return purchaseMarkup(plan,variant)+extensionMarkup(plan,variant);}
+  // Buying the held allowance again. Only when the server says the purchase will
+  // wait for the current paid time, and only as a one-off: a renewal would start
+  // charging over that time. This is also where a promo code can be used.
+  function separatePurchaseMarkup(plan,variant){
+    const unavailable='<span class="button secondary full" aria-disabled="true">Current access allowance</span>';
+    if(plan.separatePurchaseSafe!==true||plan.currentProvider)return unavailable;
+    if(variant.soldOut)return '<span class="button secondary full" aria-disabled="true">Currently full for this allowance</span>';
+    const providers=['stripe','paypal','plisio'].filter(provider=>availableModes(variant,provider).includes('payment'));
+    if(!providers.length)return unavailable;
+    return `<div class="paymentNote">Separate purchase: it starts after your current paid time ends. Eligible promo codes can apply to either purchase option.</div>${providers.map(provider=>checkoutForm(plan,variant,provider,'payment',`Buy separately with ${providerLabel(provider)}`,true)).join('')}`;
+  }
+  function purchaseMarkup(plan,variant){
+    if(plan.currentPlan&&Number(plan.currentQuantity)===Number(variant.quantity))return separatePurchaseMarkup(plan,variant);
     if(variant.soldOut)return '<span class="button secondary full" aria-disabled="true">Currently full for this allowance</span>';
     if(plan.currentProvider==='paypal'&&!plan.currentCancelAtPeriodEnd)return '<div class="paymentNote">Stop the current PayPal renewal before changing this access allowance.</div><a class="button secondary full" href="#renewal-control">Stop PayPal renewal first</a>';
     if(plan.currentProvider){

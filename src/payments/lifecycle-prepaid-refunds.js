@@ -1,6 +1,7 @@
 'use strict';
 
 const { transaction } = require('../db');
+const carriedTime = require('./carried-time');
 
 function dateMs(value, label) {
   const ms = new Date(value).getTime();
@@ -10,6 +11,8 @@ function dateMs(value, label) {
 
 async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cutoffAt, serviceType }) {
   return transaction(async client => {
+    // One lock order everywhere: the customer, then the subscription.
+    await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
     const result = await client.query(`
       SELECT s.*,p.service_type
       FROM subscriptions s
@@ -64,34 +67,32 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
     // still present locally, so queued periods can never be shifted twice.
     const removedMs = Math.max(0, observedEndMs - cutoffMs);
 
-    if (removedMs > 0) {
+    if (removedMs > 0 && row.superseded_by && row.replacement_reason === 'paid_time_carried') {
+      // The time now sits on a newer plan. Take exactly the refunded base span
+      // off it, leaving separately bought extension days where they are.
+      await carriedTime.reduceSource(client, row.id, removedMs / 1000, { basePayment: true, reason: 'source_prorata_refund' });
+      await client.query(`
+        UPDATE subscriptions
+        SET current_period_end=$2,status='expired',updated_at=NOW()
+        WHERE id=$1
+      `, [row.id, cutoffDate]);
+    } else if (removedMs > 0) {
       await client.query(`
         UPDATE subscriptions
         SET current_period_end=$2,status='expired',service_extension_days=0,updated_at=NOW()
         WHERE id=$1
       `, [row.id, cutoffDate]);
 
+      // Later purchases were queued behind the whole access slot, extension days
+      // included. The database owner moves them without creating any overlap.
       await client.query(`
-        UPDATE subscriptions queued
-        SET starts_at=queued.starts_at-($4::bigint * INTERVAL '1 millisecond'),
-            current_period_end=queued.current_period_end-($4::bigint * INTERVAL '1 millisecond'),
-            updated_at=NOW()
-        FROM plans qp
-        WHERE queued.plan_id=qp.id
-          AND queued.customer_id=$1
-          AND queued.id<>$2
-          AND queued.superseded_by IS NULL
-          AND queued.starts_at >= $3
-          AND queued.status IN ('active','trialing','past_due','paused','cancelled')
-          AND queued.source IN ('stripe','paypal','plisio')
-          AND NOT (queued.source='stripe' AND COALESCE(queued.provider_subscription_id,'') ~* '^sub_')
-          AND NOT (queued.source='paypal' AND COALESCE(queued.provider_subscription_id,'') ~* '^I-')
-          AND (
-            COALESCE(queued.service_type_snapshot,qp.service_type,'jellyfin')='bundle'
-            OR $5='bundle'
-            OR COALESCE(queued.service_type_snapshot,qp.service_type,'jellyfin')=$5
-          )
-      `, [row.customer_id, row.id, observedEndDate, removedMs, effectiveServiceType]);
+        SELECT public.pull_prepaid_queue(
+          $1,$2,$3::timestamptz,
+          $4::bigint/1000.0
+            +EXTRACT(EPOCH FROM (($3::timestamptz+(($5::int||' days')::interval))-$3::timestamptz))::numeric,
+          $6
+        )
+      `, [row.customer_id, effectiveServiceType, observedEndDate, removedMs, Math.max(0, Number(row.service_extension_days || 0)), row.id]);
     }
 
     return { row, removedMs, cutoffAt:cutoffDate, observedEnd:observedEndDate, serviceType:effectiveServiceType };

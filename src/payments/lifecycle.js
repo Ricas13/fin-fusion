@@ -583,9 +583,14 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
     if(!plan)throw new Error('Your Free Access hold has expired.');
     if(plan.is_addon)throw new Error('Free primary access cannot be claimed from an add-on product.');
     const requestedLocation = plan.reserved_media_location || mediaLocation || null;
-    const preferredLocation = automatic && !requestedLocation
-        ? null
-        : await customerServerChoice.resolveAcquisitionLocation(plan, requestedLocation, { requireSelection: !reservationId });
+    // An already-issued Free registration reservation owns capacity. Resolving a
+    // new acquisition location would see its own held final slot as sold out.
+    // Preserve the reserved location and validate the committed server below.
+    const preferredLocation = reservationId
+        ? requestedLocation
+        : automatic && !requestedLocation
+            ? null
+            : await customerServerChoice.resolveAcquisitionLocation(plan, requestedLocation, { requireSelection: true });
     const policy = await trialPolicy();
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
@@ -601,9 +606,19 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         if(policy.freeMode!=='renewable'&&historical.rowCount)throw new Error('Free access on this plan has already been claimed.');
         let selectedServer=null;
         if(customerServerChoice.mediaServerType(plan)){
-            selectedServer=reservation?.media_server_id
-                ? await customerServerChoice.reservedServerIfEligible(plan,reservation.media_server_id,preferredLocation,{db:(sql,params)=>client.query(sql,params)})
-                : null;
+            if(reservation?.media_server_id){
+                // Lock and revalidate the already promised server, not a new
+                // vacancy. The reservation is excluded above from the atomic
+                // plan/fleet capacity check and remains counted for everyone else.
+                await client.query('SELECT id FROM jellyfin_servers WHERE id=$1 FOR UPDATE',[reservation.media_server_id]);
+                selectedServer=await customerServerChoice.committedReservedServer(
+                    plan,reservation.media_server_id,preferredLocation,
+                    {db:(sql,params)=>client.query(sql,params)}
+                );
+            }
+            // Legacy reservations without a server, or a genuinely unavailable
+            // reserved server, may use an alternative eligible vacancy. Never
+            // bypass disabled, drained or unhealthy server checks.
             if(!selectedServer)selectedServer=await customerServerChoice.selectServerForLocationLocked(plan,preferredLocation,{db:(sql,params)=>client.query(sql,params),requireSelection:!automatic&&!reservationId});
         }
         const selectedLocation=selectedServer?.selected_location||preferredLocation||null;

@@ -28,6 +28,8 @@ assert.deepStrictEqual(view.watchTime(row({ progress_reported: null, duration_se
 assert.strictEqual(view.watchTime(row({ progress_reported: true, duration_seconds: 3 * 86400 }), opts).seconds, 12 * 3600, 'no single play is ever longer than 12 hours (a 3-day stale session is not a 3-day watch)');
 assert.strictEqual(view.watchTime(row({ duration_seconds: -50 }), opts).seconds, 0);
 assert.strictEqual(view.watchTime(row({ duration_seconds: 'garbage' }), opts).seconds, 0);
+assert.deepStrictEqual(view.watchTime(row({ native_observed: true, native_confirmed_seconds: 3600, duration_seconds: 3600, progress_reported: false }), opts), { seconds: 3600, estimate: false });
+assert.deepStrictEqual(view.watchTime(row({ native_observed: true, native_confirmed_seconds: 0, duration_seconds: 10800, progress_reported: false }), opts), { seconds: 10800, estimate: true });
 assert.strictEqual(view.durationLabel(0), '0m');
 assert.strictEqual(view.durationLabel(20), '<1m');
 assert.strictEqual(view.durationLabel(2700), '45m');

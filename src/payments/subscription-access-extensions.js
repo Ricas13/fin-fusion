@@ -3,6 +3,8 @@
 const { transaction } = require('../db');
 const billingPeriods = require('./billing-periods');
 const subscriptionState = require('../entitlements/subscription-state');
+const carriedTime = require('./carried-time');
+const discounts = require('./discounts');
 
 const PROVIDERS=new Set(['stripe','paypal','plisio']);
 const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled','expired']);
@@ -52,6 +54,8 @@ function purchasedDays(snapshot={},from=new Date()){
   const end=billingPeriods.addPlanDuration({billingInterval:interval,durationDays},new Date(from));
   return wholeDaysBetween(from,end);
 }
+// The paid-for extension cannot be attached to this subscription.
+function targetUnavailable(message){const error=new Error(message);error.code='ACCESS_EXTENSION_TARGET_UNAVAILABLE';return error;}
 async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId=null}){
   const result=await client.query(`
     SELECT s.*,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.is_free_tier,p.is_addon,p.billing_interval,
@@ -64,11 +68,11 @@ async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutInt
      FOR UPDATE OF s
   `,[subscriptionId,customerId]);
   const row=result.rows[0]||null;
-  if(!row)throw new Error('The subscription being extended no longer exists.');
-  if(String(row.plan_id)!==String(planId))throw new Error('The selected extension no longer matches your current plan.');
-  if(row.superseded_by)throw new Error('This subscription has already been replaced.');
-  if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw new Error('Only a current paid plan can be extended.');
-  if(row.refund_terminated_at)throw new Error('A refunded or charged-back subscription cannot be extended.');
+  if(!row)throw targetUnavailable('The subscription being extended no longer exists.');
+  if(String(row.plan_id)!==String(planId))throw targetUnavailable('The selected extension no longer matches your current plan.');
+  if(row.superseded_by)throw targetUnavailable('This subscription has already been replaced.');
+  if(row.is_addon||row.is_free_tier||Number(row.price_minor||0)<=0||String(row.billing_interval||'')==='trial')throw targetUnavailable('Only a current paid plan can be extended.');
+  if(row.refund_terminated_at)throw targetUnavailable('A refunded or charged-back subscription cannot be extended.');
 
   let committedCheckout=null;
   if(checkoutIntentId){
@@ -106,7 +110,7 @@ async function lockedTarget(client,{customerId,subscriptionId,planId,checkoutInt
   if(service==='stremio')current=await subscriptionState.effectiveStremioSubscription(row.customer_id,{client,includeBlocked:true});
   else if(service==='emby')current=await subscriptionState.effectiveEmbySubscription(row.customer_id,{client,includeBlocked:true});
   else if(service==='jellyfin'||service==='bundle')current=await subscriptionState.effectiveSubscription(row.customer_id,{client,includeBlocked:true});
-  else throw new Error('This service type cannot be extended through customer checkout.');
+  else throw targetUnavailable('This service type cannot be extended through customer checkout.');
   if(current&&String(current.subscription_id||current.id||'')!==String(row.id)){
     const error=new Error('This subscription was replaced before the extension payment could be fulfilled.');
     error.code='ACCESS_EXTENSION_TARGET_REPLACED';
@@ -172,7 +176,7 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
     }
   }
   const nextTotal=baseDays+activeDays;
-  if(nextTotal>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  if(nextTotal>3650)throw targetUnavailable('This subscription cannot be extended beyond the maximum supported paid-through window.');
   let updated=subscription;
   if(nextTotal!==currentTotal){
     updated=(await client.query('UPDATE subscriptions SET service_extension_days=$2,updated_at=NOW() WHERE id=$1 RETURNING *',[subscriptionId,nextTotal])).rows[0];
@@ -180,6 +184,11 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
   return{changed:nextTotal!==currentTotal,purchasedDays:activeDays,baseDays,subscription:updated,accessExpiresAt:cursor};
 }
 
+// Purchases queued behind this subscription move with its bought time, in the
+// same transaction. Replays never reach this, so time is not moved twice.
+async function shiftQueuedPurchases(client,subscriptionId,previousExtensionDays){
+  await client.query('SELECT public.shift_prepaid_queue_after_end_change($1,$2)',[subscriptionId,Math.max(0,Number(previousExtensionDays||0))]);
+}
 async function existingExtension(client,{provider,providerPaymentId,checkoutIntentId}){
   const result=await client.query(`
     SELECT *
@@ -230,7 +239,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   target={...target,...(rebased.subscription||{})};
   const cursor=new Date(new Date(target.current_period_end).getTime()+Math.max(0,Number(target.service_extension_days||0))*86400000);
   const days=purchasedDays(commercialSnapshot,cursor);
-  if(Number(target.service_extension_days||0)+days>3650)throw new Error('This subscription cannot be extended beyond the maximum supported paid-through window.');
+  if(Number(target.service_extension_days||0)+days>3650)throw targetUnavailable('This subscription cannot be extended beyond the maximum supported paid-through window.');
   const directCollision=await client.query(`
     SELECT id,customer_id
     FROM subscriptions
@@ -251,6 +260,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8::jsonb)
     RETURNING *
   `,[customerId,subscriptionId,planId,provider,providerPaymentId,checkoutIntentId||null,days,JSON.stringify(commercialSnapshot||{})])).rows[0];
+  await discounts.redeemForExtensionTx(client,inserted);
   const updated=(await client.query(`
     UPDATE subscriptions
        SET service_extension_days=COALESCE(service_extension_days,0)+$2,
@@ -258,6 +268,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
      WHERE id=$1
      RETURNING *
   `,[subscriptionId,days])).rows[0];
+  await shiftQueuedPurchases(client,subscriptionId,replayTarget?.service_extension_days);
   await client.query(`
     INSERT INTO audit_log(action,entity_type,entity_id,metadata)
     VALUES('subscription.access_extension.purchase','subscription',$1,$2::jsonb)
@@ -278,14 +289,22 @@ async function extensionIdentity(provider,providerPaymentId){
 async function revokeByProviderPayment({provider,providerPaymentId,customerId=null,reason='Provider payment was reversed',reference=null}){
   provider=cleanProvider(provider);providerPaymentId=cleanReference(providerPaymentId);
   return transaction(async client=>{
+    // One lock order everywhere: the customer, then the subscription. Taken
+    // always, because a purchase can be queued between a check and the lock.
+    await client.query(`
+      SELECT c.id FROM customers c
+      JOIN subscription_access_extensions e ON e.customer_id=c.id
+      WHERE e.provider=$1 AND e.provider_payment_id=$2
+      FOR UPDATE OF c
+    `,[provider,providerPaymentId]);
     // All purchase, renewal and reversal paths lock the parent first. Locking
     // an extension first deadlocks concurrent refunds against recomputation.
-    await client.query(`
-      SELECT s.id FROM subscriptions s
+    const parent=(await client.query(`
+      SELECT s.id,s.service_extension_days,s.superseded_by,s.replacement_reason FROM subscriptions s
       JOIN subscription_access_extensions e ON e.subscription_id=s.id
       WHERE e.provider=$1 AND e.provider_payment_id=$2
       FOR UPDATE OF s
-    `,[provider,providerPaymentId]);
+    `,[provider,providerPaymentId])).rows[0]||null;
     const extension=(await client.query(`
       SELECT * FROM subscription_access_extensions
        WHERE provider=$1 AND provider_payment_id=$2
@@ -299,6 +318,11 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
       throw error;
     }
     if(extension.status==='revoked')return{matched:true,changed:false,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension};
+    // A purchase on a row whose time has been carried also has to come off the
+    // plan that now holds it.
+    const carried=parent?.superseded_by&&parent.replacement_reason==='paid_time_carried';
+    const appliedTotal=async()=>Number((await client.query('SELECT COALESCE(SUM(applied_days),0) AS days FROM subscription_access_extensions WHERE subscription_id=$1',[extension.subscription_id])).rows[0]?.days||0);
+    const appliedBefore=carried?await appliedTotal():0;
     const revoked=(await client.query(`
       UPDATE subscription_access_extensions
          SET status='revoked',revoked_at=COALESCE(revoked_at,NOW()),
@@ -310,6 +334,11 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
     // change the applied day-count of every later month/6-month/year extension,
     // so never subtract this row's historical purchased_days in isolation.
     const recomputed=await recomputeActivePurchasedDaysTx(client,extension.subscription_id,extension.customer_id);
+    await shiftQueuedPurchases(client,extension.subscription_id,parent?.service_extension_days);
+    if(carried){
+      const removedDays=appliedBefore-await appliedTotal();
+      if(removedDays>0)await carriedTime.reduceSource(client,extension.subscription_id,removedDays*86400,{basePayment:false,reason:'source_extension_reversed'});
+    }
     await client.query(`
       INSERT INTO audit_log(action,entity_type,entity_id,metadata)
       VALUES('subscription.access_extension.revoke','subscription',$1,$2::jsonb)

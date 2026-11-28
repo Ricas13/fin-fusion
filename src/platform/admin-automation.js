@@ -57,7 +57,7 @@ function dt(value){ return value ? new Date(value).toLocaleString('en-GB') : 'Ne
 function duration(value){ return value==null ? '—' : Number(value)<1000 ? `${value} ms` : `${(Number(value)/1000).toFixed(1)} s`; }
 function intervalLabel(seconds){ const n=Number(seconds||0); if(n%86400===0)return `${n/86400} day${n===86400?'':'s'}`; if(n%3600===0)return `${n/3600} hour${n===3600?'':'s'}`; if(n%60===0)return `${n/60} minute${n===60?'':'s'}`; return `${n} seconds`; }
 function token(req){ return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
-function statePill(state){const cls=state==='healthy'?'good':state==='failed'||state==='stale'||state==='missing'?'bad':state==='disabled'||state==='degraded'?'warn':'';return `<span class="pill ${cls}">${esc(String(state).replace('_',' '))}</span>`}
+function statePill(state){const cls=state==='healthy'?'good':state==='failed'||state==='stale'||state==='stuck'||state==='missing'?'bad':state==='disabled'||state==='degraded'?'warn':'';return `<span class="pill ${cls}">${esc(String(state).replace('_',' '))}</span>`}
 function scheduleOptions(value){const current=Number(value||0),values=[...new Set([...PRESETS,current].filter(n=>n>=30&&n<=86400))].sort((a,b)=>a-b);return values.map(n=>`<option value="${n}" ${n===current?'selected':''}>Every ${esc(intervalLabel(n))}</option>`).join('')}
 function groupFor(jobKey){return GROUPS.find(([, ,keys])=>keys.has(jobKey))||['Other','Less common background work.',new Set()]}
 
@@ -85,8 +85,8 @@ function groupedJobs(req,jobs){
 
 function automationHero(jobs,worker,workerAlive){
     const states=jobs.map(job=>jobHealth.healthState(job));
-    const unhealthyJobs=jobs.filter(job=>['degraded','failed','stale','missing'].includes(jobHealth.healthState(job)));
-    const hardFailures=jobs.filter(job=>['failed','stale','missing'].includes(jobHealth.healthState(job))).length;
+    const unhealthyJobs=jobs.filter(job=>['degraded','failed','stale','stuck','missing'].includes(jobHealth.healthState(job)));
+    const hardFailures=jobs.filter(job=>['failed','stale','stuck','missing'].includes(jobHealth.healthState(job))).length;
     const degraded=states.filter(state=>state==='degraded').length;
     const disabled=states.filter(state=>state==='disabled').length;
     const healthy=states.filter(state=>state==='healthy').length;
@@ -97,7 +97,7 @@ function automationHero(jobs,worker,workerAlive){
     return ui.operatorHero({tone,eyebrow:'Automation control room',title,body:'Worker health, partial failures and failed jobs are shown before routine schedules so background degradation is hard to miss.',statusLabel:!workerAlive?'Worker problem':hardFailures?'Action required':degraded?'Degraded':disabled?'Review disabled':'Operating normally',next,facts:[
         {label:'Worker',value:workerAlive?'Alive':'Stale / missing',detail:worker?`heartbeat ${worker.heartbeat_age_seconds}s ago`:'no heartbeat registered'},
         {label:'Healthy jobs',value:`${healthy} / ${jobs.length}`,detail:'based on canonical job-health state'},
-        {label:'Needs review',value:String(unhealthyJobs.length),detail:'degraded, failed, stale or missing'},
+        {label:'Needs review',value:String(unhealthyJobs.length),detail:'degraded, failed, stuck, stale or missing'},
         {label:'Disabled',value:String(disabled),detail:'recurring schedule off'}
     ],actionsHtml:first?`<a class="button" href="#automation-problems">Fix unhealthy jobs</a><a class="button secondary" href="#all-automation-jobs">All schedules</a>`:'<a class="button secondary" href="#all-automation-jobs">Review schedules</a>'});
 }
@@ -141,8 +141,8 @@ async function page(req) {
     ]);
     const integrityNames=await integrityCustomerNames(accessFindings);
     const workerAlive=Boolean(worker&&Number(worker.heartbeat_age_seconds)<=Math.max(60,Math.ceil(Number(worker?.metadata?.pollMs||15000)/1000)*4));
-    const problemJobs=jobs.filter(job=>['degraded','failed','stale','missing'].includes(jobHealth.healthState(job)));
-    const problems=problemJobs.length?`<section class="section" id="automation-problems">${ui.sectionHeader({title:'Fix these jobs first',description:'These jobs are degraded, failed, stale or missing. Run them for catch-up/diagnosis or correct the underlying worker/integration problem.'})}<div class="serverGrid">${problemJobs.map(job=>jobCard(req,job)).join('')}</div></section>`:'';
+    const problemJobs=jobs.filter(job=>['degraded','failed','stale','stuck','missing'].includes(jobHealth.healthState(job)));
+    const problems=problemJobs.length?`<section class="section" id="automation-problems">${ui.sectionHeader({title:'Fix these jobs first',description:'These jobs are degraded, failed, stuck, stale or missing. Run them for catch-up/diagnosis or correct the underlying worker/integration problem.'})}<div class="serverGrid">${problemJobs.map(job=>jobCard(req,job)).join('')}</div></section>`:'';
     const routine=ui.detailDisclosure({title:`All automation schedules (${jobs.length})`,summary:'Routine controls · open only when changing schedules or running a job manually',bodyHtml:`<div id="all-automation-jobs">${groupedJobs(req,jobs)}</div>`});
     return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${accessIntegritySection(req,accessFindings,integrityNames)}${problems}${routine}`,pageClass:'page-automation'});
 }

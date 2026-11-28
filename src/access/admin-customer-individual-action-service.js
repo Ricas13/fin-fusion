@@ -3,6 +3,7 @@
 const {query,transaction}=require('../db');
 const subscriptionState=require('../entitlements/subscription-state');
 const planExpiry=require('../entitlements/plan-expiry');
+const queuedPurchases=require('../payments/queued-purchases');
 const accessHolds=require('../entitlements/access-holds');
 const serviceAdminControl=require('../entitlements/service-admin-control');
 const provisioning=require('../jellyfin/resilient-provisioning');
@@ -79,9 +80,11 @@ async function jellyfinAccounts(customerId){
 
 async function extend({customerId,actorUserId,subscriptionId,operationId,units}){
   const result=await transaction(async client=>{
+    await queuedPurchases.lockQueueOwner(client,customerId);
     const sub=await lockedSubscriptionForCustomer(client,customerId,subscriptionId);
     if(planExpiry.isFreeTier(sub))throw new Error('Free Access has no expiry to extend.');
     const subId=sub.id||sub.subscription_id;
+    const before=await queuedPurchases.accessEndBefore(client,subId);
     const durationDays=Math.max(1,Number(sub.duration_days_snapshot||sub.duration_days||30));
     const requestedDays=durationDays*units;
     if(!Number.isInteger(requestedDays)||requestedDays<1)throw new Error('Requested service extension is invalid.');
@@ -128,6 +131,7 @@ async function extend({customerId,actorUserId,subscriptionId,operationId,units})
       );
       added+=row.days;
     }
+    if(added)await queuedPurchases.moveQueuedPurchases(client,subId,before);
     return{subId,requestedDays,added};
   });
   const warnings=[];
@@ -146,15 +150,18 @@ async function extend({customerId,actorUserId,subscriptionId,operationId,units})
 
 async function setExpiry({customerId,actorUserId,subscriptionId,expiryDate}){
   const subId=await transaction(async client=>{
+    await queuedPurchases.lockQueueOwner(client,customerId);
     const sub=await lockedSubscriptionForCustomer(client,customerId,subscriptionId);
     if(planExpiry.isFreeTier(sub))throw new Error('Free Access does not use an expiry date.');
     if(subscriptionState.recurringProvider(sub))throw new Error('Expiry on an active Stripe/PayPal recurring agreement is provider-controlled. Use billing cancellation or plan change instead.');
     const id=sub.id||sub.subscription_id;
+    const before=await queuedPurchases.accessEndBefore(client,id);
     const updated=await client.query(
       `UPDATE subscriptions SET current_period_end=$2::date,service_extension_days=0,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id`,
       [id,expiryDate,customerId]
     );
     if(!updated.rowCount)throw new Error('The selected subscription changed before the expiry could be saved.');
+    await queuedPurchases.moveQueuedPurchases(client,id,before);
     return id;
   });
   const warnings=[];
@@ -174,16 +181,19 @@ async function resetExpiryToPlan({customerId,actorUserId=null}){
   const subscriptionId=entitlement.subscription_id||entitlement.id;
   const end=planExpiry.endForPlan(entitlement);
   await transaction(async client=>{
+    await queuedPurchases.lockQueueOwner(client,customerId);
     const locked=await client.query(
       'SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',
       [subscriptionId,customerId]
     );
     if(!locked.rowCount)throw new Error('The active subscription changed before expiry could be reset.');
+    const before=await queuedPurchases.accessEndBefore(client,subscriptionId);
     const updated=await client.query(
       'UPDATE subscriptions SET current_period_end=$2,service_extension_days=0,updated_at=NOW() WHERE id=$1 AND customer_id=$3 RETURNING id',
       [subscriptionId,end,customerId]
     );
     if(!updated.rowCount)throw new Error('The active subscription changed before expiry could be reset.');
+    await queuedPurchases.moveQueuedPurchases(client,subscriptionId,before);
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
        VALUES($1,'admin.customer.expiry.reset_to_plan','customer',$2,$3::jsonb)`,
@@ -202,8 +212,10 @@ async function resetExpiryToPlan({customerId,actorUserId=null}){
 async function resetTrial({customerId,actorUserId,subscriptionId}){
   const now=new Date();
   const result=await transaction(async client=>{
+    await queuedPurchases.lockQueueOwner(client,customerId);
     const sub=await lockedTrialSubscriptionForCustomer(client,customerId,subscriptionId);
     const subId=sub.id||sub.subscription_id;
+    const before=await queuedPurchases.accessEndBefore(client,subId);
     const durationDays=Math.max(1,Math.min(3650,Number(sub.duration_days_snapshot||sub.duration_days||1)));
     const end=new Date(now.getTime()+durationDays*86400000);
     const previous={
@@ -222,6 +234,7 @@ async function resetTrial({customerId,actorUserId,subscriptionId}){
       RETURNING id,starts_at,current_period_end,status
     `,[subId,now,end,customerId]);
     if(!updated.rowCount)throw new Error('The trial changed before its duration could be reset.');
+    await queuedPurchases.moveQueuedPurchases(client,subId,before);
     await client.query(`
       INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.customer.trial.reset_duration','subscription',$2,$3::jsonb)

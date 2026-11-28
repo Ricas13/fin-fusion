@@ -80,6 +80,7 @@ function jobDecision(row, state) {
     const jobKey = String(row?.job_key || '');
     if (health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)) return { visible: true, severity: 'critical', reason: 'disabled', failures: 0 };
     if (health === 'stale') return { visible: true, severity: CORE_AUTOMATION_JOBS.has(jobKey) ? 'critical' : 'warning', reason: 'stale' };
+    if (health === 'stuck') return { visible: true, severity: CORE_AUTOMATION_JOBS.has(jobKey) ? 'critical' : 'warning', reason: 'stuck' };
     if (!['failed', 'degraded'].includes(health)) return { visible: false, severity: null };
     const failures = Math.max(0, Number(row?.consecutive_failures || 0));
     // The integrity watchdog means an invariant is already broken, not merely

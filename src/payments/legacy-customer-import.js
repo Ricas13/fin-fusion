@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 const subscriptionState = require('../entitlements/subscription-state');
 const lifecyclePrimitives = require('./lifecycle-primitives');
+const queuedPurchases = require('./queued-purchases');
 
 const MAX_FILES = 20;
 const MAX_PAYLOAD_BYTES = 800 * 1024;
@@ -164,6 +165,8 @@ function existingPaidDecision(payment, planId, subscriptions) {
     if (!localPaid.length) return { kind: 'none', subscription: null };
     if (localPaid.length > 1) return { kind: 'review', subscription: null, reason: 'More than one active local paid subscription overlaps this legacy term.' };
     const partial = localPaid[0];
+    // Its time now sits on a newer plan, so it cannot be lengthened in place.
+    if (partial.superseded_by) return { kind: 'review', subscription: partial, reason: 'Existing paid access that was carried onto a newer plan overlaps this legacy term.' };
     if (String(partial.plan_id) !== String(planId)) return { kind: 'review', subscription: partial, reason: 'Existing local paid access overlaps this legacy term on a different plan.' };
     return { kind: 'extend', subscription: partial };
 }
@@ -190,7 +193,7 @@ async function loadContext(emails, transactionKeys, legacyNames = []) {
     }
     for (const row of importedResult.rows) imported.set(`${row.provider}:${row.provider_transaction_id}`, row);
     const customerIds = Array.from(new Set([...customersResult.rows, ...jellyfinResult.rows].map(row => row.id)));
-    const subscriptions = customerIds.length ? (await query(`SELECT s.*,p.is_free_tier,COALESCE(s.price_minor_snapshot,p.price_minor,0) effective_price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=ANY($1::uuid[]) AND s.superseded_by IS NULL AND s.current_period_end>NOW() ORDER BY s.starts_at,s.current_period_end`, [customerIds])).rows : [];
+    const subscriptions = customerIds.length ? (await query(`SELECT s.*,p.is_free_tier,COALESCE(s.price_minor_snapshot,p.price_minor,0) effective_price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=ANY($1::uuid[]) AND (s.superseded_by IS NULL OR s.replacement_reason='paid_time_carried') AND s.current_period_end>NOW() ORDER BY s.starts_at,s.current_period_end`, [customerIds])).rows : [];
     const subscriptionsByCustomer = new Map();
     for (const row of subscriptions) { const key = String(row.customer_id); if (!subscriptionsByCustomer.has(key)) subscriptionsByCustomer.set(key, []); subscriptionsByCustomer.get(key).push(row); }
     return { plans: plansResult.rows, customersByEmail, customersByJellyfinName, orphanUsersByEmail, imported, subscriptionsByCustomer };
@@ -335,16 +338,19 @@ async function importSafe(files, actorUserId, { now = new Date() } = {}) {
             const planResult = await client.query(`SELECT id,name,code,billing_interval,duration_days,price_minor,currency,streams,service_type,server_class,is_free_tier FROM plans WHERE id=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' FOR UPDATE`, [candidate.planMatch.id]);
             if (!planResult.rowCount) throw new Error(`Mapped plan for ${candidate.email} is no longer available.`);
             const plan = planResult.rows[0];
-            const activeSubs = await client.query(`SELECT s.*,p.is_free_tier,COALESCE(s.price_minor_snapshot,p.price_minor,0) effective_price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.current_period_end>NOW() FOR UPDATE OF s`, [customer.row.id]);
+            await queuedPurchases.lockQueueOwner(client, customer.row.id);
+            const activeSubs = await client.query(`SELECT s.*,p.is_free_tier,COALESCE(s.price_minor_snapshot,p.price_minor,0) effective_price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND (s.superseded_by IS NULL OR s.replacement_reason='paid_time_carried') AND s.current_period_end>NOW() FOR UPDATE OF s`, [customer.row.id]);
             const decision = existingPaidDecision(candidate, plan.id, activeSubs.rows);
             if (['covered_recurring','covered'].includes(decision.kind)) continue;
             if (decision.kind === 'review') throw new Error(`Paid access changed for ${candidate.email} after preview: ${decision.reason}`);
             const snapshot = commercialSnapshot(candidate, plan);
             let subscription, extendedExisting = false;
             if (decision.kind === 'extend') {
+                const before = await queuedPurchases.accessEndBefore(client, decision.subscription.id);
                 const extended = await client.query(`UPDATE subscriptions SET starts_at=LEAST(starts_at,$2),current_period_end=GREATEST(current_period_end,$3),cancel_at_period_end=TRUE,updated_at=NOW() WHERE id=$1 AND customer_id=$4 AND plan_id=$5 AND superseded_by IS NULL AND status='active' RETURNING *`, [decision.subscription.id, candidate.start, candidate.end, customer.row.id, plan.id]);
                 if (!extended.rowCount) throw new Error(`Existing paid access changed for ${candidate.email} after preview; import stopped for review.`);
                 subscription = extended.rows[0];
+                await queuedPurchases.moveQueuedPurchases(client, subscription.id, before);
                 extendedExisting = true;
                 extendedSubscriptions++;
             } else {

@@ -20,7 +20,7 @@ function addCommandPalette(html){
 }
 
 function addFilterStyles(html){
-  const link='<link rel="stylesheet" href="/css/admin-filter-bars.css">';
+  const link='<link rel="stylesheet" href="/css/admin-filter-bars.css"><link rel="stylesheet" href="/css/admin-visual-polish.css">';
   return html.includes('</head>')?html.replace('</head>',`${link}</head>`):html;
 }
 

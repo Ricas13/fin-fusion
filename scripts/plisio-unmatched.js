@@ -11,7 +11,21 @@ const sweep = require('../src/payments/plisio-sweep');
 
 // Only these fields are printed (no wallet address, hash, link or customer email).
 const FIELDS = ['txn_id', 'order_number', 'order_name', 'status', 'type', 'source_amount', 'source_currency', 'currency', 'amount', 'actual_sum', 'created_at', 'created_at_utc', 'tx_created_at', 'expire_utc'];
-const SAFE = /^[\w .:+\/@-]{0,120}$/;
+const SAFE = /^[\w .:+-]{0,120}$/;
+const ORDER_NUMBER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const IDENTIFIER = /^[A-Za-z0-9_-]{1,120}$/;
+const AMOUNT = /^[0-9]{1,18}(?:\.[0-9]{1,18})?$/;
+const CURRENCY = /^[A-Z0-9]{2,12}$/;
+function printable(key,value){
+    // External order descriptions may contain arbitrary personal information,
+    // even with ordinary characters. Never print them; IDs identify the invoice.
+    if(key==='order_name')return false;
+    if(key==='order_number')return ORDER_NUMBER.test(value);
+    if(key==='txn_id')return IDENTIFIER.test(value);
+    if(['source_amount','amount','actual_sum'].includes(key))return AMOUNT.test(value);
+    if(['source_currency','currency'].includes(key))return CURRENCY.test(value);
+    return SAFE.test(value)&&!/(?:https?:|www\.)/i.test(value);
+}
 
 // Pure: one printable block for an operation.
 function describe(operation) {
@@ -20,7 +34,7 @@ function describe(operation) {
         const raw = operation?.[key] ?? operation?.params?.[key];
         if (raw == null || typeof raw === 'object') continue;
         const value = String(raw);
-        lines.push(`  ${key}: ${SAFE.test(value) ? value : '(not shown)'}`);
+        lines.push(`  ${key}: ${printable(key,value) ? value : '(not shown)'}`);
     }
     return lines.join('\n') || '  (no recognised fields)';
 }
@@ -30,7 +44,7 @@ async function main() {
     const { query, getPool } = require('../src/db');
     try {
         const scanned = await sweep.scan({ apiFn: plisio.api });
-        if (scanned.structural.length || scanned.failed) { console.log(`Cannot list payments safely (${scanned.structural.join(',') || scanned.failed}).`); return; }
+        if (scanned.structural.length || scanned.failed) { console.log(`Cannot list payments safely (${scanned.structural.join(',') || scanned.failed}).`); process.exitCode=1; return; }
         const compared = await sweep.compare(scanned.operations, query);
         console.log(`Completed at Plisio: ${scanned.operations.length}. Settled here: ${compared.settled.length}. Unmatched: ${compared.unmatched.length}. Open here: ${compared.pending.length}. Closed here: ${compared.closed.length}.${scanned.incomplete ? ' (partial scan)' : ''}`);
         for (const [label, ids] of [['UNMATCHED (no checkout, not in ledger)', compared.unmatched], ['COMPLETED AT PLISIO BUT OPEN HERE', compared.pending], ['COMPLETED AT PLISIO BUT CLOSED HERE', compared.closed]]) {

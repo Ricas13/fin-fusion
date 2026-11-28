@@ -13,11 +13,19 @@ const serviceCreditReservations = require('./service-credit-reservations');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
 const financialState = require('./provider-financial-state');
 const accessExtensions = require('./subscription-access-extensions');
+const samePlanRepurchase = require('./same-plan-repurchase');
 const stremioEntitlements = require('../stremio/entitlements');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
+const carriedTime = require('./carried-time');
 const PAYMENT_DELINQUENCY_HOLD_TYPE = 'payment_delinquency';
+// Reasons a paid extension can no longer be attached to its subscription.
+// Payment-identity conflicts, money loss and database errors are not among them.
+const EXTENSION_TARGET_FAILURES = new Set([
+    'ACCESS_EXTENSION_TARGET_UNAVAILABLE', 'ACCESS_EXTENSION_TARGET_REPLACED', 'ACCESS_EXTENSION_ACCESS_BLOCKED',
+    'ACCESS_EXTENSION_PLAN_CHANGE_OPEN', 'ACCESS_EXTENSION_ALLOWANCE_CHANGED'
+]);
 
 function addPlanDuration(plan, from = new Date()) {
     return billingPeriods.addPlanDuration(plan, from);
@@ -75,7 +83,8 @@ async function syncProviderAccessState({ customerId, provider, providerSubscript
             type: PAYMENT_DELINQUENCY_HOLD_TYPE,
             sourceKey,
             reason: `${provider} recurring payment is delinquent`,
-            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true }
+            // 'unpaid' survives a later suspension of the same hold.
+            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true, ...(status === 'past_due' ? { unpaid: true } : {}) }
         }, client);
     }
 
@@ -254,7 +263,7 @@ async function confirmedMoneyLoss(client, provider, providerSubscriptionId, { bi
     return result.rows[0] || null;
 }
 
-async function recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId, error }) {
+async function recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId, error, repair = null }) {
     if (!checkoutIntentId) return null;
     const eventId = `capacity:${String(checkoutIntentId)}`;
     const result = await query(`
@@ -287,9 +296,20 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
         providerSubscriptionId,
         paidButUnfulfilled: true,
         lastError: String(error?.message || error || 'Plan capacity exhausted').slice(0, 1000),
-        lastSeenAt: new Date().toISOString()
+        lastSeenAt: new Date().toISOString(),
+        ...(repair || {})
     })]);
     return result.rows[0] || null;
+}
+
+function repurchaseRepair(contract, error) {
+    if (!contract?.repurchaseReason) return null;
+    return {
+        reason: `${contract.repurchaseReason}_repurchase_extension_failed`,
+        extensionSubscriptionId: contract.extensionSubscriptionId || null,
+        extensionFailureCode: error?.code || null,
+        operatorAction: 'Money was received for more time on the current plan and could not be applied. Add the paid time to that customer or refund the payment. Do not activate it as a separate purchase over time they still hold.'
+    };
 }
 
 async function resolveCapacitySettlementIncident({ provider, checkoutIntentId }, client = null) {
@@ -309,11 +329,12 @@ async function resolveCapacitySettlementIncident({ provider, checkoutIntentId },
 async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null, checkoutIntentId = null }) {
     if (!['stripe', 'paypal', 'plisio'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
-    const contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
+    let contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
     const settlementCheckoutIntentId = checkoutIntentId || contract?.checkoutIntentId || null;
     let subscription;
     let historicalCheckoutReplay = false;
     let activationSuppressedByMoneyLoss = false;
+    let carryIssue = null;
     try {
         subscription = await transaction(async client => {
             const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
@@ -342,15 +363,58 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 activationSuppressedByMoneyLoss
             });
 
-            const snapshotJson = contract ? JSON.stringify(contract) : null;
             const planNameSnapshot = contract?.planName || plan.name;
             const planCodeSnapshot = contract?.planCode || plan.code;
             const priceMinorSnapshot = contract?.priceMinor ?? plan.price_minor;
             const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
-            const isAccessExtension = contract?.kind === 'subscription_extension';
+            // A full-plan repurchase that could not extend was activated as a
+            // direct purchase; a replay of that payment finds its row.
+            let isAccessExtension = contract?.kind === 'subscription_extension'
+                && !(contract.repurchaseReason === 'plan_full' && existing.rowCount);
             let activationMediaServer=null;
+            let extensionApplied = null, repurchaseFallback = null;
+            const extensionRequest = () => ({
+                customerId,
+                subscriptionId: contract?.extensionSubscriptionId,
+                planId,
+                provider,
+                providerPaymentId: providerSubscriptionId,
+                checkoutIntentId: settlementCheckoutIntentId,
+                commercialSnapshot: contract
+            });
+            // The holder paid to buy their full plan again. Queueing protects
+            // their time, so if the extension cannot be applied the payment
+            // still activates as a queued purchase instead of being stranded.
+            if (isAccessExtension && contract.repurchaseReason === 'plan_full' && !activationSuppressedByMoneyLoss
+                && checkoutBillingMode === billingMode.BILLING_MODES.PAYMENT) {
+                await client.query('SAVEPOINT repurchase_extension');
+                try {
+                    extensionApplied = await accessExtensions.applyPurchase(client, extensionRequest());
+                } catch (error) {
+                    if (!EXTENSION_TARGET_FAILURES.has(error?.code)) throw error;
+                    await client.query('ROLLBACK TO SAVEPOINT repurchase_extension');
+                    const db = (sql, params) => client.query(sql, params);
+                    const holding = await samePlanRepurchase.assessHolding(customerId, planId, { db });
+                    // Never over time that queueing would not protect (nothing can
+                    // queue behind lifetime access), and never into a full plan
+                    // for someone who no longer holds a place.
+                    if (holding.lifetime || holding.unprotectedIds.length) throw error;
+                    if (!holding.current) {
+                        try { await capacity.lockAndAssert(client, planId, plan.name || 'This plan', { excludeCheckoutIntentId: settlementIntent?.id || null }); }
+                        catch (capacityError) { if (capacityError?.code === 'PLAN_CAPACITY_EXHAUSTED') throw error; throw capacityError; }
+                    }
+                    repurchaseFallback = error.code;
+                    isAccessExtension = false;
+                    contract = { ...contract, kind: 'direct_plan', extensionSubscriptionId: null, repurchaseFallback };
+                    if (settlementIntent?.id) {
+                        await client.query(`UPDATE billing_checkout_intents SET commercial_snapshot=commercial_snapshot||$2::jsonb,updated_at=NOW() WHERE id=$1`,
+                            [settlementIntent.id, JSON.stringify({ kind: 'direct_plan', extensionSubscriptionId: null, repurchaseFallback })]);
+                    }
+                }
+            }
+            const snapshotJson = contract ? JSON.stringify(contract) : null;
 
             if (!isAccessExtension) {
                 const extensionOwner = await client.query(`
@@ -371,7 +435,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 throw new Error('Access extensions must use a one-time payment.');
             }
 
-            if (!isAccessExtension && !existing.rowCount && !activationSuppressedByMoneyLoss) {
+            if (!isAccessExtension && !repurchaseFallback && !existing.rowCount && !activationSuppressedByMoneyLoss) {
                 if (billingMode.isRecurring({ source: provider, billing_mode: checkoutBillingMode })) {
                     await subscriptionState.assertNoOtherLiveRecurring(client, customerId, null, planId);
                 }
@@ -397,15 +461,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     error.code = 'ACCESS_EXTENSION_MONEY_LOSS';
                     throw error;
                 }
-                const applied = await accessExtensions.applyPurchase(client, {
-                    customerId,
-                    subscriptionId: contract?.extensionSubscriptionId,
-                    planId,
-                    provider,
-                    providerPaymentId: providerSubscriptionId,
-                    checkoutIntentId: settlementCheckoutIntentId,
-                    commercialSnapshot: contract
-                });
+                const applied = extensionApplied || await accessExtensions.applyPurchase(client, extensionRequest());
                 row = applied.subscription;
                 historicalCheckoutReplay = Boolean(applied.replay);
             } else if (existing.rowCount) {
@@ -416,6 +472,13 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     throw mismatch;
                 }
                 if (activationSuppressedByMoneyLoss) {
+                    // Before the row is ended: a replaced row's carried time is
+                    // taken back; a receiving row hands its sources back.
+                    if (existingSubscription.superseded_by) {
+                        await carriedTime.reverseSource(client, existingSubscription.id, existingSubscription.customer_id);
+                    } else {
+                        carryIssue = carriedTime.owedProblem(await carriedTime.returnToSources(client, existingSubscription.id));
+                    }
                     const ended = await client.query(`
                         UPDATE subscriptions
                         SET status='cancelled',
@@ -468,11 +531,27 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 row = located.rows[0] || row;
             }
 
+            // The payment adds to the time already held, only once it is
+            // confirmed: a new row that is active, or an unconfirmed one that is
+            // active now. A replay of an active row carries nothing.
+            if (row && !isAccessExtension && !activationSuppressedByMoneyLoss) {
+                let carried = null;
+                if (!existing.rowCount) {
+                    if (!await carriedTime.markAwaitingFirstPayment(client, row)) carried = await carriedTime.carryOnActivation(client, row);
+                } else if (row.status === 'active' && await carriedTime.firstPaymentPending(client, existing.rows[0])) {
+                    carried = await carriedTime.carryOnFirstPayment(client, row);
+                }
+                if (carried) {
+                    row = carried.row;
+                    carryIssue = carried.problem;
+                }
+            }
+
             const effectiveStatus = row.status;
             if (!isAccessExtension) await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
-            if (effectiveDiscountCodeId && !historicalCheckoutReplay) {
+            if (effectiveDiscountCodeId && !historicalCheckoutReplay && !isAccessExtension) {
                 await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
             }
             if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
@@ -484,18 +563,19 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 await settleCheckoutServiceCredit(client, settlementCheckoutIntentId, contract);
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
-            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`, [isAccessExtension?'payment.access_extension.activate':'payment.subscription.activate',row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null, accessExtension:isAccessExtension })]);
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`, [isAccessExtension?'payment.access_extension.activate':'payment.subscription.activate',row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay, activationSuppressedByMoneyLoss, moneyLossIncidentId: moneyLoss?.id || null, accessExtension:isAccessExtension, repurchaseFallback })]);
             return row;
         });
     } catch (error) {
-        const extensionFulfillmentFailure = contract?.kind === 'subscription_extension'
+        const extensionFulfillmentFailure = (contract?.kind === 'subscription_extension' || Boolean(contract?.repurchaseFallback))
             && error?.code !== 'ACCESS_EXTENSION_MONEY_LOSS';
         if (settlementCheckoutIntentId && (
             ['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
             || extensionFulfillmentFailure
         )) {
             try {
-                await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error });
+                await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error,
+                    repair: extensionFulfillmentFailure ? repurchaseRepair(contract, error) : null });
                 error.paidButUnfulfilled = true;
             } catch (incidentError) {
                 console.error('Paid-but-unfulfilled checkout incident could not be recorded:', incidentError.message);
@@ -503,6 +583,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         }
         throw error;
     }
+    await carriedTime.reportProblem(customerId, subscription, carryIssue);
     const oneTimeReplay = historicalCheckoutReplay && billingMode.normalize(subscription?.billing_mode) === billingMode.BILLING_MODES.PAYMENT;
     if (providerCustomerId && (!historicalCheckoutReplay || oneTimeReplay)) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
 
@@ -562,16 +643,36 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
 async function updateProviderSubscription({ provider, providerSubscriptionId, providerStatus, periodEnd = null, cancelAtPeriodEnd = null }) {
     const status = mapProviderStatus(provider, providerStatus);
     if (!status) console.warn(`Ignoring unknown ${provider} subscription status without changing access state:`, String(providerStatus || 'unknown').slice(0, 120));
+    let carryIssue = null;
     const row = await transaction(async client => {
-        const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
+        // One lock order everywhere: the customer, then the subscription. The
+        // update alone would lock the row first and the activation trigger the
+        // customer second.
+        const owners = await client.query(`SELECT id FROM customers WHERE id IN (SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2) ORDER BY id FOR UPDATE`, [provider, providerSubscriptionId]);
+        // The row as it was: needed when a first payment is confirmed, or when
+        // the agreement ends.
+        const prior = owners.rowCount && ['active', 'cancelled', 'expired'].includes(status)
+            ? (await client.query(`SELECT id,customer_id,status,current_period_end,billing_interval_snapshot,duration_days_snapshot FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 FOR UPDATE`, [provider, providerSubscriptionId])).rows[0] || null
+            : null;
+        const nextEnd = await carriedTime.paidEndWhenAgreementEnds(client, {
+            prior, status, periodEnd: periodEnd ? new Date(periodEnd) : null, provider, providerSubscriptionId
+        });
+        const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, nextEnd, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
         let updated = result.rows[0];
+        // A first payment that is only now confirmed.
+        if (updated.status === 'active' && await carriedTime.firstPaymentPending(client, prior)) {
+            const carried = await carriedTime.carryOnFirstPayment(client, updated);
+            updated = carried.row;
+            carryIssue = carried.problem;
+        }
         const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, updated.id, updated.customer_id);
         updated = rebased.subscription || updated;
         if (status) await syncProviderAccessState({ customerId: updated.customer_id, provider, providerSubscriptionId, status: updated.status, billingMode: updated.billing_mode }, client);
         return updated;
     });
     if (row) {
+        await carriedTime.reportProblem(row.customer_id, row, carryIssue);
         if (['active','trialing'].includes(String(row.status||''))) {
             await ensureStremioInstallForSubscription(row.customer_id,row.id).catch(error=>{
                 console.error('Provider subscription Stremio link recovery pending:',{

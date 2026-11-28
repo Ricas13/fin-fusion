@@ -31,8 +31,10 @@ assert(intents.includes("snapshot.kind === 'subscription_extension'")&&intents.i
 assert(require('fs').readFileSync(require('path').join(__dirname,'..','src/payments/customer-plan-change.js'),'utf8').includes('assertNoOutstandingExtensionCheckout'),'plan changes must refuse an open or paid-but-unfulfilled extension checkout before mutating provider billing');
 assert(checkout.includes('A plan change is already open for this subscription. Complete or resolve it before buying extra time.'),'commercial-operation conflicts must be safe customer-visible checkout errors');
 assert(checkout.includes('public.subscription_access_blocked')&&checkout.includes('Resolve the current account or payment hold before buying extra time.'),'extension checkout must reject held access before the customer is sent to a payment provider');
-assert(checkout.includes("choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim()"),'extensions must reject promo codes before discount reservation because redemption identity belongs to the base subscription');
-assert(checkout.indexOf("choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim()") < checkout.indexOf('discounts.reserveForIntent'),'promo-code rejection must run before creating any extension discount reservation');
+assert(!checkout.includes('Promo codes are not available for subscription extensions.'),'ordinary promo codes must be accepted for extensions');
+assert(extension.includes('discounts.redeemForExtensionTx(client,inserted)'),'extension discount accounting must use the individual extension identity in the fulfillment transaction');
+assert(lifecycle.includes('!historicalCheckoutReplay && !isAccessExtension'),'provider extensions must not redeem against their original subscription');
+assert(zeroValue.includes("if(snapshot.kind!=='subscription_extension') await discounts.redeemForSubscriptionTx"),'zero-value extensions must not redeem against their original subscription');
 assert(checkout.includes("checkout_mode:'payment'"),'recurring provider pricing must be convertible to a one-off extension charge');
 assert(intents.includes("snapshot.kind !== 'subscription_extension'"),'extensions must not reserve another plan/server capacity slot');
 assert(intents.includes("['direct_plan','subscription_extension'].includes(snapshot.kind)"),'provider return verification must accept the extension contract explicitly');

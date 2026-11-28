@@ -10,6 +10,7 @@ const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock'
 const reconciliationLock = require('../src/jellyfin/reconciliation-lock');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
+const dispatchPolicy = require('../src/automation/dispatch-policy');
 const providerSettings = require('../src/payments/provider-settings');
 const requestSettings = require('../src/integrations/request-service-settings');
 const emailSettings = require('../src/integrations/email-settings');
@@ -28,6 +29,13 @@ let stopping = false;
 let running = new Set();
 let runningJobs = new Set();
 let heartbeatTimer = null;
+
+const dispatchWake = dispatchPolicy.createDispatchWake({
+    loadDue: () => dueJobs(),
+    dispatch: rows => dispatchDue(rows),
+    isStopping: () => stopping,
+    onError: error => console.error('Automation dispatcher wake failed:', safeLog(error.message || error, 1000))
+});
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function safeLog(value, max = 500) {
@@ -110,7 +118,10 @@ async function runOne(row) {
     const jobKey = row.job_key;
     try {
         const guarded = await withMaintenanceSharedLock(
-            () => jobHealth.runSingleton(jobKey, () => jobRegistry.run(jobKey), { force: Boolean(row.force_run_requested) }),
+            () => jobHealth.runSingleton(jobKey, () => jobRegistry.run(jobKey), {
+                force: Boolean(row.force_run_requested),
+                hostLocks: Boolean(jobRegistry.definition(jobKey)?.hostLocks)
+            }),
             { skipIfBusy: true }
         );
         if (guarded?.skipped && guarded?.reason === 'database_maintenance') return;
@@ -133,26 +144,28 @@ async function runOne(row) {
 }
 
 function dispatchDue(rows) {
-    let capacity = Math.max(0, MAX_CONCURRENCY - running.size);
+    const capacity = Math.max(0, MAX_CONCURRENCY - running.size);
     if (!capacity || stopping) return 0;
 
-    let launched = 0;
-    for (const row of rows) {
-        if (!capacity || stopping) break;
+    const selected = dispatchPolicy.selectDispatchable(rows, {
+        capacity,
+        maxConcurrency: MAX_CONCURRENCY,
+        runningJobKeys: runningJobs,
+        isCritical: jobRegistry.isCritical
+    });
+    for (const row of selected) {
         const jobKey = row.job_key;
-        if (runningJobs.has(jobKey)) continue;
-
         runningJobs.add(jobKey);
+        dispatchWake.noteStarted(jobKey);
         const promise = runOne(row);
         running.add(promise);
         promise.finally(() => {
             running.delete(promise);
             runningJobs.delete(jobKey);
+            dispatchWake.wake();
         });
-        launched += 1;
-        capacity -= 1;
     }
-    return launched;
+    return selected.length;
 }
 
 async function loop() {
@@ -178,6 +191,7 @@ async function loop() {
     while (!stopping) {
         try {
             await heartbeat();
+            dispatchWake.beginCycle(runningJobs);
             const due = await dueJobs();
             if (due.length) dispatchDue(due);
         } catch (error) {

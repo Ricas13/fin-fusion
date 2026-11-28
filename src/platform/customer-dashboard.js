@@ -25,6 +25,8 @@ const customerNav=require('./customer-nav-html');
 const productReadiness=require('./product-readiness');
 const checkoutIntents=require('../payments/checkout-intents');
 const planChange=require('../payments/customer-plan-change');
+const samePlanRepurchase=require('../payments/same-plan-repurchase');
+const queuedPurchases=require('../payments/queued-purchases');
 const csrf=require('../auth/csrf');
 const customerServerChoice=require('../jellyfin/customer-server-choice');
 
@@ -88,13 +90,26 @@ async function stremioHouseholdForCustomer(customerId,hasStremio){if(!hasStremio
 async function libraryProfilesForPortal(customerId,portal){const profiles=[];for(const account of Array.isArray(portal?.accounts)?portal.accounts:[]){if(account.disabled||String(account.media_server_type||'jellyfin')!=='jellyfin')continue;try{const profile=await provisioning.libraryPolicyForAccount(customerId,account);if(!profile.entitlement?.allow_customer_library_choice||!profile.effective)continue;const available=profile.effective.entitlementRows.filter(row=>row.effective).map(row=>row.name);if(!available.length)continue;profiles.push({accountId:account.id,serverName:account.server_name||'Jellyfin server',username:account.jellyfin_username||'',accessLane:account.access_lane||'primary',available,selected:profile.effective.visibleNames});}catch(error){console.warn('Customer Jellyfin library profile unavailable:',{customerId,accountId:account.id,error:error.message});}}return profiles;}
 async function discountPreview(customerId,rawCode){const code=discounts.normalizeCode(rawCode);if(!code)return{code:'',valid:false,plans:{},message:null};const plans=await sellablePlans(),out={},errors=[];for(const plan of plans.filter(plan=>Number(plan.price_minor||0)>0)){try{const discount=await discounts.validateForCheckout({code,planId:plan.id,planCode:plan.code,customerId,currency:plan.currency}),baseMinor=Number(plan.price_minor||0),finalMinor=discounts.computeDiscountedMinor(baseMinor,discount);out[plan.code]={valid:true,baseMinor,finalMinor,currency:plan.currency||'USD',discountType:discount?.discount_type||null,percentOff:Number(discount?.percent_off||0),fixedOffMinor:Number(discount?.fixed_off_minor||0)};}catch(error){out[plan.code]={valid:false};errors.push(error.message);}}const valid=Object.values(out).some(row=>row.valid);return{code,valid,plans:out,message:valid?'Promo applied to eligible plan prices below. Stripe subscription promos reduce the first payment; PayPal recurring plans cannot be dynamically repriced, so a promo uses PayPal one-time checkout.':errors[0]||'That promo code is not valid for the available plans.'};}
 
+function durationLabel(plan){const interval=String(plan?.billing_interval||''),labels={trial:'24-hour trial',month:'Monthly','6_months':'6 months',year:'Yearly',custom:'Custom duration'};if(labels[interval])return labels[interval];const days=Number(plan?.duration_days||0);return days?`${days} days`:'Subscription';}
+// Mirrors the server-rendered Extend forms, so rebuilding a plan card in the
+// browser never takes away the holder's way to add time.
+async function extensionState(customerId,plan,kind,enabled){
+  const held=await samePlanRepurchase.currentPaidSubscription(customerId,plan).catch(()=>null);if(!held)return null;
+  const quantity=planChange.subscriptionAccessQuantity(held,kind),own=plan.access_variants.find(variant=>variantCapacity.variantQuantity(plan,variant)===quantity);
+  const providers=Array.from(new Set(variantPaymentOptions(own,enabled).map(option=>option.provider)));
+  return providers.length?{subscriptionId:subscriptionId(held),quantity,durationLabel:durationLabel(plan),providers}:null;
+}
+
 async function customerVariantState(customerId){
   const plans=(await catalogPlans()).filter(plan=>plan.sale_ready!==false),enabled={stripe:stripe.enabled(),paypal:paypal.enabled(),plisio:plisio.enabled()};
   return Promise.all(plans.filter(plan=>Array.isArray(plan.access_variants)&&plan.access_variants.length>1).map(async plan=>{
-    const current=await planChange.currentRecurring(customerId,plan).catch(()=>null),samePlan=Boolean(current&&String(current.plan_id)===String(plan.id)),kind=plan.access_variant_kind||accessVariants.variantKind(plan),currentQuantity=samePlan?planChange.subscriptionAccessQuantity(current,kind):null,currentProvider=recurringProvider(current),preferred=plan.preferred_access_variant||plan.access_variants.find(v=>!v.capacity?.soldOut)||plan.access_variants[0];
+    let recurringUnknown=false;
+    const current=await planChange.currentRecurring(customerId,plan).catch(()=>{recurringUnknown=true;return null;}),samePlan=Boolean(current&&String(current.plan_id)===String(plan.id)),kind=plan.access_variant_kind||accessVariants.variantKind(plan),extension=await extensionState(customerId,plan,kind,enabled),currentQuantity=samePlan?planChange.subscriptionAccessQuantity(current,kind):null,heldQuantity=currentQuantity||extension?.quantity||null,currentProvider=recurringProvider(current),preferred=plan.preferred_access_variant||plan.access_variants.find(v=>!v.capacity?.soldOut)||plan.access_variants[0];
     const variants=plan.access_variants.map(variant=>{const quantity=variantCapacity.variantQuantity(plan,variant),replacementFits=Boolean(samePlan&&currentQuantity&&quantity<=currentQuantity),soldOut=Boolean(variant.capacity?.soldOut&&!replacementFits);return{quantity,kind:variant.variant_kind||kind,priceMinor:Number(variant.price_minor||0),currency:variant.currency||plan.currency,priceLabel:priceLabel(variant.price_minor,variant.currency||plan.currency),soldOut,scarcity:soldOut?(variant.capacity?.label||'Currently full'):(replacementFits&&variant.capacity?.soldOut?'Available as a reduction':variant.capacity?.label||'Available'),paymentOptions:variantPaymentOptions(variant,enabled)};});
-    const preferredQuantity=samePlan&&variants.some(v=>v.quantity===currentQuantity)?currentQuantity:variantCapacity.variantQuantity(plan,preferred);
-    return{planId:plan.id,code:plan.code,name:plan.name,kind,preferredQuantity,currentPlan:samePlan,currentQuantity,currentProvider,currentCancelAtPeriodEnd:Boolean(current?.cancel_at_period_end),currentPriceMinor:current?Number(current.price_minor_snapshot??current.price_minor??0):null,variants};
+    const preferredQuantity=heldQuantity&&variants.some(v=>v.quantity===heldQuantity)?heldQuantity:variantCapacity.variantQuantity(plan,preferred);
+    // A holder may also buy the plan again, separately, but never beside a renewing agreement.
+    const separatePurchaseSafe=Boolean((samePlan||extension)&&!currentProvider&&!recurringUnknown)&&await samePlanRepurchase.separatePurchaseSafe(customerId,plan.id);
+    return{planId:plan.id,code:plan.code,name:plan.name,kind,preferredQuantity,currentPlan:Boolean(samePlan||extension),currentQuantity:heldQuantity,extension,separatePurchaseSafe,currentProvider,currentCancelAtPeriodEnd:Boolean(current?.cancel_at_period_end),currentPriceMinor:current?Number(current.price_minor_snapshot??current.price_minor??0):null,variants};
   }));
 }
 
@@ -182,7 +197,7 @@ function createCustomerDashboardRouter(){
       const customerId=req.session.customerId;
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
-      const [portal,currency,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+      const [portal,currency,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings,queuedPaidPurchases]=await Promise.all([
         customers.getCurrentCustomerPortal(customerId),
         planPricing.platformDefaultCurrency(),
         requestUserSync.requestAccessForCustomer(customerId),
@@ -190,7 +205,8 @@ function createCustomerDashboardRouter(){
         provisioning.control.getCustomerState(customerId).catch(()=>null),
         planChange.currentRecurring(customerId).catch(()=>null),
         planChange.pendingForCustomer(customerId).catch(()=>null),
-        notificationSettings.status().catch(()=>({}))
+        notificationSettings.status().catch(()=>({})),
+        queuedPurchases.listForCustomer(customerId)
       ]);
       if(!portal)throw new Error('Customer portal state is unavailable.');
       const accessSnapshot=portal.accessSnapshot,primaryAccess=accessSnapshot.primary,freeAccess=accessSnapshot.free,stremioAccess=accessSnapshot.stremio,embyAccess=accessSnapshot.emby;
@@ -205,10 +221,10 @@ function createCustomerDashboardRouter(){
         effectiveFreePlan=null;
       }
       const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
-      const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
+      const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange||queuedPaidPurchases.length?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
       const navOptions=customerNav.optionsFromPortal(portal);
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
-      if(!accessRows.length&&!openPlanChange){
+      if(!accessRows.length&&!openPlanChange&&!queuedPaidPurchases.length){
         const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
         const noPlanMessage=inactivityRemoval
           ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. There is nothing reserved to restore; choose an available plan below if you want access again.'
@@ -218,7 +234,7 @@ function createCustomerDashboardRouter(){
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
       const jellyfinPlan=effectiveCurrentPlan||effectiveFreePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
-      return res.render('customer/dashboard',{portal,plans,currentAccessRows:accessRows,currentPlan:jellyfinPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
+      return res.render('customer/dashboard',{portal,plans,queuedPaidPurchases,currentAccessRows:accessRows,currentPlan:jellyfinPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));const outcome=await provisioning.reconcileCustomer(customerId);if(outcome?.active&&(outcome?.account?.id||outcome?.emby?.account?.id||outcome?.stremio?.status==='active'))return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your streaming access has been refreshed.'));const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});

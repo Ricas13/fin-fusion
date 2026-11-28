@@ -76,7 +76,15 @@ function previousRange(startAt,now=new Date()){
 // Credited watch time per play. A play whose app reports progress counts its measured interval (max 12h). A play whose app only reports
 // "started" (progress_reported false) or that predates progress tracking (null) is capped at the same allowance the activity worker credits,
 // so the table, the totals and every KPI on this page agree and an old stale session never inflates them.
-function safeDurationSql(alias='ph'){const raw=`GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(${alias}.ended_at,${alias}.last_seen_at)-${alias}.started_at)))`;return `LEAST(CASE WHEN ${alias}.progress_reported IS TRUE THEN 43200 ELSE ${Math.trunc(customerPlayback.unreportedCapSeconds())} END,${raw})`;}
+function safeDurationSql(alias='ph'){
+  const raw=`GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(${alias}.ended_at,${alias}.last_seen_at)-${alias}.started_at)))`;
+  const legacy=`LEAST(CASE WHEN ${alias}.progress_reported IS TRUE THEN 43200 ELSE ${Math.trunc(customerPlayback.unreportedCapSeconds())} END,${raw})`;
+  // Opt-in native accounting applies only to observations recorded after rollout.
+  // Historical rows without an observation retain their original display values.
+  return process.env.PLAYBACK_ACCOUNTING_NATIVE_DISPLAY_ENABLED==='true'
+    ? `CASE WHEN ${alias}.observed_last_at IS NOT NULL THEN LEAST(43200,GREATEST(0,COALESCE(${alias}.observed_watch_seconds,0))) ELSE ${legacy} END`
+    : legacy;
+}
 function number(value){const parsed=Number(value);return Number.isFinite(parsed)?parsed:0;}
 function percentChange(current,previous){const a=number(current),b=number(previous);if(b<=0)return a>0?100:0;return Math.round(((a-b)/b)*100);}
 function publicItemImage(publicUrl,itemId){
@@ -286,7 +294,7 @@ async function insightData(customerId,rawRange,rawScope='all'){
 async function data(customerId,rawRange,rawScope='all'){
   const scope=scopeOption(rawScope),range=rangeOption(rawRange),startAt=rangeStart(range,new Date()),playbackScopeClause=scopePredicate(scope,'ph'),eventScopeClause=scopePredicate(scope,'stream_policy_events','created_at');
   const [activityRows,eventRows,freeUsage,portal,insights]=await Promise.all([
-    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,ph.progress_reported,${safeDurationSql('ph')} AS duration_seconds,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
+    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,ph.progress_reported,ph.observed_last_at IS NOT NULL AS native_observed,ph.observed_confirmed_seconds AS native_confirmed_seconds,${safeDurationSql('ph')} AS duration_seconds,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 AND ($2::timestamptz IS NULL OR COALESCE(ph.last_seen_at,ph.started_at)>=$2::timestamptz)${playbackScopeClause} ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 AND ($2::timestamptz IS NULL OR created_at>=$2::timestamptz)${eventScopeClause} ORDER BY created_at DESC LIMIT 100`,[customerId,startAt?startAt.toISOString():null]),
     inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
     customers.getCurrentCustomerPortal(customerId),

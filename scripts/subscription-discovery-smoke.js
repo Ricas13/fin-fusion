@@ -246,4 +246,22 @@ assert.ok(adminSource.includes("filter(item=>item.state!=='linked'&&item.state!=
 assert.ok(adminSource.includes('Recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
 
+// Visual polish guard: sheet wired once per shell, no token redefinition, billing disclosure shape.
+{
+  const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8');
+  const count = (text, needle) => text.split(needle).length - 1;
+  assert.strictEqual(count(read('src', 'platform', 'admin-html-core.js'), '/css/admin-visual-polish.css'), 1, 'admin-html-core must link the polish sheet exactly once');
+  assert.strictEqual(count(read('views', 'admin', '_head.ejs'), '/css/admin-visual-polish.css'), 1, 'admin _head.ejs must link the polish sheet exactly once');
+  const polish = read('public', 'css', 'admin-visual-polish.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/--(?:rail-w|bar-h|pitch|dim|r|t-[\w-]+)\s*:/.test(polish), 'polish sheet must not redeclare shell tokens');
+  const ending = adminBilling.endingPaidTermsSection([{ id: 1, email: 'ending@example.com', plan: 'premium', state: 'ending', paidThrough: new Date(Date.now() + 864e5).toISOString() }]);
+  assert.ok(ending.includes('id="ending-paid-terms"'), 'ending section must keep its anchor id');
+  const calloutAt = ending.indexOf('No action required.');
+  const detailsAt = ending.indexOf('<details');
+  assert.ok(calloutAt > -1 && detailsAt > calloutAt, 'callout must precede the collapsed details');
+  assert.ok(!/<details[^>]*\sopen/.test(ending), 'ending paid terms details must be collapsed by default');
+  const tableAt = ending.indexOf('endingTermTable');
+  assert.ok(tableAt > detailsAt && tableAt < ending.indexOf('</details>'), 'ending term table must remain inside the disclosure');
+}
+
 console.log('Subscription discovery smoke passed.');

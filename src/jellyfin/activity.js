@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { getPool, query, transaction } = require('../db');
 const { encryptString } = require('../crypto');
 const registry = require('./registry');
+const playbackAccounting = require('./playback-accounting');
 
 const ENFORCEMENT_ACK = 'I_UNDERSTAND_THIS_STOPS_PLAYBACK';
 const ADVISORY_LOCK_ID = 637441013;
@@ -185,18 +186,25 @@ async function upsertHistorySession(s, seenAt = new Date(), progressReported = f
             ), archived AS (
                 INSERT INTO playback_history(
                     server_id,customer_id,jellyfin_account_id,jellyfin_user_id,playback_key,jellyfin_session_id,item_id,item_name,item_type,
-                    client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+                    client_name,device_name,playback_method,transcode_reasons,started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported,
+                    observed_watch_seconds,observed_confirmed_seconds,observed_anchor_at,observed_last_at,
+                    observed_last_position_ticks,observed_last_paused,observed_sample_count,observed_last_source,observed_ended
                 )
                 SELECT server_id,customer_id,jellyfin_account_id,jellyfin_user_id,
                        playback_key||':seg:'||(EXTRACT(EPOCH FROM ended_at)::bigint)::text,
                        jellyfin_session_id,item_id,item_name,item_type,client_name,device_name,playback_method,transcode_reasons,
-                       started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported
+                       started_at,last_seen_at,ended_at,ended_reason,access_lane_snapshot,progress_reported,
+                       observed_watch_seconds,observed_confirmed_seconds,observed_anchor_at,observed_last_at,
+                       observed_last_position_ticks,observed_last_paused,observed_sample_count,observed_last_source,observed_ended
                 FROM old
                 ON CONFLICT (server_id,playback_key) DO NOTHING
                 RETURNING 1
             )
             UPDATE playback_history ph
-            SET started_at=$3::timestamptz,last_seen_at=$3::timestamptz,ended_at=NULL,ended_reason=NULL,progress_reported=FALSE
+            SET started_at=$3::timestamptz,last_seen_at=$3::timestamptz,ended_at=NULL,ended_reason=NULL,progress_reported=FALSE,
+                observed_watch_seconds=NULL,observed_confirmed_seconds=NULL,observed_anchor_at=NULL,
+                observed_last_at=NULL,observed_last_position_ticks=NULL,observed_last_paused=NULL,
+                observed_sample_count=NULL,observed_last_source=NULL,observed_ended=NULL
             FROM old
             WHERE ph.id=old.id AND EXISTS (SELECT 1 FROM archived)
         `, [s.serverId, s.playbackKey, observedAt, RESUME_SEGMENT_GAP_SECONDS, Boolean(advance)]);
@@ -220,6 +228,16 @@ async function upsertHistorySession(s, seenAt = new Date(), progressReported = f
             s.clientName,s.deviceName,s.method,JSON.stringify(s.transcodeReasons),observedAt,s.accessLane||null,Boolean(progressReported),Boolean(advance)
         ]);
     });
+
+    // Shadow accounting never changes the legacy timeline or enforcement.
+    // A session with no trustworthy activity timestamp must not earn credit.
+    if (advance) {
+        await playbackAccounting.recordSafely({
+            serverId: s.serverId, playbackKey: s.playbackKey,
+            at: observedAt, positionTicks: s.positionTicks,
+            isPaused: s.isPaused, source: 'poll', event: 'progress'
+        });
+    }
 }
 
 async function upsertObservedSession(s) {
