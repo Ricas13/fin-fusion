@@ -26,6 +26,7 @@ const productReadiness=require('./product-readiness');
 const checkoutIntents=require('../payments/checkout-intents');
 const planChange=require('../payments/customer-plan-change');
 const samePlanRepurchase=require('../payments/same-plan-repurchase');
+const queuedPurchases=require('../payments/queued-purchases');
 const csrf=require('../auth/csrf');
 const customerServerChoice=require('../jellyfin/customer-server-choice');
 
@@ -196,7 +197,7 @@ function createCustomerDashboardRouter(){
       const customerId=req.session.customerId;
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
-      const [portal,currency,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+      const [portal,currency,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings,queuedPaidPurchases]=await Promise.all([
         customers.getCurrentCustomerPortal(customerId),
         planPricing.platformDefaultCurrency(),
         requestUserSync.requestAccessForCustomer(customerId),
@@ -204,7 +205,8 @@ function createCustomerDashboardRouter(){
         provisioning.control.getCustomerState(customerId).catch(()=>null),
         planChange.currentRecurring(customerId).catch(()=>null),
         planChange.pendingForCustomer(customerId).catch(()=>null),
-        notificationSettings.status().catch(()=>({}))
+        notificationSettings.status().catch(()=>({})),
+        queuedPurchases.listForCustomer(customerId)
       ]);
       if(!portal)throw new Error('Customer portal state is unavailable.');
       const accessSnapshot=portal.accessSnapshot,primaryAccess=accessSnapshot.primary,freeAccess=accessSnapshot.free,stremioAccess=accessSnapshot.stremio,embyAccess=accessSnapshot.emby;
@@ -219,10 +221,10 @@ function createCustomerDashboardRouter(){
         effectiveFreePlan=null;
       }
       const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
-      const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
+      const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange||queuedPaidPurchases.length?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
       const navOptions=customerNav.optionsFromPortal(portal);
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
-      if(!accessRows.length&&!openPlanChange){
+      if(!accessRows.length&&!openPlanChange&&!queuedPaidPurchases.length){
         const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);
         const noPlanMessage=inactivityRemoval
           ?'Your Free Server access was removed because of inactivity. You now have no active Free Server plan. There is nothing reserved to restore; choose an available plan below if you want access again.'
@@ -232,7 +234,7 @@ function createCustomerDashboardRouter(){
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||noPlanMessage,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
       const jellyfinPlan=effectiveCurrentPlan||effectiveFreePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
-      return res.render('customer/dashboard',{portal,plans,currentAccessRows:accessRows,currentPlan:jellyfinPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
+      return res.render('customer/dashboard',{portal,plans,queuedPaidPurchases,currentAccessRows:accessRows,currentPlan:jellyfinPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));const outcome=await provisioning.reconcileCustomer(customerId);if(outcome?.active&&(outcome?.account?.id||outcome?.emby?.account?.id||outcome?.stremio?.status==='active'))return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your streaming access has been refreshed.'));const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});

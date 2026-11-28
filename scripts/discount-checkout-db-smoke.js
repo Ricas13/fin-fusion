@@ -84,10 +84,40 @@ async function fullyDiscountedPaymentInvariant(){
   assert.strictEqual(count,1,'fully covering promo must consume exactly one redemption');
 }
 
+async function editableCustomerLimitInvariant(){
+  const owner=await customer('discount-edit-limit');
+  const p=await plan('Editable limit plan',1000);
+  const code=unique('EDITLIMIT').toUpperCase();
+  const admin=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,$3,'admin',TRUE) RETURNING id`,[unique('discount-admin'),`${unique('discount-admin')}@example.invalid`,await require('bcryptjs').hash(unique('password'),10)])).rows[0];
+  const d=(await query(`INSERT INTO discount_codes(code,discount_type,percent_off,max_redemptions,per_customer_limit,active) VALUES($1,'percent',25,100,1,TRUE) RETURNING *`,[code])).rows[0];
+  await query(`INSERT INTO discount_redemptions(discount_code_id,customer_id,amount_applied_minor) VALUES($1,$2,250)`,[d.id,owner.id]);
+  await query(`UPDATE discount_codes SET redemption_count=1 WHERE id=$1`,[d.id]);
+  const input={discountCodeId:d.id,actorUserId:admin.id};
+  await assert.rejects(()=>discounts.validateForCheckout({code,planId:p.id,planCode:p.code,customerId:owner.id,currency:'GBP'}),/already used/);
+  for(const limit of ['1.5','50foo','0','1001',[],null]) await assert.rejects(()=>discounts.updatePerCustomerLimit({...input,limit}),/between 1 and 1000/);
+  const updated=await discounts.updatePerCustomerLimit({...input,limit:'50'});
+  assert.strictEqual(updated.per_customer_limit,50);
+  assert.strictEqual(updated.max_redemptions,100);
+  assert.strictEqual(updated.redemption_count,1);
+  assert.strictEqual(updated.percent_off,25);
+  await discounts.validateForCheckout({code,planId:p.id,planCode:p.code,customerId:owner.id,currency:'GBP'});
+  const intent=await intents.createIntent({scope:'customer',customerId:owner.id,planId:p.id,provider:'stripe',checkoutMode:'payment',commercialSnapshot:snapshotFor(p)});
+  const reservation=await discounts.reserveForIntent({code,planCode:p.code,customerId:owner.id,checkoutIntentId:intent.id,baseMinor:1000,currency:'GBP',ttlMinutes:30});
+  await assert.rejects(()=>discounts.updatePerCustomerLimit({...input,limit:1}),/existing redemptions and active reservations/);
+  assert.strictEqual((await discounts.updatePerCustomerLimit({...input,limit:2})).per_customer_limit,2);
+  assert.strictEqual((await query('SELECT state FROM discount_checkout_reservations WHERE id=$1',[reservation.reservation.id])).rows[0].state,'reserved');
+  await discounts.updatePerCustomerLimit({...input,limit:2});
+  const audits=(await query(`SELECT metadata,actor_user_id FROM audit_log WHERE entity_id=$1 AND action='admin.discount.limit.update' ORDER BY id`,[d.id])).rows;
+  assert.deepStrictEqual(audits.map(a=>[a.metadata.previousLimit,a.metadata.newLimit]),[[1,50],[50,2]]);
+  assert(audits.every(a=>a.actor_user_id===admin.id));
+  await intents.consume({intentId:intent.id,nonce:intent.nonce,state:'failed',scope:'customer',provider:'stripe',ownerId:owner.id});
+}
+
 async function main(){
   await ensureMediaServer();
   await fixedCurrencyMismatchInvariant();
   await fullyDiscountedPaymentInvariant();
+  await editableCustomerLimitInvariant();
   console.log('discount checkout DB smoke: currency integrity and zero-cash settlement ok');
 }
 

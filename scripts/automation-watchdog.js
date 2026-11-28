@@ -3,6 +3,7 @@
 // One-shot, read-only monitor intended to run outside the automation worker.
 // An alive heartbeat is not proof that scheduled jobs are making progress.
 const HEARTBEAT_MAX_MS=90_000;
+const {stuckAfterSeconds}=require('../src/automation/job-health');
 const WARMUP_MS=5*60_000;
 
 function time(value){
@@ -29,7 +30,7 @@ function evaluate({worker,jobs,definitions,now=Date.now()}){
     const interval=Math.max(30,Number(row.interval_seconds)||300);
     const began=time(row.last_started_at),completed=time(row.last_completed_at)||time(row.last_success_at);
     const running=began!==null&&(completed===null||began>completed);
-    const maxRun=Math.max(interval*3,30*60,Number(definition.maxRunSeconds)||0,key==='stremio_media_index'?3600:0);
+    const maxRun=stuckAfterSeconds(row);
     if(running){
       if(now-began>maxRun*1000)add(critical?'critical':'warning','job_running_too_long',key);
       continue;

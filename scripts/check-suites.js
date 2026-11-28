@@ -51,6 +51,9 @@ module.exports = {
       "node scripts/automation-registry-ownership-smoke.js",
       "node scripts/automation-job-definition-smoke.js",
       "node scripts/automation-release-hardening-smoke.js",
+      "node scripts/reconciliation-lock-nesting-smoke.js",
+      "node scripts/automation-dispatch-lanes-smoke.js",
+      "node scripts/automation-stuck-state-smoke.js",
       "node scripts/revenue-integrity-auto-repair-smoke.js",
       "node scripts/critical-runtime-continuity-smoke.js",
       "node scripts/deployment-tooling-smoke.js",
@@ -231,7 +234,8 @@ module.exports = {
       "node scripts/whatsapp-removal-completeness-db-smoke.js",
       "node scripts/admin-jellyfin-assignment-lock-db-smoke.js",
       "node scripts/database-operational-hardening-db-smoke.js",
-      "node scripts/worker-instance-health-db-smoke.js"
+      "node scripts/worker-instance-health-db-smoke.js",
+      "node scripts/automation-watchdog-db-smoke.js"
     ],
     "check:db:access": [
       "node scripts/request-user-sync-smoke.js",
