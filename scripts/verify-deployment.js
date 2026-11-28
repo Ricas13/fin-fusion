@@ -17,6 +17,11 @@ const DEPLOYMENT_PROBE_JOBS = Object.freeze([
     'revenue_integrity'
 ]);
 const DEPLOYMENT_PROBE_TIMEOUT_MS = 120000;
+const DEFAULT_PROOF_TIMEOUT_MS = 180000;
+const MIN_PROOF_TIMEOUT_MS = 30000;
+const MAX_PROOF_TIMEOUT_MS = 900000;
+const OVERDUE_OBSERVATION_MS = 30000;
+const INACTIVITY_JOB = 'customer_inactivity';
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -78,6 +83,28 @@ function deploymentCriticalState(row, workerStartedAt, now = Date.now()) {
     return state;
 }
 
+function deploymentProofTimeoutMs(value = process.env.DEPLOY_VERIFY_PROOF_TIMEOUT_MS) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PROOF_TIMEOUT_MS;
+    return Math.max(MIN_PROOF_TIMEOUT_MS, Math.min(MAX_PROOF_TIMEOUT_MS, Math.floor(parsed)));
+}
+
+// Critical jobs the candidate worker still has to run: overdue ones, and ones
+// left "running" by an earlier worker. Probe jobs have their own recovery pass.
+// Operator-disabled jobs are never selected because a forced run would execute them.
+function deploymentProofCandidates(jobs, workerStartedAt, now = Date.now()) {
+    const workerStartMs = timestamp(workerStartedAt);
+    return (Array.isArray(jobs) ? jobs : []).filter(job => {
+        if (!jobRegistry.isCritical(job.job_key) || job.enabled === false) return false;
+        if (DEPLOYMENT_PROBE_JOBS.includes(job.job_key)) return false;
+        const state = jobHealth.healthState(job, now);
+        if (state === 'stale') return true;
+        if (!['running', 'stuck'].includes(state) || workerStartMs == null) return false;
+        const startedMs = timestamp(job.last_started_at);
+        return startedMs != null && startedMs < workerStartMs;
+    }).map(job => job.job_key);
+}
+
 function formatProbeSnapshot(snapshot) {
     const format = value => value ? new Date(value).toISOString() : 'never';
     return `${snapshot.jobKey}:state=${snapshot.state}`
@@ -111,6 +138,12 @@ async function proveAutomationRecoveryPass({
             continue;
         }
 
+        // Never force a job the operator has disabled.
+        if (row?.enabled === false) {
+            requiredSince.set(jobKey, databaseMarker);
+            continue;
+        }
+
         // requestRun returns the database row updated by the force request, so
         // updated_at is a DB-clock marker that cannot be beaten by an older run.
         const requested = await jobHealth.requestRun(jobKey);
@@ -141,14 +174,17 @@ async function proveBlockingCriticalJobs({
     timeoutMs = DEPLOYMENT_PROBE_TIMEOUT_MS,
     workerStartedAt = null
 } = {}) {
-    const keys = [...new Set((Array.isArray(jobKeys) ? jobKeys : []).map(String).filter(Boolean))];
-    if (!keys.length) return [];
+    const selected = [...new Set((Array.isArray(jobKeys) ? jobKeys : []).map(String).filter(Boolean))];
 
     const requestedAt = new Map();
-    for (const jobKey of keys) {
-        const requested = await jobHealth.requestRun(jobKey);
-        requestedAt.set(jobKey, new Date(requested?.updated_at || Date.now()));
+    for (const jobKey of selected) {
+        const requested = await jobHealth.requestRun(jobKey, { enabledOnly: true });
+        // Disabled by the operator since selection: nothing may force it now.
+        if (!requested) continue;
+        requestedAt.set(jobKey, new Date(requested.updated_at || Date.now()));
     }
+    const keys = [...requestedAt.keys()];
+    if (!keys.length) return [];
 
     const deadline = Date.now() + Math.max(15000, Number(timeoutMs) || DEPLOYMENT_PROBE_TIMEOUT_MS);
     while (Date.now() < deadline) {
@@ -195,9 +231,123 @@ async function proveBlockingCriticalJobs({
     }).join('; '));
 }
 
+// Where the run requested at `requestedAt` stands. A run that started before
+// the request proves nothing either way.
+function overdueRunStatus(row, requestedAt) {
+    const requestedMs = timestamp(requestedAt);
+    const startedMs = timestamp(row?.last_started_at);
+    if (requestedMs == null || startedMs == null || startedMs < requestedMs) return 'not_started';
+    const completedMs = timestamp(row?.last_completed_at);
+    if (completedMs == null || completedMs < startedMs) return 'running';
+    const outcome = String(row.last_outcome || '');
+    return ['success','degraded'].includes(outcome) ? outcome : 'failed';
+}
+
+async function requestOverdueRuns(jobKeys) {
+    const requested = new Map();
+    for (const jobKey of jobKeys) {
+        const row = await jobHealth.requestRun(jobKey, { enabledOnly: true });
+        if (row) requested.set(jobKey, new Date(row.updated_at));
+    }
+    return requested;
+}
+
+// Polls the requested runs until every status is settled or time runs out. A
+// failure, once seen, is kept even if a later run has since started.
+async function watchOverdueRuns(requested, { timeoutMs, isSettled, pollMs = 2000 }) {
+    const statuses = new Map();
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        const byKey = new Map((await jobHealth.list()).map(row => [row.job_key, row]));
+        for (const [jobKey, requestedAt] of requested) {
+            if (statuses.get(jobKey) !== 'failed') {
+                statuses.set(jobKey, overdueRunStatus(byKey.get(jobKey), requestedAt));
+            }
+        }
+        if ([...statuses.values()].every(isSettled) || Date.now() >= deadline) return statuses;
+        await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+    }
+}
+
+// Release rules for critical jobs the candidate worker has to exercise:
+//  - already failed or degraded: a fresh success is required;
+//  - overdue inactivity cleanup: a requested run must start and not end badly;
+//  - other overdue jobs: only a failed requested run blocks.
+async function proveCriticalAutomation({
+    jobs,
+    workerStartedAt,
+    add,
+    requiredJobs = jobRegistry.criticalNames(),
+    inactivityTimeoutMs = deploymentProofTimeoutMs(),
+    observationMs = OVERDUE_OBSERVATION_MS,
+    pollMs = 2000
+}) {
+    const critical = new Set(requiredJobs);
+    const historicalBlockers = jobs.filter(job => {
+        if (!critical.has(job.job_key) || job.enabled === false) return false;
+        const state = deploymentCriticalState(job, workerStartedAt);
+        return ['failed','degraded'].includes(state) && deploymentJobBlocks(job.job_key, state);
+    });
+    const overdue = deploymentProofCandidates(jobs, workerStartedAt);
+
+    // Requested before anything else so that it takes the next dispatcher slot.
+    const inactivityRequest = overdue.includes(INACTIVITY_JOB)
+        ? await requestOverdueRuns([INACTIVITY_JOB])
+        : new Map();
+    const [repair, inactivityStatuses] = await Promise.all([
+        historicalBlockers.length
+            ? proveBlockingCriticalJobs({
+                jobKeys: historicalBlockers.map(job => job.job_key),
+                workerStartedAt
+            }).then(repaired => ({ repaired }), error => ({ error }))
+            : null,
+        inactivityRequest.size
+            ? watchOverdueRuns(inactivityRequest, {
+                timeoutMs: inactivityTimeoutMs,
+                isSettled: status => status !== 'not_started',
+                pollMs
+            })
+            : new Map()
+    ]);
+    if (repair?.error) add('critical automation repair probe', false, repair.error.message);
+    else if (repair) {
+        add('critical automation repair probe', true,
+            repair.repaired.map(item => `${item.jobKey}:success`).join(', '));
+    }
+
+    // Requested only now, so their number cannot delay the proofs above.
+    const requested = await requestOverdueRuns(overdue.filter(jobKey => jobKey !== INACTIVITY_JOB));
+    const observed = requested.size
+        ? await watchOverdueRuns(requested, {
+            timeoutMs: observationMs,
+            isSettled: status => ['success','degraded','failed'].includes(status),
+            pollMs
+        })
+        : new Map();
+
+    const finalJobs = await jobHealth.list();
+    if (requested.size) {
+        const byKey = new Map(finalJobs.map(row => [row.job_key, row]));
+        const results = [...requested].map(([jobKey, requestedAt]) => ({
+            jobKey,
+            status: observed.get(jobKey) === 'failed' ? 'failed' : overdueRunStatus(byKey.get(jobKey), requestedAt),
+            error: byKey.get(jobKey)?.last_error || null
+        }));
+        add('overdue critical automation', results.every(item => item.status !== 'failed'),
+            results.map(item => `${item.jobKey}:${item.status}${item.status === 'failed' && item.error ? ` error=${item.error}` : ''}`).join(', '),
+            { warn: results.some(item => item.status !== 'success') });
+    }
+
+    return {
+        jobs: finalJobs,
+        overdueKeys: new Set(requested.keys()),
+        inactivityProof: inactivityStatuses.get(INACTIVITY_JOB) || null
+    };
+}
+
 async function main() {
     const checks = [];
-    const add = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail: String(detail || '') });
+    const add = (name, ok, detail = '', { warn = false } = {}) => checks.push({ name, ok: Boolean(ok), warn: Boolean(ok && warn), detail: String(detail || '') });
 
     try {
         try {
@@ -294,27 +444,20 @@ async function main() {
             // to prove that fix before web cutover. Otherwise deployment can
             // deadlock forever on historical state produced by the previous
             // worker: the candidate contains the repair, but the verifier
-            // rejects it before that candidate job is ever exercised.
+            // rejects it before that candidate job is ever exercised. Overdue
+            // and orphaned critical jobs are exercised in the same step.
+            let overdueKeys = new Set();
+            let inactivityProof = null;
             if (automationWorkerHealthy && automationShaMatches && missingRegisteredJobs.length === 0) {
-                const historicalBlockers = jobs.filter(job => {
-                    if (!critical.has(job.job_key) || job.enabled === false) return false;
-                    const state = deploymentCriticalState(job, automationWorker?.started_at);
-                    return ['failed','degraded'].includes(state) && deploymentJobBlocks(job.job_key, state);
+                const proof = await proveCriticalAutomation({
+                    jobs,
+                    workerStartedAt: automationWorker.started_at,
+                    requiredJobs,
+                    add
                 });
-                if (historicalBlockers.length) {
-                    try {
-                        const repaired = await proveBlockingCriticalJobs({
-                            jobKeys: historicalBlockers.map(job => job.job_key),
-                            workerStartedAt: automationWorker.started_at
-                        });
-                        add('critical automation repair probe', true,
-                            repaired.map(item => `${item.jobKey}:success`).join(', '));
-                    } catch (error) {
-                        add('critical automation repair probe', false, error.message);
-                    }
-                    jobs = await jobHealth.list();
-                    jobsByKey = new Map(jobs.map(job => [job.job_key, job]));
-                }
+                ({ overdueKeys, inactivityProof } = proof);
+                jobs = proof.jobs;
+                jobsByKey = new Map(jobs.map(job => [job.job_key, job]));
             }
             // A degraded critical job means one or more customer/revenue sub-operations
             // failed. Treat that as a deployment blocker rather than accepting a green
@@ -323,24 +466,35 @@ async function main() {
             const badStates = new Set(['failed', 'degraded', 'stale', 'missing']);
             const bad = jobs.filter(job => {
                 const state = deploymentCriticalState(job, automationWorker?.started_at);
+                // Overdue jobs are judged above by the run requested for them.
                 return critical.has(job.job_key)
                     && job.enabled !== false
+                    && !overdueKeys.has(job.job_key)
                     && deploymentJobBlocks(job.job_key, state);
             });
 
             const inactivityJob = jobsByKey.get('customer_inactivity');
-            const inactivityState = inactivityJob ? jobHealth.healthState(inactivityJob) : 'missing';
+            const inactivityState = inactivityJob
+                ? deploymentCriticalState(inactivityJob, automationWorker?.started_at)
+                : 'missing';
+            // A requested run that never started, or ended badly, must not be
+            // hidden by the restart warm-up state.
+            const inactivityUnproven = inactivityProof !== null && !['running','success'].includes(inactivityProof);
             const inactivityAllowed = Boolean(inactivityJob) && (
                 inactivityJob.enabled === false
                     ? jobRegistry.mayBeDisabled('customer_inactivity')
-                    : !badStates.has(inactivityState)
+                    : !badStates.has(inactivityState) && !inactivityUnproven
             );
             add('Free Server inactivity cleanup policy', inactivityAllowed,
                 inactivityJob
                     ? inactivityJob.enabled === false
                         ? `state=${inactivityState} (operator-disabled; allowed)`
                         : `state=${inactivityState} next=${inactivityJob.next_run_at || 'pending'}`
-                    : 'job row missing');
+                            + ` last_started=${inactivityJob.last_started_at || 'never'}`
+                            + ` last_completed=${inactivityJob.last_completed_at || 'never'}`
+                            + (inactivityProof ? ` requested_run=${inactivityProof}` : '')
+                    : 'job row missing',
+                { warn: inactivityState === 'stuck' });
 
             const freeBackfillJob = jobsByKey.get('free_capacity_backfill');
             const freeBackfillState = freeBackfillJob
@@ -350,7 +504,8 @@ async function main() {
                 Boolean(freeBackfillJob?.enabled) && !['failed','stale','missing','degraded'].includes(freeBackfillState),
                 freeBackfillJob
                     ? `state=${freeBackfillState} interval=${freeBackfillJob.interval_seconds}s next=${freeBackfillJob.next_run_at || 'pending'}${freeBackfillJob.last_warning ? ` warning=${freeBackfillJob.last_warning}` : ''}`
-                    : 'job row missing');
+                    : 'job row missing',
+                { warn: freeBackfillState === 'stuck' });
 
             const missingCritical = requiredJobs.filter(jobKey => !jobsByKey.has(jobKey));
             add('critical automation job registry', missingCritical.length === 0,
@@ -370,7 +525,15 @@ async function main() {
             add('revenue integrity execution', Boolean(revenueJob) && !['failed','stale','missing'].includes(revenueState),
                 revenueJob
                     ? `state=${revenueState}${revenueJob.last_warning ? ` operator_attention=${revenueJob.last_warning}` : ''}`
-                    : 'job row missing');
+                    : 'job row missing',
+                { warn: revenueState === 'stuck' });
+            const stuck = jobs.filter(job => critical.has(job.job_key) && job.enabled !== false
+                && deploymentCriticalState(job, automationWorker?.started_at) === 'stuck');
+            if (stuck.length) {
+                add('stuck critical automation', true,
+                    stuck.map(job => `${job.job_key}:started=${job.last_started_at}`).join(', '),
+                    { warn: true });
+            }
 
             const lifecycleTable = (await query(`SELECT to_regclass('public.jellyfin_account_lifecycle') AS table_name`)).rows[0]?.table_name;
             add('Free Server lifecycle ledger', Boolean(lifecycleTable), lifecycleTable || 'table missing');
@@ -387,7 +550,7 @@ async function main() {
                 `${fleet.rows[0].placement_ready}/${fleet.rows[0].enabled} placement-ready`);
         }
 
-        for (const check of checks) console.log(`${check.ok ? 'PASS' : 'FAIL'}  ${check.name}${check.detail ? ` — ${check.detail}` : ''}`);
+        for (const check of checks) console.log(`${check.ok ? (check.warn ? 'WARN' : 'PASS') : 'FAIL'}  ${check.name}${check.detail ? ` — ${check.detail}` : ''}`);
         const failed = checks.filter(check => !check.ok);
         if (failed.length) {
             process.exitCode = 1;
@@ -416,6 +579,10 @@ module.exports = {
     probeSnapshot,
     formatProbeSnapshot,
     deploymentCriticalState,
+    deploymentProofTimeoutMs,
+    deploymentProofCandidates,
+    overdueRunStatus,
+    proveCriticalAutomation,
     proveAutomationRecoveryPass,
     proveBlockingCriticalJobs,
     main

@@ -547,15 +547,16 @@ async function main() {
         VALUES($1,$2,'active','stripe',$3,'subscription',NOW(),NOW()+INTERVAL '30 days','jellyfin')`, [duplicate.owner.id, duplicate.plan.id, incumbentRef]);
     const duplicateContract=(await intents.findById(duplicate.id)).commercial_snapshot;
     const duplicateRef=`sub_${unique('late_duplicate')}`;
-    const activateDuplicate=providerStatus=>require('../src/payments/lifecycle-primitives').activatePurchase({
+    const activateDuplicate=(providerStatus,providerPaymentVerified=false)=>require('../src/payments/lifecycle').activatePurchase({
         customerId:duplicate.owner.id,planId:duplicate.plan.id,provider:'stripe',providerSubscriptionId:duplicateRef,providerStatus,
-        commercialSnapshot:duplicateContract,checkoutIntentId:duplicate.id
+        commercialSnapshot:duplicateContract,checkoutIntentId:duplicate.id,providerPaymentVerified
     });
     const conflicts=async()=> (await query(`SELECT * FROM payment_incidents WHERE provider='stripe' AND provider_case_id=$1 AND incident_type='checkout_completion'`,[duplicate.id])).rows;
     await assert.rejects(()=>activateDuplicate('trialing'),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&!error.paidButUnfulfilled);
-    assert.strictEqual((await conflicts()).length,0,'unconfirmed agreements must not create paid incidents');
+    await assert.rejects(()=>activateDuplicate('active'),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&!error.paidButUnfulfilled);
+    assert.strictEqual((await conflicts()).length,0,'neither trialing nor active agreements alone prove collection');
     for(let attempt=0;attempt<2;attempt++){
-        await assert.rejects(()=>activateDuplicate('active'),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&error.paidButUnfulfilled===true);
+        await assert.rejects(()=>activateDuplicate('active',true),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&error.paidButUnfulfilled===true);
     }
     const duplicateIncidents=await conflicts();
     assert.strictEqual(duplicateIncidents.length,1,'provider retry must not duplicate the paid incident');

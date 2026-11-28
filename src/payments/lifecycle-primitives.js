@@ -328,7 +328,7 @@ async function resolveCapacitySettlementIncident({ provider, checkoutIntentId },
     return result.rowCount;
 }
 
-async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null, checkoutIntentId = null }) {
+async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null, checkoutIntentId = null, providerPaymentVerified = false }) {
     if (!['stripe', 'paypal', 'plisio'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
     let contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
@@ -571,9 +571,10 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
     } catch (error) {
         const extensionFulfillmentFailure = (contract?.kind === 'subscription_extension' || Boolean(contract?.repurchaseFallback))
             && error?.code !== 'ACCESS_EXTENSION_MONEY_LOSS';
-        // Approval-pending/trialing agreements are not proof of a payment.
+        // An agreement can be active with no cash collected. Only a trusted
+        // provider adapter that has verified a positive payment may mark this paid.
         const recurringSettlementConflict = error?.code === 'RECURRING_SUBSCRIPTION_CONFLICT'
-            && mapProviderStatus(provider, providerStatus) === 'active';
+            && providerPaymentVerified === true;
         if (settlementCheckoutIntentId && (
             recurringSettlementConflict ||
             ['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
