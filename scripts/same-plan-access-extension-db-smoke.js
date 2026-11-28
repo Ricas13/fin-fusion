@@ -7,6 +7,8 @@ const extensions=require('../src/payments/subscription-access-extensions');
 const lifecyclePrimitives=require('../src/payments/lifecycle-primitives');
 const checkoutIntents=require('../src/payments/checkout-intents');
 const planCapacity=require('../src/entitlements/plan-capacity');
+const termination=require('../src/payments/subscription-termination');
+const subscriptionState=require('../src/entitlements/subscription-state');
 
 async function main(){
   const suffix=Date.now().toString(36);
@@ -309,12 +311,18 @@ async function main(){
   const recoveryRequest={customerId:recoveredCustomer.id,subscriptionId:recoveryBase.id,planId:plan.id,provider:'stripe',
     providerPaymentId:'pi_recovery_ext_'+suffix,commercialSnapshot:recoverySnapshot};
   const boughtRecovery=await transaction(client=>extensions.applyPurchase(client,recoveryRequest));
-  await query("UPDATE subscriptions SET refund_terminated_at=NOW(),status='cancelled',current_period_end=NOW(),service_extension_days=0 WHERE id=$1",[recoveryBase.id]);
+  const terminated=await termination.terminateForRefund(recoveryBase.id,recoveredCustomer.id,{reason:'Independent extension recovery regression'});
+  assert(terminated.changed,'actual refund termination changes the original row');
   const independent=await extensions.restoreActivePurchasedDays(recoveryBase.id,recoveredCustomer.id);
   assert(independent.subscription.id!==recoveryBase.id,'recovered extension must have a separate entitlement');
   assert.equal(Number(independent.subscription.service_extension_days),Number(boughtRecovery.extension.applied_days),'preserve the exact independently purchased duration');
   const terminal=(await query('SELECT * FROM subscriptions WHERE id=$1',[recoveryBase.id])).rows[0];
   assert(terminal.refund_terminated_at&&terminal.status==='cancelled'&&Number(terminal.service_extension_days)===0,'refunded base remains terminal');
+  const providerSync=await lifecyclePrimitives.updateProviderSubscription({provider:'stripe',providerSubscriptionId:recoveryBase.provider_subscription_id,providerStatus:'active',periodEnd:new Date(Date.now()+30*86400000)});
+  assert.equal(providerSync.id,recoveryBase.id,'provider replay must never return the local recovery row as the provider contract');
+  assert(providerSync.refund_terminated_at&&providerSync.status==='cancelled','provider replay keeps original terminal');
+  const effective=await subscriptionState.effectiveSubscription(recoveredCustomer.id,{includeBlocked:true});
+  assert.equal(String(effective?.subscription_id||effective?.id),independent.subscription.id,'independent holder must actually provide access');
   const recoveryReplay=await transaction(client=>extensions.applyPurchase(client,recoveryRequest));
   assert.equal(recoveryReplay.replay,true);
   assert.equal(recoveryReplay.subscription.id,independent.subscription.id,'original checkout replay finds the recovered holder');
