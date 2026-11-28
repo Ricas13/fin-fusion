@@ -9,7 +9,7 @@ const EXTENDABLE_STATUSES=new Set(['active','trialing','past_due','paused','canc
 // Customer-visible refusals. Every one of them happens before money is taken.
 const MESSAGES=Object.freeze({
   // Also shown to somebody buying a different allowance, for whom Extend is not the answer.
-  UNPROTECTED:'This would run over time you already have on this plan, so it cannot be bought as a separate purchase now. To add time at your current allowance, use Extend (promo codes and service credit do not apply). To change your allowance, contact support. You have not been charged.',
+  UNPROTECTED:'This would run over time you already have on this plan, so it cannot be bought as a separate purchase now. To add time at your current allowance, use Extend (eligible promo codes apply; service credit does not). To change your allowance, contact support. You have not been charged.',
   LIFETIME:'Your access to this plan does not expire, so there is nothing more to buy. You have not been charged.',
   UNVERIFIED:'Your current access could not be checked, so nothing was charged. Try again shortly.'
 });

@@ -12,6 +12,7 @@ const MAX_EXTENSION_DAYS=3650;
 const MESSAGES=Object.freeze({
   LIFETIME:'You already have access like this that does not expire, so there is no time an auto-renewing plan could add. You have not been charged.',
   LIMIT:'The time you already have cannot all be added to a new plan because it exceeds the longest supported paid period. Contact support. You have not been charged.',
+  VALUE_TRANSFER_REQUIRED:'You still have paid access that cannot safely be moved to this new recurring plan yet. Your existing access is unchanged. Contact support or wait until the paid access ends. You have not been charged.',
   UNVERIFIED:'Your current access could not be checked, so nothing was charged. Try again shortly.'
 });
 // Lock and serialization conflicts pass: retrying the whole activation is
@@ -26,11 +27,12 @@ const PERIOD_MONTHS=Object.freeze({month:1,'6_months':6,year:12});
 const AWAITING_FIRST_PAYMENT='subscription.paid_time.awaiting_first_payment';
 const FIRST_PAYMENT_CONFIRMED='subscription.paid_time.first_payment_confirmed';
 
-function refusal(code){const error=new Error(MESSAGES[code]);error.code=`CARRIED_TIME_${code}`;return error;}
+function refusal(code){const error=new Error(MESSAGES[code]);error.code=`CARRIED_TIME_${code}`;error.expose=true;return error;}
 
 function precheckRefusal(row){
   if(row?.lifetime)return'LIFETIME';
-  return Number(row?.total_days||0)>MAX_EXTENSION_DAYS?'LIMIT':null;
+  if(Number(row?.total_days||0)>MAX_EXTENSION_DAYS)return'LIMIT';
+  return row?.requires_value_transfer?'VALUE_TRANSFER_REQUIRED':null;
 }
 
 // Before an auto-renewing checkout is created: refuse when the time the customer
@@ -39,8 +41,32 @@ function precheckRefusal(row){
 async function assertCarryPossible({customerId,planId,snapshot},{db=query}={}){
   let row;
   try{
-    row=(await db('SELECT lifetime,total_days FROM public.carried_time_precheck($1,$2,$3::jsonb)',
+    // Existing carry is defined only for identical access. Refuse a new
+    // recurring purchase if it would run concurrently with paid time outside
+    // that exact candidate set. Independent service lanes remain purchasable.
+    row=(await db(`
+      SELECT check_result.lifetime,check_result.total_days,
+        EXISTS(
+          SELECT 1 FROM public.prepaid_paid_time($1) held
+          JOIN subscriptions s ON s.id=held.subscription_id
+          JOIN plans bought ON bought.id=$2
+          WHERE public.prepaid_lanes_overlap(held.service_type,COALESCE(bought.service_type,'jellyfin'))
+            AND COALESCE(bought.is_addon,FALSE)=FALSE AND COALESCE(bought.is_free_tier,FALSE)=FALSE
+            AND COALESCE(bought.billing_interval,'')<>'trial'
+            AND s.status IN ('active','cancelled','expired')
+            AND NOT EXISTS (
+              SELECT 1 FROM public.carryable_paid_time(
+                $1,COALESCE(bought.service_type,'jellyfin'),
+                COALESCE(NULLIF($3::jsonb->>'serverClass',''),bought.server_class),
+                COALESCE(CASE WHEN $3::jsonb->>'streams' ~ '^[0-9]{1,4}$' THEN ($3::jsonb->>'streams')::integer END,bought.streams),
+                COALESCE(CASE WHEN $3::jsonb->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN ($3::jsonb->>'stremioHouseholdNetworkLimit')::integer END,bought.stremio_household_network_limit),
+                NULL
+              ) candidate WHERE candidate.subscription_id=s.id
+            )
+        ) AS requires_value_transfer
+      FROM public.carried_time_precheck($1,$2,$3::jsonb) check_result`,
       [customerId,planId,JSON.stringify(snapshot||{})])).rows[0];
+    if(!row)throw new Error('Paid-time precheck returned no result.');
   }catch(error){
     console.warn('Current paid time could not be checked before an auto-renewing checkout:',error.message);
     throw refusal('UNVERIFIED');

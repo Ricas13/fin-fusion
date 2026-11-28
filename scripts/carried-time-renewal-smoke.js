@@ -29,9 +29,10 @@ async function beforeMoney(){
   const check=()=>carriedTime.assertCarryPossible({customerId:'cust',planId:'plan',snapshot:{streams:1}});
   for(const [row,code] of [
     [{lifetime:false,total_days:'0'},null],[{lifetime:false,total_days:'3650'},null],
-    [{lifetime:false,total_days:'3651'},'CARRIED_TIME_LIMIT'],[{lifetime:true,total_days:'0'},'CARRIED_TIME_LIFETIME']
+    [{lifetime:false,total_days:'3651'},'CARRIED_TIME_LIMIT'],[{lifetime:true,total_days:'0'},'CARRIED_TIME_LIFETIME'],
+    [{lifetime:false,total_days:'0',requires_value_transfer:true},'CARRIED_TIME_VALUE_TRANSFER_REQUIRED']
   ]){
-    queryHandler=async(sql,params)=>{assert(sql.includes('public.carried_time_precheck'));assert.deepStrictEqual(params,['cust','plan','{"streams":1}']);return{rows:[row],rowCount:1};};
+    queryHandler=async(sql,params)=>{assert(sql.includes('public.carried_time_precheck'));assert(sql.includes('public.prepaid_paid_time')&&sql.includes('public.carryable_paid_time')&&sql.includes('public.prepaid_lanes_overlap'));assert.deepStrictEqual(params,['cust','plan','{"streams":1}']);return{rows:[row],rowCount:1};};
     if(code)await assert.rejects(check(),error=>error.code===code&&/not been charged/.test(error.message));
     else await check();
   }
