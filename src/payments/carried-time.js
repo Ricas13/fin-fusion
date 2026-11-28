@@ -219,8 +219,9 @@ function periodStart(end,row){
 }
 
 // A renewal that was never paid must not become paid time when the agreement is
-// then ended: the provider's period end is already the unpaid one, and carried
-// days would be added after it. For a row holding carried time only. Whatever
+// then ended: the provider's period end is already the unpaid one, and prepaid
+// days would be added after it. Protect both carried and separately purchased
+// extension time. Whatever
 // the status in between (past due, suspended), an open delinquency hold for the
 // agreement ends the paid period when the hold was raised, but only when there
 // is evidence of a failed payment AND the period being cut began around or after
@@ -229,8 +230,13 @@ function periodStart(end,row){
 // end to store.
 async function paidEndWhenAgreementEnds(client,{prior,status,periodEnd,provider,providerSubscriptionId}){
   if(!prior||!ENDED.has(status))return periodEnd;
-  const carried=await client.query(`SELECT 1 FROM subscription_time_carryovers WHERE target_subscription_id=$1 AND status='active' LIMIT 1`,[prior.id]);
-  if(!carried.rowCount)return periodEnd;
+  const prepaid=await client.query(`
+    SELECT 1 FROM subscription_time_carryovers WHERE target_subscription_id=$1 AND status='active'
+    UNION ALL
+    SELECT 1 FROM subscription_access_extensions WHERE subscription_id=$1 AND status='active' AND applied_days>0
+    LIMIT 1
+  `,[prior.id]);
+  if(!prepaid.rowCount)return periodEnd;
   // Once ended, a later delivery cannot move the end forward again.
   const unchanged=ENDED.has(prior.status)?earliest([periodEnd,prior.current_period_end],periodEnd):periodEnd;
   const hold=(await client.query(`
