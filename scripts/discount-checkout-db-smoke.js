@@ -4,6 +4,7 @@ require('dotenv').config();
 const assert=require('assert');
 const crypto=require('crypto');
 const {query,getPool}=require('../src/db');
+const lifecycle=require('../src/payments/lifecycle-primitives');
 const intents=require('../src/payments/checkout-intents');
 const discounts=require('../src/payments/discounts');
 const zeroValue=require('../src/payments/zero-value-checkout');
@@ -84,10 +85,64 @@ async function fullyDiscountedPaymentInvariant(){
   assert.strictEqual(count,1,'fully covering promo must consume exactly one redemption');
 }
 
+async function extensionPromoInvariant(){
+  const owner=await customer('discount-extension');
+  const p=await plan('Discount extension plan',1000);
+  const sub=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end,service_type_snapshot,billing_interval_snapshot,duration_days_snapshot)
+    VALUES($1,$2,'active','stripe','subscription',$3,NOW()-INTERVAL '1 day','2030-01-31T00:00:00Z','jellyfin','month',30) RETURNING *`,[owner.id,p.id,`sub_${unique('base')}`])).rows[0];
+  const promo=(await query(`INSERT INTO discount_codes(code,discount_type,percent_off,max_redemptions,per_customer_limit,active) VALUES($1,'percent',25,4,4,TRUE) RETURNING *`,[unique('EXT25').toUpperCase()])).rows[0];
+  const free=(await query(`INSERT INTO discount_codes(code,discount_type,percent_off,max_redemptions,per_customer_limit,active) VALUES($1,'percent',100,1,1,TRUE) RETURNING *`,[unique('EXT100').toUpperCase()])).rows[0];
+  await query('INSERT INTO discount_redemptions(discount_code_id,customer_id,subscription_id,amount_applied_minor) VALUES($1,$2,$3,250)',[promo.id,owner.id,sub.id]);
+  await query('UPDATE discount_codes SET redemption_count=1 WHERE id=$1',[promo.id]);
+  async function prepare(code,provider){
+    const snapshot={...snapshotFor(p),kind:'subscription_extension',extensionSubscriptionId:sub.id,accessVariantKind:'streams',accessQuantity:1,mediaLocation:null,provider};
+    const intent=await intents.createIntent({scope:'customer',customerId:owner.id,planId:p.id,provider,checkoutMode:'payment',commercialSnapshot:snapshot});
+    const reservation=await discounts.reserveForIntent({code:code.code,planCode:p.code,customerId:owner.id,checkoutIntentId:intent.id,baseMinor:1000,currency:'GBP'});
+    const frozen={...intent.commercial_snapshot,discountCodeId:code.id,discountCode:code.code,discountReservationId:reservation.reservation.id,grossDiscountedMinor:reservation.discountedMinor,discountedMinor:reservation.discountedMinor,serviceCreditMinor:0};
+    await query('UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb WHERE id=$1',[intent.id,JSON.stringify(frozen)]);
+    return {intent,reservation};
+  }
+  for(const provider of ['stripe','paypal','plisio']){
+    const {intent,reservation}=await prepare(promo,provider);
+    assert.strictEqual(reservation.discountedMinor,750);
+    const paymentId=unique(provider==='stripe'?'pi':'capture');
+    const checkoutId=unique('checkout');
+    await intents.attachProviderCheckout(intent.id,checkoutId);
+    const verified=await intents.verifiedProviderContract({provider,providerCheckoutId:checkoutId,ownerId:owner.id,planId:p.id,checkoutMode:'payment',amountMinor:750,currency:'GBP'});
+    await intents.completeVerifiedProvider(provider,checkoutId,'completed');
+    const activate=()=>lifecycle.activatePurchase({customerId:owner.id,planId:p.id,provider,providerSubscriptionId:paymentId,providerStatus:provider==='plisio'?'completed':'active',commercialSnapshot:verified.snapshot});
+    await activate(); await activate();
+    const ledger=(await query('SELECT * FROM subscription_access_extensions WHERE checkout_intent_id=$1',[intent.id])).rows;
+    assert.strictEqual(ledger.length,1);
+    const redemptions=(await query('SELECT * FROM discount_redemptions WHERE access_extension_id=$1',[ledger[0].id])).rows;
+    assert.strictEqual(redemptions.length,1);
+    assert.strictEqual(redemptions[0].subscription_id,null);
+    assert.strictEqual(redemptions[0].amount_applied_minor,250);
+    assert.strictEqual(redemptions[0].discount_code_id,promo.id);
+    assert.strictEqual((await query('SELECT state FROM discount_checkout_reservations WHERE id=$1',[reservation.reservation.id])).rows[0].state,'consumed');
+  }
+  assert.strictEqual((await query('SELECT redemption_count FROM discount_codes WHERE id=$1',[promo.id])).rows[0].redemption_count,4);
+  assert.strictEqual((await query('SELECT COUNT(*)::int n FROM discount_redemptions WHERE subscription_id=$1',[sub.id])).rows[0].n,1);
+  await assert.rejects(()=>discounts.validateForCheckout({code:promo.code,planId:p.id,planCode:p.code,customerId:owner.id,currency:'GBP'}),/redemption limit/);
+  const {intent,reservation}=await prepare(free,'plisio');
+  await zeroValue.activateFullyDiscountedPayment({customerId:owner.id,intentId:intent.id,nonce:intent.nonce,provider:'plisio'});
+  const all=(await query('SELECT purchased_days FROM subscription_access_extensions WHERE subscription_id=$1 ORDER BY created_at,id',[sub.id])).rows;
+  assert.strictEqual(all.length,4);
+  assert.deepStrictEqual(all.map(e=>e.purchased_days),[28,28,31,30],'full calendar terms irrespective of promo');
+  assert.strictEqual((await query('SELECT redemption_count FROM discount_codes WHERE id=$1',[free.id])).rows[0].redemption_count,1);
+  assert.strictEqual((await query('SELECT state FROM discount_checkout_reservations WHERE id=$1',[reservation.reservation.id])).rows[0].state,'consumed');
+  const parent=(await query('SELECT * FROM subscriptions WHERE id=$1',[sub.id])).rows[0];
+  assert.strictEqual(parent.service_extension_days,117);
+  assert.strictEqual(parent.provider_subscription_id,sub.provider_subscription_id);
+  assert.strictEqual(new Date(parent.current_period_end).toISOString(),new Date(sub.current_period_end).toISOString());
+  assert.strictEqual((await query('SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1',[owner.id])).rows[0].n,1);
+}
+
 async function main(){
   await ensureMediaServer();
   await fixedCurrencyMismatchInvariant();
   await fullyDiscountedPaymentInvariant();
+  await extensionPromoInvariant();
   console.log('discount checkout DB smoke: currency integrity and zero-cash settlement ok');
 }
 
