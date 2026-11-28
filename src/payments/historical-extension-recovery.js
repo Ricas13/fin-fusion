@@ -4,6 +4,7 @@
 // a terminal base, exact completed checkout evidence for every surviving
 // extension, and no unresolved payment loss. No provider charges or refunds.
 const {query,transaction}=require('../db');
+const financialState=require('./provider-financial-state');
 const ELIGIBLE=`
  s.refund_terminated_at IS NOT NULL AND s.superseded_by IS NULL
  AND NOT EXISTS(SELECT 1 FROM subscriptions recovered WHERE recovered.extension_recovery_of=s.id)
@@ -30,10 +31,7 @@ const ELIGIBLE=`
      OR EXISTS(SELECT 1 FROM payment_incidents pi WHERE pi.provider=e.provider
        AND pi.provider_subscription_id=e.provider_payment_id
        AND pi.incident_type IN ('refund','chargeback','dispute'))
-     OR EXISTS(SELECT 1 FROM payment_history_transactions t WHERE t.provider=e.provider
-       AND (t.provider_reference_id=e.provider_payment_id OR t.provider_transaction_id=e.provider_payment_id
-         OR t.metadata->>'checkoutIntentId'=i.id::text)
-       AND (t.gross_amount_minor<0 OR LOWER(t.transaction_type) IN ('refund','chargeback','reversal','dispute')))
+     OR ${financialState.extensionAdverseEvidenceSql()}
    )
  )`;
 async function candidates({limit=25,db=query}={}){

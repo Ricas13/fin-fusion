@@ -730,7 +730,17 @@ async function customerSnapshot(customerId) {
     return{identities,transactions,incidents,unlinkedCount};
 }
 
+// Internal fixed aliases from the historical extension candidate query. No
+// user-supplied SQL fragments are accepted.
+function extensionAdverseEvidenceSql(){
+    return `EXISTS(SELECT 1 FROM payment_history_transactions t WHERE t.provider=e.provider
+       AND (t.provider_reference_id=e.provider_payment_id OR t.provider_transaction_id=e.provider_payment_id
+         OR t.metadata->>'checkoutIntentId'=i.id::text)
+       AND (t.gross_amount_minor<0 OR LOWER(t.transaction_type) IN ('refund','chargeback','reversal','dispute')))`;
+}
+
 module.exports={
+    extensionAdverseEvidenceSql,
     knownTransactionIds,PROVIDERS,MAX_QUERY_ROWS,providerName,transactionSelect,transactionWhere,queryTransactions,countTransactions,resolveCustomerId,
     missingPlisioFeeTransactions,markPlisioFeeReconcileAttempt,latestPlisioCallbackEvidence,transactionCoverage,exportTransactions,scanTransactionsInRange,scanAllTransactions,transactionsForCustomers,providerIdentityCounts,latestProviderIdentityJoinSql,ensureProviderIdentity,findProviderIdentity,providerIdentityRows,providerIdentityOwners,paypalSubscriptionReferences,recordTransaction,transactionExists,backfillProviderCustomers,
     backfillPlisioTransactions,repairLinks,reconcileLocalEvidence,providerIdentities,customerIncidents,
