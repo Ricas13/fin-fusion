@@ -89,7 +89,7 @@ async function destination(client,planId,snapshot){
 async function evidenceFor(client,source,customerId,sourceVerifier=verifySource){
  await client.query('SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[source.id,customerId]);
  const row=await readEvidence(client,source.id),e=previewFromEvidence(row);
- invariant(row?.customer_id===customerId&&e.verified===true&&e.serviceCreditPaidMinor==='0','Original cash purchase cannot be valued conclusively.');
+ invariant(row?.customer_id===customerId&&e.verified===true,'Original purchase and funding allocations cannot be valued conclusively.');
  await sourceVerifier(row,e);
  return {row,e};
 }
@@ -101,7 +101,7 @@ async function prepare(client,{customerId,planId,snapshot},{sourceVerifier=verif
  const {e}=await evidenceFor(client,held[0],customerId,sourceVerifier);
  const rate=await rateFetcher(e.currency,target.currency);
  const quote=quoteConversion(e,target,{rate});
- return {version:1,sourceId:held[0].id,planId,target,providerMappingId:snapshot.providerMappingId,preview:quote};
+ return {version:1,sourceId:held[0].id,planId,target,providerMappingId:snapshot.providerMappingId,preview:{...quote,...fundingBreakdown(e,quote)}};
 }
 async function verifyTarget(row,intent,prepared,adapter=stripeClient){
  const stripe=await adapter();
@@ -121,6 +121,22 @@ async function verifyTarget(row,intent,prepared,adapter=stripeClient){
    Number(item.current_period_start)*1000===time(row.starts_at)&&Number(item.current_period_end)*1000===time(row.current_period_end)&&
    time(addPlanDuration(prepared.target,row.starts_at))===time(row.current_period_end),
    'New recurring payment or initial billing period is not conclusively verified.');
+}
+// Keep provider cash and earned credit independently identifiable throughout
+// the transfer. Credit never becomes provider-refundable cash. Both fund the
+// same original entitlement, so the existing source-payment-loss policy still
+// ends that entitlement (and reverses its transferred access).
+function fundingBreakdown(e,quote){
+ const cash=e.remainingCashValueMinor,credit=e.remainingServiceCreditValueMinor;
+ const total=e.remainingValueMinor;
+ invariant(cash&&credit&&total&&cash.denominator===total.denominator&&credit.denominator===total.denominator&&
+   BigInt(cash.numerator)+BigInt(credit.numerator)===BigInt(total.numerator),
+   'Original cash and service-credit value does not reconcile.');
+ const converted=value=>({numerator:(BigInt(value.numerator)*BigInt(quote.fx.numerator)).toString(),
+   denominator:(BigInt(value.denominator)*BigInt(quote.fx.denominator)).toString()});
+ return {sourceProviderPaidMinor:e.providerPaidMinor,sourceServiceCreditPaidMinor:e.serviceCreditPaidMinor,
+   sourceRemainingCashValueMinor:cash,sourceRemainingServiceCreditValueMinor:credit,
+   destinationRemainingCashValueMinor:converted(cash),destinationRemainingServiceCreditValueMinor:converted(credit)};
 }
 function ratio(quote,e){
  // Exact rational seconds-to-seconds conversion, used again for reversals.
@@ -167,7 +183,7 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  const rate=await rateFetcher(e.currency,prepared.target.currency);
  const quote=quoteConversion(e,prepared.target,{rate,termStart:row.starts_at});
  const fraction=ratio(quote,e),from=new Date(Math.max(time(e.startsAt),time(e.asOf))).toISOString();
- const audit={...quote,quoteOnly:false,ratio:fraction,sourceProviderPaidMinor:e.providerPaidMinor,sourceIntentId:source.intent_id,checkoutIntentId:id};
+ const audit={...quote,quoteOnly:false,ratio:fraction,...fundingBreakdown(e,quote),sourceIntentId:source.intent_id,checkoutIntentId:id};
  invariant(quote.addedDays>0&&quote.addedDays<=3650,'Converted value is outside the supported limit.');
  const ledger=await client.query(`
  INSERT INTO subscription_time_carryovers(customer_id,target_subscription_id,source_subscription_id,source_provider,source_payment_ref,

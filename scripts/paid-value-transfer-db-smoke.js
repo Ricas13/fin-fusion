@@ -43,8 +43,29 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  const variantPrepared=await prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:variantContract},deps);
  assert.equal(variantPrepared.preview.destinationCurrency,'USD');assert.equal(variantPrepared.preview.fx.numerator,'125');assert.equal(variantPrepared.target.normalPriceMinor,'18000');assert.equal(variantPrepared.target.accessVariantId,variant.id);
  await assert.rejects(()=>prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:{...variantContract,priceMinor:12000}},deps),/Normal destination price/);
+ // The identical source now has a genuine applied earned-credit allocation.
+ // Preparation must reject an unproven credit claim, then include both funding
+ // components without increasing the original cash amount.
+ const mixed={...sourceContract,serviceCreditMinor:1000,serviceCreditCurrency:'GBP',grossDiscountedMinor:5500};
+ await client.query('UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb WHERE id=$1',[sourceIntent.id,JSON.stringify(mixed)]);
+ await client.query('UPDATE subscriptions SET commercial_snapshot=$2::jsonb WHERE id=$1',[source.id,JSON.stringify({...mixed,checkoutIntentId:sourceIntent.id})]);
+ await assert.rejects(()=>prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:targetContract},deps),/funding allocations/);
+ const grant=(await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id)
+ VALUES($1,'GBP',1500,'earned','available',$2) RETURNING id`,[customer.id,unique('grant')])).rows[0];
+ const reservation=(await client.query(`INSERT INTO affiliate_credit_checkout_reservations(customer_id,checkout_intent_id,currency,amount_minor,state,expires_at,applied_at)
+ VALUES($1,$2,'GBP',1000,'applied',NOW()+INTERVAL '1 hour',NOW()) RETURNING id`,[customer.id,sourceIntent.id])).rows[0];
+ const debit=(await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id,metadata)
+ VALUES($1,'GBP',-1000,'redeemed','available',$2,$3::jsonb) RETURNING id`,[customer.id,'mixed-checkout:'+sourceIntent.id,JSON.stringify({checkoutIntentId:sourceIntent.id,reservationId:reservation.id})])).rows[0];
+ await client.query(`INSERT INTO affiliate_credit_allocations(customer_id,currency,debit_ledger_id,grant_ledger_id,amount_minor)
+ VALUES($1,'GBP',$2,$3,1000)`,[customer.id,debit.id,grant.id]);
+ await client.query(`INSERT INTO affiliate_credit_recoveries(customer_id,currency,source_reward_id,amount_minor,reason)
+ VALUES($1,'GBP',$2,100,'test reversal recovery')`,[customer.id,grant.id]);
+ await assert.rejects(()=>prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:targetContract},deps),/funding allocations/);
+ await client.query('DELETE FROM affiliate_credit_recoveries WHERE source_reward_id=$1',[grant.id]);
  sourceChecks=0;
  const prepared=await prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:targetContract},deps);
+ assert.equal(prepared.preview.sourceProviderPaidMinor,'4500');
+ assert.equal(prepared.preview.sourceServiceCreditPaidMinor,'1000');
  assert(prepared.preview.addedDays>0);assert.equal(sourceChecks,1);
  const intent=(await client.query(`INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,state,nonce_hash,expires_at,commercial_snapshot,provider_checkout_id,paid_value_transfer_snapshot)
  VALUES('customer',$1,$2,$3,'stripe','subscription','open',$4,NOW()+INTERVAL '1 hour',$5::jsonb,$6,$7::jsonb) RETURNING id`,[customer.id,boughtPlan.id,price.id,unique('nonce'),JSON.stringify(targetContract),'cs_'+unique('target'),JSON.stringify(prepared)])).rows[0];
@@ -57,6 +78,10 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  const ledger=(await client.query('SELECT * FROM subscription_time_carryovers WHERE target_subscription_id=$1',[receiver.id])).rows[0];
  assert.equal(ledger.applied_days,days);assert.equal(ledger.reason,'monetary_plan_transfer');
  assert.equal(ledger.value_transfer_quote.sourceProviderPaidMinor,'4500');
+ assert.equal(ledger.value_transfer_quote.sourceServiceCreditPaidMinor,'1000');
+ const q=ledger.value_transfer_quote;
+ assert.equal(BigInt(q.destinationRemainingCashValueMinor.numerator)+BigInt(q.destinationRemainingServiceCreditValueMinor.numerator),BigInt(q.destinationRemainingValueMinor.numerator));
+ assert.equal(q.destinationRemainingCashValueMinor.denominator,q.destinationRemainingValueMinor.denominator);
  assert.equal(ledger.value_transfer_quote.sourceCurrency,'GBP');assert.equal(ledger.value_transfer_quote.destinationCurrency,'USD');assert.equal(rateChecks,3);
  assert.equal(Number((await client.query('SELECT public.rebalance_carried_time($1) AS delta',[receiver.id])).rows[0].delta),0,'exact rebalancing keeps initial quote');
  const replay=await settlePrepared(client,outcome.row,deps);
@@ -68,4 +93,5 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  assert.equal((await client.query('SELECT status FROM subscription_time_carryovers WHERE id=$1',[ledger.id])).rows[0].status,'reversed');
  const afterReversal=(await client.query('SELECT * FROM subscriptions WHERE id=$1',[receiver.id])).rows[0];
  assert.equal((await settlePrepared(client,afterReversal,deps)).row.service_extension_days,0,'replay cannot resurrect reversed value');
+ assert.equal((await client.query('SELECT amount_minor FROM affiliate_credit_ledger WHERE id=$1',[debit.id])).rows[0].amount_minor,-1000,'transfer or source refund never issues new cash or credit');
 })).catch(error=>{console.error(error.stack||error);process.exitCode=1;});
