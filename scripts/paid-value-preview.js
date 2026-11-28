@@ -70,7 +70,7 @@ async function readEvidence(client,subscriptionId){
  if(!UUID.test(String(subscriptionId||'')))throw new Error('A subscription UUID is required.');
  const result=await client.query(`
   SELECT s.*,p.is_addon,p.is_free_tier,NOW() AS as_of,
-    i.id::text AS intent_id,i.state AS intent_state,i.commercial_snapshot AS intent_snapshot,
+    i.id::text AS intent_id,i.provider_checkout_id AS intent_provider_checkout_id,i.state AS intent_state,i.commercial_snapshot AS intent_snapshot,
     (s.current_period_end AT TIME ZONE 'UTC')=
       CASE s.commercial_snapshot->>'billingInterval'
        WHEN 'month' THEN (s.starts_at AT TIME ZONE 'UTC')+INTERVAL '1 month'
@@ -85,7 +85,7 @@ async function readEvidence(client,subscriptionId){
     EXISTS(SELECT 1 FROM subscription_time_carryovers c WHERE c.source_subscription_id=s.id OR c.target_subscription_id=s.id) AS has_carry_history,
     EXISTS(SELECT 1 FROM customer_plan_changes pc WHERE pc.current_subscription_id=s.id AND pc.state='pending') AS has_open_plan_change,
     EXISTS(SELECT 1 FROM payment_incidents pi WHERE pi.provider=s.source AND pi.provider_subscription_id=s.provider_subscription_id
-      AND pi.incident_type IN ('refund','chargeback')) AS has_adverse_incident,
+      AND pi.incident_type IN ('refund','chargeback','dispute')) AS has_adverse_incident,
     EXISTS(SELECT 1 FROM payment_history_transactions adverse
       WHERE adverse.provider=s.source AND (adverse.provider_reference_id=s.provider_subscription_id
         OR adverse.provider_transaction_id=s.provider_subscription_id OR adverse.metadata->>'checkoutIntentId'=i.id::text

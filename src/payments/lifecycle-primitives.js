@@ -577,6 +577,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             && providerPaymentVerified === true;
         if (settlementCheckoutIntentId && (
             recurringSettlementConflict ||
+            (error?.code === 'PAID_VALUE_TRANSFER_SETTLEMENT_CONFLICT' && providerPaymentVerified === true) ||
             ['PLAN_CAPACITY_EXHAUSTED','SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT','MEDIA_LOCATION_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_MISSING','ASSIGNED_MEDIA_SERVER_UNAVAILABLE','ASSIGNED_MEDIA_SERVER_PROVIDER_MISMATCH','JELLYFIN_SERVER_CAPACITY_CHANGED'].includes(error?.code)
             || extensionFulfillmentFailure
         )) {
