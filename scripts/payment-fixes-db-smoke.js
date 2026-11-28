@@ -13,6 +13,7 @@ const livePaypalHistory = require('../src/payments/live-paypal-payment-history')
 const paypal = require('../src/payments/paypal');
 const stripe = require('../src/payments/stripe');
 const providerSettings = require('../src/payments/provider-settings');
+const settlementReview = require('../src/payments/settlement-review');
 
 const suffix = fixtureUnique('payfix');
 const created = { customers: [], plans: [], intents: [], servers: [], codes: [] };
@@ -48,6 +49,7 @@ const snapshotFor = (p, provider, mode, extra = {}) => ({
 const stateOf = async id => (await query('SELECT state,provider_checkout_id FROM billing_checkout_intents WHERE id=$1', [id])).rows[0];
 
 async function cleanup() {
+  await query("DELETE FROM payment_incidents WHERE provider_event_id LIKE $1", [`settlement-review:%${suffix}%`]).catch(() => {});
   if (created.intents.length) await query('DELETE FROM billing_checkout_intents WHERE id=ANY($1::uuid[])', [created.intents]).catch(() => {});
   if (created.codes.length) await query('DELETE FROM discount_codes WHERE id=ANY($1::uuid[])', [created.codes]).catch(() => {});
   if (created.plans.length) await query('DELETE FROM plans WHERE id=ANY($1::uuid[])', [created.plans]).catch(() => {});
@@ -220,12 +222,28 @@ async function providerSettingsRefresh() {
   }
 }
 
+// Paid-but-unverified settlements never withhold access: they open one access-neutral operator incident, idempotently.
+async function paidSettlementFlaggedNotBlocked() {
+  const owner = await customer('review flag');
+  const ref = `sub_${unique('review')}`;
+  const first = await settlementReview.flagForReview({ provider: 'stripe', customerId: owner.id, providerReference: ref, reasons: ['Stripe Checkout amount does not match the checkout contract.'] });
+  const again = await settlementReview.flagForReview({ provider: 'stripe', customerId: owner.id, providerReference: ref, reasons: ['Stripe subscription is past_due, not active.'] });
+  assert(first && again && first.id === again.id, 'a replay refreshes the same incident');
+  const rows = (await query(`SELECT * FROM payment_incidents WHERE provider='stripe' AND provider_event_id=$1`, [`settlement-review:${ref}`])).rows;
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].access_action, 'preserve', 'flagging never changes access');
+  assert.strictEqual(rows[0].incident_status, 'open');
+  assert.strictEqual(await settlementReview.flagForReview({ provider: 'stripe', customerId: owner.id, providerReference: ref, reasons: [] }), null, 'nothing to flag means no incident');
+  await query(`DELETE FROM payment_incidents WHERE provider_event_id=$1`, [`settlement-review:${ref}`]);
+}
+
 runDbSmoke('payment fixes DB smoke', async () => {
   try {
     const srv = await server();
     await paypalSettlementOrdering(srv);
     await exactIntentAssociation(srv);
     await providerSettingsRefresh();
+    await paidSettlementFlaggedNotBlocked();
   } finally {
     await cleanup();
   }
