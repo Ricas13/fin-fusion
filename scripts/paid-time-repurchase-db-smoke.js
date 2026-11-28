@@ -90,8 +90,9 @@ async function triggerOrder(){
 // Everything, including any role created here, is rolled back.
 async function runtimePrivileges(){
   const roles=['steamfusion_app','steamfusion_automation'];
-  const body=fs.readFileSync(path.join(__dirname,'..','db','migrations','20261127150000_paid_time_survives_repurchase.sql'),'utf8')
-    .replace(/^\s*BEGIN\s*;/i,'').replace(/COMMIT\s*;\s*$/i,'');
+  const bodies=['20261127150000_paid_time_survives_repurchase.sql','20261128120000_carried_paid_time_on_auto_renewal.sql']
+    .map(file=>fs.readFileSync(path.join(__dirname,'..','db','migrations',file),'utf8')
+      .replace(/^\s*BEGIN\s*;/im,'').replace(/COMMIT\s*;\s*$/i,''));
   const client=await getPool().connect();
   const allowed=async(role,signature)=>(await client.query(`SELECT has_function_privilege($1,to_regprocedure($2)::oid,'EXECUTE') AS ok`,[role,signature])).rows[0].ok;
   try{
@@ -104,7 +105,7 @@ async function runtimePrivileges(){
     }
     for(const signature of REQUIRED_FUNCTIONS)await client.query(`REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC, ${roles.join(', ')}`);
     assert.equal(await allowed(roles[0],REQUIRED_FUNCTIONS[0]),false,'fixture: access was removed');
-    await client.query(body);
+    for(const body of bodies)await client.query(body);
     for(const role of roles)for(const signature of REQUIRED_FUNCTIONS){
       assert.equal(await allowed(role,signature),true,`${role} must be able to execute ${signature}`);
     }
@@ -119,6 +120,12 @@ async function queueing(){
     const first=await insert(customer,plan,{status,start:-20,end:status==='active'?10:-2,ext:15});
     const next=await insert(customer,plan);
     same(next.starts_at,first.access_end,`G1/G6 ${status}: a repurchase starts after the extension days`);
+    const visible=await queuedPurchases.listForCustomer(customer.id);
+    assert.deepStrictEqual(visible.map(row=>row.subscription_id),[next.id],'only the confirmed future purchase appears');
+    same(visible[0].starts_at,next.starts_at,'portal uses stored queue start');
+    same(visible[0].access_expires_at,next.access_end,'portal uses stored queue end');
+    const outsider=await makeCustomer('queue-private');
+    assert.deepStrictEqual(await queuedPurchases.listForCustomer(outsider.id),[],'queued purchases are customer scoped');
     const expected=(await query(`SELECT $1::timestamptz+INTERVAL '1 month' AS t`,[next.starts_at])).rows[0].t;
     same(next.current_period_end,expected,'the queued purchase keeps its full calendar term');
   }

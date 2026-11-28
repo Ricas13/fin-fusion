@@ -114,7 +114,7 @@
   function extensionMarkup(plan,variant){
     const extension=plan.extension;if(!extension||!(extension.providers||[]).length)return'';
     const other=Number(variant.quantity)===Number(extension.quantity)?'':`<div class="paymentNote">Or extend your current allowance: ${esc(accessLabel(plan.kind,extension.quantity))}.</div>`;
-    return `${other}<div class="paymentNote">Buy more time without losing what remains. The purchased ${esc(String(extension.durationLabel).toLowerCase())} is added to the end of your existing paid access and does not create another server account.</div>${extension.providers.map(provider=>extensionForm(plan,provider)).join('')}`;
+    return `${other}<div class="paymentNote">Buy more time without losing what remains. The purchased ${esc(String(extension.durationLabel).toLowerCase())} is added to the end of your existing paid access and does not create another server account. Eligible promo codes apply to this one-off extension, not to future renewals.</div>${extension.providers.map(provider=>extensionForm(plan,provider)).join('')}`;
   }
   function actionMarkup(plan,variant){return purchaseMarkup(plan,variant)+extensionMarkup(plan,variant);}
   // Buying the held allowance again. Only when the server says the purchase will
@@ -126,7 +126,7 @@
     if(variant.soldOut)return '<span class="button secondary full" aria-disabled="true">Currently full for this allowance</span>';
     const providers=['stripe','paypal','plisio'].filter(provider=>availableModes(variant,provider).includes('payment'));
     if(!providers.length)return unavailable;
-    return `<div class="paymentNote">Separate purchase: it starts after your current paid time ends. Promo codes apply to this purchase, not to Extend.</div>${providers.map(provider=>checkoutForm(plan,variant,provider,'payment',`Buy separately with ${providerLabel(provider)}`,true)).join('')}`;
+    return `<div class="paymentNote">Separate purchase: it starts after your current paid time ends. Eligible promo codes can apply to either purchase option.</div>${providers.map(provider=>checkoutForm(plan,variant,provider,'payment',`Buy separately with ${providerLabel(provider)}`,true)).join('')}`;
   }
   function purchaseMarkup(plan,variant){
     if(plan.currentPlan&&Number(plan.currentQuantity)===Number(variant.quantity))return separatePurchaseMarkup(plan,variant);

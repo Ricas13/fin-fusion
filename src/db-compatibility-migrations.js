@@ -15,11 +15,13 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261031230000_checkout_operator_resolution.sql',
   '20261031233000_playback_progress_reporting.sql',
   '20261105204500_native_playback_accounting_shadow.sql',
-  '20261127150000_paid_time_survives_repurchase.sql'
+  '20261127150000_paid_time_survives_repurchase.sql',
+  '20261128120000_carried_paid_time_on_auto_renewal.sql',
+  '20261128134500_extension_discount_redemptions.sql'
 ]);
 
 // Database functions the application calls that only a repeatable migration
-// installs. Keep in step with the grant list in that migration.
+// installs. Keep in step with the grant lists in those migrations, in order.
 const REQUIRED_FUNCTIONS = Object.freeze([
   'public.prepaid_access_covered(uuid,text,jsonb,integer,uuid)',
   'public.prepaid_lanes_overlap(text,text)',
@@ -28,7 +30,20 @@ const REQUIRED_FUNCTIONS = Object.freeze([
   'public.prepaid_stack_anchors(uuid,uuid,text,jsonb,integer,boolean)',
   'public.prepaid_row_is_queueable(text,text,text,jsonb)',
   'public.pull_prepaid_queue(uuid,text,timestamptz,numeric,uuid,timestamptz)',
-  'public.shift_prepaid_queue_after_end_change(uuid,integer,timestamptz)'
+  'public.shift_prepaid_queue_after_end_change(uuid,integer,timestamptz)',
+  'public.carryable_paid_time(uuid,text,text,integer,integer,uuid)',
+  'public.carry_candidates(uuid)',
+  'public.carried_time_precheck(uuid,uuid,jsonb)',
+  'public.carried_time_total_days(uuid,uuid,timestamptz,timestamptz,numeric)',
+  'public.rebalance_carried_time(uuid)',
+  'public.carry_paid_time(uuid,uuid,numeric,text)',
+  'public.carry_all_paid_time(uuid,jsonb,text)',
+  'public.apply_carried_change(uuid,integer)',
+  'public.reverse_carried_paid_time(uuid,text)',
+  'public.reverse_carried_paid_time_by_payment(text,text,boolean,text)',
+  'public.reduce_carried_paid_time(uuid,numeric,boolean,text)',
+  'public.return_carried_paid_time(uuid,text)',
+  'public.subscription_access_blocked(uuid,text,text)'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {

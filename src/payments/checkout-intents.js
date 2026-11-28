@@ -6,6 +6,7 @@ const commerce = require('./commerce-control');
 const serviceCreditReservations = require('./service-credit-reservations');
 const capacity = require('../entitlements/plan-capacity');
 const customerServerChoice = require('../jellyfin/customer-server-choice');
+const carriedTime = require('./carried-time');
 const samePlanRepurchase = require('./same-plan-repurchase');
 
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
@@ -151,6 +152,14 @@ async function createIntent({
             await samePlanRepurchase.assertPurchaseKeepsPaidTime(
                 { customerId, planId, kind: snapshot.kind },
                 { db: (sql, params) => client.query(sql, params), transactional: true }
+            );
+        }
+        if (planId && checkoutMode === 'subscription' && snapshot.kind !== 'subscription_extension') {
+            // Time already held is added to a new auto-renewing plan. Where that
+            // is impossible, say so before money is taken.
+            await carriedTime.assertCarryPossible(
+                { customerId, planId, snapshot },
+                { db: (sql, params) => client.query(sql, params) }
             );
         }
         if (snapshot.kind === 'subscription_extension') {

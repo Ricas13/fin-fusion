@@ -3,6 +3,8 @@
 const { transaction } = require('../db');
 const billingPeriods = require('./billing-periods');
 const subscriptionState = require('../entitlements/subscription-state');
+const carriedTime = require('./carried-time');
+const discounts = require('./discounts');
 
 const PROVIDERS=new Set(['stripe','paypal','plisio']);
 const LIVE_STATUSES=new Set(['active','trialing','past_due','paused','cancelled','expired']);
@@ -258,6 +260,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8::jsonb)
     RETURNING *
   `,[customerId,subscriptionId,planId,provider,providerPaymentId,checkoutIntentId||null,days,JSON.stringify(commercialSnapshot||{})])).rows[0];
+  await discounts.redeemForExtensionTx(client,inserted);
   const updated=(await client.query(`
     UPDATE subscriptions
        SET service_extension_days=COALESCE(service_extension_days,0)+$2,
@@ -297,7 +300,7 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
     // All purchase, renewal and reversal paths lock the parent first. Locking
     // an extension first deadlocks concurrent refunds against recomputation.
     const parent=(await client.query(`
-      SELECT s.id,s.service_extension_days FROM subscriptions s
+      SELECT s.id,s.service_extension_days,s.superseded_by,s.replacement_reason FROM subscriptions s
       JOIN subscription_access_extensions e ON e.subscription_id=s.id
       WHERE e.provider=$1 AND e.provider_payment_id=$2
       FOR UPDATE OF s
@@ -315,6 +318,11 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
       throw error;
     }
     if(extension.status==='revoked')return{matched:true,changed:false,customerId:extension.customer_id,subscriptionId:extension.subscription_id,extension};
+    // A purchase on a row whose time has been carried also has to come off the
+    // plan that now holds it.
+    const carried=parent?.superseded_by&&parent.replacement_reason==='paid_time_carried';
+    const appliedTotal=async()=>Number((await client.query('SELECT COALESCE(SUM(applied_days),0) AS days FROM subscription_access_extensions WHERE subscription_id=$1',[extension.subscription_id])).rows[0]?.days||0);
+    const appliedBefore=carried?await appliedTotal():0;
     const revoked=(await client.query(`
       UPDATE subscription_access_extensions
          SET status='revoked',revoked_at=COALESCE(revoked_at,NOW()),
@@ -327,6 +335,10 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
     // so never subtract this row's historical purchased_days in isolation.
     const recomputed=await recomputeActivePurchasedDaysTx(client,extension.subscription_id,extension.customer_id);
     await shiftQueuedPurchases(client,extension.subscription_id,parent?.service_extension_days);
+    if(carried){
+      const removedDays=appliedBefore-await appliedTotal();
+      if(removedDays>0)await carriedTime.reduceSource(client,extension.subscription_id,removedDays*86400,{basePayment:false,reason:'source_extension_reversed'});
+    }
     await client.query(`
       INSERT INTO audit_log(action,entity_type,entity_id,metadata)
       VALUES('subscription.access_extension.revoke','subscription',$1,$2::jsonb)

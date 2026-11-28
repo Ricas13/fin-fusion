@@ -1,6 +1,7 @@
 'use strict';
 
 const { transaction } = require('../db');
+const carriedTime = require('./carried-time');
 
 function dateMs(value, label) {
   const ms = new Date(value).getTime();
@@ -66,7 +67,16 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
     // still present locally, so queued periods can never be shifted twice.
     const removedMs = Math.max(0, observedEndMs - cutoffMs);
 
-    if (removedMs > 0) {
+    if (removedMs > 0 && row.superseded_by && row.replacement_reason === 'paid_time_carried') {
+      // The time now sits on a newer plan. Take exactly the refunded base span
+      // off it, leaving separately bought extension days where they are.
+      await carriedTime.reduceSource(client, row.id, removedMs / 1000, { basePayment: true, reason: 'source_prorata_refund' });
+      await client.query(`
+        UPDATE subscriptions
+        SET current_period_end=$2,status='expired',updated_at=NOW()
+        WHERE id=$1
+      `, [row.id, cutoffDate]);
+    } else if (removedMs > 0) {
       await client.query(`
         UPDATE subscriptions
         SET current_period_end=$2,status='expired',service_extension_days=0,updated_at=NOW()

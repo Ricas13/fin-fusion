@@ -13,9 +13,9 @@ module.exports = {
       "node scripts/plisio-sweep-smoke.js",
       "node scripts/customer-onboarding-link-smoke.js",
       "node scripts/unpaid-access-activation-smoke.js",
-      "node scripts/access-repair-behavior-smoke.js",
       "node scripts/unpaid-trial-rollback-recheck-smoke.js",
       "node scripts/entitlement-reconcile-lock-timeout-smoke.js",
+      "node scripts/access-repair-behavior-smoke.js",
       "node scripts/access-repair-ownership-smoke.js",
       "node scripts/access-integrity-operator-smoke.js",
       "node scripts/lifecycle-audit-regressions-smoke.js",
@@ -53,6 +53,9 @@ module.exports = {
       "node scripts/automation-registry-ownership-smoke.js",
       "node scripts/automation-job-definition-smoke.js",
       "node scripts/automation-release-hardening-smoke.js",
+      "node scripts/reconciliation-lock-nesting-smoke.js",
+      "node scripts/automation-dispatch-lanes-smoke.js",
+      "node scripts/automation-stuck-state-smoke.js",
       "node scripts/revenue-integrity-auto-repair-smoke.js",
       "node scripts/critical-runtime-continuity-smoke.js",
       "node scripts/deployment-tooling-smoke.js",
@@ -70,6 +73,7 @@ module.exports = {
       "node scripts/operational-robustness-smoke.js",
       "node scripts/outbound-policy-smoke.js",
       "node scripts/reschedule-timer-smoke.js",
+      "node scripts/automation-watchdog-smoke.js",
       "node scripts/policy-engine-smoke.js"
     ],
     "check:fast:customer-access": [
@@ -161,6 +165,7 @@ module.exports = {
       "node scripts/checkout-abandonment-smoke.js",
       "node scripts/same-plan-access-extension-smoke.js",
       "node scripts/paid-time-repurchase-smoke.js",
+      "node scripts/carried-time-renewal-smoke.js",
       "node scripts/customer-error-sanitization-smoke.js"
     ],
     "check:fast:dashboards": [
@@ -231,7 +236,8 @@ module.exports = {
       "node scripts/whatsapp-removal-completeness-db-smoke.js",
       "node scripts/admin-jellyfin-assignment-lock-db-smoke.js",
       "node scripts/database-operational-hardening-db-smoke.js",
-      "node scripts/worker-instance-health-db-smoke.js"
+      "node scripts/worker-instance-health-db-smoke.js",
+      "node scripts/automation-watchdog-db-smoke.js"
     ],
     "check:db:access": [
       "node scripts/request-user-sync-smoke.js",
@@ -265,6 +271,7 @@ module.exports = {
       "node scripts/prepaid-access-stacking-smoke.js",
       "node scripts/same-plan-access-extension-db-smoke.js",
       "node scripts/paid-time-repurchase-db-smoke.js",
+      "node scripts/carried-time-renewal-db-smoke.js",
       "node scripts/prorata-refund-db-smoke.js",
       "node scripts/prorata-refund-retry-db-smoke.js",
       "node scripts/affiliate-first-payment-only-db-smoke.js",

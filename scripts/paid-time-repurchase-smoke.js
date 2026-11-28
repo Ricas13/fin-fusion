@@ -145,10 +145,11 @@ async function repurchaseDecision(){
     assert.equal((await decide([payment],null)).subscriptionId,'sub-1','a single one-off option counts as a one-off purchase');
     assert.equal(await decide([payment,recurring],null),null,'an unresolved payment-type choice is left to the choice page');
     assert.equal(await decide([recurring],'subscription'),null,'recurring checkouts are untouched');
-    await refused(decide([payment],'payment',{discountCode:'SAVE'}),'a promo code cannot buy a purchase that runs over paid time, including a zero-value one');
+    assert.equal((await decide([payment],'payment',{discountCode:'SAVE'})).subscriptionId,'sub-1','a discounted purchase must extend rather than overlap existing paid time');
     await refused(decide([payment],'payment',{applyServiceCredit:'on'}),'service credit cannot either');
     await refused(decide([recurring],'payment'),'no one-off price is invented for a plan that only sells renewals');
     target=null;await refused(decide([payment]),'queued rows, a plan change or a held account refuse instead of overlapping');
+    await refused(decide([payment],'payment',{discountCode:'SAVE'}),'a promotion cannot bypass the paid-time protection when no extension is possible');
     target={subscriptionId:'another'};await refused(decide([payment]),'an extension of a different row does not protect the unprotected one');
     target={subscriptionId:'sub-1'};subscription={...held(),commercial_snapshot:{accessQuantity:3}};
     await refused(decide([payment]),'a different allowance is refused, not sold over paid time');
@@ -442,7 +443,7 @@ async function clientCards(){
     overseerrUrl:null,requestAccess:null,requestSyncConfigured:false,provisioningState:null,hasJellyfin:true,hasStremio:false,hasEmby:false,jellyfinAccounts:[],embyAccounts:[]},{filename:path.join(root,'views','customer','dashboard.ejs')});
   const server=parseForms(html).filter(form=>'extensionSubscriptionId' in form.inputs);
   assert.deepStrictEqual(forms,server,'browser-built Extend forms must match the server-rendered ones');
-  assert(page.actions.innerHTML.includes('name="discountCode" data-promo-target'),'promo behaviour is unchanged on Extend forms');
+  assert(page.actions.innerHTML.includes('name="discountCode" data-promo-target'),'Extend forms submit the promo code');
 
   page.reset();
   page.choose(2);
@@ -456,7 +457,7 @@ async function clientCards(){
   assert.equal(parseForms(recurring.actions.innerHTML).filter(form=>form.inputs.extensionSubscriptionId).length,3,'recurring payers who can extend keep Extend');
 
   // A holder whose time the purchase would wait behind can also buy separately,
-  // which is where a promo code applies.
+  // Both purchase paths can carry an eligible promo code.
   const mixed=[{provider:'stripe',checkoutMode:'subscription'},{provider:'stripe',checkoutMode:'payment'},{provider:'paypal',checkoutMode:'subscription'},{provider:'plisio',checkoutMode:'payment'}];
   const offer=(changes={},variant={})=>({...variantPlan,separatePurchaseSafe:true,...changes,
     variants:[1,2].map(quantity=>({quantity,priceMinor:600*quantity,currency:'GBP',priceLabel:'price',soldOut:false,paymentOptions:mixed,...(quantity===1?variant:{})}))});
@@ -467,8 +468,8 @@ async function clientCards(){
   assert(separate(safe).every(form=>form.inputs.checkoutMode==='payment'&&form.inputs.accessQuantity==='1'&&'discountCode' in form.inputs&&'mediaLocation' in form.inputs),'one-off only, with the held allowance');
   const markup=safe.actions.innerHTML;
   assert.equal((markup.match(/<form class="plainForm checkoutForm" data-separate-purchase /g)||[]).length,2);
-  assert.equal((markup.match(/data-promo-target/g)||[]).length,5,'both separate forms receive the promo code; Extend is unchanged');
-  assert(markup.includes('Separate purchase: it starts after your current paid time ends. Promo codes apply to this purchase, not to Extend.'));
+  assert.equal((markup.match(/data-promo-target/g)||[]).length,5,'separate and Extend forms receive the promo code');
+  assert(markup.includes('Separate purchase: it starts after your current paid time ends. Eligible promo codes can apply to either purchase option.'));
   assert(markup.includes('Buy separately with Stripe')&&!markup.includes('Current access allowance'));
   assert.equal(extending(safe).length,3,'Extend stays beside it');
   assert.equal(safe.appended().length,2,'only the separate purchases pick a server location');
@@ -627,7 +628,9 @@ function refundInsertLocksTheCustomerFirst(source){
   // this function would silently drop the lock.
   const definers=fs.readdirSync(path.join(__dirname,'..','db','migrations')).sort()
     .filter(file=>/FUNCTION\s+(?:public\.)?enforce_provider_refund_cash_basis\s*\(\)\s*RETURNS/i.test(read('db/migrations/'+file)));
-  assert.deepStrictEqual(definers,[CASH_BASIS,MIGRATION]);
+  // The carried-time migration redefines it with the lock widened, which its
+  // own smoke checks.
+  assert.deepStrictEqual(definers,[CASH_BASIS,MIGRATION,'20261128120000_carried_paid_time_on_auto_renewal.sql']);
 }
 
 function contracts(){
@@ -656,10 +659,13 @@ function contracts(){
   // Every public function the migration creates is granted to the runtime roles
   // and listed as required; trigger functions need no EXECUTE grant.
   const names=signatures=>signatures.map(signature=>signature.slice('public.'.length,signature.indexOf('('))).sort();
+  // The required list is this migration's functions followed by those of later
+  // repeatable migrations, which their own smoke compares with their grants.
   const created=Array.from(migration.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g),match=>match[1]).sort();
-  assert.deepStrictEqual(names(Array.from(compatibility.REQUIRED_FUNCTIONS)),created);
+  const own=Array.from(compatibility.REQUIRED_FUNCTIONS).slice(0,created.length);
+  assert.deepStrictEqual(names(own),created);
   const grants=migration.slice(migration.indexOf('DO $grants$'),migration.indexOf('$grants$;'));
-  assert.deepStrictEqual(Array.from(grants.matchAll(/'(public\.[^']+)'/g),match=>match[1]),Array.from(compatibility.REQUIRED_FUNCTIONS),'grant list and required list must match');
+  assert.deepStrictEqual(Array.from(grants.matchAll(/'(public\.[^']+)'/g),match=>match[1]),own,'grant list and required list must match');
   for(const role of ['steamfusion_app','steamfusion_automation'])assert(grants.includes("'"+role+"'"));
   const statements=report.replace(/--.*$/gm,'');
   assert(!/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|TRUNCATE|GRANT)\b/i.test(statements),'the report must stay read only');

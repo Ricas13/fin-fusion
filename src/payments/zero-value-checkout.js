@@ -96,7 +96,7 @@ async function activateFullyDiscountedPayment({customerId,intentId,nonce,provide
             ]);
             row=inserted.rows[0];
         }
-        await discounts.redeemForSubscriptionTx(client,{
+        if(snapshot.kind!=='subscription_extension') await discounts.redeemForSubscriptionTx(client,{
             discountCodeId:snapshot.discountCodeId,
             customerId,
             subscriptionId:row.id,
