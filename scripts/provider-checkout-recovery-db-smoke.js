@@ -539,6 +539,34 @@ async function main() {
     assert.strictEqual(logged.rowCount, 1);
     assert(/signature/.test(logged.rows[0].metadata.reason));
 
+    // A checkout started before a different recurring agreement activated may settle late.
+    // Preserve the existing access and create exactly one durable paid-but-unfulfilled incident.
+    const duplicate = await attachedIntent('recovery duplicate recurring', 'stripe', `cs_test_${unique('duplicate')}`, `price_${unique('duplicate')}`, 'subscription', server);
+    const incumbentRef = `sub_${unique('incumbent')}`;
+    await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,billing_mode,starts_at,current_period_end,service_type_snapshot)
+        VALUES($1,$2,'active','stripe',$3,'subscription',NOW(),NOW()+INTERVAL '30 days','jellyfin')`, [duplicate.owner.id, duplicate.plan.id, incumbentRef]);
+    const duplicateContract=(await intents.findById(duplicate.id)).commercial_snapshot;
+    const duplicateRef=`sub_${unique('late_duplicate')}`;
+    const activateDuplicate=(providerStatus,providerPaymentVerified=false)=>require('../src/payments/lifecycle').activatePurchase({
+        customerId:duplicate.owner.id,planId:duplicate.plan.id,provider:'stripe',providerSubscriptionId:duplicateRef,providerStatus,
+        commercialSnapshot:duplicateContract,checkoutIntentId:duplicate.id,providerPaymentVerified
+    });
+    const conflicts=async()=> (await query(`SELECT * FROM payment_incidents WHERE provider='stripe' AND provider_case_id=$1 AND incident_type='checkout_completion'`,[duplicate.id])).rows;
+    await assert.rejects(()=>activateDuplicate('trialing'),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&!error.paidButUnfulfilled);
+    await assert.rejects(()=>activateDuplicate('active'),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&!error.paidButUnfulfilled);
+    assert.strictEqual((await conflicts()).length,0,'neither trialing nor active agreements alone prove collection');
+    for(let attempt=0;attempt<2;attempt++){
+        await assert.rejects(()=>activateDuplicate('active',true),error=>error.code==='RECURRING_SUBSCRIPTION_CONFLICT'&&error.paidButUnfulfilled===true);
+    }
+    const duplicateIncidents=await conflicts();
+    assert.strictEqual(duplicateIncidents.length,1,'provider retry must not duplicate the paid incident');
+    assert.strictEqual(duplicateIncidents[0].incident_status,'open');
+    assert.strictEqual(duplicateIncidents[0].metadata.reason,'overlapping_recurring_subscription_after_provider_settlement');
+    assert.strictEqual(duplicateIncidents[0].metadata.paidButUnfulfilled,true);
+    const retained=(await query('SELECT provider_subscription_id,status FROM subscriptions WHERE customer_id=$1',[duplicate.owner.id])).rows;
+    assert.deepStrictEqual(retained,[{provider_subscription_id:incumbentRef,status:'active'}]);
+    assert.strictEqual((await stateOf(duplicate.id)).state,'open','paid conflict stays available for operator recovery');
+
     console.log('provider checkout recovery DB smoke: retry isolation, pending safety and terminal convergence ok');
 }
 
