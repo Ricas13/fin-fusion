@@ -1,14 +1,15 @@
 'use strict';
 
 const assert = require('assert');
-const { createAccessRepair } = require('../src/access/access-repair');
+const { createAccessRepair, UNPAID_TRIAL_REPAIR_GRACE_MS } = require('../src/access/access-repair');
 
 const STATES = {
   ACTIVE_READY: 'ACTIVE_READY',
   ACTIVE_BLOCKED: 'ACTIVE_BLOCKED',
   INCONSISTENT_UNPAID: 'INCONSISTENT_UNPAID',
   ORPHAN_ACCOUNT: 'ORPHAN_ACCOUNT',
-  NONE: 'NONE'
+  NONE: 'NONE',
+  ACTIVE_ENTITLED: 'ACTIVE_ENTITLED'
 };
 
 function accessState({ free = [], primary = [] } = {}) {
@@ -208,8 +209,9 @@ function accessState({ free = [], primary = [] } = {}) {
       })
     });
     const result = await repair.repairUnpaidTrial('customer');
-    assert.strictEqual(result.status, 'removed');
-    assert.strictEqual(trialRollbacks, 1);
+    assert.strictEqual(result.status, 'deferred');
+    assert.strictEqual(result.reason, 'manual_review_required');
+    assert.strictEqual(trialRollbacks, 0);
   }
 
   {
@@ -396,6 +398,252 @@ function accessState({ free = [], primary = [] } = {}) {
       /remained after no-plan reconciliation/,
       'orphan cleanup must verify the destructive postcondition instead of trusting a successful reconcile call'
     );
+  }
+  const lockError = () => Object.assign(new Error('busy'), { code: 'CUSTOMER_RECONCILIATION_LOCK_TIMEOUT' });
+
+  // A lock-timeout cause defers before anything is even read.
+  {
+    let trialRollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState(),
+      provisioning: { reconcileCustomer: async () => { throw new Error('must not reconcile'); } },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { trialRollbacks += 1; } })
+    });
+    const result = await repair.repairUnpaidTrial('customer', { cause: lockError() });
+    assert.deepStrictEqual(result, { status: 'deferred', reason: 'lock_timeout' });
+    assert.strictEqual(trialRollbacks, 0);
+  }
+
+  {
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'trial-busy', billing_interval: 'trial', service_type: 'jellyfin' }
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('must not reconcile'); } },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { throw lockError(); } })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.strictEqual(result.status, 'deferred', 'a failed trial must be retained without invoking rollback');
+  }
+
+  // Free repair: neither a busy reconcile nor a busy rollback removes the claim.
+  {
+    let rollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [{ state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-busy' } }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw lockError(); } },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'free-busy');
+    assert.strictEqual(result.status, 'deferred');
+    assert.strictEqual(rollbacks, 0, 'a Free reconcile lock timeout must never roll the claim back');
+  }
+
+  {
+    const missing = { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-busy-rollback' } };
+    const repair = createAccessRepair({
+      customerAccessState: accessState({ free: [missing, missing] }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { throw lockError(); } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'free-busy-rollback');
+    assert.strictEqual(result.status, 'deferred');
+  }
+  // A rollback skipped under the lock is not a removal.
+  for (const [reason, status] of [['ready', 'ready'], ['blocked', 'skipped'], ['not_current', 'skipped']]) {
+    let options = null;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'trial-skip', billing_interval: 'trial', service_type: 'jellyfin' }
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('must not reconcile after a skip'); } },
+      lifecycle: () => ({
+        rollbackUnprovisionedJellyfinTrial: async (_customer, _subscription, received) => {
+          options = received;
+          return { rolledBack: false, reason };
+        }
+      })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.deepStrictEqual(result, { status: 'deferred', reason: 'manual_review_required', subscriptionId: 'trial-skip' });
+    assert.strictEqual(options, null, 'background repair never invokes trial rollback');
+
+    const missing = { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-skip' } };
+    const free = createAccessRepair({
+      customerAccessState: accessState({ free: [missing, missing] }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({
+        rollbackUnprovisionedFreeClaim: async (_customer, _subscription, received) => {
+          assert.strictEqual(received.retainBlocked, true);
+          return { rolledBack: false, reason };
+        }
+      })
+    });
+    const freeResult = await free.repairFreeEntitlement('customer', 'free-skip');
+    assert.strictEqual(freeResult.status, status);
+    assert.strictEqual(freeResult.reason, reason);
+  }
+  assert.strictEqual(UNPAID_TRIAL_REPAIR_GRACE_MS, 15 * 60 * 1000);
+  const NOW = Date.parse('2026-06-01T12:00:00Z');
+  const minutesAgo = minutes => new Date(NOW - minutes * 60 * 1000);
+
+  // A young Jellyfin trial is left for activation and the worker to finish.
+  for (const [age, status] of [[5, 'deferred'], [16, 'deferred'], [1440, 'deferred']]) {
+    let rollbacks = 0;
+    const repair = createAccessRepair({
+      now: () => NOW,
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: {
+            subscription_id: 'trial-age', billing_interval: 'trial', service_type: 'jellyfin',
+            subscription_created_at: minutesAgo(age),
+            // Plan columns overwrite created_at; it must not decide the age.
+            created_at: minutesAgo(100000)
+          }
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('cleanup failed'); } },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.strictEqual(result.status, status, `age ${age}; no age permits automatic trial cancellation`);
+    assert.strictEqual(rollbacks, 0);
+  }
+
+  // Unpaid Emby-only, Stremio-only and bundle trials.
+  function serviceRepair({
+    lane, entitlement = {}, state = STATES.ACTIVE_ENTITLED, ready = {}, primary = null,
+    accounts = [], converge = async () => {}, rollback = async () => ({ rolledBack: true })
+  }) {
+    const calls = { rollbacks: [], converged: 0, reconciles: 0, reads: 0 };
+    const full = {
+      subscription_id: 'service-trial', billing_interval: 'trial', service_type: lane, source: 'manual',
+      starts_at: minutesAgo(60), access_expires_at: new Date(NOW + 86400000), ...entitlement
+    };
+    const read = async () => { calls.reads += 1; return { state, entitlement: full }; };
+    const rollbackFor = name => async (_customer, subscriptionId, options) => {
+      calls.rollbacks.push({ name, subscriptionId, options });
+      return rollback();
+    };
+    const repair = createAccessRepair({
+      now: () => NOW,
+      customerAccessState: {
+        ACCESS_STATES: STATES,
+        emby: read,
+        stremio: read,
+        primaryJellyfin: async () => primary
+      },
+      provisioning: {
+        reconcileCustomer: async () => { calls.reconciles += 1; },
+        reconciliationLock: { withCustomerReconciliationLock: async (_customer, fn) => fn() }
+      },
+      mediaReconciliation: {
+        accountsFor: async () => accounts,
+        reconcileCustomer: async (_customer, service) => {
+          assert.strictEqual(service, 'emby');
+          calls.converged += 1;
+          return converge(ready);
+        }
+      },
+      lifecycle: () => ({
+        readyEmbyAccountForSubscription: async () => ready.emby || null,
+        readyStremioInstallForSubscription: async () => ready.stremio || null,
+        readyPrimaryJellyfinAccountForSubscription: async () => ready.jellyfin || null,
+        readyJellyfinBundleForSubscription: async () => (ready.jellyfin && ready.stremio ? ready : null),
+        rollbackUnprovisionedEmbyTrial: rollbackFor('emby'),
+        rollbackUnprovisionedStremioTrial: rollbackFor('stremio'),
+        rollbackUnprovisionedBundleTrial: rollbackFor('bundle')
+      })
+    });
+    return { calls, run: options => repair.repairUnpaidServiceTrial('customer', lane, options) };
+  }
+
+  for (const lane of ['emby', 'stremio']) {
+    const untouched = [
+      [{ entitlement: { billing_interval: 'month' } }, 'skipped', 'paid access'],
+      [{ entitlement: { source: 'stripe' } }, 'skipped', 'provider-billed access'],
+      [{ entitlement: { is_addon: true } }, 'skipped', 'add-on'],
+      [{ state: STATES.ACTIVE_BLOCKED }, 'skipped', 'blocked trial'],
+      [{ entitlement: { access_expires_at: Infinity } }, 'protected', 'permanent access'],
+      [{ entitlement: { permanent_access: true } }, 'protected', 'operator protection'],
+      [{ entitlement: { starts_at: minutesAgo(5) } }, 'deferred', 'young trial'],
+      [{ ready: { emby: { id: 'a' }, stremio: { entitlementId: 'e' } } }, 'ready', 'ready trial']
+    ];
+    for (const [options, status, label] of untouched) {
+      const scenario = serviceRepair({ lane, ...options });
+      const result = await scenario.run();
+      assert.strictEqual(result.status, status, `${lane} ${label}`);
+      assert.deepStrictEqual(scenario.calls.rollbacks, [], `${lane} ${label} must not be rolled back`);
+      assert.strictEqual(scenario.calls.converged, 0, `${lane} ${label}`);
+    }
+
+    const busy = serviceRepair({ lane });
+    assert.strictEqual((await busy.run({ cause: lockError() })).status, 'deferred');
+    assert.strictEqual(busy.calls.reads, 0, 'a lock-timeout cause must defer before any read');
+
+    const stranded = serviceRepair({ lane });
+    const result = await stranded.run({ reason: 'provisioning failed' });
+    assert.strictEqual(result.status, 'deferred', `${lane} stranded trial`);
+    assert.strictEqual(result.reason, 'manual_review_required');
+    assert.deepStrictEqual(stranded.calls.rollbacks, []);
+    assert.strictEqual(stranded.calls.reconciles, 0);
+  }
+
+  {
+    const recovered = serviceRepair({ lane: 'emby', converge: async ready => { ready.emby = { id: 'created' }; } });
+    assert.strictEqual((await recovered.run()).status, 'repaired', 'Emby gets its own attempt before removal');
+    assert.deepStrictEqual(recovered.calls.rollbacks, []);
+
+    const busy = serviceRepair({ lane: 'emby', converge: async () => { throw lockError(); } });
+    assert.strictEqual((await busy.run()).status, 'deferred');
+    assert.deepStrictEqual(busy.calls.rollbacks, []);
+
+    const failed = serviceRepair({ lane: 'emby', converge: async () => { throw new Error('no Emby capacity'); } });
+    assert.strictEqual((await failed.run()).status, 'deferred');
+    assert.deepStrictEqual(failed.calls.rollbacks, []);
+    assert.strictEqual(failed.calls.reconciles, 0);
+
+    const pinned = serviceRepair({
+      lane: 'emby',
+      entitlement: { media_server_id: 'emby-1' },
+      accounts: [{ id: 'existing', server_id: 'emby-1', server_enabled: false }]
+    });
+    assert.strictEqual((await pinned.run()).reason, 'assigned_server_account_unavailable');
+    assert.deepStrictEqual(pinned.calls.rollbacks, []);
+  }
+
+  {
+    const entitlement = { service_type: 'bundle' };
+    const jellyfin = (state, extra = {}, accounts = []) => ({
+      state, accounts, entitlement: { subscription_id: 'service-trial', billing_interval: 'trial', ...extra }
+    });
+
+    const missingBoth = serviceRepair({
+      lane: 'stremio', entitlement, primary: jellyfin(STATES.INCONSISTENT_UNPAID)
+    });
+    assert.strictEqual((await missingBoth.run()).status, 'deferred');
+    assert.deepStrictEqual(missingBoth.calls.rollbacks, []);
+
+    const kept = [
+      [jellyfin(STATES.ACTIVE_READY), 'media_account_ready'],
+      [jellyfin(STATES.ACTIVE_BLOCKED), 'blocked'],
+      [jellyfin(STATES.INCONSISTENT_UNPAID, { admin_jellyfin_mode: 'present' }), 'admin_protected'],
+      [jellyfin(STATES.INCONSISTENT_UNPAID, { media_server_id: 's' }, [{ server_id: 's' }]), 'assigned_server_account_unavailable']
+    ];
+    for (const [primary, reason] of kept) {
+      const scenario = serviceRepair({ lane: 'stremio', entitlement, primary });
+      assert.strictEqual((await scenario.run()).reason, reason);
+      assert.deepStrictEqual(scenario.calls.rollbacks, [], `bundle ${reason} must not be rolled back`);
+    }
   }
 
   console.log('access repair behavior smoke: ok');
