@@ -201,6 +201,18 @@ const { activateOrRollback } = require('../src/payments/unpaid-access-activation
     assert.strictEqual(queued, 1);
   }
 
+  // Trial policy is independent of the type of provisioning or verification failure.
+  for (const cause of [null, new Error('no capacity'), new Error('verification unavailable')]) {
+    let rollbacks=0,queued=0;
+    await assert.rejects(activateOrRollback({
+      ...base,retainOnFailure:true,
+      reconcile:async()=>{if(cause?.message==='no capacity')throw cause;},
+      verify:async()=>{if(cause?.message==='verification unavailable')throw cause;return null;},
+      rollback:async()=>{rollbacks++;},onPending:async()=>{queued++;}
+    }),error=>error.code==='PENDING'&&error.retryable===true);
+    assert.strictEqual(rollbacks,0);
+    assert.strictEqual(queued,1);
+  }
   // Failing to queue the follow-up must not hide the pending outcome.
   await assert.rejects(
     activateOrRollback({
