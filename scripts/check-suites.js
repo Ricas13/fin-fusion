@@ -71,6 +71,7 @@ module.exports = {
       "node scripts/operational-robustness-smoke.js",
       "node scripts/outbound-policy-smoke.js",
       "node scripts/reschedule-timer-smoke.js",
+      "node scripts/automation-watchdog-smoke.js",
       "node scripts/policy-engine-smoke.js"
     ],
     "check:fast:customer-access": [
@@ -233,7 +234,8 @@ module.exports = {
       "node scripts/whatsapp-removal-completeness-db-smoke.js",
       "node scripts/admin-jellyfin-assignment-lock-db-smoke.js",
       "node scripts/database-operational-hardening-db-smoke.js",
-      "node scripts/worker-instance-health-db-smoke.js"
+      "node scripts/worker-instance-health-db-smoke.js",
+      "node scripts/automation-watchdog-db-smoke.js"
     ],
     "check:db:access": [
       "node scripts/request-user-sync-smoke.js",
