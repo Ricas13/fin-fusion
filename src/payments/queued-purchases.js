@@ -43,4 +43,22 @@ async function moveQueuedPurchases(client,subscriptionId,before){
     [subscriptionId,Math.max(0,Number(before.service_extension_days||0)),before.period_end||null]);
 }
 
-module.exports={RESUME_BLOCKED,hasPurchaseQueuedBehind,lockQueueOwner,accessEndBefore,moveQueuedPurchases};
+// Read model only: future settled one-off purchases, not live entitlements.
+async function listForCustomer(customerId,{db=query}={}){
+  const result=await db(`
+    SELECT s.id AS subscription_id,COALESCE(s.plan_name_snapshot,p.name) AS plan_name,
+           COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS service_type,
+           s.starts_at,
+           s.current_period_end+make_interval(days=>COALESCE(s.service_extension_days,0)) AS access_expires_at
+    FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+    WHERE s.customer_id=$1 AND s.status='active' AND s.starts_at>NOW()
+      AND s.current_period_end>s.starts_at
+      AND s.superseded_by IS NULL AND s.refund_terminated_at IS NULL
+      AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(p.is_free_tier,FALSE)=FALSE
+      AND public.prepaid_row_is_queueable(s.source,s.provider_subscription_id,s.billing_mode,s.commercial_snapshot)
+    ORDER BY s.starts_at,s.created_at,s.id
+  `,[customerId]);
+  return result.rows;
+}
+
+module.exports={listForCustomer,RESUME_BLOCKED,hasPurchaseQueuedBehind,lockQueueOwner,accessEndBefore,moveQueuedPurchases};
