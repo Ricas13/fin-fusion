@@ -299,6 +299,31 @@ async function main(){
   assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[baselineSubscription.id])).rows[0].service_extension_days),7,
     'concurrent refunds must preserve unrelated manual extension days');
 
+  // Confirmed base-payment loss must keep the original row terminal while
+  // separately settled extension access survives on a distinct holder.
+  const recoveredCustomer=(await query("INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *",['Recovery '+suffix,'recovery-'+suffix+'@example.invalid'])).rows[0];
+  const recoveryBase=(await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,provider_subscription_id,starts_at,current_period_end)
+    VALUES($1,$2,'active','stripe','payment',$3,NOW()-INTERVAL '5 days',NOW()+INTERVAL '20 days') RETURNING *`,
+    [recoveredCustomer.id,plan.id,'pi_recovery_base_'+suffix])).rows[0];
+  const recoverySnapshot={...snapshot,extensionSubscriptionId:recoveryBase.id};
+  const recoveryRequest={customerId:recoveredCustomer.id,subscriptionId:recoveryBase.id,planId:plan.id,provider:'stripe',
+    providerPaymentId:'pi_recovery_ext_'+suffix,commercialSnapshot:recoverySnapshot};
+  const boughtRecovery=await transaction(client=>extensions.applyPurchase(client,recoveryRequest));
+  await query("UPDATE subscriptions SET refund_terminated_at=NOW(),status='cancelled',current_period_end=NOW(),service_extension_days=0 WHERE id=$1",[recoveryBase.id]);
+  const independent=await extensions.restoreActivePurchasedDays(recoveryBase.id,recoveredCustomer.id);
+  assert(independent.subscription.id!==recoveryBase.id,'recovered extension must have a separate entitlement');
+  assert.equal(Number(independent.subscription.service_extension_days),Number(boughtRecovery.extension.applied_days),'preserve the exact independently purchased duration');
+  const terminal=(await query('SELECT * FROM subscriptions WHERE id=$1',[recoveryBase.id])).rows[0];
+  assert(terminal.refund_terminated_at&&terminal.status==='cancelled'&&Number(terminal.service_extension_days)===0,'refunded base remains terminal');
+  const recoveryReplay=await transaction(client=>extensions.applyPurchase(client,recoveryRequest));
+  assert.equal(recoveryReplay.replay,true);
+  assert.equal(recoveryReplay.subscription.id,independent.subscription.id,'original checkout replay finds the recovered holder');
+  const againRecovery=await extensions.restoreActivePurchasedDays(recoveryBase.id,recoveredCustomer.id);
+  assert.equal(againRecovery.subscription.id,independent.subscription.id,'refund replay cannot create a second holder');
+  await extensions.revokeByProviderPayment({provider:'stripe',providerPaymentId:recoveryRequest.providerPaymentId,customerId:recoveredCustomer.id});
+  assert.equal(Number((await query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[independent.subscription.id])).rows[0].service_extension_days),0,'only the extension reversal removes the recovered access');
+  await query('DELETE FROM customers WHERE id=$1',[recoveredCustomer.id]);
+
   console.log('same-plan access extension smoke: ok — additive, no capacity subscription duplication, replay-safe and refund-safe');
 }
 

@@ -241,9 +241,13 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
         // A mismatch means an administrator has since pinned Permanent Access
         // to another subscription. Refund automation must not defeat that newer
         // explicit authority.
-        if(subscription.status==='cancelled'&&Number(subscription.service_extension_days||0)===0){
-            return{changed:permanentAccessRevoked,reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType,permanentAccessRevoked};
+        if(subscription.refund_terminated_at){
+            const recovered=(await client.query('SELECT public.recover_independent_paid_extensions($1) AS id',[subscription.id])).rows[0]?.id||null;
+            return{changed:permanentAccessRevoked||Boolean(recovered),reason:'already_terminated',id:subscription.id,customerId,serviceType:effectiveServiceType,permanentAccessRevoked,recoveredExtensionSubscriptionId:recovered};
         }
+        const before=(await client.query(
+            "SELECT current_period_end::text AS base_end,(current_period_end+make_interval(days=>service_extension_days))::text AS access_end FROM subscriptions WHERE id=$1",
+            [subscription.id])).rows[0];
         const ended=await client.query(`
             UPDATE subscriptions
             SET status='cancelled',current_period_end=LEAST(COALESCE(current_period_end,NOW()),NOW()),service_extension_days=0,cancel_at_period_end=TRUE,updated_at=NOW()
@@ -258,7 +262,18 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
         `,[subscription.id]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'billing.subscription.terminate_for_refund','subscription',$2,$3::jsonb)`,
             [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
-        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
+        const recovered=(await client.query('SELECT public.recover_independent_paid_extensions($1) AS id',[subscription.id])).rows[0]?.id||null;
+        // Compact later paid purchases after the independent extension (if any),
+        // not after the refunded base period. The customer lock serializes this
+        // with new checkout settlements. A replay follows the terminal branch.
+        if(before&&['stripe','paypal','plisio'].includes(subscription.source)){
+            await client.query(`SELECT public.pull_prepaid_queue($1,$2,$3::timestamptz,
+                GREATEST(0,EXTRACT(EPOCH FROM ($4::timestamptz-GREATEST(NOW(),COALESCE(
+                    (SELECT current_period_end+make_interval(days=>service_extension_days) FROM subscriptions WHERE id=$5),NOW()))))),
+                $6,(SELECT current_period_end+make_interval(days=>service_extension_days) FROM subscriptions WHERE id=$5))`,
+                [customerId,effectiveServiceType,before.base_end,before.access_end,recovered,subscription.id]);
+        }
+        return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked,recoveredExtensionSubscriptionId:recovered,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
     });
     await carriedTime.reportProblem(customerId,refundedRow,carryIssue);
     const result=await hardRevokeRefundedStremio(customerId,local);
