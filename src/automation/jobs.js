@@ -1,5 +1,6 @@
 'use strict';
 const workerDbBudget=require('./worker-db-budget');
+const MAX_RUN_SECONDS=require('./job-run-limits');
 workerDbBudget.install(require('../db'));
 const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioning');
 const{notifyExpiringSubscriptions}=require('../entitlements/subscription-expiry');
@@ -83,7 +84,7 @@ const JOB_METADATA=Object.freeze({
  pending_registration_cleanup:{defaultIntervalSeconds:300,critical:false},
  stremio_managed_accounts:{defaultIntervalSeconds:300,critical:true},
  stremio_external_tokens:{defaultIntervalSeconds:300,critical:true},
- stremio_media_index:{defaultIntervalSeconds:300,critical:false}
+ stremio_media_index:{defaultIntervalSeconds:300,critical:false,hostLocks:true,maxRunSeconds:MAX_RUN_SECONDS.stremio_media_index}
 });
 
 
