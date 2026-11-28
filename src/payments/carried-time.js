@@ -18,6 +18,13 @@ const MESSAGES=Object.freeze({
 // better than activating without the carry.
 const RETRYABLE=new Set(['40001','40P01','55P03']);
 const ENDED=new Set(['cancelled','expired']);
+// A renewal failure is recognised from the period it left unpaid: that period
+// starts no earlier than this long before the delinquency hold was raised.
+const UNPAID_PERIOD_GRACE_MS=7*86400000;
+const PERIOD_MONTHS=Object.freeze({month:1,'6_months':6,year:12});
+// Audit markers: an agreement whose first payment is not yet confirmed.
+const AWAITING_FIRST_PAYMENT='subscription.paid_time.awaiting_first_payment';
+const FIRST_PAYMENT_CONFIRMED='subscription.paid_time.first_payment_confirmed';
 
 function refusal(code){const error=new Error(MESSAGES[code]);error.code=`CARRIED_TIME_${code}`;return error;}
 
@@ -51,7 +58,9 @@ async function carryOnActivation(client,row){
   try{
     const result=(await client.query('SELECT public.carry_all_paid_time($1) AS result',[row.id])).rows[0]?.result||null;
     let updated=row;
-    if(Number(result?.days||0)>0){
+    // A fully covered source adds no days but is still replaced and may hand
+    // over its server placement.
+    if(Number(result?.days||0)>0||result?.carried?.length){
       updated=(await client.query('SELECT * FROM subscriptions WHERE id=$1',[row.id])).rows[0]||row;
     }
     await client.query('RELEASE SAVEPOINT carried_time');
@@ -64,12 +73,14 @@ async function carryOnActivation(client,row){
 }
 
 function carryProblem(result){
+  if(result?.ineligible)return{reason:'carried_time_receiving_period_ended',detail:'The new plan\'s recorded paid period had already ended, so no remaining time was added to it.'};
   const overLimit=(result?.skipped||[]).filter(item=>item.reason==='over_limit');
   return overLimit.length?{reason:'carried_time_over_limit',detail:`Not carried: ${overLimit.map(item=>item.subscriptionId).join(', ')}`}:null;
 }
 
 const OPERATOR_ACTIONS=Object.freeze({
   carried_time_failed:'A new auto-renewing plan was paid for but the remaining time could not be added to it. Check the customer\'s plans and add the remaining days to the new plan.',
+  carried_time_receiving_period_ended:'A new auto-renewing plan was confirmed but its recorded paid period had already ended, so the remaining time was not added. Check the provider period and add the remaining days to the new plan.',
   carried_time_over_limit:'Some remaining time exceeds the longest supported paid period and was not added to the new plan. It is still on the older plan row.',
   carried_time_owed_after_renewal_loss:'A later renewal payment was reversed and that plan has ended. Days carried from earlier payments are still owed: nothing was granted automatically. Add them to the customer or refund them.'
 });
@@ -97,6 +108,39 @@ async function reportProblem(customerId,subscription,problem){
   console.error('Carried paid time needs operator attention:',{customerId,subscriptionId:subscription?.id,reason:problem.reason});
   try{await recordOperatorIncident({customerId,subscription,reason:problem.reason,detail:problem.detail});}
   catch(error){console.error('Carried paid time incident could not be recorded:',error.message);}
+}
+
+// An auto-renewing row created before its first payment is confirmed. The time
+// held is added when it first becomes active, however it gets there.
+async function markAwaitingFirstPayment(client,row){
+  if(!row?.id||String(row.status||'')==='active'||!billingMode.isRecurring(row))return false;
+  await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,
+    [AWAITING_FIRST_PAYMENT,String(row.id),JSON.stringify({customerId:row.customer_id,status:row.status})]);
+  return true;
+}
+
+// Whether this transition to active confirms a first payment. An approved
+// agreement (trialing) always does. Otherwise only a row marked when it was
+// created and not yet confirmed: a renewal recovering on an older agreement must
+// not move time it never carried (past purchases are repaired separately).
+async function firstPaymentPending(client,prior){
+  if(!prior?.id||String(prior.status||'')==='active')return false;
+  if(prior.status==='trialing')return true;
+  const result=await client.query(`
+    SELECT 1 FROM audit_log a
+     WHERE a.entity_type='subscription' AND a.entity_id=$1 AND a.action=$2
+       AND NOT EXISTS(SELECT 1 FROM audit_log c WHERE c.entity_type='subscription' AND c.entity_id=$1 AND c.action=$3)
+     LIMIT 1
+  `,[String(prior.id),AWAITING_FIRST_PAYMENT,FIRST_PAYMENT_CONFIRMED]);
+  return Boolean(result.rowCount);
+}
+
+// The carry itself happens at most once per receiving row (the ledger).
+async function carryOnFirstPayment(client,row){
+  const outcome=await carryOnActivation(client,row);
+  await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,
+    [FIRST_PAYMENT_CONFIRMED,String(row.id),JSON.stringify({customerId:row.customer_id})]);
+  return outcome;
 }
 
 // The receiving row's payment is being taken back: 'returned', 'owed' or 'none'.
@@ -164,32 +208,52 @@ async function settleSourcePaymentLoss({provider,reference,customerId,decide,rea
   return[...new Set(holders)];
 }
 
+function times(values){return values.filter(Boolean).map(value=>new Date(value).getTime()).filter(Number.isFinite);}
+function earliest(values,fallback){const list=times(values);return list.length?new Date(Math.min(...list)):fallback;}
+// Where the period ending at `end` began, from the row's contract.
+function periodStart(end,row){
+  const start=new Date(end),months=PERIOD_MONTHS[String(row?.billing_interval_snapshot||'').toLowerCase()];
+  if(months)start.setUTCMonth(start.getUTCMonth()-months);
+  else start.setTime(start.getTime()-Math.max(1,Number(row?.duration_days_snapshot)||30)*86400000);
+  return start;
+}
+
 // A renewal that was never paid must not become paid time when the agreement is
 // then ended: the provider's period end is already the unpaid one, and carried
-// days would be added after it. For a row holding carried time only, the paid
-// period ends when the unpaid renewal was first seen. Returns the end to store.
+// days would be added after it. For a row holding carried time only. Whatever
+// the status in between (past due, suspended), an open delinquency hold for the
+// agreement ends the paid period when the hold was raised, but only when there
+// is evidence of a failed payment AND the period being cut began around or after
+// that moment. A period that started well before it was paid for (a suspension
+// or a failed one-off charge part way through) is never shortened. Returns the
+// end to store.
 async function paidEndWhenAgreementEnds(client,{prior,status,periodEnd,provider,providerSubscriptionId}){
   if(!prior||!ENDED.has(status))return periodEnd;
-  const wasUnpaid=prior.status==='past_due',wasEnded=ENDED.has(prior.status);
-  if(!wasUnpaid&&!wasEnded)return periodEnd;
   const carried=await client.query(`SELECT 1 FROM subscription_time_carryovers WHERE target_subscription_id=$1 AND status='active' LIMIT 1`,[prior.id]);
   if(!carried.rowCount)return periodEnd;
-  const candidates=[periodEnd,prior.current_period_end];
-  if(wasUnpaid){
-    const hold=await client.query(`
-      SELECT created_at FROM customer_access_holds
-       WHERE customer_id=$1 AND hold_type='payment_delinquency' AND source_key=$2 AND released_at IS NULL
-       LIMIT 1
-    `,[prior.customer_id,`${provider}:${providerSubscriptionId}`]);
-    if(!hold.rowCount)return periodEnd;
-    candidates.push(hold.rows[0].created_at);
-  }
-  const times=candidates.filter(Boolean).map(value=>new Date(value).getTime()).filter(Number.isFinite);
-  return times.length?new Date(Math.min(...times)):periodEnd;
+  // Once ended, a later delivery cannot move the end forward again.
+  const unchanged=ENDED.has(prior.status)?earliest([periodEnd,prior.current_period_end],periodEnd):periodEnd;
+  const hold=(await client.query(`
+    SELECT h.created_at,
+           (COALESCE(h.metadata->>'unpaid','false')='true' OR EXISTS(
+             SELECT 1 FROM payment_incidents pi
+              WHERE pi.provider=$3 AND pi.provider_subscription_id=$4 AND pi.incident_type='failed_renewal'
+                AND pi.created_at>=h.created_at-INTERVAL '7 days'
+           )) AS failed_payment
+      FROM customer_access_holds h
+     WHERE h.customer_id=$1 AND h.hold_type='payment_delinquency' AND h.source_key=$2 AND h.released_at IS NULL
+     LIMIT 1
+  `,[prior.customer_id,`${provider}:${providerSubscriptionId}`,provider,providerSubscriptionId])).rows[0];
+  if(!hold||!(prior.status==='past_due'||hold.failed_payment))return unchanged;
+  const ends=times([periodEnd,prior.current_period_end]);
+  if(!ends.length)return unchanged;
+  const raised=new Date(hold.created_at).getTime();
+  if(periodStart(Math.max(...ends),prior).getTime()<raised-UNPAID_PERIOD_GRACE_MS)return unchanged;
+  return earliest([periodEnd,prior.current_period_end,hold.created_at],unchanged);
 }
 
 module.exports={
   MAX_EXTENSION_DAYS,MESSAGES,refusal,precheckRefusal,assertCarryPossible,carryOnActivation,carryProblem,
   recordOperatorIncident,reportProblem,returnToSources,owedProblem,reverseSource,reduceSource,holdersOf,
-  settleSourcePaymentLoss,paidEndWhenAgreementEnds
+  settleSourcePaymentLoss,paidEndWhenAgreementEnds,markAwaitingFirstPayment,firstPaymentPending,carryOnFirstPayment
 };

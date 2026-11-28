@@ -83,7 +83,8 @@ async function syncProviderAccessState({ customerId, provider, providerSubscript
             type: PAYMENT_DELINQUENCY_HOLD_TYPE,
             sourceKey,
             reason: `${provider} recurring payment is delinquent`,
-            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true }
+            // 'unpaid' survives a later suspension of the same hold.
+            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true, ...(status === 'past_due' ? { unpaid: true } : {}) }
         }, client);
     }
 
@@ -531,13 +532,19 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             }
 
             // The payment adds to the time already held, only once it is
-            // confirmed: a new row that is active, or one that was waiting for
-            // approval and is active now. A replay of an active row carries nothing.
-            if (row && !isAccessExtension && !activationSuppressedByMoneyLoss
-                && (!existing.rowCount || existing.rows[0].status === 'trialing')) {
-                const carried = await carriedTime.carryOnActivation(client, row);
-                row = carried.row;
-                carryIssue = carried.problem;
+            // confirmed: a new row that is active, or an unconfirmed one that is
+            // active now. A replay of an active row carries nothing.
+            if (row && !isAccessExtension && !activationSuppressedByMoneyLoss) {
+                let carried = null;
+                if (!existing.rowCount) {
+                    if (!await carriedTime.markAwaitingFirstPayment(client, row)) carried = await carriedTime.carryOnActivation(client, row);
+                } else if (row.status === 'active' && await carriedTime.firstPaymentPending(client, existing.rows[0])) {
+                    carried = await carriedTime.carryOnFirstPayment(client, row);
+                }
+                if (carried) {
+                    row = carried.row;
+                    carryIssue = carried.problem;
+                }
             }
 
             const effectiveStatus = row.status;
@@ -645,7 +652,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
         // The row as it was: needed when a first payment is confirmed, or when
         // the agreement ends.
         const prior = owners.rowCount && ['active', 'cancelled', 'expired'].includes(status)
-            ? (await client.query(`SELECT id,customer_id,status,current_period_end FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 FOR UPDATE`, [provider, providerSubscriptionId])).rows[0] || null
+            ? (await client.query(`SELECT id,customer_id,status,current_period_end,billing_interval_snapshot,duration_days_snapshot FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 FOR UPDATE`, [provider, providerSubscriptionId])).rows[0] || null
             : null;
         const nextEnd = await carriedTime.paidEndWhenAgreementEnds(client, {
             prior, status, periodEnd: periodEnd ? new Date(periodEnd) : null, provider, providerSubscriptionId
@@ -653,9 +660,9 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, nextEnd, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
         let updated = result.rows[0];
-        // An approved agreement whose first payment is only now confirmed.
-        if (prior?.status === 'trialing' && updated.status === 'active') {
-            const carried = await carriedTime.carryOnActivation(client, updated);
+        // A first payment that is only now confirmed.
+        if (updated.status === 'active' && await carriedTime.firstPaymentPending(client, prior)) {
+            const carried = await carriedTime.carryOnFirstPayment(client, updated);
             updated = carried.row;
             carryIssue = carried.problem;
         }

@@ -15,6 +15,8 @@ const incidents=require('../src/payments/incidents');
 const prepaidRefunds=require('../src/payments/lifecycle-prepaid-refunds');
 const termination=require('../src/payments/subscription-termination');
 const carriedTime=require('../src/payments/carried-time');
+const operatorRefund=require('../src/payments/operator-refund');
+const crypto=require('crypto');
 
 const DAY=86400000;
 const suffix=Date.now().toString(36);
@@ -253,6 +255,8 @@ async function selection(){
   await insert(sources,half,{source:'stripe',recurring:true,status:'cancelled',cancelAtEnd:true,start:-40,end:-1,ext:11});
   const all=await renewing(sources,year);
   assert.equal((await ledger(all.row.id)).length,4,'credit, granted, hand-made and ended auto-renew time is carried');
+  assert.equal(all.row.service_extension_days,10,'four rows covering the same ten days add ten days, not forty');
+  assert.equal(carriedDays(await ledger(all.row.id)),10);
 
   // A payment that is only approved carries nothing until it is confirmed.
   const approved=await makeCustomer('approved');
@@ -285,7 +289,143 @@ async function ratio(){
   const target=await insert(customer,year,{source:'stripe',recurring:true,end:365});
   const days=(await query('SELECT public.carry_paid_time($1,$2,2.5) AS days',[target.id,source.id])).rows[0].days;
   assert.equal(days,24,'ceil(9.5 days x 2.5)');
-  assert.equal((await query('SELECT public.carry_paid_time($1,$2,2.5) AS days',[target.id,source.id])).rows[0].days,0,'once');
+  assert.equal((await query('SELECT public.carry_paid_time($1,$2,2.5) AS days',[target.id,source.id])).rows[0].days,null,'once');
+}
+
+const carriedDays=entries=>entries.filter(row=>row.status==='active').reduce((sum,row)=>sum+row.applied_days,0);
+
+// Time held twice over is granted once, and a refund leaves whatever another
+// payment still covers. A one-off is inserted first so that the stacking trigger
+// does not queue it behind the overlapping row.
+async function overlaps(){
+  const days=async row=>(await get(row.id)).service_extension_days;
+
+  const covering=await makeCustomer('overlap-covering');
+  const paid=await insert(covering,half,{source:'stripe',start:-6,end:39.5});
+  await insert(covering,half,{start:-5,end:19.5});
+  await insert(covering,half,{source:'admin_grant',start:-4,end:9.5});
+  const quoted=(await query('SELECT total_days FROM public.carried_time_precheck($1,$2,$3::jsonb)',[covering.id,year.id,JSON.stringify(contract(year,'stripe'))])).rows[0];
+  assert.equal(Number(quoted.total_days),40,'the check before payment counts the same union');
+  const first=await renewing(covering,year);
+  assert.equal(await days(first.row),40);
+  assert.equal((await ledger(first.row.id)).length,3,'covered rows are replaced too');
+  assert.equal(carriedDays(await ledger(first.row.id)),40);
+  await refund(covering,paid);
+  assert.equal(await days(first.row),20,'the customer keeps what the other paid row still covers');
+  assert.equal(carriedDays(await ledger(first.row.id)),20);
+
+  const covered=await makeCustomer('overlap-covered');
+  const inner=await insert(covered,half,{source:'stripe',start:-5,end:19.5});
+  await insert(covered,half,{start:-6,end:39.5});
+  const second=await renewing(covered,year);
+  assert.equal(await days(second.row),40);
+  await refund(covered,inner);
+  assert.equal(await days(second.row),40,'refunding a covered payment takes nothing the other row holds');
+
+  const partial=await makeCustomer('overlap-partial');
+  const short=await insert(partial,half,{source:'stripe',start:-6,end:9.5});
+  await insert(partial,half,{start:-5,end:29.5});
+  const third=await renewing(partial,year);
+  assert.equal(await days(third.row),30);
+  assert.deepStrictEqual((await ledger(third.row.id)).map(row=>row.applied_days).sort((a,b)=>a-b),[10,20]);
+  await refund(partial,short);
+  assert.equal(await days(third.row),30);
+  await termination.terminateForRefund(third.row.id,partial.id,{reason:'first payment refunded'});
+  assert.equal(await days(third.row),0);
+
+  // A pro-rata refund of a covered row takes nothing; of the covering row, only
+  // the part no other row covers.
+  // Returns a retry of the same refund.
+  const proRataNow=async(customer,row)=>{
+    const input={subscriptionId:row.id,customerId:customer.id,originalEnd:(await get(row.id)).current_period_end,cutoffAt:new Date(),serviceType:'emby'};
+    await prepaidRefunds.applyPrepaidRefund(input);
+    return()=>prepaidRefunds.applyPrepaidRefund(input);
+  };
+  const hidden=await makeCustomer('overlap-prorata-covered');
+  const underneath=await insert(hidden,half,{source:'stripe',start:-5,end:19.5});
+  await insert(hidden,half,{start:-6,end:39.5});
+  const fourth=await renewing(hidden,year);
+  await proRataNow(hidden,underneath);
+  assert.equal(await days(fourth.row),40,'pro-rata on a fully covered row removes nothing');
+  assert.equal(carriedDays(await ledger(fourth.row.id)),40);
+
+  const topped=await makeCustomer('overlap-prorata-covering');
+  const outer=await insert(topped,half,{source:'stripe',start:-6,end:29.5});
+  await insert(topped,half,{start:-5,end:9.5});
+  const fifth=await renewing(topped,year);
+  assert.equal(await days(fifth.row),30);
+  const retry=await proRataNow(topped,outer);
+  assert.equal(await days(fifth.row),10,'pro-rata on the covering row removes only what nothing else covers');
+  assert.equal(carriedDays(await ledger(fifth.row.id)),10);
+  await retry();
+  assert.equal(await days(fifth.row),10,'a retry removes nothing more');
+
+  // Overlapping time is also counted once against the limit.
+  const long=await makeCustomer('overlap-limit');
+  await insert(long,half,{start:-6,end:3000});
+  await insert(long,half,{source:'admin_grant',start:-5,end:2999});
+  await carriedTime.assertCarryPossible({customerId:long.id,planId:year.id,snapshot:contract(year,'stripe')});
+}
+
+async function reversedCannotBeRefundedAgain(){
+  const customer=await makeCustomer('refund-twice');
+  const paid=await insert(customer,half,{source:'plisio',end:19.5});
+  await renewing(customer,year);
+  await chargeback(customer,paid);
+  await assert.rejects(operatorRefund.record({customerId:customer.id,subscriptionId:paid.id,amount:'6.00',full:true,
+    reason:'Refunded again by mistake',submissionId:crypto.randomUUID()}),/already been refunded or reversed/);
+
+  // The lock is taken before an auto-renewing payment's loss is written too.
+  const renewed=await makeCustomer('refund-lock');
+  const bought=await renewing(renewed,year);
+  const holder=await getPool().connect(),other=await getPool().connect();
+  try{
+    await holder.query('BEGIN');
+    await holder.query(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,customer_id,provider_subscription_id,access_action,metadata)
+      VALUES('stripe',$1,$1,'refund','recorded','direct',$2,$3,'preserve','{"fullRefund":true}'::jsonb)`,[`evt_carried_lock_${suffix}`,renewed.id,bought.ref]);
+    await other.query('BEGIN');
+    await assert.rejects(other.query('SELECT id FROM customers WHERE id=$1 FOR KEY SHARE NOWAIT',[renewed.id]),{code:'55P03'});
+  }finally{
+    for(const client of [other,holder]){await client.query('ROLLBACK').catch(()=>{});client.release();}
+  }
+}
+
+async function firstPaymentRecovery(){
+  const customer=await makeCustomer('first-past-due');
+  await insert(customer,half,{end:19.5});
+  const pending=await renewing(customer,year,{providerStatus:'incomplete'});
+  assert.equal((await ledger(pending.row.id)).length,0);
+  await lifecycle.updateProviderSubscription({provider:'stripe',providerSubscriptionId:pending.ref,providerStatus:'active',periodEnd:pending.periodEnd});
+  assert.equal((await get(pending.row.id)).service_extension_days,20,'a first payment confirmed late still adds the time');
+
+  // A renewal recovering on an agreement that was paid at purchase moves nothing.
+  const older=await makeCustomer('renewal-recovery');
+  const agreement=await renewing(older,year);
+  await insert(older,half,{end:19.5});
+  for(const providerStatus of ['past_due','active'])await lifecycle.updateProviderSubscription({provider:'stripe',providerSubscriptionId:agreement.ref,providerStatus});
+  assert.equal((await ledger(agreement.row.id)).length,0);
+
+  const late=await makeCustomer('ended-period');
+  const kept=await insert(late,half,{end:19.5});
+  await renewing(late,year,{periodEnd:fromNow(-0.001)});
+  assert.equal((await get(kept.id)).superseded_by,null);
+  assert.equal((await operatorItems(late,'carried_time_receiving_period_ended')).length,1,'an operator is told');
+}
+
+async function suspendedAgreements(){
+  const buy=async label=>{
+    const customer=await makeCustomer(label);
+    await insert(customer,half,{end:99.5});
+    return renewing(customer,year,{provider:'paypal',ref:`I-${label}-${suffix}`});
+  };
+  const update=(bought,providerStatus,periodEnd)=>lifecycle.updateProviderSubscription({provider:'paypal',providerSubscriptionId:bought.ref,providerStatus,periodEnd});
+  const unpaid=await buy('SUSPENDEDUNPAID');
+  for(const status of ['PAST_DUE','SUSPENDED','CANCELLED'])await update(unpaid,status,fromNow(730));
+  assert(Math.abs(ms((await get(unpaid.row.id)).access_end)-(Date.now()+100*DAY))<DAY,'past due, suspended, cancelled: no unpaid period');
+
+  const paid=await buy('SUSPENDEDPAID');
+  for(const status of ['SUSPENDED','CANCELLED'])await update(paid,status,paid.periodEnd);
+  same((await get(paid.row.id)).current_period_end,paid.periodEnd,'a paid period is never shortened');
 }
 
 async function concurrency(){
@@ -324,6 +464,10 @@ async function main(){
     await firstTermAndLater();
     await pastDue();
     await selection();
+    await overlaps();
+    await reversedCannotBeRefundedAgain();
+    await firstPaymentRecovery();
+    await suspendedAgreements();
     await ratio();
     await concurrency();
   }finally{await cleanup();}

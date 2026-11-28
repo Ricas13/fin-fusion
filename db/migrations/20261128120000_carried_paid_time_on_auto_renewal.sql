@@ -18,9 +18,15 @@ CREATE TABLE IF NOT EXISTS public.subscription_time_carryovers (
   source_subscription_id uuid NOT NULL REFERENCES public.subscriptions(id) ON DELETE CASCADE,
   source_provider text NOT NULL,
   source_payment_ref text,
-  -- Source time still carried, in the source's own units.
+  -- The part of the source's access still carried, as it stood when carried.
+  -- Refunds shorten it. Windows of different sources may overlap.
+  window_start timestamptz NOT NULL,
+  window_end timestamptz NOT NULL,
+  -- What this row adds to the union of the receiving row's windows: time no
+  -- earlier window already covers, in the source's own units. May be zero.
   carried_seconds bigint NOT NULL CHECK (carried_seconds>=0),
-  -- Days that time contributes to the receiving row.
+  -- Days that adds to the receiving row. The total is rounded once, so this may
+  -- be zero for a row that adds less than the rounding already granted.
   applied_days integer NOT NULL CHECK (applied_days>=0),
   -- 1 today. Converting between plans by value may give more or fewer days.
   value_ratio numeric NOT NULL DEFAULT 1 CHECK (value_ratio>0),
@@ -162,27 +168,109 @@ LANGUAGE sql
 STABLE
 SET search_path = public, pg_temp
 AS $$
-  SELECT COALESCE(BOOL_OR(held.lifetime),FALSE),
-         COALESCE(SUM(CEIL(held.carried_seconds/86400.0)),0)::bigint
-    FROM plans bought
-    CROSS JOIN LATERAL public.carryable_paid_time(
-      p_customer,
-      COALESCE(bought.service_type,'jellyfin'),
-      COALESCE(NULLIF(p_snapshot->>'serverClass',''),bought.server_class),
-      COALESCE(CASE WHEN p_snapshot->>'streams' ~ '^[0-9]{1,4}$' THEN (p_snapshot->>'streams')::integer END,bought.streams),
-      COALESCE(CASE WHEN p_snapshot->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN (p_snapshot->>'stremioHouseholdNetworkLimit')::integer END,bought.stremio_household_network_limit),
-      NULL
-    ) held
-   WHERE bought.id=p_plan
-     AND COALESCE(bought.is_addon,FALSE)=FALSE
-     AND COALESCE(bought.is_free_tier,FALSE)=FALSE
-     AND COALESCE(bought.billing_interval,'')<>'trial'
+  WITH held AS (
+    SELECT c.lifetime AS forever,GREATEST(NOW(),c.starts_at) AS window_start,c.access_end AS window_end,
+           c.starts_at AS began,c.subscription_id AS source_id
+      FROM plans bought
+      CROSS JOIN LATERAL public.carryable_paid_time(
+        p_customer,
+        COALESCE(bought.service_type,'jellyfin'),
+        COALESCE(NULLIF(p_snapshot->>'serverClass',''),bought.server_class),
+        COALESCE(CASE WHEN p_snapshot->>'streams' ~ '^[0-9]{1,4}$' THEN (p_snapshot->>'streams')::integer END,bought.streams),
+        COALESCE(CASE WHEN p_snapshot->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN (p_snapshot->>'stremioHouseholdNetworkLimit')::integer END,bought.stremio_household_network_limit),
+        NULL
+      ) c
+     WHERE bought.id=p_plan
+       AND COALESCE(bought.is_addon,FALSE)=FALSE
+       AND COALESCE(bought.is_free_tier,FALSE)=FALSE
+       AND COALESCE(bought.billing_interval,'')<>'trial'
+  ), uncovered AS (
+    -- The union of the held windows, exactly as carrying would count it.
+    SELECT FLOOR(GREATEST(0,EXTRACT(EPOCH FROM (held.window_end-GREATEST(held.window_start,
+             MAX(held.window_end) OVER (ORDER BY held.window_start,held.began,held.source_id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)))))) AS seconds
+      FROM held
+     WHERE NOT held.forever AND held.window_end>held.window_start
+  )
+  SELECT (SELECT COALESCE(BOOL_OR(held.forever),FALSE) FROM held),
+         (SELECT CEIL(COALESCE(SUM(uncovered.seconds),0)/86400)::bigint FROM uncovered)
+$$;
+
+-- The days the receiving row's carried windows would be worth with one more
+-- window added: the union, rounded up once. Read only.
+CREATE OR REPLACE FUNCTION public.carried_time_total_days(
+  p_target uuid,p_source uuid,p_from timestamptz,p_to timestamptz,p_ratio numeric
+)
+RETURNS numeric
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  WITH windows AS (
+    SELECT l.window_start,l.window_end,l.value_ratio AS ratio,s.starts_at AS began,l.source_subscription_id AS source_id
+      FROM subscription_time_carryovers l
+      JOIN subscriptions s ON s.id=l.source_subscription_id
+     WHERE l.target_subscription_id=p_target AND l.status='active' AND l.window_end>l.window_start
+    UNION ALL
+    SELECT p_from,p_to,p_ratio,s.starts_at,s.id FROM subscriptions s WHERE s.id=p_source
+  ), uncovered AS (
+    SELECT windows.ratio,
+           FLOOR(GREATEST(0,EXTRACT(EPOCH FROM (windows.window_end-GREATEST(windows.window_start,
+             MAX(windows.window_end) OVER (ORDER BY windows.window_start,windows.began,windows.source_id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)))))) AS seconds
+      FROM windows
+  )
+  SELECT CEIL(COALESCE(SUM(uncovered.seconds*uncovered.ratio),0)/86400) FROM uncovered
+$$;
+
+-- Recount every active window of a receiving row. Each source adds only the time
+-- no earlier one covers, so time held once is granted once, and the days are
+-- shared out so that their total is the union rounded up once. A window with
+-- nothing left is closed. Returns the days the receiving row should lose
+-- (negative: gain). The caller holds the customer lock and applies the change.
+CREATE OR REPLACE FUNCTION public.rebalance_carried_time(p_target uuid)
+RETURNS integer
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  days_before bigint;
+  days_after bigint;
+BEGIN
+  SELECT COALESCE(SUM(applied_days),0) INTO days_before FROM subscription_time_carryovers
+   WHERE target_subscription_id=p_target AND status='active';
+
+  UPDATE subscription_time_carryovers
+     SET status='reversed',carried_seconds=0,applied_days=0,closed_at=NOW()
+   WHERE target_subscription_id=p_target AND status='active' AND window_end<=window_start;
+
+  WITH uncovered AS (
+    SELECT l.id,l.value_ratio,l.window_start,s.starts_at AS began,l.source_subscription_id AS source_id,
+           FLOOR(GREATEST(0,EXTRACT(EPOCH FROM (l.window_end-GREATEST(l.window_start,
+             MAX(l.window_end) OVER (ORDER BY l.window_start,s.starts_at,l.source_subscription_id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING))))))::bigint AS seconds
+      FROM subscription_time_carryovers l
+      JOIN subscriptions s ON s.id=l.source_subscription_id
+     WHERE l.target_subscription_id=p_target AND l.status='active'
+  ), valued AS (
+    SELECT uncovered.id,uncovered.seconds,uncovered.seconds*uncovered.value_ratio AS own_value,
+           SUM(uncovered.seconds*uncovered.value_ratio) OVER (ORDER BY uncovered.window_start,uncovered.began,uncovered.source_id) AS running
+      FROM uncovered
+  )
+  UPDATE subscription_time_carryovers l
+     SET carried_seconds=valued.seconds,
+         applied_days=(CEIL(valued.running/86400)-CEIL((valued.running-valued.own_value)/86400))::integer
+    FROM valued
+   WHERE l.id=valued.id;
+
+  SELECT COALESCE(SUM(applied_days),0) INTO days_after FROM subscription_time_carryovers
+   WHERE target_subscription_id=p_target AND status='active';
+  RETURN (days_before-days_after)::integer;
+END;
 $$;
 
 -- Move one source's remaining time onto a receiving row. Callable on its own.
--- Returns the days added, 0 when the source is not eligible, and -1 when it
--- would exceed the 3,650-day limit (the source is then left exactly as it was).
--- It never refuses a paid activation by raising.
+-- Returns the days added (0 when other carried time already covers all of it),
+-- NULL when the source is not eligible, and -1 when it would exceed the
+-- 3,650-day limit (the source is then left exactly as it was). It never refuses
+-- a paid activation by raising.
 CREATE OR REPLACE FUNCTION public.carry_paid_time(
   p_target uuid,p_source uuid,p_ratio numeric DEFAULT 1,p_reason text DEFAULT 'auto_renew_purchase'
 )
@@ -195,12 +283,14 @@ DECLARE
   receiving subscriptions%ROWTYPE;
   donor subscriptions%ROWTYPE;
   candidate record;
-  exact_days numeric;
+  window_from timestamptz;
+  days_before bigint;
+  days_after numeric;
   days integer;
 BEGIN
   SELECT s.customer_id INTO owner_id FROM subscriptions s WHERE s.id=p_target;
   IF owner_id IS NULL OR p_ratio IS NULL OR p_ratio<=0 THEN
-    RETURN 0;
+    RETURN NULL;
   END IF;
 
   -- One lock order everywhere: the customer, the stacking lock, subscriptions.
@@ -209,30 +299,33 @@ BEGIN
   SELECT * INTO receiving FROM subscriptions WHERE id=p_target FOR UPDATE;
   SELECT * INTO donor FROM subscriptions WHERE id=p_source AND customer_id=owner_id FOR UPDATE;
   IF donor.id IS NULL THEN
-    RETURN 0;
+    RETURN NULL;
   END IF;
 
   SELECT * INTO candidate FROM public.carry_candidates(p_target) c WHERE c.subscription_id=p_source;
   IF NOT FOUND THEN
-    RETURN 0;
+    RETURN NULL;
   END IF;
-  IF candidate.lifetime OR COALESCE(candidate.carried_seconds,0)<=0 THEN
-    RETURN 0;
+  window_from:=GREATEST(NOW(),candidate.starts_at);
+  IF candidate.lifetime OR candidate.access_end<=window_from THEN
+    RETURN NULL;
   END IF;
 
-  exact_days:=CEIL((candidate.carried_seconds::numeric*p_ratio)/86400);
-  IF COALESCE(receiving.service_extension_days,0)+exact_days>3650 THEN
+  SELECT COALESCE(SUM(applied_days),0) INTO days_before FROM subscription_time_carryovers
+   WHERE target_subscription_id=p_target AND status='active';
+  days_after:=public.carried_time_total_days(p_target,p_source,window_from,candidate.access_end,p_ratio);
+  IF COALESCE(receiving.service_extension_days,0)+(days_after-days_before)>3650 THEN
     RETURN -1;
   END IF;
-  days:=exact_days::integer;
 
   INSERT INTO subscription_time_carryovers(
     customer_id,target_subscription_id,source_subscription_id,source_provider,source_payment_ref,
-    carried_seconds,applied_days,value_ratio,target_first_period_end,reason
+    window_start,window_end,carried_seconds,applied_days,value_ratio,target_first_period_end,reason
   ) VALUES(
     owner_id,p_target,p_source,donor.source,donor.provider_subscription_id,
-    candidate.carried_seconds,days,p_ratio,receiving.current_period_end,p_reason
+    window_from,candidate.access_end,0,0,p_ratio,receiving.current_period_end,p_reason
   );
+  days:=-public.rebalance_carried_time(p_target);
 
   UPDATE subscriptions
      SET superseded_by=p_target,replaced_at=NOW(),replacement_reason='paid_time_carried',updated_at=NOW()
@@ -241,7 +334,7 @@ BEGIN
   -- The customer keeps the server they already occupy unless the new purchase
   -- chose a placement of its own.
   UPDATE subscriptions
-     SET service_extension_days=COALESCE(service_extension_days,0)+days,
+     SET service_extension_days=GREATEST(0,COALESCE(service_extension_days,0)+days),
          media_server_id=CASE
            WHEN media_server_id IS NULL AND NULLIF(media_location_snapshot,'') IS NULL AND donor.starts_at<=NOW()
            THEN donor.media_server_id ELSE media_server_id END,
@@ -256,10 +349,10 @@ BEGIN
 
   INSERT INTO audit_log(action,entity_type,entity_id,metadata)
   VALUES('subscription.paid_time.carried','subscription',p_target::text,jsonb_build_object(
-    'customerId',owner_id,'sourceSubscriptionId',p_source,'carriedSeconds',candidate.carried_seconds,
-    'appliedDays',days,'valueRatio',p_ratio,'reason',p_reason));
+    'customerId',owner_id,'sourceSubscriptionId',p_source,'windowStart',window_from,'windowEnd',candidate.access_end,
+    'addedDays',days,'valueRatio',p_ratio,'reason',p_reason));
 
-  RETURN days;
+  RETURN GREATEST(days,0);
 END;
 $$;
 
@@ -274,6 +367,7 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   owner_id uuid;
+  receiving subscriptions%ROWTYPE;
   source_ids uuid[];
   source_id uuid;
   days integer;
@@ -292,16 +386,29 @@ BEGIN
     RETURN jsonb_build_object('days',0,'carried',carried,'skipped',skipped,'already',TRUE);
   END IF;
 
+  -- A paid agreement whose recorded period has already ended can receive
+  -- nothing. Say so when there is time that should have been added to it.
+  SELECT * INTO receiving FROM subscriptions WHERE id=p_target FOR UPDATE;
+  IF receiving.status='active' AND receiving.current_period_end<=NOW()
+     AND receiving.superseded_by IS NULL AND receiving.refund_terminated_at IS NULL
+     AND public.prepaid_row_is_recurring(receiving.source,receiving.provider_subscription_id,receiving.billing_mode)
+     AND EXISTS(
+       SELECT 1 FROM public.carried_time_precheck(owner_id,receiving.plan_id,receiving.commercial_snapshot) held
+        WHERE held.total_days>0
+     ) THEN
+    RETURN jsonb_build_object('days',0,'carried',carried,'skipped',skipped,'ineligible','receiving_period_ended');
+  END IF;
+
   SELECT ARRAY_AGG(c.subscription_id ORDER BY c.starts_at,c.subscription_id)
     INTO source_ids FROM public.carry_candidates(p_target) c;
 
   FOREACH source_id IN ARRAY COALESCE(source_ids,ARRAY[]::uuid[]) LOOP
     days:=public.carry_paid_time(p_target,source_id,COALESCE((p_ratios->>source_id::text)::numeric,1),p_reason);
-    IF days>0 THEN
+    IF days>=0 THEN
       total:=total+days;
       carried:=carried||jsonb_build_object('subscriptionId',source_id,'days',days);
     ELSE
-      skipped:=skipped||jsonb_build_object('subscriptionId',source_id,'reason',CASE WHEN days<0 THEN 'over_limit' ELSE 'not_carried' END);
+      skipped:=skipped||jsonb_build_object('subscriptionId',source_id,'reason',CASE WHEN days IS NULL THEN 'not_carried' ELSE 'over_limit' END);
     END IF;
   END LOOP;
 
@@ -309,54 +416,59 @@ BEGIN
 END;
 $$;
 
--- Take days off the row that holds them, following carried time that has since
--- moved on again. Separately bought extension days are never removed. The caller
--- holds the customer lock. Returns the row that finally holds the time.
-CREATE OR REPLACE FUNCTION public.remove_carried_days(p_target uuid,p_days integer)
+-- Apply a recount to the row holding the time, following carried time that has
+-- since moved on again. Separately bought extension days are never removed, and
+-- an ended row is never given days. The caller holds the customer lock.
+CREATE OR REPLACE FUNCTION public.apply_carried_change(p_target uuid,p_lost_days integer)
 RETURNS uuid
 LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $$
 DECLARE
   holder uuid:=p_target;
-  remaining integer:=GREATEST(0,COALESCE(p_days,0));
+  lost integer:=COALESCE(p_lost_days,0);
+  held subscriptions%ROWTYPE;
   previous integer;
+  updated integer;
   bought bigint;
-  next_entry subscription_time_carryovers%ROWTYPE;
-  next_days integer;
+  onward subscription_time_carryovers%ROWTYPE;
 BEGIN
   FOR step IN 1..100 LOOP
-    SELECT COALESCE(service_extension_days,0) INTO previous FROM subscriptions WHERE id=holder FOR UPDATE;
-    EXIT WHEN previous IS NULL;
+    EXIT WHEN lost=0;
+    SELECT * INTO held FROM subscriptions WHERE id=holder FOR UPDATE;
+    EXIT WHEN NOT FOUND;
+    previous:=COALESCE(held.service_extension_days,0);
     SELECT COALESCE(SUM(applied_days),0) INTO bought
       FROM subscription_access_extensions WHERE subscription_id=holder AND status='active';
-    IF previous>0 AND remaining>0 THEN
-      UPDATE subscriptions
-         SET service_extension_days=GREATEST(LEAST(previous,bought)::integer,previous-remaining),updated_at=NOW()
-       WHERE id=holder;
+    updated:=previous;
+    IF lost>0 THEN
+      updated:=GREATEST(LEAST(previous,bought)::integer,previous-lost);
+    ELSIF held.refund_terminated_at IS NULL THEN
+      updated:=LEAST(3650,previous-lost);
+    END IF;
+    IF updated<>previous THEN
+      UPDATE subscriptions SET service_extension_days=updated,updated_at=NOW() WHERE id=holder;
       PERFORM public.shift_prepaid_queue_after_end_change(holder,previous);
     END IF;
 
-    SELECT * INTO next_entry FROM subscription_time_carryovers
+    SELECT * INTO onward FROM subscription_time_carryovers
      WHERE source_subscription_id=holder AND status='active' FOR UPDATE;
     EXIT WHEN NOT FOUND;
-    remaining:=LEAST(remaining,next_entry.applied_days);
-    next_days:=next_entry.applied_days-remaining;
+    -- Carried days sit at the end of the holder's access.
     UPDATE subscription_time_carryovers
-       SET applied_days=next_days,
-           carried_seconds=LEAST(carried_seconds,FLOOR(next_days*86400/value_ratio)::bigint),
-           status=CASE WHEN next_days=0 THEN 'reversed' ELSE status END,
-           closed_at=CASE WHEN next_days=0 THEN NOW() ELSE closed_at END
-     WHERE id=next_entry.id;
-    holder:=next_entry.target_subscription_id;
+       SET window_end=GREATEST(window_start,window_end-((lost::bigint*86400)*INTERVAL '1 second'))
+     WHERE id=onward.id;
+    lost:=public.rebalance_carried_time(onward.target_subscription_id);
+    holder:=onward.target_subscription_id;
   END LOOP;
   RETURN holder;
 END;
 $$;
 
--- The source's own payment was lost (full refund or lost chargeback): take its
--- carried days back, once. Time carried into the source from other payments, and
--- extensions bought on it, stay. Returns NULL when nothing is carried from it.
+-- The source's own payment was lost (full refund or lost chargeback): its own
+-- time stops counting, once. Time carried into the source from other payments,
+-- extensions bought on it, and whatever other carried sources still cover all
+-- stay. Returns the days taken back, or NULL when nothing is carried from it.
 CREATE OR REPLACE FUNCTION public.reverse_carried_paid_time(p_source uuid,p_reason text DEFAULT 'source_payment_lost')
 RETURNS integer
 LANGUAGE plpgsql
@@ -381,30 +493,23 @@ BEGIN
     RETURN NULL;
   END IF;
 
+  -- Days on the source that its lost payment did not buy. They end its access.
   SELECT COALESCE((SELECT SUM(e.applied_days) FROM subscription_access_extensions e
                     WHERE e.subscription_id=p_source AND e.status='active'),0)
         +COALESCE((SELECT SUM(l.applied_days) FROM subscription_time_carryovers l
                     WHERE l.target_subscription_id=p_source AND l.status='active'),0)
     INTO keep;
-  keep:=LEAST(keep,entry.applied_days);
-  removed:=entry.applied_days-keep;
-
-  IF keep=0 THEN
-    UPDATE subscription_time_carryovers SET status='reversed',reason=p_reason,closed_at=NOW() WHERE id=entry.id;
-  ELSE
-    UPDATE subscription_time_carryovers
-       SET applied_days=keep,carried_seconds=LEAST(carried_seconds,FLOOR(keep*86400/value_ratio)::bigint),reason=p_reason
-     WHERE id=entry.id;
-  END IF;
-  IF removed>0 THEN
-    PERFORM public.remove_carried_days(entry.target_subscription_id,removed);
-  END IF;
+  UPDATE subscription_time_carryovers
+     SET window_start=GREATEST(window_start,window_end-((keep*86400)*INTERVAL '1 second')),reason=p_reason
+   WHERE id=entry.id;
+  removed:=public.rebalance_carried_time(entry.target_subscription_id);
+  PERFORM public.apply_carried_change(entry.target_subscription_id,removed);
   UPDATE subscriptions SET refund_terminated_at=COALESCE(refund_terminated_at,NOW()),updated_at=NOW()
    WHERE id=p_source;
 
   INSERT INTO audit_log(action,entity_type,entity_id,metadata)
   VALUES('subscription.paid_time.reversed','subscription',entry.target_subscription_id::text,jsonb_build_object(
-    'customerId',owner_id,'sourceSubscriptionId',p_source,'removedDays',removed,'keptDays',keep,'reason',p_reason));
+    'customerId',owner_id,'sourceSubscriptionId',p_source,'removedDays',removed,'separatelyHeldDays',keep,'reason',p_reason));
   RETURN removed;
 END;
 $$;
@@ -438,8 +543,10 @@ END;
 $$;
 
 -- Part of a carried source was refunded (pro-rata), or an extension bought on it
--- was reversed: take off exactly that span. p_base_payment skips a source whose
--- base payment loss has already been applied. Returns the days removed.
+-- was reversed: take exactly that span out of its window. A base refund comes
+-- off the front, so extension days at the end stay; an extension reversal comes
+-- off the end. p_base_payment skips a source whose base payment loss has already
+-- been applied. Returns the days removed from the receiving row.
 CREATE OR REPLACE FUNCTION public.reduce_carried_paid_time(
   p_source uuid,p_removed_seconds numeric,p_base_payment boolean,p_reason text DEFAULT 'source_partially_refunded'
 )
@@ -451,8 +558,7 @@ DECLARE
   owner_id uuid;
   entry subscription_time_carryovers%ROWTYPE;
   refunded_at timestamptz;
-  next_seconds bigint;
-  next_days integer;
+  span interval;
   removed integer;
 BEGIN
   SELECT customer_id INTO owner_id FROM subscription_time_carryovers
@@ -472,20 +578,21 @@ BEGIN
     RETURN 0;
   END IF;
 
-  next_seconds:=GREATEST(0,entry.carried_seconds-CEIL(p_removed_seconds)::bigint);
-  next_days:=LEAST(entry.applied_days::numeric,CEIL((next_seconds::numeric*entry.value_ratio)/86400))::integer;
-  removed:=entry.applied_days-next_days;
-  UPDATE subscription_time_carryovers
-     SET carried_seconds=next_seconds,applied_days=next_days,reason=p_reason,
-         status=CASE WHEN next_days=0 THEN 'reversed' ELSE status END,
-         closed_at=CASE WHEN next_days=0 THEN NOW() ELSE closed_at END
-   WHERE id=entry.id;
-  IF removed>0 THEN
-    PERFORM public.remove_carried_days(entry.target_subscription_id,removed);
-    INSERT INTO audit_log(action,entity_type,entity_id,metadata)
-    VALUES('subscription.paid_time.reduced','subscription',entry.target_subscription_id::text,jsonb_build_object(
-      'customerId',owner_id,'sourceSubscriptionId',p_source,'removedDays',removed,'reason',p_reason));
+  span:=CEIL(p_removed_seconds)::double precision*INTERVAL '1 second';
+  IF p_base_payment THEN
+    UPDATE subscription_time_carryovers
+       SET window_start=LEAST(window_end,window_start+span),reason=p_reason
+     WHERE id=entry.id;
+  ELSE
+    UPDATE subscription_time_carryovers
+       SET window_end=GREATEST(window_start,window_end-span),reason=p_reason
+     WHERE id=entry.id;
   END IF;
+  removed:=public.rebalance_carried_time(entry.target_subscription_id);
+  PERFORM public.apply_carried_change(entry.target_subscription_id,removed);
+  INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+  VALUES('subscription.paid_time.reduced','subscription',entry.target_subscription_id::text,jsonb_build_object(
+    'customerId',owner_id,'sourceSubscriptionId',p_source,'removedDays',removed,'reason',p_reason));
   RETURN removed;
 END;
 $$;
@@ -686,9 +793,10 @@ BEGIN
 END;
 $$;
 
--- As 20261127150000. The customer is now also locked before a lost chargeback is
--- inserted, and before any loss that will reverse carried time. Everything after
--- the lock block is unchanged.
+-- As 20261127150000. The customer is now locked before any full refund or lost
+-- chargeback that names a payment row is inserted, auto-renewing ones included:
+-- whether its time has been carried cannot be known safely before that lock.
+-- Everything after the lock block is unchanged.
 CREATE OR REPLACE FUNCTION enforce_provider_refund_cash_basis()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -705,15 +813,7 @@ BEGIN
         ELSIF NEW.incident_type='chargeback' THEN
             money_lost := COALESCE(NEW.incident_status='lost',FALSE);
         END IF;
-        IF money_lost AND (
-            (NOT (NEW.provider='stripe' AND NEW.provider_subscription_id ~* '^sub_')
-             AND NOT (NEW.provider='paypal' AND NEW.provider_subscription_id ~* '^I-'))
-            OR EXISTS(
-              SELECT 1 FROM public.subscriptions s
-                JOIN public.subscription_time_carryovers l ON l.source_subscription_id=s.id AND l.status='active'
-               WHERE s.source=NEW.provider AND s.provider_subscription_id=NEW.provider_subscription_id
-            )
-        ) THEN
+        IF money_lost THEN
             PERFORM 1 FROM public.customers
              WHERE id IN (
                SELECT NEW.customer_id
@@ -772,9 +872,11 @@ BEGIN
         'public.carryable_paid_time(uuid,text,text,integer,integer,uuid)',
         'public.carry_candidates(uuid)',
         'public.carried_time_precheck(uuid,uuid,jsonb)',
+        'public.carried_time_total_days(uuid,uuid,timestamptz,timestamptz,numeric)',
+        'public.rebalance_carried_time(uuid)',
         'public.carry_paid_time(uuid,uuid,numeric,text)',
         'public.carry_all_paid_time(uuid,jsonb,text)',
-        'public.remove_carried_days(uuid,integer)',
+        'public.apply_carried_change(uuid,integer)',
         'public.reverse_carried_paid_time(uuid,text)',
         'public.reverse_carried_paid_time_by_payment(text,text,boolean,text)',
         'public.reduce_carried_paid_time(uuid,numeric,boolean,text)',

@@ -77,7 +77,11 @@ async function addHold({ customerId, type, sourceKey = '', reason = '', actorUse
             INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason,metadata,actor_user_id)
             VALUES($1,$2,$3,$4,$5::jsonb,$6)
             ON CONFLICT (customer_id,hold_type,source_key) WHERE released_at IS NULL
-            DO UPDATE SET reason=EXCLUDED.reason,metadata=EXCLUDED.metadata,actor_user_id=EXCLUDED.actor_user_id
+            DO UPDATE SET reason=EXCLUDED.reason,
+                -- A hold that once recorded a failed payment keeps saying so.
+                metadata=CASE WHEN customer_access_holds.metadata->>'unpaid'='true'
+                    THEN EXCLUDED.metadata||'{"unpaid":true}'::jsonb ELSE EXCLUDED.metadata END,
+                actor_user_id=EXCLUDED.actor_user_id
             RETURNING *
         `, [customerId, holdType, key, clean(reason, 500), JSON.stringify(metadata || {}), actorUserId]);
         await syncLegacySummary(customerId, db);
