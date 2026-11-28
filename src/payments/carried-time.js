@@ -54,7 +54,11 @@ async function assertCarryPossible({customerId,planId,snapshot},{db=query,prepar
             AND COALESCE(bought.is_addon,FALSE)=FALSE AND COALESCE(bought.is_free_tier,FALSE)=FALSE
             AND COALESCE(bought.billing_interval,'')<>'trial'
             AND s.status IN ('active','cancelled','expired')
-            AND NOT EXISTS (
+            AND (
+              (COALESCE(NULLIF(UPPER(BTRIM(s.currency_snapshot)),''),NULLIF(UPPER(s.commercial_snapshot->>'currency'),'')) IS NOT NULL
+                AND NULLIF(UPPER($3::jsonb->>'currency'),'') IS NOT NULL
+                AND COALESCE(NULLIF(UPPER(BTRIM(s.currency_snapshot)),''),NULLIF(UPPER(s.commercial_snapshot->>'currency'),''))<>UPPER($3::jsonb->>'currency'))
+              OR NOT EXISTS (
               SELECT 1 FROM public.carryable_paid_time(
                 $1,COALESCE(bought.service_type,'jellyfin'),
                 COALESCE(NULLIF($3::jsonb->>'serverClass',''),bought.server_class),
@@ -62,6 +66,7 @@ async function assertCarryPossible({customerId,planId,snapshot},{db=query,prepar
                 COALESCE(CASE WHEN $3::jsonb->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN ($3::jsonb->>'stremioHouseholdNetworkLimit')::integer END,bought.stremio_household_network_limit),
                 NULL
               ) candidate WHERE candidate.subscription_id=s.id
+              )
             )
         ) AS requires_value_transfer
       FROM public.carried_time_precheck($1,$2,$3::jsonb) check_result`,

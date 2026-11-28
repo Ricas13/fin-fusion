@@ -2,7 +2,7 @@
 require('dotenv').config();
 const assert=require('assert/strict');
 const {runDbSmoke,withRollback,fixtureCustomer,fixturePlan,unique}=require('./test-fixture');
-const {prepare,settlePrepared,verifySource}=require('../src/payments/paid-value-transfer');
+const {prepare,settlePrepared,verifySource,verifyTarget}=require('../src/payments/paid-value-transfer');
 const {addPlanDuration}=require('../src/payments/billing-periods');
 const DAY=86400000;
 runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>{
@@ -19,6 +19,8 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  VALUES($1,$2,'active','stripe','payment',$3,$4,$5,'GBP',$6::jsonb,'jellyfin') RETURNING *`,[customer.id,donorPlan.id,ref,start,end,JSON.stringify({...sourceContract,checkoutIntentId:sourceIntent.id})])).rows[0];
  await client.query(`INSERT INTO payment_history_transactions(provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,net_amount_minor,provider_reference_id,provider_source_id,customer_id,metadata)
  VALUES('stripe',$1,'charge','available',NOW(),'GBP',4500,150,4350,$2,$3,$4,$5::jsonb)`,[unique('txn'),ref,unique('charge'),customer.id,JSON.stringify({providerAuthoritative:true,liveStripeSync:true,checkoutIntentId:sourceIntent.id})]);
+ const variant=(await client.query(`INSERT INTO plan_access_variants(plan_id,variant_kind,quantity,currency,price_minor) VALUES($1,'streams',4,'GBP',18000) RETURNING id`,[boughtPlan.id])).rows[0];
+ const mapping=(await client.query(`INSERT INTO plan_access_variant_provider_prices(access_variant_id,provider,checkout_mode,external_id) VALUES($1,'stripe','subscription',$2) RETURNING id,external_id`,[variant.id,'price_'+unique('variant')])).rows[0];
  const targetContract={kind:'direct_plan',checkoutMode:'subscription',planId:boughtPlan.id,planPriceId:price.id,provider:'stripe',currency:'GBP',priceMinor:12000,discountedMinor:12000,billingInterval:'month',durationDays:30,streams:2,serverClass:'premium',providerMappingId:'price_'+unique('target')};
  let sourceChecks=0,targetChecks=0;
  const sourceVerifier=async(row,e)=>{sourceChecks++;assert.equal(row.id,source.id);assert.equal(e.providerPaidMinor,'4500');
@@ -26,7 +28,18 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
    await verifySource(row,e,{stripeClient:async()=>({paymentIntents:{retrieve:async()=>payment}})});
    await assert.rejects(()=>verifySource(row,e,{stripeClient:async()=>({paymentIntents:{retrieve:async()=>({...payment,latest_charge:{...payment.latest_charge,amount_refunded:100}})}})}),/unreversed/);
  };
- const deps={sourceVerifier,targetVerifier:async(row)=>{targetChecks++;assert.equal(row.plan_id,boughtPlan.id);}};
+ const deps={sourceVerifier,targetVerifier:async(row,intent,prepared)=>{targetChecks++;assert.equal(row.plan_id,boughtPlan.id);
+   const sub={id:row.provider_subscription_id,status:'active',metadata:{internal_checkout_intent_id:intent.id,internal_customer_id:row.customer_id,internal_plan_id:row.plan_id},items:{data:[{quantity:1,price:{id:prepared.providerMappingId,unit_amount:Number(prepared.target.normalPriceMinor),currency:'gbp'},current_period_start:+new Date(row.starts_at)/1000,current_period_end:+new Date(row.current_period_end)/1000}]},latest_invoice:{status:'paid',billing_reason:'subscription_create',amount_paid:12000,currency:'gbp'}};
+   const session={id:intent.provider_checkout_id,mode:'subscription',status:'complete',payment_status:'paid',subscription:sub.id,amount_total:12000,currency:'gbp'};
+   const adapter=async()=>({subscriptions:{retrieve:async()=>sub},checkout:{sessions:{retrieve:async()=>session}}});
+   await verifyTarget(row,intent,prepared,adapter);
+   await assert.rejects(()=>verifyTarget(row,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...sub,latest_invoice:{...sub.latest_invoice,amount_paid:0}})},checkout:{sessions:{retrieve:async()=>session}}})),/not conclusively verified/);
+ }};
+ const variantContract={...targetContract,accessVariantId:variant.id,accessVariantKind:'streams',accessQuantity:4,streams:4,priceMinor:18000,discountedMinor:18000,providerMappingRecordId:mapping.id,providerMappingId:mapping.external_id};
+ const variantPrepared=await prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:variantContract},deps);
+ assert.equal(variantPrepared.target.normalPriceMinor,'18000');assert.equal(variantPrepared.target.accessVariantId,variant.id);
+ await assert.rejects(()=>prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:{...variantContract,priceMinor:12000}},deps),/Normal destination price/);
+ sourceChecks=0;
  const prepared=await prepare(client,{customerId:customer.id,planId:boughtPlan.id,snapshot:targetContract},deps);
  assert(prepared.preview.addedDays>0);assert.equal(sourceChecks,1);
  const intent=(await client.query(`INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,state,nonce_hash,expires_at,commercial_snapshot,provider_checkout_id,paid_value_transfer_snapshot)
@@ -41,9 +54,13 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
  assert.equal(ledger.applied_days,days);assert.equal(ledger.reason,'monetary_plan_transfer');
  assert.equal(ledger.value_transfer_quote.sourceProviderPaidMinor,'4500');
  assert.equal(Number((await client.query('SELECT public.rebalance_carried_time($1) AS delta',[receiver.id])).rows[0].delta),0,'exact rebalancing keeps initial quote');
- await assert.rejects(()=>settlePrepared(client,outcome.row,deps),/does not match/);
+ const replay=await settlePrepared(client,outcome.row,deps);
+ assert.equal(replay.row.service_extension_days,days,'replay leaves original grant intact');
+ assert.equal(targetChecks,1,'replay performs no second provider mutation or verification');
  const removed=(await client.query('SELECT public.reverse_carried_paid_time($1,$2) AS removed',[source.id,'test_refund'])).rows[0].removed;
  assert.equal(Number(removed),days);
  assert.equal((await client.query('SELECT service_extension_days FROM subscriptions WHERE id=$1',[receiver.id])).rows[0].service_extension_days,0);
  assert.equal((await client.query('SELECT status FROM subscription_time_carryovers WHERE id=$1',[ledger.id])).rows[0].status,'reversed');
+ const afterReversal=(await client.query('SELECT * FROM subscriptions WHERE id=$1',[receiver.id])).rows[0];
+ assert.equal((await settlePrepared(client,afterReversal,deps)).row.service_extension_days,0,'replay cannot resurrect reversed value');
 })).catch(error=>{console.error(error.stack||error);process.exitCode=1;});

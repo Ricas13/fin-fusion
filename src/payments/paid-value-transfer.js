@@ -51,20 +51,33 @@ async function candidates(client,customerId,planId,exclude=null){
  return r.rows;
 }
 async function destination(client,planId,snapshot){
- // The first execution path supports normal base prices only. An access
- // variant needs its own authoritative price mapping, never the base price.
- invariant(!snapshot.accessVariantId&&snapshot.kind==='direct_plan'&&snapshot.checkoutMode==='subscription'&&snapshot.provider==='stripe',
+ // An access variant must use its own normal price and provider mapping.
+ invariant(snapshot.kind==='direct_plan'&&snapshot.checkoutMode==='subscription'&&snapshot.provider==='stripe',
    'Destination is not supported by automatic monetary transfer.');
  const r=await client.query(`
- SELECT pr.id AS "priceId",pr.price_minor AS "normalPriceMinor",pr.currency,p.billing_interval AS "billingInterval"
+ SELECT pr.id AS "priceId",
+        CASE WHEN $3::uuid IS NULL THEN pr.price_minor ELSE v.price_minor END AS "normalPriceMinor",
+        pr.currency,p.billing_interval AS "billingInterval",
+        v.id AS "accessVariantId",v.variant_kind AS "accessVariantKind",v.quantity AS "accessQuantity"
  FROM plan_prices pr JOIN plans p ON p.id=pr.plan_id
+ LEFT JOIN plan_access_variants v ON v.id=$3 AND v.plan_id=p.id AND v.currency=pr.currency AND v.active=TRUE
  WHERE p.id=$1 AND pr.id=$2 AND pr.active=TRUE AND pr.price_minor>0 AND p.active=TRUE AND p.visible=TRUE
+   AND ($3::uuid IS NULL OR (v.id IS NOT NULL AND v.price_minor>0 AND
+      ((v.variant_kind='streams' AND p.service_type IN ('jellyfin','bundle')) OR
+       (v.variant_kind='households' AND p.service_type='stremio'))))
    AND p.archived_at IS NULL AND p.audience IN ('direct','both')
    AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(p.is_free_tier,FALSE)=FALSE
    AND (p.effective_from IS NULL OR p.effective_from<=NOW()) AND (p.effective_until IS NULL OR p.effective_until>NOW())
- `,[planId,snapshot.planPriceId]);
+ `,[planId,snapshot.planPriceId,snapshot.accessVariantId||null]);
  const d=r.rows[0];
  invariant(r.rowCount===1&&String(d.normalPriceMinor)===String(snapshot.priceMinor)&&currency(d.currency)===currency(snapshot.currency)&&d.billingInterval===snapshot.billingInterval,'Normal destination price is unverified.');
+ if(snapshot.accessVariantId){
+   invariant(d.accessVariantId===snapshot.accessVariantId&&d.accessVariantKind===snapshot.accessVariantKind&&Number(d.accessQuantity)===Number(snapshot.accessQuantity),'Destination access variant is unverified.');
+   const mapping=await client.query(`SELECT id FROM plan_access_variant_provider_prices
+     WHERE id=$1 AND access_variant_id=$2 AND provider='stripe' AND checkout_mode='subscription' AND active=TRUE AND external_id=$3`,
+     [snapshot.providerMappingRecordId,snapshot.accessVariantId,snapshot.providerMappingId]);
+   invariant(mapping.rowCount===1,'Destination access variant provider mapping is unverified.');
+ }
  return {...d,normalPriceMinor:String(d.normalPriceMinor),currency:currency(d.currency)};
 }
 async function evidenceFor(client,source,customerId,sourceVerifier=verifySource){
@@ -96,6 +109,9 @@ async function verifyTarget(row,intent,prepared,adapter=stripeClient){
    session.id===intent.provider_checkout_id&&session.mode==='subscription'&&session.status==='complete'&&
    session.payment_status==='paid'&&stripeId(session.subscription)===sub.id&&session.amount_total>0&&currency(session.currency)===prepared.target.currency&&
    invoice&&typeof invoice==='object'&&invoice.status==='paid'&&invoice.billing_reason==='subscription_create'&&
+   Number.isInteger(invoice.amount_paid)&&invoice.amount_paid>0&&invoice.amount_paid===session.amount_total&&currency(invoice.currency)===prepared.target.currency&&
+   Number.isInteger(row.commercial_snapshot?.discountedMinor)&&session.amount_total===row.commercial_snapshot.discountedMinor&&
+   Number(row.commercial_snapshot?.serviceCreditMinor||0)===0&&
    Number(item.current_period_start)*1000===time(row.starts_at)&&Number(item.current_period_end)*1000===time(row.current_period_end)&&
    time(addPlanDuration(prepared.target,row.starts_at))===time(row.current_period_end),
    'New recurring payment or initial billing period is not conclusively verified.');
@@ -114,13 +130,24 @@ async function settlePrepared(client,row,{sourceVerifier=verifySource,targetVeri
  if(!prepared)return null;
  invariant(prepared.version===1&&intent.customer_id===row.customer_id&&intent.plan_id===row.plan_id&&prepared.planId===row.plan_id&&
    intent.provider==='stripe'&&row.source==='stripe'&&intent.checkout_mode==='subscription'&&row.status==='active'&&
-   !row.superseded_by&&!row.refund_terminated_at&&Number(row.service_extension_days||0)===0&&time(row.current_period_end)>Date.now(),
+   !row.superseded_by&&!row.refund_terminated_at&&time(row.current_period_end)>Date.now(),
    'Prepared transfer does not match the receiving entitlement.');
  const snapshot=row.commercial_snapshot;
- invariant(!snapshot.accessVariantId&&String(snapshot.planPriceId)===prepared.target.priceId&&String(snapshot.priceMinor)===prepared.target.normalPriceMinor&&
+ invariant((snapshot.accessVariantId||null)===(prepared.target.accessVariantId||null)&&
+   (!snapshot.accessVariantId||(snapshot.accessVariantKind===prepared.target.accessVariantKind&&Number(snapshot.accessQuantity)===Number(prepared.target.accessQuantity)))&&
+   String(snapshot.planPriceId)===prepared.target.priceId&&String(snapshot.priceMinor)===prepared.target.normalPriceMinor&&
    currency(snapshot.currency)===prepared.target.currency&&snapshot.billingInterval===prepared.target.billingInterval&&snapshot.providerMappingId===prepared.providerMappingId,
    'The paid checkout differs from the prepared normal price.');
  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))',[row.customer_id]);
+ // A replay must acknowledge the original transfer, even if the source was
+ // later refunded. Never create a second ledger entry or restore reversed days.
+ const previous=await client.query(`SELECT id,source_subscription_id,value_transfer_quote FROM subscription_time_carryovers WHERE target_subscription_id=$1 AND reason='monetary_plan_transfer'`,[row.id]);
+ if(previous.rowCount){
+   invariant(previous.rowCount===1&&previous.rows[0].source_subscription_id===prepared.sourceId&&previous.rows[0].value_transfer_quote?.checkoutIntentId===id,'Existing transfer does not match the prepared checkout.');
+   const current=(await client.query('SELECT * FROM subscriptions WHERE id=$1',[row.id])).rows[0];
+   return {row:current,problem:null};
+ }
+ invariant(Number(row.service_extension_days||0)===0,'Receiving entitlement already has extension time.');
  await targetVerifier(row,intent,prepared);
  const held=await candidates(client,row.customer_id,row.plan_id,row.id);
  invariant(held.length<=1&&(!held.length||(held[0].id===prepared.sourceId&&held[0].service_type===held[0].destination_service)),
