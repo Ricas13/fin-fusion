@@ -170,7 +170,7 @@ function contracts(){
   const grants=sql.slice(sql.indexOf('DO $grants$'),sql.indexOf('$grants$;'));
   const granted=Array.from(grants.matchAll(/'(public\.\w+\([^']*\))'/g),match=>match[1]);
   assert.deepStrictEqual(granted.map(name=>name.slice(7,name.indexOf('('))).sort(),[...created].sort());
-  assert.deepStrictEqual(Array.from(compatibility.REQUIRED_FUNCTIONS).slice(-granted.length),granted,'grant list and required list must match');
+  assert.deepStrictEqual(Array.from(compatibility.REQUIRED_FUNCTIONS).slice(compatibility.REQUIRED_FUNCTIONS.indexOf(granted[0]),compatibility.REQUIRED_FUNCTIONS.indexOf(granted[0])+granted.length),granted,'grant list and required list must match');
   assert(grants.includes('GRANT SELECT,INSERT,UPDATE ON TABLE public.subscription_time_carryovers'),'without table access every carry fails after payment');
 
   // Ledger: room for value conversion above 1, one live carry per source.

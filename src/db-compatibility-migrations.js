@@ -18,6 +18,7 @@ const REPEATABLE_COMPATIBILITY_MIGRATIONS = new Set([
   '20261127150000_paid_time_survives_repurchase.sql',
   '20261128120000_carried_paid_time_on_auto_renewal.sql',
   '20261128134500_extension_discount_redemptions.sql',
+  '20261128150000_independent_paid_extension_recovery.sql',
   '20261128153000_prepared_paid_value_transfer.sql'
 ]);
 
@@ -44,7 +45,8 @@ const REQUIRED_FUNCTIONS = Object.freeze([
   'public.reverse_carried_paid_time_by_payment(text,text,boolean,text)',
   'public.reduce_carried_paid_time(uuid,numeric,boolean,text)',
   'public.return_carried_paid_time(uuid,text)',
-  'public.subscription_access_blocked(uuid,text,text)'
+  'public.subscription_access_blocked(uuid,text,text)',
+  'public.recover_independent_paid_extensions(uuid)'
 ]);
 
 function isRepeatableCompatibilityMigration(filename) {

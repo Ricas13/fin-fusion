@@ -147,7 +147,11 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
     ORDER BY created_at,id
     FOR UPDATE
   `,[subscriptionId])).rows;
-  const active=rows.filter(row=>row.status==='active');
+  if(subscription.refund_terminated_at&&!subscription.superseded_by){
+    const recovered=(await client.query('SELECT public.recover_independent_paid_extensions($1) AS id',[subscriptionId])).rows[0]?.id;
+    const restored=recovered?(await client.query('SELECT * FROM subscriptions WHERE id=$1',[recovered])).rows[0]:null;
+    return{changed:Boolean(restored),purchasedDays:Number(restored?.service_extension_days||0),subscription:restored||subscription};
+  }
   // service_extension_days contains unrelated/manual extension time plus the
   // CURRENTLY APPLIED contribution of access-extension purchases. Keep that
   // contribution separate from purchased_days so a revoked row can retain its
@@ -166,7 +170,7 @@ async function recomputeActivePurchasedDaysTx(client,subscriptionId,customerId=n
     let appliedDays=0;
     if(row.status==='active'){
       const snapshot=row.commercial_snapshot&&typeof row.commercial_snapshot==='object'?row.commercial_snapshot:{};
-      appliedDays=purchasedDays(snapshot,cursor);
+      appliedDays=row.recovered_days==null?purchasedDays(snapshot,cursor):Number(row.recovered_days);
       activeDays+=appliedDays;
       cursor=new Date(cursor.getTime()+appliedDays*86400000);
     }
@@ -213,7 +217,7 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
   const prior=await existingExtension(client,{provider,providerPaymentId,checkoutIntentId});
   if(prior){
     const identityMismatch=String(prior.customer_id)!==String(customerId)
-      ||String(prior.subscription_id)!==String(subscriptionId)
+      ||(String(prior.subscription_id)!==String(subscriptionId)&&String(prior.original_subscription_id||'')!==String(subscriptionId))
       ||String(prior.plan_id)!==String(planId)
       ||String(prior.provider||'')!==String(provider)
       ||String(prior.provider_payment_id||'')!==String(providerPaymentId)
@@ -224,7 +228,10 @@ async function applyPurchase(client,{customerId,subscriptionId,planId,provider,p
       throw error;
     }
     if(!replayTarget)throw new Error('The subscription being extended no longer exists.');
-    return{subscription:replayTarget,extension:prior,replay:true};
+    const holder=String(prior.subscription_id)===String(subscriptionId)?replayTarget:
+      (await client.query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2',[prior.subscription_id,customerId])).rows[0];
+    if(!holder)throw new Error('The independently paid extension holder no longer exists.');
+    return{subscription:holder,extension:prior,replay:true};
   }
   let target=await lockedTarget(client,{customerId,subscriptionId,planId,checkoutIntentId});
   const accessKind=extensionAccessKind(commercialSnapshot,target);
@@ -354,7 +361,10 @@ async function revokeByProviderPayment({provider,providerPaymentId,customerId=nu
 
 async function restoreActivePurchasedDays(subscriptionId,customerId){
   subscriptionId=cleanReference(subscriptionId,'Subscription');
-  return transaction(client=>recomputeActivePurchasedDaysTx(client,subscriptionId,customerId));
+  return transaction(async client=>{
+    await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
+    return recomputeActivePurchasedDaysTx(client,subscriptionId,customerId);
+  });
 }
 
 module.exports={PROVIDERS,LIVE_STATUSES,cleanProvider,cleanReference,objectValue,extensionAccessKind,currentAccessQuantity,wholeDaysBetween,purchasedDays,lockedTarget,recomputeActivePurchasedDaysTx,applyPurchase,extensionIdentity,revokeByProviderPayment,restoreActivePurchasedDays};

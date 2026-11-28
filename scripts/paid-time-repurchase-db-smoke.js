@@ -91,7 +91,7 @@ async function triggerOrder(){
 // Everything, including any role created here, is rolled back.
 async function runtimePrivileges(){
   const roles=['steamfusion_app','steamfusion_automation'];
-  const bodies=['20261127150000_paid_time_survives_repurchase.sql','20261128120000_carried_paid_time_on_auto_renewal.sql']
+  const bodies=['20261127150000_paid_time_survives_repurchase.sql','20261128120000_carried_paid_time_on_auto_renewal.sql','20261128150000_independent_paid_extension_recovery.sql']
     .map(file=>fs.readFileSync(path.join(__dirname,'..','db','migrations',file),'utf8')
       .replace(/^\s*BEGIN\s*;/im,'').replace(/COMMIT\s*;\s*$/i,''));
   const client=await getPool().connect();
