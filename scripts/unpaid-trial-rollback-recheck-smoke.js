@@ -235,10 +235,11 @@ async function testRollbackLockTimeoutIsNotDestructive() {
 
 async function testActivationLockTimeoutKeepsTrial() {
   for (const serviceType of ['jellyfin', 'emby', 'stremio', 'bundle']) {
+    for(const failure of [lockTimeout(),new Error('no server capacity')]) {
     reset({
       plan: trialPlan(serviceType),
       jellyfin: entitlement(), emby: entitlement(), stremio: entitlement(),
-      reconcile: async () => { throw lockTimeout(); }
+      reconcile: async () => { throw failure; }
     });
     await assert.rejects(
       lifecycle.startFreeTrial(CUSTOMER, 'trial'),
@@ -248,6 +249,7 @@ async function testActivationLockTimeoutKeepsTrial() {
     assert.deepStrictEqual(cancelled(), [], `${serviceType}: a lock timeout must not cancel the trial`);
     assert.deepStrictEqual(world.deleted, [], `${serviceType}: a lock timeout must not delete accounts`);
     assert.deepStrictEqual(world.requested, [CUSTOMER], `${serviceType}: pending activation must queue a reconcile`);
+    }
   }
 }
 
@@ -285,10 +287,11 @@ async function testStremioInstallLockTimeoutFallsThroughToActivation() {
   });
   await assert.rejects(
     lifecycle.startFreeTrial(CUSTOMER, 'trial'),
-    error => error.code === 'TRIAL_STREMIO_INSTALL_FAILED',
-    'a real link failure must still fail the trial'
+    error => error.code === 'TRIAL_ACTIVATION_PENDING',
+    'a real link failure must retain the trial for retry'
   );
-  assert.strictEqual(cancelled().length, 1, 'a real link failure must still roll the trial back');
+  assert.strictEqual(cancelled().length, 0, 'a real link failure must never roll the trial back');
+  assert.deepStrictEqual(world.requested, [CUSTOMER]);
 }
 
 // One entry per single-service rollback: what it reads to judge readiness and
