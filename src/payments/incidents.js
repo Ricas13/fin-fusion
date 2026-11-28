@@ -6,6 +6,7 @@ const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 const subscriptionTermination = require('./subscription-termination');
 const accessExtensions = require('./subscription-access-extensions');
+const carriedTime = require('./carried-time');
 
 // A refund/dispute/chargeback under review is a commercial incident, not an
 // access state ("a customer asking for a refund is not an access state").
@@ -203,6 +204,18 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
         reference:incident.id
       });
       if(extensionReversal.changed)await reconcileMany([effectIdentity.customerId]);
+      // Time from this payment may since have been carried onto another plan.
+      const carriedHolders=await carriedTime.settleSourcePaymentLoss({
+        provider:normalizedProvider,
+        reference:normalizedReference,
+        customerId:effectIdentity.customerId,
+        reason:confirmedFullRefund?'source_refunded':'source_chargeback_lost',
+        decide:async row=>confirmedFullRefund
+          ?(await refundTerminatesMatchedSubscription(row,{provider,eventId,metadata:{...(incident.metadata||{}),...(metadata||{})}})).terminate
+          :true
+      });
+      for(const holderId of carriedHolders)await accessExtensions.restoreActivePurchasedDays(holderId,effectIdentity.customerId);
+      if(carriedHolders.length)await reconcileMany([effectIdentity.customerId]);
       const matched=await query(`
         SELECT id,billing_mode,current_period_end,duration_days_snapshot
         FROM subscriptions

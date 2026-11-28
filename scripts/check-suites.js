@@ -159,6 +159,7 @@ module.exports = {
       "node scripts/checkout-abandonment-smoke.js",
       "node scripts/same-plan-access-extension-smoke.js",
       "node scripts/paid-time-repurchase-smoke.js",
+      "node scripts/carried-time-renewal-smoke.js",
       "node scripts/customer-error-sanitization-smoke.js"
     ],
     "check:fast:dashboards": [
@@ -263,6 +264,7 @@ module.exports = {
       "node scripts/prepaid-access-stacking-smoke.js",
       "node scripts/same-plan-access-extension-db-smoke.js",
       "node scripts/paid-time-repurchase-db-smoke.js",
+      "node scripts/carried-time-renewal-db-smoke.js",
       "node scripts/prorata-refund-db-smoke.js",
       "node scripts/prorata-refund-retry-db-smoke.js",
       "node scripts/affiliate-first-payment-only-db-smoke.js",

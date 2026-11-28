@@ -36,7 +36,10 @@ async function record({ customerId, subscriptionId, amount, full = false, reason
                COALESCE(NULLIF(s.currency_snapshot,''),p.currency,'GBP') AS currency,
                COALESCE(s.price_minor_snapshot,p.price_minor,0)::bigint AS price_minor
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.id=$1 AND s.customer_id=$2 AND s.superseded_by IS NULL
+        WHERE s.id=$1 AND s.customer_id=$2
+          AND (s.superseded_by IS NULL
+            -- A payment whose remaining time moved onto a newer plan can still be refunded.
+            OR EXISTS(SELECT 1 FROM subscription_time_carryovers l WHERE l.source_subscription_id=s.id AND l.status IN ('active','reversed')))
     `, [subscriptionId, customerId])).rows[0];
     if (!sub) throw new Error('Choose one of this customer\'s current plans.');
     const source = String(sub.source || '').toLowerCase();

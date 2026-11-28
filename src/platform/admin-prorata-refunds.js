@@ -45,7 +45,9 @@ async function eligibleRows(customerId=null) {
     FROM subscriptions s
     JOIN customers c ON c.id=s.customer_id
     LEFT JOIN app_users u ON u.id=c.user_id
-    WHERE s.superseded_by IS NULL
+    WHERE (s.superseded_by IS NULL
+        -- A purchase whose remaining time was added to a newer plan stays refundable.
+        OR EXISTS(SELECT 1 FROM subscription_time_carryovers l WHERE l.source_subscription_id=s.id AND l.status='active'))
       AND ($1::uuid IS NULL OR s.customer_id=$1::uuid)
       AND s.source IN ('stripe','paypal')
       AND s.status IN ('active','trialing','past_due','paused','cancelled')
