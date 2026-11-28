@@ -96,6 +96,17 @@ async function readEvidence(client,subscriptionId){
  `,[subscriptionId]);
  return result.rows[0]||null;
 }
+async function readDestination(client,priceId){
+ if(!UUID.test(String(priceId||'')))throw new Error('A destination plan price UUID is required.');
+ const r=await client.query(`SELECT pr.id AS "priceId",pr.price_minor AS "normalPriceMinor",pr.currency,p.billing_interval AS "billingInterval"
+ FROM plan_prices pr JOIN plans p ON p.id=pr.plan_id
+ WHERE pr.id=$1 AND pr.active=TRUE AND pr.price_minor>0 AND p.active=TRUE AND p.visible=TRUE
+ AND p.archived_at IS NULL AND p.audience IN ('direct','both')
+ AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(p.is_free_tier,FALSE)=FALSE
+ AND (p.effective_from IS NULL OR p.effective_from<=NOW()) AND (p.effective_until IS NULL OR p.effective_until>NOW())`,[priceId]);
+ if(r.rowCount!==1)throw new Error('Destination normal base price is unavailable.');
+ return r.rows[0];
+}
 async function main(){
  require('dotenv').config();
  const {getPool}=require('../src/db');
@@ -106,7 +117,18 @@ async function main(){
    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    await client.query("SET LOCAL statement_timeout='10s'");
    const result=previewFromEvidence(await readEvidence(client,process.argv[2]));
+   const target=result.verified&&process.argv[3]?await readDestination(client,process.argv[3]):null;
    await client.query('COMMIT');
+   if(target){
+     const conversion=require('../src/payments/paid-value-conversion');
+     try{
+       const rate=await conversion.fetchRate(result.currency,target.currency);
+       result.conversion=conversion.quoteConversion(result,target,{rate});
+     }catch(error){
+       console.log(JSON.stringify({...result,conversion:{quoteOnly:true,verified:false,reason:'conversion_unavailable'}},null,2));
+       return 2;
+     }
+   }
    console.log(JSON.stringify(result,null,2));
    return result.verified?0:2;
  }catch(_error){

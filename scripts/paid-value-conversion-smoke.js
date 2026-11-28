@@ -1,0 +1,35 @@
+'use strict';
+const assert=require('assert');
+const {fetchRate,quoteConversion}=require('../src/payments/paid-value-conversion');
+const now=new Date('2026-11-28T12:00:00Z');
+const evidence={verified:true,currency:'GBP',remainingValueMinor:{numerator:'1875',denominator:'1'},asOf:now.toISOString()};
+const target={currency:'USD',normalPriceMinor:6000,billingInterval:'year',priceId:'price',discountedMinor:4500};
+const row={base:'GBP',quote:'USD',date:'2026-11-27',rate:1.28};
+const rate={...row,source:'frankfurter',observedAt:now.toISOString()};
+async function main(){
+ const q=quoteConversion(evidence,target,{rate,now});
+ assert.equal(q.addedDays,146,'18.75 GBP * 1.28 / 60 USD * 365 days, using normal price');
+ assert.equal(q.destinationRemainingValueMinor.numerator,'240000');
+ assert.equal(q.destinationRemainingValueMinor.denominator,'100');
+ assert.equal(q.fx.rateDate,'2026-11-27');
+ assert.equal(quoteConversion(evidence,{...target,discountedMinor:1},{rate,now}).addedDays,q.addedDays);
+ assert.equal(quoteConversion(evidence,{...target,currency:'GBP'},{now}).addedDays,115);
+ const tiny={...evidence,remainingValueMinor:{numerator:'1',denominator:'100000'}};
+ assert.equal(quoteConversion(tiny,target,{rate,now}).addedDays,1,'round once, up, even for tiny positive value');
+ const leap=quoteConversion({...evidence,remainingValueMinor:{numerator:'6000',denominator:'1'}},{...target,currency:'GBP',billingInterval:'month'},{now,termStart:'2028-01-31T12:00:00Z'});
+ assert.equal(leap.addedDays,29);
+ assert.throws(()=>quoteConversion(evidence,target,{now}),/FX/);
+ for(const invalid of [{...rate,source:'fallback'},{...rate,date:'2026-11-10'},{...rate,date:'2026-11-29'},{...rate,date:'2026-11-31'},{...rate,quote:'EUR'},{...rate,rate:0},{...rate,observedAt:'2026-11-28T11:00:00Z'}])assert.throws(()=>quoteConversion(evidence,target,{rate:invalid,now}),/FX/);
+ assert.throws(()=>quoteConversion({...evidence,verified:false},target,{rate,now}),/not verified/);
+ assert.throws(()=>quoteConversion({...evidence,remainingValueMinor:{numerator:'0',denominator:'1'}},target,{rate,now}),/positive unused/);
+ assert.throws(()=>quoteConversion(evidence,{...target,normalPriceMinor:0},{rate,now}),/positive normal/);
+ assert.throws(()=>quoteConversion(evidence,{...target,currency:'CAD'},{rate,now}),/currency/);
+ assert.throws(()=>quoteConversion({...evidence,asOf:'2026-11-28T11:00:00Z'},target,{rate,now}),/stale/);
+ let calls=0;const fake=async(url,options)=>{calls++;assert.equal(url,'https://api.frankfurter.dev/v2/rates?base=GBP&quotes=USD');assert.equal(options.redirect,'error');return{ok:true,json:async()=>[row]};};
+ assert.equal((await fetchRate('GBP','USD',{fetchFn:fake,now:()=>+now})).rate,'1.28');
+ assert.equal(await fetchRate('GBP','GBP',{fetchFn:fake,now:()=>+now}),null);assert.equal(calls,1);
+ await assert.rejects(()=>fetchRate('GBP','USD',{fetchFn:async()=>({ok:false}),now:()=>+now}),/unavailable/);
+ await assert.rejects(()=>fetchRate('GBP','USD',{fetchFn:async()=>({ok:true,json:async()=>[row,row]}),now:()=>+now}),/ambiguous/);
+ console.log('paid-value conversion smoke: exact valuation, validated FX, single ceiling and refusal invariants ok');
+}
+main().catch(error=>{console.error(error.stack||error);process.exitCode=1;});
