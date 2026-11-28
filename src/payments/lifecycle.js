@@ -502,32 +502,14 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
                 entitlement:{subscription_id:created.id,service_type_snapshot:type}
             });
         }catch(error){
-            // A lock timeout means the link was never attempted. Fall through to
-            // strict activation below, which verifies it and can report pending.
-            let linkFailed=!isLockTimeoutError(error);
-            if(linkFailed){
-                try{
-                    const outcome=await rollbackUnprovisionedStremioTrial(customerId,created.id,{reason:error.message});
-                    // Skipped under the lock: let strict activation decide.
-                    if(outcome?.rolledBack===false)linkFailed=false;
-                }catch(rollbackError){
-                    if(!isLockTimeoutError(rollbackError))throw rollbackError;
-                    linkFailed=false;
-                }
-            }
-            if(linkFailed){
-                console.error('Stremio trial installation link could not be created.',{
-                    customerId,subscriptionId:created.id,error:error.message
-                });
-                const failure=new Error('The Stremio trial could not be activated because its installation link could not be created. No trial plan was retained.');
-                failure.code='TRIAL_STREMIO_INSTALL_FAILED';
-                failure.expose=true;
-                failure.cause=error;
-                throw failure;
-            }
+            // Keep the trial and let the normal strict reconciliation retry.
+            console.warn('Trial installation is pending reconciliation.', {
+                customerId,subscriptionId:created.id,error:error.message
+            });
         }
     }
     const pendingActivation={
+        retainOnFailure:true,
         pendingCode:'TRIAL_ACTIVATION_PENDING',
         pendingMessage:TRIAL_ACTIVATION_PENDING_MESSAGE,
         onPending:customer=>provisioning.control.requestCustomerReconcile(customer)
