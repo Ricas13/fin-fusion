@@ -5,6 +5,7 @@ const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
 const accessRepair = require('../access/access-repair');
 const scanCursor = require('../automation/scan-cursor');
+const { isLockTimeoutError } = require('./lock-errors');
 
 const DEFAULT_RECONCILE_CONCURRENCY = 2;
 const MAX_RECONCILE_CONCURRENCY = 8;
@@ -211,8 +212,11 @@ async function dueCustomers(limit = 250) {
 }
 
 async function rollbackStrandedUnpaidJellyfinTrial(customerId, originalError = null) {
+    // The reconcile never ran: nothing is stranded, only busy. Retry via backoff.
+    if (isLockTimeoutError(originalError)) return false;
     const result = await accessRepair.repairUnpaidTrial(customerId, {
-        reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account'
+        reason: originalError?.message || originalError || 'Legacy unpaid Jellyfin trial had no enabled server account',
+        cause: originalError
     });
     return result.status === 'removed';
 }

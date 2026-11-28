@@ -151,6 +151,78 @@ const { activateOrRollback } = require('../src/payments/unpaid-access-activation
       subscriptionId: 'subscription-exact'
     }], 'activation rollback must remain exact-customer/exact-subscription scoped');
   }
+  const lockError = (code = 'CUSTOMER_RECONCILIATION_LOCK_TIMEOUT') => Object.assign(new Error('busy'), { code });
+  const base = {
+    customerId: 'customer-lock',
+    subscriptionId: 'subscription-lock',
+    verify: async () => null,
+    missingReason: 'missing',
+    failureMessage: 'failed',
+    failureCode: 'FAILED',
+    pendingMessage: 'still setting up',
+    pendingCode: 'PENDING'
+  };
+
+  // A reconcile that could not take its lock never ran: no rollback, pending.
+  for (const cause of [
+    lockError(),
+    lockError('STREMIO_OPERATION_LOCK_TIMEOUT'),
+    Object.assign(new Error('wrapped'), { cause: lockError() }),
+    Object.assign(new Error('aggregate'), { errors: [new Error('other'), lockError()] })
+  ]) {
+    let rollbackCalls = 0;
+    const queued = [];
+    await assert.rejects(
+      activateOrRollback({
+        ...base,
+        reconcile: async () => { throw cause; },
+        rollback: async () => { rollbackCalls += 1; },
+        onPending: async (customerId, subscriptionId) => queued.push([customerId, subscriptionId])
+      }),
+      error => error.code === 'PENDING' && error.message === 'still setting up'
+        && error.retryable === true && error.cause === cause
+    );
+    assert.strictEqual(rollbackCalls, 0, 'a lock timeout must never trigger unpaid rollback');
+    assert.deepStrictEqual(queued, [['customer-lock', 'subscription-lock']], 'pending activation must queue one reconcile');
+  }
+
+  // A rollback that could not take its lock did nothing either.
+  {
+    let queued = 0;
+    await assert.rejects(
+      activateOrRollback({
+        ...base,
+        reconcile: async () => {},
+        rollback: async () => { throw lockError(); },
+        onPending: async () => { queued += 1; }
+      }),
+      error => error.code === 'PENDING'
+    );
+    assert.strictEqual(queued, 1);
+  }
+
+  // Failing to queue the follow-up must not hide the pending outcome.
+  await assert.rejects(
+    activateOrRollback({
+      ...base,
+      reconcile: async () => { throw lockError(); },
+      rollback: async () => { throw new Error('must not run'); },
+      onPending: async () => { throw new Error('queue unavailable'); }
+    }),
+    error => error.code === 'PENDING'
+  );
+
+  // Error cycles are bounded and are not lock timeouts.
+  {
+    const cyclic = new Error('cycle');
+    cyclic.cause = cyclic;
+    let rollbackCalls = 0;
+    await assert.rejects(
+      activateOrRollback({ ...base, reconcile: async () => { throw cyclic; }, rollback: async () => { rollbackCalls += 1; } }),
+      error => error.code === 'FAILED'
+    );
+    assert.strictEqual(rollbackCalls, 1, 'ordinary failures must still roll back');
+  }
 
   console.log('unpaid access activation smoke: ok');
 })().catch(error => {

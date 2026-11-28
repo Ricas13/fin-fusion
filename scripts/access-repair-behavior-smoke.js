@@ -397,6 +397,61 @@ function accessState({ free = [], primary = [] } = {}) {
       'orphan cleanup must verify the destructive postcondition instead of trusting a successful reconcile call'
     );
   }
+  const lockError = () => Object.assign(new Error('busy'), { code: 'CUSTOMER_RECONCILIATION_LOCK_TIMEOUT' });
+
+  // A lock-timeout cause defers before anything is even read.
+  {
+    let trialRollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState(),
+      provisioning: { reconcileCustomer: async () => { throw new Error('must not reconcile'); } },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { trialRollbacks += 1; } })
+    });
+    const result = await repair.repairUnpaidTrial('customer', { cause: lockError() });
+    assert.deepStrictEqual(result, { status: 'deferred', reason: 'lock_timeout' });
+    assert.strictEqual(trialRollbacks, 0);
+  }
+
+  {
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'trial-busy', billing_interval: 'trial', service_type: 'jellyfin' }
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('must not reconcile'); } },
+      lifecycle: () => ({ rollbackUnprovisionedJellyfinTrial: async () => { throw lockError(); } })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.strictEqual(result.status, 'deferred', 'a rollback lock timeout must not be reported as removed');
+  }
+
+  // Free repair: neither a busy reconcile nor a busy rollback removes the claim.
+  {
+    let rollbacks = 0;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        free: [{ state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-busy' } }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw lockError(); } },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { rollbacks += 1; } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'free-busy');
+    assert.strictEqual(result.status, 'deferred');
+    assert.strictEqual(rollbacks, 0, 'a Free reconcile lock timeout must never roll the claim back');
+  }
+
+  {
+    const missing = { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-busy-rollback' } };
+    const repair = createAccessRepair({
+      customerAccessState: accessState({ free: [missing, missing] }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({ rollbackUnprovisionedFreeClaim: async () => { throw lockError(); } })
+    });
+    const result = await repair.repairFreeEntitlement('customer', 'free-busy-rollback');
+    assert.strictEqual(result.status, 'deferred');
+  }
 
   console.log('access repair behavior smoke: ok');
 })().catch(error => {

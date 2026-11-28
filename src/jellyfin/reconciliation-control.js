@@ -161,6 +161,30 @@ async function forceCustomerDue(customerId) {
     `, [customerId]);
 }
 
+// Durably ask the worker to look at this customer again. Unlike forceCustomerDue,
+// the request survives a reconciliation that is currently running: its status is
+// left alone and the newer reconcile_requested_at makes the finish path requeue.
+// Mirrors request_customer_entitlement_reconciliation() in the database.
+async function requestCustomerReconcile(customerId) {
+    await query(`
+        INSERT INTO customer_provisioning_state(
+            customer_id,status,next_attempt_at,reconcile_requested_at,updated_at
+        ) VALUES($1,'pending',NOW(),NOW(),NOW())
+        ON CONFLICT (customer_id) DO UPDATE SET
+            reconcile_requested_at=NOW(),
+            status=CASE
+                WHEN customer_provisioning_state.status='running' THEN 'running'
+                ELSE 'pending'
+            END,
+            next_attempt_at=CASE
+                WHEN customer_provisioning_state.status='running'
+                    THEN COALESCE(customer_provisioning_state.next_attempt_at,NOW()+make_interval(mins=>$2))
+                ELSE NOW()
+            END,
+            updated_at=NOW()
+    `, [customerId, RUNNING_STALE_MINUTES]);
+}
+
 async function forceAllProblemsDue() {
     const result = await query(`
         UPDATE customer_provisioning_state
@@ -224,6 +248,7 @@ module.exports = {
     markCustomerHealthy,
     markCustomerProblem,
     forceCustomerDue,
+    requestCustomerReconcile,
     forceAllProblemsDue,
     getAccountState,
     markAccountSuccess,

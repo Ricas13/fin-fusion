@@ -2,6 +2,11 @@
 
 const customerAccessState = require('./customer-access-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const { isLockTimeoutError } = require('../jellyfin/lock-errors');
+
+// A lock timeout means the work never ran, so repair has learned nothing about
+// this customer. Leave everything in place for a later pass.
+const DEFERRED_LOCK_TIMEOUT = Object.freeze({ status: 'deferred', reason: 'lock_timeout' });
 
 function trialEntitlement(entitlement) {
   return String(entitlement?.contract_billing_interval || entitlement?.billing_interval || '').toLowerCase() === 'trial';
@@ -55,6 +60,9 @@ function createAccessRepair(deps = {}) {
     } catch (error) {
       reconcileError = error;
     }
+    if (isLockTimeoutError(reconcileError)) {
+      return { ...DEFERRED_LOCK_TIMEOUT, reconcileError };
+    }
 
     access = await accessState.freeJellyfin(customerId, { includeBlocked: true });
     if (access.entitlement
@@ -84,13 +92,20 @@ function createAccessRepair(deps = {}) {
     }
 
     const lifecycle = lifecycleApi();
-    await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
-      reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account'
-    });
+    try {
+      await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
+        reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account'
+      });
+    } catch (error) {
+      if (isLockTimeoutError(error)) return { ...DEFERRED_LOCK_TIMEOUT, reconcileError };
+      throw error;
+    }
     return { status: 'removed', reconcileError };
   }
 
-  async function repairUnpaidTrial(customerId, { reason = null } = {}) {
+  async function repairUnpaidTrial(customerId, { reason = null, cause = null } = {}) {
+    if (isLockTimeoutError(cause)) return { ...DEFERRED_LOCK_TIMEOUT };
+
     const access = await accessState.primaryJellyfin(customerId, { includeBlocked: true });
     const entitlement = access.entitlement;
     if (!entitlement
@@ -109,9 +124,16 @@ function createAccessRepair(deps = {}) {
     }
 
     const lifecycle = lifecycleApi();
-    await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
-      reason: reason || 'Unpaid Jellyfin trial had no enabled server account'
-    });
+    try {
+      await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
+        reason: reason || 'Unpaid Jellyfin trial had no enabled server account'
+      });
+    } catch (error) {
+      if (isLockTimeoutError(error)) {
+        return { ...DEFERRED_LOCK_TIMEOUT, subscriptionId: entitlement.subscription_id };
+      }
+      throw error;
+    }
 
     // Converge the now no-plan state so stale provisioning metadata does not
     // keep advertising a deployment for an entitlement that was rolled back.

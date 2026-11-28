@@ -20,6 +20,7 @@ const stremioInstallRecovery = require('../stremio/install-credential-recovery')
 const stremioExternalPlaybackToken = require('../stremio/external-playback-token');
 const stremioManagedEntitlements = require('../stremio/managed-entitlements');
 const accessExtensions = require('./subscription-access-extensions');
+const { isLockTimeoutError } = require('../jellyfin/lock-errors');
 
 function addPlanDuration(plan, from = new Date()) {
     return planExpiry.endForPlan(plan, { now: from });
@@ -248,14 +249,23 @@ async function rollbackUnprovisionedBundleTrial(customerId,subscriptionId,{media
     const mediaRollback=mediaType==='emby'?rollbackUnprovisionedEmbyTrial:rollbackUnprovisionedJellyfinTrial;
     let mediaResult=null,mediaError=null;
     try{mediaResult=await mediaRollback(customerId,subscriptionId,{reason});}
-    catch(error){mediaError=error;}
+    catch(error){
+        // The media half never ran. Cancelling the trial through the Stremio
+        // half would turn "busy" into a destructive rollback.
+        if(isLockTimeoutError(error))throw error;
+        mediaError=error;
+    }
     let stremioError=null;
     try{await rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason});}
     catch(error){stremioError=error;}
     if(mediaError||stremioError){
         const failure=new Error('Bundle trial rollback did not fully converge.');
         failure.code='TRIAL_BUNDLE_ROLLBACK_INCOMPLETE';
-        failure.cause=mediaError||stremioError;
+        // Only an untouched trial may be reported as "lock timed out". Once the
+        // media half has closed the trial, keep the Stremio error out of the
+        // cause chain so callers do not tell the customer setup is still pending.
+        if(mediaError)failure.cause=mediaError;
+        else failure.stremioError=stremioError;
         throw failure;
     }
     return mediaResult;
@@ -418,16 +428,32 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
                 entitlement:{subscription_id:created.id,service_type_snapshot:type}
             });
         }catch(error){
-            await rollbackUnprovisionedStremioTrial(customerId,created.id,{reason:error.message});
-            const failure=new Error('The Stremio trial could not be activated because its installation link could not be created. No trial plan was retained.');
-            failure.code='TRIAL_STREMIO_INSTALL_FAILED';
-            failure.cause=error;
-            throw failure;
+            // A lock timeout means the link was never attempted. Fall through to
+            // strict activation below, which verifies it and can report pending.
+            let linkFailed=!isLockTimeoutError(error);
+            if(linkFailed){
+                try{await rollbackUnprovisionedStremioTrial(customerId,created.id,{reason:error.message});}
+                catch(rollbackError){
+                    if(!isLockTimeoutError(rollbackError))throw rollbackError;
+                    linkFailed=false;
+                }
+            }
+            if(linkFailed){
+                const failure=new Error('The Stremio trial could not be activated because its installation link could not be created. No trial plan was retained.');
+                failure.code='TRIAL_STREMIO_INSTALL_FAILED';
+                failure.cause=error;
+                throw failure;
+            }
         }
     }
+    const pendingActivation={
+        pendingCode:'TRIAL_ACTIVATION_PENDING',
+        onPending:customer=>provisioning.control.requestCustomerReconcile(customer)
+    };
     const mediaType=customerServerChoice.mediaServerType(plan);
     if(mediaType==='jellyfin'){
         await unpaidAccessActivation.activateOrRollback({
+            ...pendingActivation,
             customerId,
             subscriptionId:created.id,
             reconcile:primitives.reconcileCommittedCustomerStrict,
@@ -451,6 +477,7 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
         });
     }else if(mediaType==='emby'){
         await unpaidAccessActivation.activateOrRollback({
+            ...pendingActivation,
             customerId,
             subscriptionId:created.id,
             reconcile:primitives.reconcileCommittedCustomerStrict,
@@ -474,6 +501,7 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
         });
     }else if(type==='stremio'||type==='bundle'){
         await unpaidAccessActivation.activateOrRollback({
+            ...pendingActivation,
             customerId,
             subscriptionId:created.id,
             reconcile:primitives.reconcileCommittedCustomerStrict,
@@ -635,6 +663,8 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
     // enabled Free-lane Jellyfin account on the correct placement. We never
     // retain a live Free plan in a "deployment pending" state.
     await unpaidAccessActivation.activateOrRollback({
+        pendingCode:'FREE_CLAIM_ACTIVATION_PENDING',
+        onPending:customer=>provisioning.control.requestCustomerReconcile(customer),
         customerId,
         subscriptionId:created.id,
         reconcile:primitives.reconcileCommittedCustomerStrict,
@@ -824,6 +854,8 @@ module.exports = {
     rollbackUnprovisionedEmbyTrial,
     readyFreeAccountForSubscription,
     rollbackUnprovisionedFreeClaim,
+    rollbackUnprovisionedStremioTrial,
+    rollbackUnprovisionedBundleTrial,
     claimFreePlan,
     activatePurchase,
     attachDiscoveredProviderSubscription,

@@ -14,6 +14,8 @@ module.exports = {
       "node scripts/customer-onboarding-link-smoke.js",
       "node scripts/unpaid-access-activation-smoke.js",
       "node scripts/access-repair-behavior-smoke.js",
+      "node scripts/unpaid-trial-rollback-recheck-smoke.js",
+      "node scripts/entitlement-reconcile-lock-timeout-smoke.js",
       "node scripts/access-repair-ownership-smoke.js",
       "node scripts/access-integrity-operator-smoke.js",
       "node scripts/lifecycle-audit-regressions-smoke.js",
