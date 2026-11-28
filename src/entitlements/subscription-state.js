@@ -10,6 +10,25 @@ function recurringProvider(row){return billingMode.isRecurring(row)}
 function audienceAllows(plan,channel){const audience=String(plan?.audience||'direct');if(channel==='customer')return DIRECT_AUDIENCES.has(audience);return false}
 function assertAudience(plan,channel){if(!audienceAllows(plan,channel))throw new Error('This plan is not available for direct customers.');return plan}
 
+// Match the paid-extension exception in subscription_access_blocked: a
+// delinquent provider's advanced (unpaid) period end is not paid access.
+// This expression is for the canonical entitlement read model, not the
+// provider's contractual current_period_end or a mutation of paid days.
+const paidAccessEndSql = `(
+ CASE WHEN COALESCE(s.service_extension_days,0)>0 AND s.refund_terminated_at IS NULL THEN
+   LEAST(s.current_period_end,(
+     SELECT MIN(h.created_at) FROM customer_access_holds h
+     WHERE h.customer_id=s.customer_id AND h.released_at IS NULL
+       AND h.hold_type='payment_delinquency'
+       AND h.source_key=CASE
+         WHEN s.source='stripe' AND LEFT(COALESCE(s.provider_subscription_id,''),4)='sub_' THEN 'stripe:'||s.provider_subscription_id
+         WHEN s.source='paypal' AND LEFT(COALESCE(s.provider_subscription_id,''),2)='I-' THEN 'paypal:'||s.provider_subscription_id
+         ELSE NULL END
+   ))
+ ELSE s.current_period_end END
+ + make_interval(days=>COALESCE(s.service_extension_days,0))
+)`;
+
 async function applyOperatorSemantics(db,row,{includeBlocked=false}={}){
  if(!row)return null;
  const decorated=await adminControl.entitlementSemantics(row,{client:db});
@@ -30,7 +49,7 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
         CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
                   OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
              THEN 'infinity'::timestamptz
-             ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
+             ELSE ${paidAccessEndSql}
         END AS access_expires_at,
         (public.subscription_admin_removed(s.customer_id,'jellyfin')
             OR (public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
@@ -61,7 +80,7 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
           CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
                     OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
                THEN 'infinity'::timestamptz
-               ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
+               ELSE ${paidAccessEndSql}
           END DESC,
           s.created_at DESC
  LIMIT 1
@@ -101,7 +120,8 @@ async function effectiveStremioSubscription(customerId,{client=null,includeBlock
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        e.access_expires_at,e.blocked
+        CASE WHEN e.access_expires_at='infinity'::timestamptz THEN e.access_expires_at
+             ELSE LEAST(e.access_expires_at,${paidAccessEndSql}) END AS access_expires_at,e.blocked
  FROM effective_stremio_entitlements e
  JOIN subscriptions s ON s.id=e.subscription_id
  JOIN plans p ON p.id=e.plan_id
@@ -117,7 +137,8 @@ async function effectiveEmbySubscription(customerId,{client=null,includeBlocked=
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        e.access_expires_at,e.blocked
+        CASE WHEN e.access_expires_at='infinity'::timestamptz THEN e.access_expires_at
+             ELSE LEAST(e.access_expires_at,${paidAccessEndSql}) END AS access_expires_at,e.blocked
  FROM effective_emby_entitlements e
  JOIN subscriptions s ON s.id=e.subscription_id
  JOIN plans p ON p.id=e.plan_id
