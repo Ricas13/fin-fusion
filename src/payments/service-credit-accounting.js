@@ -28,8 +28,8 @@ function sourceRewardIdForDebit(row){
   return metadata.sourceRewardId||metadata.earnedCreditId||null;
 }
 
-async function grantRows(client,{customerId,currency,debitCreatedAt,sourceRewardId=null,allowPending=false}){
-  const params=[customerId,currency,debitCreatedAt];
+async function grantRows(client,{customerId,currency,debitId,sourceRewardId=null,allowPending=false}){
+  const params=[customerId,currency,debitId];
   let source='';
   if(sourceRewardId){params.push(String(sourceRewardId));source=` AND (g.id::text=$4 OR g.metadata->>'sourceRewardId'=$4)`;}
   const states=allowPending?`('available','pending')`:`('available')`;
@@ -37,7 +37,7 @@ async function grantRows(client,{customerId,currency,debitCreatedAt,sourceReward
       COALESCE((SELECT SUM(a.amount_minor) FROM affiliate_credit_allocations a WHERE a.grant_ledger_id=g.id),0)::int allocated_minor
     FROM affiliate_credit_ledger g
     WHERE g.customer_id=$1 AND g.currency=$2 AND g.amount_minor>0 AND g.state IN ${states}
-      AND g.created_at<=$3 ${source}
+      AND g.created_at<=(SELECT d.created_at FROM affiliate_credit_ledger d WHERE d.id=$3 AND d.customer_id=$1 AND d.currency=$2) ${source}
     ORDER BY g.created_at,g.id FOR UPDATE`,params);
   return r.rows;
 }
@@ -49,7 +49,7 @@ async function allocateOneDebit(client,row){
   let remaining=amount-int(existing.rows[0]?.n);
   if(remaining<=0)return 0;
   const sourceRewardId=sourceRewardIdForDebit(row);
-  const grants=await grantRows(client,{customerId:row.customer_id,currency:row.currency,debitCreatedAt:row.created_at,sourceRewardId,allowPending:row.entry_type==='reversed'});
+  const grants=await grantRows(client,{customerId:row.customer_id,currency:row.currency,debitId:row.id,sourceRewardId,allowPending:row.entry_type==='reversed'});
   let allocated=0;
   for(const grant of grants){
     const free=Math.max(0,int(grant.amount_minor)-int(grant.allocated_minor));

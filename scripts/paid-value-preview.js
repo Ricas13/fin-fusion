@@ -27,7 +27,8 @@ function verifiedCredit(row,contract,intent,currency){
 }
 function previewFromEvidence(row){
  if(!row)return unavailable('subscription_not_found');
- if(row.billing_mode!=='payment'||!['stripe','paypal','plisio'].includes(row.source)||row.status!=='active'||
+ const pure=row.source==='service_credit'&&row.billing_mode==='manual';
+ if((!pure&&(row.billing_mode!=='payment'||!['stripe','paypal','plisio'].includes(row.source)))||row.status!=='active'||
     row.is_addon||row.is_free_tier||row.superseded_by||row.refund_terminated_at||row.permanent_or_operator_present)
    return unavailable('unsupported_entitlement');
  if(Number(row.service_extension_days)!==0||row.has_extension_history||row.has_carry_history)
@@ -37,15 +38,25 @@ function previewFromEvidence(row){
  if(!row.term_matches)return unavailable('original_term_unverified');
  const contract=row.commercial_snapshot||{},intent=row.intent_snapshot||{};
  const currency=String(contract.currency||'').toUpperCase();
+ let paid,credit;
+ if(pure){
+   const cost=minor(contract.priceMinor),rec=row.pure_credit_records||[];
+   if(contract.kind!=='service_credit_redemption'||contract.provider!=='service_credit'||contract.checkoutMode!=='payment'||contract.planId!==row.plan_id||
+      !contract.planPriceId||!['GBP','USD','EUR'].includes(currency)||currency!==row.currency_snapshot||contract.serviceCreditCurrency!==currency||
+      cost===null||cost<=0n||minor(contract.discountedMinor)!==0n||minor(contract.serviceCreditMinor)!==cost||minor(contract.grossDiscountedMinor)!==cost||
+      minor(row.price_minor_snapshot)!==cost||row.provider_subscription_id||rec.length!==1||rec[0].exact_identity!==true||rec[0].funding_verified!==true||
+      minor(rec[0].debited_minor)!==cost||minor(rec[0].allocated_minor)!==cost)return unavailable('service_credit_evidence_unverified');
+   paid=0n;credit=cost;
+ }else{
  if(!row.intent_id||row.intent_state!=='completed'||contract.checkoutIntentId!==row.intent_id||
     contract.kind!=='direct_plan'||intent.kind!=='direct_plan'||contract.checkoutMode!=='payment'||intent.checkoutMode!=='payment'||
     contract.planId!==row.plan_id||intent.planId!==row.plan_id||contract.provider!==row.source||intent.provider!==row.source||
     !/^[A-Z]{3}$/.test(currency)||String(intent.currency||'').toUpperCase()!==currency||
     String(row.currency_snapshot||'').trim().toUpperCase()!==currency)
    return unavailable('checkout_contract_unverified');
- const credit=verifiedCredit(row,contract,intent,currency);
+ credit=verifiedCredit(row,contract,intent,currency);
  if(credit===null)return unavailable('service_credit_evidence_unverified');
- const paid=minor(contract.discountedMinor),intentPaid=minor(intent.discountedMinor);
+ paid=minor(contract.discountedMinor);const intentPaid=minor(intent.discountedMinor);
  if(paid===null||paid<=0n||intentPaid!==paid)
    return unavailable('cash_amount_unverified');
  const records=row.payment_records||[];
@@ -53,6 +64,7 @@ function previewFromEvidence(row){
  const payment=records[0];
  if(minor(payment.gross_amount_minor)!==paid||String(payment.currency||'').toUpperCase()!==currency)
    return unavailable('payment_amount_or_currency_mismatch');
+ }
  const start=ms(row.starts_at),end=ms(row.current_period_end),now=ms(row.as_of);
  if(![start,end,now].every(Number.isSafeInteger)||end<=start)return unavailable('invalid_period');
  const total=BigInt(end-start),unused=BigInt(Math.max(0,end-Math.max(start,now)));
@@ -70,7 +82,7 @@ async function readEvidence(client,subscriptionId){
  if(!UUID.test(String(subscriptionId||'')))throw new Error('A subscription UUID is required.');
  const result=await client.query(`
   SELECT s.*,p.is_addon,p.is_free_tier,NOW() AS as_of,
-    i.id::text AS intent_id,i.state AS intent_state,i.commercial_snapshot AS intent_snapshot,
+    i.id::text AS intent_id,i.provider_checkout_id AS intent_provider_checkout_id,i.state AS intent_state,i.commercial_snapshot AS intent_snapshot,
     (s.current_period_end AT TIME ZONE 'UTC')=
       CASE s.commercial_snapshot->>'billingInterval'
        WHEN 'month' THEN (s.starts_at AT TIME ZONE 'UTC')+INTERVAL '1 month'
@@ -85,7 +97,7 @@ async function readEvidence(client,subscriptionId){
     EXISTS(SELECT 1 FROM subscription_time_carryovers c WHERE c.source_subscription_id=s.id OR c.target_subscription_id=s.id) AS has_carry_history,
     EXISTS(SELECT 1 FROM customer_plan_changes pc WHERE pc.current_subscription_id=s.id AND pc.state='pending') AS has_open_plan_change,
     EXISTS(SELECT 1 FROM payment_incidents pi WHERE pi.provider=s.source AND pi.provider_subscription_id=s.provider_subscription_id
-      AND pi.incident_type IN ('refund','chargeback')) AS has_adverse_incident,
+      AND pi.incident_type IN ('refund','chargeback','dispute')) AS has_adverse_incident,
     EXISTS(SELECT 1 FROM payment_history_transactions adverse
       WHERE adverse.provider=s.source AND (adverse.provider_reference_id=s.provider_subscription_id
         OR adverse.provider_transaction_id=s.provider_subscription_id OR adverse.metadata->>'checkoutIntentId'=i.id::text
@@ -93,7 +105,8 @@ async function readEvidence(client,subscriptionId){
              AND charge.provider_reference_id=s.provider_subscription_id AND charge.provider_source_id=adverse.provider_source_id)))
       AND (adverse.gross_amount_minor<0 OR LOWER(adverse.transaction_type) IN ('refund','chargeback','reversal','dispute'))) AS has_adverse_financial_history,
     COALESCE(pay.records,'[]'::jsonb) AS payment_records,
-    COALESCE(credit.records,'[]'::jsonb) AS credit_records
+    COALESCE(credit.records,'[]'::jsonb) AS credit_records,
+    COALESCE(pure_credit.records,'[]'::jsonb) AS pure_credit_records
   FROM subscriptions s JOIN plans p ON p.id=s.plan_id
   LEFT JOIN billing_checkout_intents i ON i.id::text=s.commercial_snapshot->>'checkoutIntentId'
     AND i.customer_id=s.customer_id AND i.plan_id=s.plan_id AND i.provider=s.source AND i.scope='customer' AND i.checkout_mode='payment'
@@ -152,7 +165,47 @@ async function readEvidence(client,subscriptionId){
       WHERE a.debit_ledger_id=d.id
     ) funding ON TRUE
     WHERE r.checkout_intent_id=i.id
-  ) credit ON TRUE WHERE s.id=$1
+  ) credit ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT jsonb_agg(jsonb_build_object(
+      'debited_minor',(-d.amount_minor::bigint)::text,
+      'allocated_minor',COALESCE(funding.total,0)::text,
+      'exact_identity',COALESCE(d.customer_id=s.customer_id AND d.currency=s.currency_snapshot
+        AND d.entry_type='redeemed' AND d.state='available' AND d.amount_minor<0
+        AND d.reference_id='subscription:'||s.id::text
+        AND d.metadata->>'planId'=s.plan_id::text
+        AND d.metadata->>'planPriceId'=s.commercial_snapshot->>'planPriceId'
+        AND d.metadata->>'costMinor'=s.commercial_snapshot->>'priceMinor',FALSE),
+      'funding_verified',COALESCE(funding.valid,FALSE))) AS records
+    FROM affiliate_credit_ledger d
+    LEFT JOIN LATERAL (
+      SELECT SUM(a.amount_minor) AS total,BOOL_AND(
+        a.customer_id=s.customer_id AND a.currency=s.currency_snapshot
+        AND g.customer_id=s.customer_id AND g.currency=s.currency_snapshot
+        AND g.state='available' AND g.amount_minor>0 AND g.entry_type IN ('earned','adjustment')
+        AND (g.available_at IS NULL OR g.available_at<=d.created_at)
+        AND g.created_at<=d.created_at
+        AND (SELECT COALESCE(SUM(other.amount_minor),0) FROM affiliate_credit_allocations other
+             WHERE other.grant_ledger_id=g.id)<=g.amount_minor
+        AND NOT EXISTS(SELECT 1 FROM affiliate_credit_recoveries rec
+          WHERE rec.source_reward_id=g.id OR rec.source_reward_id::text=g.metadata->>'sourceRewardId')
+        AND NOT EXISTS(SELECT 1 FROM affiliate_credit_ledger reversal
+          WHERE reversal.entry_type='reversed' AND reversal.state<>'void'
+            AND (reversal.metadata->>'sourceRewardId'=g.id::text
+              OR reversal.metadata->>'earnedCreditId'=g.id::text
+              OR reversal.metadata->>'sourceRewardId'=g.metadata->>'sourceRewardId'
+              OR reversal.metadata->>'earnedCreditId'=g.metadata->>'sourceRewardId'))
+        AND (g.metadata->>'sourceRewardId' IS NULL OR EXISTS(
+          SELECT 1 FROM affiliate_credit_ledger root
+          WHERE root.id::text=g.metadata->>'sourceRewardId' AND root.customer_id=s.customer_id
+            AND root.currency=s.currency_snapshot AND root.entry_type='earned'
+            AND root.state='available' AND root.amount_minor>0))) AS valid
+      FROM affiliate_credit_allocations a JOIN affiliate_credit_ledger g ON g.id=a.grant_ledger_id
+      WHERE a.debit_ledger_id=d.id
+    ) funding ON TRUE
+    WHERE s.source='service_credit' AND d.applied_subscription_id=s.id
+      AND d.entry_type='redeemed'
+  ) pure_credit ON TRUE WHERE s.id=$1
  `,[subscriptionId]);
  return result.rows[0]||null;
 }

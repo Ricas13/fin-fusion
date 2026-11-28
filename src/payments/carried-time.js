@@ -38,7 +38,7 @@ function precheckRefusal(row){
 // Before an auto-renewing checkout is created: refuse when the time the customer
 // holds with identical access could not be added to it. db runs inside the
 // checkout transaction.
-async function assertCarryPossible({customerId,planId,snapshot},{db=query}={}){
+async function assertCarryPossible({customerId,planId,snapshot},{db=query,prepareValueTransfer=null}={}){
   let row;
   try{
     // Existing carry is defined only for identical access. Refuse a new
@@ -54,7 +54,11 @@ async function assertCarryPossible({customerId,planId,snapshot},{db=query}={}){
             AND COALESCE(bought.is_addon,FALSE)=FALSE AND COALESCE(bought.is_free_tier,FALSE)=FALSE
             AND COALESCE(bought.billing_interval,'')<>'trial'
             AND s.status IN ('active','cancelled','expired')
-            AND NOT EXISTS (
+            AND (
+              (COALESCE(NULLIF(UPPER(BTRIM(s.currency_snapshot)),''),NULLIF(UPPER(s.commercial_snapshot->>'currency'),'')) IS NOT NULL
+                AND NULLIF(UPPER($3::jsonb->>'currency'),'') IS NOT NULL
+                AND COALESCE(NULLIF(UPPER(BTRIM(s.currency_snapshot)),''),NULLIF(UPPER(s.commercial_snapshot->>'currency'),''))<>UPPER($3::jsonb->>'currency'))
+              OR NOT EXISTS (
               SELECT 1 FROM public.carryable_paid_time(
                 $1,COALESCE(bought.service_type,'jellyfin'),
                 COALESCE(NULLIF($3::jsonb->>'serverClass',''),bought.server_class),
@@ -62,6 +66,7 @@ async function assertCarryPossible({customerId,planId,snapshot},{db=query}={}){
                 COALESCE(CASE WHEN $3::jsonb->>'stremioHouseholdNetworkLimit' ~ '^[0-9]{1,4}$' THEN ($3::jsonb->>'stremioHouseholdNetworkLimit')::integer END,bought.stremio_household_network_limit),
                 NULL
               ) candidate WHERE candidate.subscription_id=s.id
+              )
             )
         ) AS requires_value_transfer
       FROM public.carried_time_precheck($1,$2,$3::jsonb) check_result`,
@@ -72,7 +77,12 @@ async function assertCarryPossible({customerId,planId,snapshot},{db=query}={}){
     throw refusal('UNVERIFIED');
   }
   const code=precheckRefusal(row);
+  if(code==='VALUE_TRANSFER_REQUIRED'&&prepareValueTransfer){
+    try{return await prepareValueTransfer();}
+    catch(error){if(RETRYABLE.has(error?.code))throw error;throw refusal(code);}
+  }
   if(code)throw refusal(code);
+  return null;
 }
 
 // Runs inside the activation transaction, after the receiving row exists. Money
@@ -80,6 +90,12 @@ async function assertCarryPossible({customerId,planId,snapshot},{db=query}={}){
 // exactly as they were and an operator is told.
 async function carryOnActivation(client,row){
   if(!row||String(row.status||'')!=='active'||!billingMode.isRecurring(row))return{row,problem:null};
+  // Prepared monetary transfers must settle atomically or retry; the ordinary
+  // same-access carry below remains best effort after payment.
+  if(row.commercial_snapshot?.checkoutIntentId){
+    const transferred=await require('./paid-value-transfer').settlePrepared(client,row);
+    if(transferred)return transferred;
+  }
   await client.query('SAVEPOINT carried_time');
   try{
     const result=(await client.query('SELECT public.carry_all_paid_time($1) AS result',[row.id])).rows[0]?.result||null;

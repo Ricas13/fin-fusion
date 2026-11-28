@@ -154,12 +154,15 @@ async function createIntent({
                 { db: (sql, params) => client.query(sql, params), transactional: true }
             );
         }
+        let paidValueTransfer=null;
         if (planId && checkoutMode === 'subscription' && snapshot.kind !== 'subscription_extension') {
             // Time already held is added to a new auto-renewing plan. Where that
             // is impossible, say so before money is taken.
-            await carriedTime.assertCarryPossible(
+            const transfer=require('./paid-value-transfer');
+            paidValueTransfer=await carriedTime.assertCarryPossible(
                 { customerId, planId, snapshot },
-                { db: (sql, params) => client.query(sql, params) }
+                { db: (sql, params) => client.query(sql, params),
+                  prepareValueTransfer:transfer.enabled()?()=>transfer.prepare(client,{customerId,planId,snapshot}):null }
             );
         }
         if (snapshot.kind === 'subscription_extension') {
@@ -273,10 +276,10 @@ async function createIntent({
         const created = await client.query(`
             INSERT INTO billing_checkout_intents(
                 scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,
-                nonce_hash,expires_at,capacity_hold_until,commercial_snapshot,media_server_id
-            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9::jsonb,$10)
+                nonce_hash,expires_at,capacity_hold_until,commercial_snapshot,media_server_id,paid_value_transfer_snapshot
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9::jsonb,$10,$11::jsonb)
             RETURNING *
-        `, [scope, customerId, planId, planPriceId, provider, checkoutMode, hash(nonce), expires, JSON.stringify(snapshot),mediaServerId]);
+        `, [scope, customerId, planId, planPriceId, provider, checkoutMode, hash(nonce), expires, JSON.stringify(snapshot),mediaServerId,paidValueTransfer?JSON.stringify(paidValueTransfer):null]);
         return created.rows[0];
     });
     return { ...row, nonce };

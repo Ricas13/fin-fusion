@@ -15,6 +15,7 @@ const zeroValueCheckout=require('../payments/zero-value-checkout');
 const planChange=require('../payments/customer-plan-change');
 const samePlanRepurchase=require('../payments/same-plan-repurchase');
 const carriedTime=require('../payments/carried-time');
+const paidValueTransfer=require('../payments/paid-value-transfer');
 const serviceScope=require('../entitlements/service-scope');
 const commerce=require('../payments/commerce-control');
 const serviceCreditReservations=require('../payments/service-credit-reservations');
@@ -39,6 +40,7 @@ const CHECKOUT_SAFE=[
  'Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.',
  'Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.',
  'Service credit cannot be used for a same-plan access extension.',
+ paidValueTransfer.CHARGE_UNSUPPORTED,
  'This win-back code is only available for a new subscription.',
  'Only your current paid plan can be extended. Refresh the page and try again.',
  'The selected extension no longer matches your current plan.',
@@ -253,16 +255,26 @@ async function begin(req,res,provider){
  if(choice.extensionSubscriptionId&&wantsCredit)throw new Error('Service credit cannot be used for a same-plan access extension.');
  if(wantsCredit&&provider==='paypal'&&choice.mode==='subscription')throw new Error('Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.');
  if(wantsCredit&&provider==='plisio')throw new Error('Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.');
- if(wantsCredit){const conflict=(await livePrimaryRows(req.session.customerId)).find(row=>serviceScope.overlaps(row,choice.plan)&&!serviceScope.isFreeTier(row));if(conflict)throw new Error(`Mixed service-credit checkout is for activating a new ${serviceScope.label(choice.plan)} service. End the current overlapping service before applying credit to a new provider checkout.`);}
+ let creditTransferRequired=false;
+ const creditConflictMessage=`Mixed service-credit checkout is for activating a new ${serviceScope.label(choice.plan)} service. End the current overlapping service before applying credit to a new provider checkout.`;
+ if(wantsCredit){
+  const conflict=(await livePrimaryRows(req.session.customerId)).find(row=>serviceScope.overlaps(row,choice.plan)&&!serviceScope.isFreeTier(row));
+  if(conflict){
+   if(provider!=='stripe'||choice.mode!=='subscription'||!paidValueTransfer.enabled()||(await overlappingRecurring(req.session.customerId,choice.plan)).length)throw new Error(creditConflictMessage);
+   creditTransferRequired=true;
+  }
+ }
  if(choice.mode==='subscription'&&!wantsCredit){const recurring=await overlappingRecurring(req.session.customerId,choice.plan);if(recurring.length){const changed=await planChange.requestChange({customerId:req.session.customerId,targetPlanCode:choice.planCode,targetCurrency:choice.currency,targetAccessQuantity:choice.accessQuantity,targetVariantKind:choice.accessVariantKind,mediaLocation:choice.mediaLocation||null,timing:req.body.changeTiming||'auto',actorUserId:req.session.customerUserId});if(changed.handled)return{internal:true,message:changed.message};throw new Error(`You already have recurring ${serviceScope.label(choice.plan)} access. Manage or cancel that service before starting another recurring subscription.`);}}
  const checkoutTtlMinutes=intents.providerMaxTtl(provider);
  const intent=await intents.createIntent({scope:'customer',customerId:req.session.customerId,planId:choice.plan.id,planPriceId:choice.plan.plan_price_id,provider,checkoutMode:choice.mode,ttlMinutes:checkoutTtlMinutes,commercialSnapshot:commercialSnapshot(choice,provider)});
  try{
+  if(creditTransferRequired&&!intent.paid_value_transfer_snapshot)throw new Error(creditConflictMessage);
   let reservation=null;
   if(req.body.discountCode)reservation=await discounts.reserveForIntent({code:req.body.discountCode,planCode:choice.planCode,customerId:req.session.customerId,checkoutIntentId:intent.id,baseMinor:Number(choice.plan.price_minor||0),currency:choice.currency,ttlMinutes:checkoutTtlMinutes});
   let snapshot={...commercialSnapshot(choice,provider,reservation),mediaServerId:intent.commercial_snapshot?.mediaServerId||null},grossDue=Number((snapshot.discountedMinor??snapshot.priceMinor)||0),serviceCreditMinor=0;
   if(wantsCredit&&grossDue>50){const creditTtl=provider==='paypal'?7*60*60*1000:70*60*1000;const credit=await serviceCreditReservations.reserveForIntent({customerId:req.session.customerId,checkoutIntentId:intent.id,currency:choice.currency,maxAmountMinor:grossDue-50,expiresAt:new Date(Date.now()+creditTtl)});serviceCreditMinor=Number(credit.amountMinor||0);}
   const providerDue=Math.max(0,grossDue-serviceCreditMinor);
+  if(intent.paid_value_transfer_snapshot)paidValueTransfer.assertChargeSupported({providerDue,serviceCreditMinor,grossDue});
   snapshot={...snapshot,grossDiscountedMinor:grossDue,serviceCreditMinor,serviceCreditCurrency:serviceCreditMinor?choice.currency:null,discountedMinor:providerDue};
   const updated=await query(`UPDATE billing_checkout_intents SET commercial_snapshot=$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING commercial_snapshot,expires_at`,[intent.id,JSON.stringify(snapshot)]);intent.commercial_snapshot=updated.rows[0]?.commercial_snapshot||snapshot;intent.expires_at=updated.rows[0]?.expires_at||intent.expires_at;
 

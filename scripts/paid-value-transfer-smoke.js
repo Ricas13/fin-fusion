@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {quoteConversion}=require('../src/payments/paid-value-conversion');
+const {ratio,minor,enabled,assertChargeSupported}=require('../src/payments/paid-value-transfer');
+const now=new Date('2026-11-28T00:00:00Z'),e={verified:true,currency:'GBP',remainingValueMinor:{numerator:'1200',denominator:'1'},unusedMilliseconds:String(15*86400000),asOf:now.toISOString()};
+const target={normalPriceMinor:'2400',currency:'GBP',billingInterval:'month'};
+const q=quoteConversion(e,target,{now,termStart:now});
+assert.equal(q.addedDays,15);
+assert.deepEqual(ratio(q,e),{numerator:'1',denominator:'1'});
+assert.equal(minor('12.50'),'1250');assert.equal(minor('12.501'),null);assert.equal(minor('-12.50'),null);
+assert.doesNotThrow(()=>assertChargeSupported({providerDue:50}));
+assert.doesNotThrow(()=>assertChargeSupported({providerDue:600,serviceCreditMinor:100,grossDue:700}));
+for(const input of [{providerDue:0},{providerDue:49},{providerDue:600,serviceCreditMinor:100}])assert.throws(()=>assertChargeSupported(input),{code:'PAID_VALUE_TRANSFER_PAYMENT_UNSUPPORTED'});
+const prev=process.env.PAID_VALUE_TRANSFER_ENABLED;
+delete process.env.PAID_VALUE_TRANSFER_ENABLED;assert.equal(enabled(),false);
+process.env.PAID_VALUE_TRANSFER_ENABLED='true';assert.equal(enabled(),true);
+if(prev===undefined)delete process.env.PAID_VALUE_TRANSFER_ENABLED;else process.env.PAID_VALUE_TRANSFER_ENABLED=prev;
+console.log('Prepared monetary transfer arithmetic and default-off gate passed');
