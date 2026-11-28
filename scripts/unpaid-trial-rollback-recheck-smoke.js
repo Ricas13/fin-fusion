@@ -460,10 +460,9 @@ async function testBundle() {
     error => error.code === 'TRIAL_BUNDLE_ROLLBACK_INCOMPLETE' && !error.cause);
 }
 
-async function testActivationSucceedsWhenAccessAppearsBeforeRollback() {
+async function testActivationSucceedsWhenAccessAppearsDuringReconcile() {
   for (const lane of LANES.filter(item => item.serviceType)) {
-    reset({ plan: trialPlan(lane.serviceType), [lane.key]: entitlement() });
-    world.onLock = () => lane.makeReady();
+    reset({ plan: trialPlan(lane.serviceType), [lane.key]: entitlement(), reconcile:async()=>lane.makeReady() });
     const created = await lifecycle.startFreeTrial(CUSTOMER, 'trial');
     assert.strictEqual(created.id, TRIAL, `${lane.serviceType} activation`);
     assert.deepStrictEqual(cancelled(), [], `${lane.serviceType} activation`);
@@ -544,7 +543,7 @@ async function testCustomerMessages() {
   await testSupersededTrialIsNeverRewritten();
   await testStremioClosedTrialIsStillCleanedUp();
   await testBundle();
-  await testActivationSucceedsWhenAccessAppearsBeforeRollback();
+  await testActivationSucceedsWhenAccessAppearsDuringReconcile();
   await testRollbackLockTimeoutIsNotDestructive();
   await testActivationLockTimeoutKeepsTrial();
   await testStremioInstallLockTimeoutFallsThroughToActivation();
