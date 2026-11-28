@@ -9,6 +9,22 @@ function minor(value){
  return n<=BigInt(Number.MAX_SAFE_INTEGER)?n:null;
 }
 function ms(value){if(value==null)return NaN;return new Date(value).getTime();}
+// An applied credit reservation alone is insufficient: prove the immutable
+// debit and every funding allocation, and refuse disputed source rewards.
+function verifiedCredit(row,contract,intent,currency){
+ const credit=minor(contract.serviceCreditMinor??0);
+ if(credit===null||minor(intent.serviceCreditMinor??0)!==credit)return null;
+ const records=row.credit_records||[];
+ if(credit===0n)return records.length===0?0n:null;
+ const cash=minor(contract.discountedMinor),gross=minor(contract.grossDiscountedMinor);
+ if(cash===null||gross===null||gross!==cash+credit||minor(intent.grossDiscountedMinor)!==gross||
+    minor(contract.priceMinor)===null||gross>minor(contract.priceMinor)||minor(intent.priceMinor)!==minor(contract.priceMinor)||
+    contract.serviceCreditCurrency!==currency||intent.serviceCreditCurrency!==currency||records.length!==1)return null;
+ const record=records[0],allocated=minor(record.allocated_minor);
+ if(record.exact_identity!==true||record.funding_verified!==true||
+    minor(record.reserved_minor)!==credit||minor(record.debited_minor)!==credit||allocated!==credit)return null;
+ return credit;
+}
 function previewFromEvidence(row){
  if(!row)return unavailable('subscription_not_found');
  if(row.billing_mode!=='payment'||!['stripe','paypal','plisio'].includes(row.source)||row.status!=='active'||
@@ -27,8 +43,8 @@ function previewFromEvidence(row){
     !/^[A-Z]{3}$/.test(currency)||String(intent.currency||'').toUpperCase()!==currency||
     String(row.currency_snapshot||'').trim().toUpperCase()!==currency)
    return unavailable('checkout_contract_unverified');
- if(minor(contract.serviceCreditMinor??0)!==0n||minor(intent.serviceCreditMinor??0)!==0n)
-   return unavailable('mixed_service_credit_requires_policy');
+ const credit=verifiedCredit(row,contract,intent,currency);
+ if(credit===null)return unavailable('service_credit_evidence_unverified');
  const paid=minor(contract.discountedMinor),intentPaid=minor(intent.discountedMinor);
  if(paid===null||paid<=0n||intentPaid!==paid)
    return unavailable('cash_amount_unverified');
@@ -42,8 +58,11 @@ function previewFromEvidence(row){
  const total=BigInt(end-start),unused=BigInt(Math.max(0,end-Math.max(start,now)));
  if(unused===0n)return unavailable('no_unused_time');
  // Exact rational value in currency minor units. No rounding policy applied.
- const numerator=paid*unused,denominator=total;
- return {verified:true,currency,providerPaidMinor:paid.toString(),remainingValueMinor:{numerator:numerator.toString(),denominator:denominator.toString()},
+ const numerator=(paid+credit)*unused,denominator=total;
+ return {verified:true,currency,providerPaidMinor:paid.toString(),serviceCreditPaidMinor:credit.toString(),
+   remainingCashValueMinor:{numerator:(paid*unused).toString(),denominator:denominator.toString()},
+   remainingServiceCreditValueMinor:{numerator:(credit*unused).toString(),denominator:denominator.toString()},
+   remainingValueMinor:{numerator:numerator.toString(),denominator:denominator.toString()},
    unusedMilliseconds:unused.toString(),originalMilliseconds:total.toString(),
    startsAt:new Date(start).toISOString(),endsAt:new Date(end).toISOString(),asOf:new Date(now).toISOString()};
 }
@@ -73,7 +92,8 @@ async function readEvidence(client,subscriptionId){
         OR (s.source='stripe' AND EXISTS(SELECT 1 FROM payment_history_transactions charge WHERE charge.provider='stripe'
              AND charge.provider_reference_id=s.provider_subscription_id AND charge.provider_source_id=adverse.provider_source_id)))
       AND (adverse.gross_amount_minor<0 OR LOWER(adverse.transaction_type) IN ('refund','chargeback','reversal','dispute'))) AS has_adverse_financial_history,
-    COALESCE(pay.records,'[]'::jsonb) AS payment_records
+    COALESCE(pay.records,'[]'::jsonb) AS payment_records,
+    COALESCE(credit.records,'[]'::jsonb) AS credit_records
   FROM subscriptions s JOIN plans p ON p.id=s.plan_id
   LEFT JOIN billing_checkout_intents i ON i.id::text=s.commercial_snapshot->>'checkoutIntentId'
     AND i.customer_id=s.customer_id AND i.plan_id=s.plan_id AND i.provider=s.source AND i.scope='customer' AND i.checkout_mode='payment'
@@ -92,7 +112,47 @@ async function readEvidence(client,subscriptionId){
              AND t.transaction_status='completed' AND t.transaction_type='payment'
              AND t.metadata->>'providerVerified'='true' AND t.metadata->>'checkoutIntentId'=i.id::text
              AND t.provider_transaction_id=i.provider_checkout_id))
-  ) pay ON TRUE WHERE s.id=$1
+  ) pay ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT jsonb_agg(jsonb_build_object(
+      'reserved_minor',r.amount_minor::text,'debited_minor',(-d.amount_minor::bigint)::text,
+      'allocated_minor',COALESCE(funding.total,0)::text,
+      'exact_identity',COALESCE(r.state='applied' AND r.applied_at IS NOT NULL
+        AND r.customer_id=s.customer_id AND r.currency=s.currency_snapshot
+        AND d.customer_id=s.customer_id AND d.currency=s.currency_snapshot
+        AND d.entry_type='redeemed' AND d.state='available' AND d.amount_minor<0
+        AND d.metadata->>'checkoutIntentId'=i.id::text AND d.metadata->>'reservationId'=r.id::text
+        AND d.applied_subscription_id IS NULL,FALSE),
+      'funding_verified',COALESCE(funding.valid,FALSE))) AS records
+    FROM affiliate_credit_checkout_reservations r
+    LEFT JOIN affiliate_credit_ledger d ON d.entry_type='redeemed' AND d.reference_id='mixed-checkout:'||i.id::text
+    LEFT JOIN LATERAL (
+      SELECT SUM(a.amount_minor) AS total,BOOL_AND(
+        a.customer_id=s.customer_id AND a.currency=s.currency_snapshot
+        AND g.customer_id=s.customer_id AND g.currency=s.currency_snapshot
+        AND g.state='available' AND g.amount_minor>0 AND g.entry_type IN ('earned','adjustment')
+        AND (g.available_at IS NULL OR g.available_at<=d.created_at)
+        AND g.created_at<=d.created_at
+        AND (SELECT COALESCE(SUM(other.amount_minor),0) FROM affiliate_credit_allocations other
+             WHERE other.grant_ledger_id=g.id)<=g.amount_minor
+        AND NOT EXISTS(SELECT 1 FROM affiliate_credit_recoveries rec
+          WHERE rec.source_reward_id=g.id OR rec.source_reward_id::text=g.metadata->>'sourceRewardId')
+        AND NOT EXISTS(SELECT 1 FROM affiliate_credit_ledger reversal
+          WHERE reversal.entry_type='reversed' AND reversal.state<>'void'
+            AND (reversal.metadata->>'sourceRewardId'=g.id::text
+              OR reversal.metadata->>'earnedCreditId'=g.id::text
+              OR reversal.metadata->>'sourceRewardId'=g.metadata->>'sourceRewardId'
+              OR reversal.metadata->>'earnedCreditId'=g.metadata->>'sourceRewardId'))
+        AND (g.metadata->>'sourceRewardId' IS NULL OR EXISTS(
+          SELECT 1 FROM affiliate_credit_ledger root
+          WHERE root.id::text=g.metadata->>'sourceRewardId' AND root.customer_id=s.customer_id
+            AND root.currency=s.currency_snapshot AND root.entry_type='earned'
+            AND root.state='available' AND root.amount_minor>0))) AS valid
+      FROM affiliate_credit_allocations a JOIN affiliate_credit_ledger g ON g.id=a.grant_ledger_id
+      WHERE a.debit_ledger_id=d.id
+    ) funding ON TRUE
+    WHERE r.checkout_intent_id=i.id
+  ) credit ON TRUE WHERE s.id=$1
  `,[subscriptionId]);
  return result.rows[0]||null;
 }
