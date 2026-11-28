@@ -5,6 +5,7 @@ const providerOps=require('./provider-operations');
 const billingControl=require('./billing-control');
 const permanentAccess=require('../entitlements/permanent-access');
 const subscriptionState=require('../entitlements/subscription-state');
+const carriedTime=require('./carried-time');
 
 const OPERATION_TYPE='subscription_terminate';
 const JELLYFIN_SERVICES=new Set(['jellyfin','bundle']);
@@ -211,14 +212,21 @@ async function hardRevokeRefundedStremio(customerId,result){
 // install credential and managed media-server identities are revoked too.
 async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,reason='',reference=null}={}){
     const note=reasonText(reason),auditReference=reference?String(reference).slice(0,200):null;
+    let carryIssue=null,refundedRow=null;
     const local=await transaction(async client=>{
+        // One lock order everywhere: the customer, then the subscription. This
+        // path may bring replaced rows back or take carried time off another row.
+        await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         const row=await client.query(`
             SELECT s.*,p.service_type
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
             WHERE s.id=$1 AND s.customer_id=$2 AND s.superseded_by IS NULL
             FOR UPDATE OF s
         `,[subscriptionId,customerId]);
-        if(!row.rowCount)return{changed:false,reason:'not_found_or_superseded'};
+        if(!row.rowCount){
+            if(await carriedTime.reverseSource(client,subscriptionId,customerId))return{changed:true,reason:'carried_time_reversed',id:subscriptionId,customerId,permanentAccessRevoked:false};
+            return{changed:false,reason:'not_found_or_superseded'};
+        }
         const subscription=row.rows[0],effectiveServiceType=serviceType(subscription);
         const permanent=await permanentAccess.revokeInTransaction(client,customerId,{
             actorUserId,
@@ -226,6 +234,10 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             expectedSubscriptionId:subscription.id
         });
         const permanentAccessRevoked=Boolean(permanent.changed);
+        // Time carried onto this plan from other payments goes back to them, or
+        // is recorded as owed. Checked even when the row has already ended.
+        refundedRow=subscription;
+        carryIssue=carriedTime.owedProblem(await carriedTime.returnToSources(client,subscription.id));
         // A mismatch means an administrator has since pinned Permanent Access
         // to another subscription. Refund automation must not defeat that newer
         // explicit authority.
@@ -248,6 +260,7 @@ async function terminateForRefund(subscriptionId,customerId,{actorUserId=null,re
             [actorUserId,subscription.id,JSON.stringify({customerId,reason:note,reference:auditReference,serviceType:effectiveServiceType,permanentAccessRevoked,permanentAccessSubscriptionMismatch:Boolean(permanent.subscriptionMismatch)})]);
         return{changed:true,...ended.rows[0],customerId,serviceType:effectiveServiceType,permanentAccessRevoked,cancelledPlanChangeServerIds:cancelledChanges.rows.map(row=>row.target_media_server_id).filter(Boolean)};
     });
+    await carriedTime.reportProblem(customerId,refundedRow,carryIssue);
     const result=await hardRevokeRefundedStremio(customerId,local);
     result.planChangeLeaseCleanup=await releaseCancelledPlanChangeLeases(customerId,result.cancelledPlanChangeServerIds);
     result.creationIntentCleanup=await cleanupCreationIntentsAfterEntitlementChange(customerId);

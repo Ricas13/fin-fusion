@@ -627,7 +627,9 @@ function refundInsertLocksTheCustomerFirst(source){
   // this function would silently drop the lock.
   const definers=fs.readdirSync(path.join(__dirname,'..','db','migrations')).sort()
     .filter(file=>/FUNCTION\s+(?:public\.)?enforce_provider_refund_cash_basis\s*\(\)\s*RETURNS/i.test(read('db/migrations/'+file)));
-  assert.deepStrictEqual(definers,[CASH_BASIS,MIGRATION]);
+  // The carried-time migration redefines it with the lock widened, which its
+  // own smoke checks.
+  assert.deepStrictEqual(definers,[CASH_BASIS,MIGRATION,'20261128120000_carried_paid_time_on_auto_renewal.sql']);
 }
 
 function contracts(){
@@ -656,10 +658,13 @@ function contracts(){
   // Every public function the migration creates is granted to the runtime roles
   // and listed as required; trigger functions need no EXECUTE grant.
   const names=signatures=>signatures.map(signature=>signature.slice('public.'.length,signature.indexOf('('))).sort();
+  // The required list is this migration's functions followed by those of later
+  // repeatable migrations, which their own smoke compares with their grants.
   const created=Array.from(migration.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g),match=>match[1]).sort();
-  assert.deepStrictEqual(names(Array.from(compatibility.REQUIRED_FUNCTIONS)),created);
+  const own=Array.from(compatibility.REQUIRED_FUNCTIONS).slice(0,created.length);
+  assert.deepStrictEqual(names(own),created);
   const grants=migration.slice(migration.indexOf('DO $grants$'),migration.indexOf('$grants$;'));
-  assert.deepStrictEqual(Array.from(grants.matchAll(/'(public\.[^']+)'/g),match=>match[1]),Array.from(compatibility.REQUIRED_FUNCTIONS),'grant list and required list must match');
+  assert.deepStrictEqual(Array.from(grants.matchAll(/'(public\.[^']+)'/g),match=>match[1]),own,'grant list and required list must match');
   for(const role of ['steamfusion_app','steamfusion_automation'])assert(grants.includes("'"+role+"'"));
   const statements=report.replace(/--.*$/gm,'');
   assert(!/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|TRUNCATE|GRANT)\b/i.test(statements),'the report must stay read only');

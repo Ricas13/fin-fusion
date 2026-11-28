@@ -18,6 +18,7 @@ const stremioEntitlements = require('../stremio/entitlements');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
+const carriedTime = require('./carried-time');
 const PAYMENT_DELINQUENCY_HOLD_TYPE = 'payment_delinquency';
 // Reasons a paid extension can no longer be attached to its subscription.
 // Payment-identity conflicts, money loss and database errors are not among them.
@@ -82,7 +83,8 @@ async function syncProviderAccessState({ customerId, provider, providerSubscript
             type: PAYMENT_DELINQUENCY_HOLD_TYPE,
             sourceKey,
             reason: `${provider} recurring payment is delinquent`,
-            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true }
+            // 'unpaid' survives a later suspension of the same hold.
+            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true, ...(status === 'past_due' ? { unpaid: true } : {}) }
         }, client);
     }
 
@@ -332,6 +334,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
     let subscription;
     let historicalCheckoutReplay = false;
     let activationSuppressedByMoneyLoss = false;
+    let carryIssue = null;
     try {
         subscription = await transaction(async client => {
             const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
@@ -469,6 +472,13 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                     throw mismatch;
                 }
                 if (activationSuppressedByMoneyLoss) {
+                    // Before the row is ended: a replaced row's carried time is
+                    // taken back; a receiving row hands its sources back.
+                    if (existingSubscription.superseded_by) {
+                        await carriedTime.reverseSource(client, existingSubscription.id, existingSubscription.customer_id);
+                    } else {
+                        carryIssue = carriedTime.owedProblem(await carriedTime.returnToSources(client, existingSubscription.id));
+                    }
                     const ended = await client.query(`
                         UPDATE subscriptions
                         SET status='cancelled',
@@ -521,6 +531,22 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 row = located.rows[0] || row;
             }
 
+            // The payment adds to the time already held, only once it is
+            // confirmed: a new row that is active, or an unconfirmed one that is
+            // active now. A replay of an active row carries nothing.
+            if (row && !isAccessExtension && !activationSuppressedByMoneyLoss) {
+                let carried = null;
+                if (!existing.rowCount) {
+                    if (!await carriedTime.markAwaitingFirstPayment(client, row)) carried = await carriedTime.carryOnActivation(client, row);
+                } else if (row.status === 'active' && await carriedTime.firstPaymentPending(client, existing.rows[0])) {
+                    carried = await carriedTime.carryOnFirstPayment(client, row);
+                }
+                if (carried) {
+                    row = carried.row;
+                    carryIssue = carried.problem;
+                }
+            }
+
             const effectiveStatus = row.status;
             if (!isAccessExtension) await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
@@ -557,6 +583,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         }
         throw error;
     }
+    await carriedTime.reportProblem(customerId, subscription, carryIssue);
     const oneTimeReplay = historicalCheckoutReplay && billingMode.normalize(subscription?.billing_mode) === billingMode.BILLING_MODES.PAYMENT;
     if (providerCustomerId && (!historicalCheckoutReplay || oneTimeReplay)) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
 
@@ -616,20 +643,36 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
 async function updateProviderSubscription({ provider, providerSubscriptionId, providerStatus, periodEnd = null, cancelAtPeriodEnd = null }) {
     const status = mapProviderStatus(provider, providerStatus);
     if (!status) console.warn(`Ignoring unknown ${provider} subscription status without changing access state:`, String(providerStatus || 'unknown').slice(0, 120));
+    let carryIssue = null;
     const row = await transaction(async client => {
         // One lock order everywhere: the customer, then the subscription. The
         // update alone would lock the row first and the activation trigger the
         // customer second.
-        await client.query(`SELECT id FROM customers WHERE id IN (SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2) ORDER BY id FOR UPDATE`, [provider, providerSubscriptionId]);
-        const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
+        const owners = await client.query(`SELECT id FROM customers WHERE id IN (SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2) ORDER BY id FOR UPDATE`, [provider, providerSubscriptionId]);
+        // The row as it was: needed when a first payment is confirmed, or when
+        // the agreement ends.
+        const prior = owners.rowCount && ['active', 'cancelled', 'expired'].includes(status)
+            ? (await client.query(`SELECT id,customer_id,status,current_period_end,billing_interval_snapshot,duration_days_snapshot FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 FOR UPDATE`, [provider, providerSubscriptionId])).rows[0] || null
+            : null;
+        const nextEnd = await carriedTime.paidEndWhenAgreementEnds(client, {
+            prior, status, periodEnd: periodEnd ? new Date(periodEnd) : null, provider, providerSubscriptionId
+        });
+        const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, nextEnd, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
         let updated = result.rows[0];
+        // A first payment that is only now confirmed.
+        if (updated.status === 'active' && await carriedTime.firstPaymentPending(client, prior)) {
+            const carried = await carriedTime.carryOnFirstPayment(client, updated);
+            updated = carried.row;
+            carryIssue = carried.problem;
+        }
         const rebased = await accessExtensions.recomputeActivePurchasedDaysTx(client, updated.id, updated.customer_id);
         updated = rebased.subscription || updated;
         if (status) await syncProviderAccessState({ customerId: updated.customer_id, provider, providerSubscriptionId, status: updated.status, billingMode: updated.billing_mode }, client);
         return updated;
     });
     if (row) {
+        await carriedTime.reportProblem(row.customer_id, row, carryIssue);
         if (['active','trialing'].includes(String(row.status||''))) {
             await ensureStremioInstallForSubscription(row.customer_id,row.id).catch(error=>{
                 console.error('Provider subscription Stremio link recovery pending:',{
