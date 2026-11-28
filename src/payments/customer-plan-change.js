@@ -22,9 +22,10 @@ function planChangeRefusal(message){const error=new Error(message);error.planCha
 function scheduleTargetPrice(schedule){let target=null;for(const phase of schedule?.phases||[])for(const item of phase?.items||[]){const price=typeof item?.price==='string'?item.price:item?.price?.id;if(price)target=price;}return target;}
 async function stripeClient(){const cfg=await providerSettings.get('stripe');const key=cfg.restrictedKey||cfg.apiKey||'';if(!key)throw planChangeRefusal('Stripe is not configured.');return new Stripe(key,{apiVersion:'2026-06-24.dahlia',appInfo:{name:'CAPTAiNFiN',version:'1.4.0'},timeout:providerHttp.timeoutMs('stripe')});}
 function monthlyValue(plan){const price=Number(plan?.price_minor_snapshot??plan?.price_minor??0),interval=String(plan?.billing_interval_snapshot||plan?.billing_interval||''),days=Math.max(1,Number(plan?.duration_days_snapshot??plan?.duration_days??30));if(interval==='month')return price;if(interval==='6_months')return price/6;if(interval==='year')return price/12;return price*30.4375/days;}
+const STRIPE_CURRENCY_REAUTHORIZE='Stripe requires a new checkout to change billing currency. Stop automatic renewal first; your existing paid access stays available until its paid-through date. Then select your new currency and plan.';
 function stripeChangeTiming(current,target,timing='auto'){
     const explicit=['immediate','period_end'].includes(timing)?timing:null,sameCurrency=billingMode.sameCurrency(current,target);
-    if(explicit==='immediate'&&!sameCurrency)throw planChangeRefusal('Cross-currency Stripe plan changes must be scheduled for the next renewal. Immediate upgrade/downgrade comparisons are only valid within the same currency.');
+    if(explicit==='immediate'&&!sameCurrency)throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
     if(explicit)return explicit;
     if(!sameCurrency)return'period_end';
     return monthlyValue(target)>monthlyValue(current)?'immediate':'period_end';
@@ -187,7 +188,7 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
     }
 }
 
-async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null,targetMediaLocation=null,targetMediaServerId=null}={}){
+async function createLocalChange(customerId,current,target,provider,actorUserId=null,{providerActionRequired=false,targetAccessQuantity=null,targetVariantKind=null,targetMediaLocation=null,targetMediaServerId=null,targetPriceId=null}={}){
     return transaction(async client=>{
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         await assertNoOutstandingExtensionCheckout(customerId,current.subscription_id||current.id,{db:(sql,params)=>client.query(sql,params)});
@@ -202,14 +203,25 @@ async function createLocalChange(customerId,current,target,provider,actorUserId=
             });
         }
         const prior=await client.query(`SELECT id FROM customer_plan_changes WHERE customer_id=$1 AND state IN ('pending','awaiting_checkout') LIMIT 1 FOR UPDATE`,[customerId]);if(prior.rowCount)throw new Error('A plan change is already open. Cancel or complete it before requesting another one.');
-        const effective=new Date(current.current_period_end),created=await client.query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,requested_by,provider_action_required,target_access_quantity,target_variant_kind,target_media_location,target_media_server_id) VALUES($1,$2,$3,$4,'period_end','pending',$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[customerId,current.subscription_id||current.id,target.id,provider,effective,actorUserId,Boolean(providerActionRequired),targetAccessQuantity,targetVariantKind,targetMediaLocation,targetMediaServerId]);
+        const effective=new Date(current.current_period_end),created=await client.query(`INSERT INTO customer_plan_changes(customer_id,current_subscription_id,target_plan_id,provider,mode,state,effective_at,requested_by,provider_action_required,target_access_quantity,target_variant_kind,target_media_location,target_media_server_id,target_price_id) VALUES($1,$2,$3,$4,'period_end','pending',$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[customerId,current.subscription_id||current.id,target.id,provider,effective,actorUserId,Boolean(providerActionRequired),targetAccessQuantity,targetVariantKind,targetMediaLocation,targetMediaServerId,targetPriceId]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.schedule','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({changeId:created.rows[0].id,fromPlanId:current.plan_id,toPlanId:target.id,targetAccessQuantity,targetVariantKind,targetMediaLocation,targetMediaServerId,provider,effectiveAt:effective.toISOString(),providerActionRequired:Boolean(providerActionRequired)})]);
         return created.rows[0];
     });
 }
 
+// Stripe cannot schedule two different currencies on one Customer. A fresh
+// customer-authorized checkout after the existing paid term is the safe path.
+async function recordStripeCurrencyChange(customerId,current,target,mapping,actorUserId=null,options={}){
+    if(billingMode.sameCurrency(current,target)||!current.cancel_at_period_end||!mapping?.external_id||current.source!=='stripe'||!billingMode.validRecurringProviderReference(current))throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
+    const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);
+    const item=remote.items?.data?.[0],end=Number(item?.current_period_end)*1000;
+    if(remote.id!==current.provider_subscription_id||remote.status!=='active'||remote.cancel_at_period_end!==true||remote.schedule||remote.items?.data?.length!==1||!Number.isFinite(end)||end!==+new Date(current.current_period_end))throw planChangeRefusal('Stripe has not confirmed the end of your current paid period. Synchronise billing before switching currency.');
+    return createLocalChange(customerId,current,target,'stripe',actorUserId,{...options,providerActionRequired:true,targetPriceId:mapping.external_id});
+}
+
 async function scheduleStripeProvider(current,target,change,{currency,mapping=null,accessQuantity=null}={}){
     const requested=accessQuantity||change.target_access_quantity||null;mapping=mapping||await replacementMapping(current,target,'stripe',currency,requested);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
+    if(billingMode.currencyOf(current)&&!billingMode.sameCurrency(current,mapping))throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
     const identity=mappingIdentity(mapping),op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:current.customer_id,operationType:'plan_change_schedule',localReference:change.id,idempotencyKey:`customer-plan-schedule:${change.id}:${identity}`,request:{changeId:change.id,subscriptionId:current.provider_subscription_id,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:mappingQuantity(target,mapping,requested),targetVariantKind:normalizedKind(target,mapping),targetPriceId:mapping.external_id,currency:mapping.currency,targetMediaLocation:change.target_media_location||null,targetMediaServerId:change.target_media_server_id||null}});
     let providerMutationAttempted=false;
     try{
@@ -278,6 +290,10 @@ async function requestChangeUnlocked({customerId,targetPlanCode,targetCurrency='
     if(samePlanCurrency&&currentQuantity===quantity&&sameProviderPrice)throw new Error('That is already your current plan, currency and access allowance.');
     const existing=await pendingForCustomer(customerId);if(existing)throw new Error('A plan change is already open. Cancel or complete it before requesting another one.');
     if(provider==='stripe'){
+        if(!billingMode.sameCurrency(current,target)){
+            const local=await recordStripeCurrencyChange(customerId,current,target,mapping,actorUserId,{targetAccessQuantity:quantity,targetVariantKind:kind,targetMediaLocation,targetMediaServerId:targetMediaServer?.id||null});
+            return{handled:true,mode:'period_end_manual_authorization',message:`Your current paid access remains until ${new Date(local.effective_at).toLocaleDateString('en-GB')}. A fresh Stripe checkout for ${target.name} · ${targetAccessLabel(target)} (${target.currency}) will be available after that date. No new payment has been taken.`};
+        }
         const requested=stripeChangeTiming(current,target,timing);
         if(requested==='immediate'){
             const changed=await setStripePlan(current,target,{proration:true,currency:target.currency,mapping,accessQuantity:quantity,mediaLocation:targetMediaLocation,mediaServer:targetMediaServer});
@@ -321,7 +337,7 @@ async function requestChange(input){
 }
 
 async function applyDueStripe(){
-    const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND pc.provider='stripe' AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,succeeded:0,failed:0,pending:0},failures=[];
+    const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND pc.provider='stripe' AND NOT pc.provider_action_required AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,succeeded:0,failed:0,pending:0},failures=[];
     for(const change of due.rows){
         await withPlanChangeLock(change.customer_id,async()=>{
         try{
@@ -389,10 +405,48 @@ async function applyDueStripe(){
     return summary;
 }
 
-async function expireDuePaypal(){const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND pc.provider='paypal' AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,notified:0,failed:0};for(const change of due.rows){await withPlanChangeLock(change.customer_id,async()=>{try{let transitioned=false;await transaction(async client=>{const updated=await client.query(`UPDATE customer_plan_changes SET state='awaiting_checkout',updated_at=NOW() WHERE id=$1 AND state='pending' RETURNING id`,[change.id]);if(!updated.rowCount)return;transitioned=true;await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.plan_change.awaiting_checkout','customer',$1,$2::jsonb)`,[change.customer_id,JSON.stringify({changeId:change.id,targetPlanId:change.target_plan_id,targetPlanCode:change.target_code,targetAccessQuantity:change.target_access_quantity,targetVariantKind:change.target_variant_kind,effectiveAt:change.effective_at})]);});if(!transitioned)return;const effectiveDate=new Date(change.effective_at).toLocaleDateString('en-GB'),access=change.target_access_quantity?` (${change.target_access_quantity} ${change.target_variant_kind==='households'?'household':'stream'}${Number(change.target_access_quantity)===1?'':'s'})`:'';await notificationDispatch.dispatch({eventType:'subscription.plan_change.requires_checkout',customerId:change.customer_id,subject:`Start checkout to switch to ${change.target_name}`,text:`Your previous PayPal renewal ended on ${effectiveDate}. To continue with ${change.target_name}${access}, start a new PayPal checkout for that plan from your account.`,adminText:`A customer's PayPal plan change to ${change.target_name}${access} is awaiting a fresh checkout (previous renewal ended ${effectiveDate}).`,dedupeKey:`plan-change-awaiting-checkout:${change.id}`}).catch(error=>console.warn('Plan-change checkout reminder failed:',error.message));summary.notified++;}catch(error){summary.failed++;console.warn('PayPal plan-change expiry failed:',{changeId:change.id,error:error.message});}});}return summary;}
+async function advanceManualChange(change){
+    // Never tell a Stripe customer to buy again before the prior agreement is
+    // terminal at Stripe AND its recorded paid period has actually elapsed.
+    if(change.provider==='stripe'){
+        const current=(await query('SELECT * FROM subscriptions WHERE id=$1 AND customer_id=$2',[change.current_subscription_id,change.customer_id])).rows[0];
+        if(!current||current.source!=='stripe'||!current.cancel_at_period_end||current.superseded_by||!billingMode.validRecurringProviderReference(current)||+new Date(current.current_period_end)>Date.now())return false;
+        const client=await stripeClient();
+        let remote;
+        try{remote=await client.subscriptions.retrieve(current.provider_subscription_id);}
+        catch(error){if(!billingControl.providerMissing(error))throw error;}
+        if(remote&&(remote.id!==current.provider_subscription_id||!['canceled','incomplete_expired'].includes(remote.status)))return false;
+    }
+    return transaction(async client=>{
+        await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[change.customer_id]);
+        const updated=await client.query(`UPDATE customer_plan_changes pc SET state='awaiting_checkout',updated_at=NOW()
+            WHERE pc.id=$1 AND pc.state='pending' AND pc.effective_at<=NOW()
+            AND (pc.provider='paypal' OR (pc.provider='stripe' AND pc.provider_action_required
+              AND EXISTS(SELECT 1 FROM subscriptions s WHERE s.id=pc.current_subscription_id AND s.customer_id=pc.customer_id AND s.cancel_at_period_end AND s.current_period_end<=NOW() AND s.superseded_by IS NULL))) RETURNING id`,[change.id]);
+        if(!updated.rowCount)return false;
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.plan_change.awaiting_checkout','customer',$1,$2::jsonb)`,[change.customer_id,JSON.stringify({changeId:change.id,targetPlanId:change.target_plan_id,targetPlanCode:change.target_code,targetAccessQuantity:change.target_access_quantity,targetVariantKind:change.target_variant_kind,effectiveAt:change.effective_at,provider:change.provider})]);
+        return true;
+    });
+}
+async function expireDuePaypal(){
+    // Historical function name retained for the automation worker. Both
+    // providers now support a renewal-boundary fresh-authorization decision.
+    const due=await query(`SELECT pc.*,p.code target_code,p.name target_name,s.customer_id FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id JOIN subscriptions s ON s.id=pc.current_subscription_id WHERE pc.state='pending' AND (pc.provider='paypal' OR (pc.provider='stripe' AND pc.provider_action_required)) AND pc.effective_at<=NOW() ORDER BY pc.effective_at LIMIT 50`),summary={total:due.rowCount,notified:0,failed:0};
+    for(const change of due.rows){
+        await withPlanChangeLock(change.customer_id,async()=>{
+            try{
+                if(!await advanceManualChange(change))return;
+                const provider=change.provider==='stripe'?'Stripe':'PayPal';
+                const effectiveDate=new Date(change.effective_at).toLocaleDateString('en-GB'),access=change.target_access_quantity?` (${change.target_access_quantity} ${change.target_variant_kind==='households'?'household':'stream'}${Number(change.target_access_quantity)===1?'':'s'})`:'';
+                await notificationDispatch.dispatch({eventType:'subscription.plan_change.requires_checkout',customerId:change.customer_id,subject:`Start checkout to switch to ${change.target_name}`,text:`Your previous ${provider} renewal ended on ${effectiveDate}. To continue with ${change.target_name}${access}, start a new ${provider} checkout for that plan from your account.`,adminText:`A customer's ${provider} plan change to ${change.target_name}${access} is awaiting a fresh checkout (previous renewal ended ${effectiveDate}).`,dedupeKey:`plan-change-awaiting-checkout:${change.id}`}).catch(error=>console.warn('Plan-change checkout reminder failed:',error.message));summary.notified++;
+            }catch(error){summary.failed++;console.warn('Plan-change expiry failed:',{changeId:change.id,error:error.message});}
+        });
+    }
+    return summary;
+}
 async function cancelPendingChangeUnlocked(customerId,actorUserId=null){const pending=await pendingForCustomer(customerId);if(!pending)throw new Error('There is no open plan change to cancel.');let warning='';if(pending.provider==='stripe'&&pending.provider_schedule_id){const client=await stripeClient();try{const schedule=await client.subscriptionSchedules.retrieve(pending.provider_schedule_id);if(['active','not_started'].includes(String(schedule.status)))await client.subscriptionSchedules.release(schedule.id);}catch(error){throw new Error(`Stripe schedule could not be released safely: ${error.message}`);}}if(pending.provider==='paypal'&&pending.provider_action_required)warning=' Your existing PayPal renewal state is unchanged; cancelling this target does not create or restore a PayPal agreement.';await transaction(async client=>{await client.query(`UPDATE customer_plan_changes SET state='cancelled',provider_schedule_state=CASE WHEN provider='stripe' THEN 'released' ELSE provider_schedule_state END,updated_at=NOW() WHERE id=$1`,[pending.id]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.cancel','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({changeId:pending.id,targetPlanId:pending.target_plan_id,targetAccessQuantity:pending.target_access_quantity,targetVariantKind:pending.target_variant_kind,targetMediaServerId:pending.target_media_server_id||null,effectiveAt:pending.effective_at,provider:pending.provider,providerScheduleId:pending.provider_schedule_id,previousState:pending.state})]);});await releaseScheduledMediaPlacement(customerId,pending.target_media_server_id).catch(()=>{});return{...pending,warning};}
 async function cancelPendingChange(customerId,actorUserId=null){return withPlanChangeLock(customerId,()=>cancelPendingChangeUnlocked(customerId,actorUserId));}
 
 async function pendingForCustomer(customerId){const result=await query(`SELECT pc.*,p.name target_plan_name,p.code target_plan_code FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id WHERE pc.customer_id=$1 AND pc.state IN ('pending','awaiting_checkout') ORDER BY pc.created_at DESC LIMIT 1`,[customerId]);return result.rows[0]||null;}
 
-module.exports={PLAN_CHANGE_PROCESSING,assertNoUnresolvedPlanOperation,beginImmediatePlanOperation,requestChange,requestChangeUnlocked,withPlanChangeLock,planChangeLockKey,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment,cancelPendingChangeUnlocked,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};
+module.exports={STRIPE_CURRENCY_REAUTHORIZE,recordStripeCurrencyChange,advanceManualChange,PLAN_CHANGE_PROCESSING,assertNoUnresolvedPlanOperation,beginImmediatePlanOperation,requestChange,requestChangeUnlocked,withPlanChangeLock,planChangeLockKey,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment,cancelPendingChangeUnlocked,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};

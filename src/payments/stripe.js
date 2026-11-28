@@ -287,7 +287,9 @@ async function activateCheckoutSession(session) {
         const subscriptionPrice=subscription.items?.data?.[0]?.price?.id||null;
         if(contract.snapshot.providerMappingId&&subscriptionPrice&&String(contract.snapshot.providerMappingId)!==String(subscriptionPrice))throw new Error('Stripe subscription price does not match the checkout contract.');
         const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot,providerPaymentVerified:verified.payment_status==='paid'&&Number.isInteger(verified.amount_total)&&verified.amount_total>0});
-        await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');return activated;
+        await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');
+        if(activated?.status==='active')await require('./plan-change-resolution').resolveAwaitingCheckout({customerId,planId,provider:'stripe',providerSubscriptionId:subscription.id,providerMappingId:contract.snapshot.providerMappingId});
+        return activated;
     }
     const paymentId=typeof verified.payment_intent==='string'?verified.payment_intent:verified.payment_intent?.id||verified.id;
     const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:paymentId,providerStatus:'active',commercialSnapshot:contract.snapshot});

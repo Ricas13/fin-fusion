@@ -63,6 +63,8 @@ const CHECKOUT_SAFE=[
  /^An existing (Stripe|PayPal|Plisio) checkout has already been created with the payment provider\./,
  'A plan change is already open for this subscription. Complete or resolve it before buying extra time.',
  planChange.PLAN_CHANGE_PROCESSING,
+ planChange.STRIPE_CURRENCY_REAUTHORIZE,
+ 'Stripe has not confirmed the end of your current paid period. Synchronise billing before switching currency.',
  'A same-plan access extension checkout is still open or awaiting fulfillment. Complete or resolve it before changing plans.',
  ...Object.values(samePlanRepurchase.MESSAGES),
  ...Object.values(carriedTime.MESSAGES)

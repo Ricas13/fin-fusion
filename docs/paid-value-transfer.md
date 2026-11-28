@@ -15,3 +15,5 @@ New full service-credit redemptions freeze their original commercial terms and c
 ## Release checklist
 
 Before enabling the flag, deploy all web and webhook workers on the same tested version, run the production deployment acceptance audit, and verify positive and zero-amount Stripe checkouts in a test-mode account, including subsequent renewal, failed settlement, duplicate webhook, and source/target refund handling. Keep the feature off if any acceptance check fails. Existing recurring-to-recurring currency replacements and histories without verifiable terms remain outside this implementation.
+
+Existing Stripe recurring agreements cannot be changed to another currency in-place. A customer who explicitly stops renewal can record the desired target currency and price; the worker verifies that the paid period has elapsed and the old Stripe agreement is terminal before requesting fresh authorization. The exact new Stripe price must settle before the change is marked applied. No new provider payment is initiated without the customer's checkout. This is not an immediate cross-currency replacement.
