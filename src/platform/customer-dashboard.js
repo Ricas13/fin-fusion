@@ -4,6 +4,7 @@ const {query}=require('../db');
 const customers=require('../customers');
 const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
+const providerSettings=require('../payments/provider-settings');
 const discounts=require('../payments/discounts');
 const publicError=require('./public-error');
 const moneyFormat=require('./money-format');
@@ -100,6 +101,7 @@ async function extensionState(customerId,plan,kind,enabled){
 }
 
 async function customerVariantState(customerId){
+  await providerSettings.ensureLoaded();
   const plans=(await catalogPlans()).filter(plan=>plan.sale_ready!==false),enabled={stripe:stripe.enabled(),paypal:paypal.enabled()};
   return Promise.all(plans.filter(plan=>Array.isArray(plan.access_variants)&&plan.access_variants.length>1).map(async plan=>{
     let recurringUnknown=false;
@@ -222,6 +224,7 @@ function createCustomerDashboardRouter(){
       const effectiveCurrentPlan=incompleteFreeSubscriptionId&&subscriptionId(currentPlan)===incompleteFreeSubscriptionId?null:currentPlan;
       const accessRows=canonicalAccessRows(portal,{currentPlan:effectiveCurrentPlan,freePlan:effectiveFreePlan,stremioPlan,embyPlan,excludeSubscriptionIds:incompleteFreeSubscriptionId?[incompleteFreeSubscriptionId]:[]}),allPlans=await catalogPlans(),includedPlanIds=Array.from(livePlanIds(accessRows)),plans=accessRows.length||openPlanChange||queuedPaidPurchases.length?homeCataloguePlans(allPlans,includedPlanIds):readySalePlans(allPlans,includedPlanIds);
       const navOptions=customerNav.optionsFromPortal(portal);
+      await providerSettings.ensureLoaded();
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
       if(!accessRows.length&&!openPlanChange&&!queuedPaidPurchases.length){
         const inactivityRemoval=await recentFreeInactivityRemoval(customerId).catch(()=>null);

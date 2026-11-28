@@ -136,6 +136,7 @@ module.exports = {
     ],
     "check:fast:commerce-support": [
       "node scripts/health-readiness-smoke.js",
+      "node scripts/payment-fixes-pure-smoke.js",
       "node scripts/storefront-currency-integrity-smoke.js",
       "node scripts/currency-narrow-symbol-smoke.js",
       "node scripts/attention-workflow-smoke.js",
@@ -259,6 +260,7 @@ module.exports = {
     ],
     "check:db:commerce": [
       "node scripts/business-expenses-calendar-date-db-smoke.js",
+      "node scripts/payment-fixes-db-smoke.js",
       "node scripts/plan-command-rollback-db-smoke.js",
       "node scripts/affiliate-renewal-credit-smoke.js",
       "node scripts/refund-cash-basis-smoke.js",

@@ -71,8 +71,8 @@ const paypalOrderStart=paypal.indexOf('async function activateCompletedOrder');
 const paypalComplete=paypal.indexOf("await checkoutIntents.completeVerifiedProvider('paypal',order.id,'completed')",paypalOrderStart);
 const paypalLedger=paypal.indexOf('await recordCompletedCapture(capture',paypalOrderStart);
 const paypalFulfill=paypal.indexOf('const activated=await lifecycle.activatePurchase',paypalOrderStart);
-assert(paypalOrderStart>=0&&paypalComplete>paypalOrderStart&&paypalLedger>paypalComplete&&paypalFulfill>paypalLedger,
-  'PayPal one-time checkout must complete local provider state, persist verified money, then fulfill access so accounting and paid-but-unfulfilled recovery stay durable');
+assert(paypalOrderStart>=0&&paypalLedger>paypalOrderStart&&paypalFulfill>paypalLedger&&paypalComplete>paypalFulfill,
+  'PayPal one-time checkout must persist verified money, fulfill access, and only then close the local provider checkout so a failure at any step leaves it open for durable recovery');
 
 
 assert(require('fs').readFileSync(require('path').join(__dirname,'..','src/payments/customer-plan-change.js'),'utf8').includes('This subscription has prepaid extension time remaining.'),'plan changes must not convert prepaid extension time into a different plan/currency/access allowance');

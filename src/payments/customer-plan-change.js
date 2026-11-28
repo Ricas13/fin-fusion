@@ -145,6 +145,50 @@ async function beginImmediatePlanOperation(customerId,subscriptionId,request){
         return providerOps.begin({provider:'stripe',scope:'customer',ownerId:customerId,operationType:'plan_change_immediate',localReference:subscriptionId,request},{db:read});
     });
 }
+// ---- Immediate upgrades: collect the money BEFORE the upgraded access is granted ----------------------------------------
+// proration_behavior=always_invoice bills the prorated difference at once (unused time on the old price is credited, the new
+// price charged for the remainder, so remaining paid value is preserved). payment_behavior=error_if_incomplete makes Stripe
+// refuse the whole update, leaving the subscription untouched, when that payment fails or needs customer authentication.
+// The stable operation idempotency key makes a retry replay the same update instead of charging twice.
+function immediateUpdateParams({item,priceId,remoteMetadata,customerId,targetPlanId,planPriceId,targetQuantity,proration}){
+    return{
+        items:[{id:item.id,price:priceId}],
+        proration_behavior:proration?'always_invoice':'none',
+        ...(proration?{payment_behavior:'error_if_incomplete'}:{}),
+        expand:['latest_invoice'],
+        metadata:{...(remoteMetadata||{}),internal_customer_id:customerId,internal_plan_id:targetPlanId,internal_plan_price_id:planPriceId||'',internal_access_quantity:String(targetQuantity)}
+    };
+}
+function upgradeNotCollected(message){const error=new Error(message);error.code='UPGRADE_PAYMENT_NOT_COLLECTED';error.expose=true;return error;}
+// Conclusive provider evidence that an immediate plan change both took effect and that any additional charge was collected.
+function verifyImmediateUpgradeCollected(subscription,{targetPriceId,proration=true}={}){
+    const item=subscription?.items?.data?.[0],price=typeof item?.price==='string'?item.price:item?.price?.id;
+    if(!price||String(price)!==String(targetPriceId))throw upgradeNotCollected('Stripe has not applied the requested plan price.');
+    if(!['active','trialing'].includes(String(subscription.status||'')))throw upgradeNotCollected(`Stripe subscription is ${subscription.status||'unknown'}, so the upgrade payment is not confirmed.`);
+    if(!proration)return{collected:'not_required',amountPaid:0};
+    const invoice=subscription.latest_invoice&&typeof subscription.latest_invoice==='object'?subscription.latest_invoice:null;
+    // No update invoice at all means Stripe found nothing to charge (a zero-cost change).
+    if(!invoice||invoice.billing_reason!=='subscription_update')return{collected:'nothing_due',amountPaid:0};
+    const due=Number(invoice.amount_due||0);
+    if(invoice.status==='paid')return{collected:due>0||Number(invoice.amount_paid||0)>0?'paid':'nothing_due',amountPaid:Number(invoice.amount_paid||0)};
+    if(due<=0&&['void','draft'].includes(String(invoice.status||'')))return{collected:'nothing_due',amountPaid:0};
+    throw upgradeNotCollected('The additional payment for this upgrade has not been collected, so the upgraded access was not granted.');
+}
+const PAYMENT_ERROR_CODES=/card_declined|insufficient_funds|expired_card|incorrect_cvc|incorrect_number|processing_error|generic_decline|do_not_honor|payment_intent_payment_attempt_failed|invoice_payment_intent_requires_action|subscription_payment_intent_requires_action|authentication_required|payment_intent_authentication_failure/i;
+// Turns a Stripe payment/authentication failure into an accurate, customer-safe refusal. Existing access is untouched because Stripe
+// rejects the update; this only explains it. Returns null for errors that are not payment related.
+function paymentRefusalFromStripeError(error){
+    if(!error||typeof error!=='object')return null;
+    const code=String(error.code||error.raw?.code||''),decline=String(error.decline_code||error.raw?.decline_code||''),type=String(error.type||error.raw?.type||''),status=Number(error.statusCode||error.raw?.statusCode||0);
+    const authentication=/authentication_required|payment_intent_authentication_failure|requires_action/i.test(`${code} ${decline}`)||/authentication|3d.?secure|requires action/i.test(String(error.message||''));
+    if(!(type==='StripeCardError'||status===402||PAYMENT_ERROR_CODES.test(`${code} ${decline}`)||authentication))return null;
+    const refusal=planChangeRefusal(authentication
+        ?'Your bank needs to confirm this payment with extra authentication, so the upgrade was not applied. Your current plan and access are unchanged. Open the billing portal to re-authenticate or update your payment method, then try the upgrade again.'
+        :'Your payment method could not be charged for this upgrade, so it was not applied. Your current plan and access are unchanged. Please update your payment method and try again.');
+    refusal.expose=true;refusal.paymentRefusal=true;refusal.code=authentication?'PLAN_CHANGE_AUTHENTICATION_REQUIRED':'PLAN_CHANGE_PAYMENT_FAILED';refusal.cause=error;
+    return refusal;
+}
+
 async function setStripePlan(current,target,{proration,currency,mapping=null,accessQuantity=null,mediaLocation=null,mediaServer=null}={}){
     mapping=mapping||await replacementMapping(current,target,'stripe',currency,accessQuantity);if(!mapping)throw new Error(`The target plan/access option is not configured for Stripe recurring billing in ${currency}.`);
     if(billingMode.currencyOf(current)&&!billingMode.sameCurrency(current,mapping))throw planChangeRefusal(STRIPE_CURRENCY_REAUTHORIZE);
@@ -166,8 +210,10 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
         if(mediaServer)placementReservation=await provisioningHelpers.reservePlacement(current.customer_id,mediaServer);
         const client=await stripeClient(),remote=await client.subscriptions.retrieve(current.provider_subscription_id);if(remote.schedule)throw planChangeRefusal('This Stripe subscription already has a scheduled change. Cancel the pending change first.');const item=remote.items?.data?.[0];if(!item?.id)throw planChangeRefusal('Stripe subscription has no editable item.');
         providerMutationAttempted=true;
-        const updated=await client.subscriptions.update(current.provider_subscription_id,{items:[{id:item.id,price:mapping.external_id}],proration_behavior:proration?'create_prorations':'none',metadata:{...(remote.metadata||{}),internal_customer_id:current.customer_id,internal_plan_id:target.id,internal_plan_price_id:mapping.plan_price_id||'',internal_access_quantity:String(targetQuantity)}},{idempotencyKey:op.idempotency_key});
-        await providerOps.providerApplied(op.id,{providerReference:updated.id,result:{priceId:mapping.external_id,status:updated.status||null}});
+        const updated=await client.subscriptions.update(current.provider_subscription_id,immediateUpdateParams({item,priceId:mapping.external_id,remoteMetadata:remote.metadata,customerId:current.customer_id,targetPlanId:target.id,planPriceId:mapping.plan_price_id,targetQuantity,proration}),{idempotencyKey:op.idempotency_key});
+        // Access is only upgraded locally once Stripe proves the price changed AND any additional charge was collected.
+        const collection=verifyImmediateUpgradeCollected(updated,{targetPriceId:mapping.external_id,proration});
+        await providerOps.providerApplied(op.id,{providerReference:updated.id,result:{priceId:mapping.external_id,status:updated.status||null,collection:collection.collected,amountPaidMinor:collection.amountPaid}});
         await transaction(async db=>{await applySnapshot(db,subscriptionId,target,mapping,{mediaLocation,mediaServerId:mediaServer?.id||null});await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,updated_at=NOW() WHERE id=$1`,[op.id]);});
         const synced=await billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id});if(!synced.ok)throw new Error(`Stripe accepted the plan change, but provider verification failed: ${synced.error}`);
         await providerOps.reconciled(op.id,{result:{subscriptionId,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,targetAccessQuantity:targetQuantity}});
@@ -181,11 +227,13 @@ async function setStripePlan(current,target,{proration,currency,mapping=null,acc
         if((!providerMutationAttempted||terminal)&&placementReservation?.placement_lease_id&&mediaServer?.id){
             await provisioningHelpers.releaseDefinitivePlacementFailure(current.customer_id,mediaServer.id,placementReservation.placement_lease_id).catch(()=>{});
         }
-        if(error&&typeof error==='object'){
-            error.providerOperationId=op.id;
-            error.providerOperationTerminal=terminal;
+        const refusal=paymentRefusalFromStripeError(error);
+        const surfaced=refusal||error;
+        if(surfaced&&typeof surfaced==='object'){
+            surfaced.providerOperationId=op.id;
+            surfaced.providerOperationTerminal=terminal;
         }
-        throw error;
+        throw surfaced;
     }
 }
 
@@ -299,7 +347,7 @@ async function requestChangeUnlocked({customerId,targetPlanCode,targetCurrency='
         if(requested==='immediate'){
             const changed=await setStripePlan(current,target,{proration:true,currency:target.currency,mapping,accessQuantity:quantity,mediaLocation:targetMediaLocation,mediaServer:targetMediaServer});
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.plan_change.immediate','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({provider:'stripe',fromPlanId:current.plan_id,toPlanId:target.id,targetPlanPriceId:target.plan_price_id,targetAccessQuantity:quantity,targetVariantKind:kind,currency:target.currency,fromCurrency:billingMode.currencyOf(current),toCurrency:billingMode.currencyOf(target),fromMonthlyValue:monthlyValue(current),toMonthlyValue:monthlyValue(target),providerOperationId:changed.providerOperationId})]);
-            return{handled:true,mode:'immediate',message:`Plan changed to ${target.name} · ${targetAccessLabel(target)} (${target.currency}). Stripe will handle any applicable proration.`};
+            return{handled:true,mode:'immediate',message:`Plan changed to ${target.name} · ${targetAccessLabel(target)} (${target.currency}). Any prorated difference has been charged to your payment method.`};
         }
         let scheduledPlacement=null,local=null;
         try{
@@ -450,4 +498,4 @@ async function cancelPendingChange(customerId,actorUserId=null){return withPlanC
 
 async function pendingForCustomer(customerId){const result=await query(`SELECT pc.*,p.name target_plan_name,p.code target_plan_code FROM customer_plan_changes pc JOIN plans p ON p.id=pc.target_plan_id WHERE pc.customer_id=$1 AND pc.state IN ('pending','awaiting_checkout') ORDER BY pc.created_at DESC LIMIT 1`,[customerId]);return result.rows[0]||null;}
 
-module.exports={STRIPE_CURRENCY_REAUTHORIZE,recordStripeCurrencyChange,advanceManualChange,PLAN_CHANGE_PROCESSING,assertNoUnresolvedPlanOperation,beginImmediatePlanOperation,requestChange,requestChangeUnlocked,withPlanChangeLock,planChangeLockKey,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment,cancelPendingChangeUnlocked,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};
+module.exports={immediateUpdateParams,verifyImmediateUpgradeCollected,paymentRefusalFromStripeError,STRIPE_CURRENCY_REAUTHORIZE,recordStripeCurrencyChange,advanceManualChange,PLAN_CHANGE_PROCESSING,assertNoUnresolvedPlanOperation,beginImmediatePlanOperation,requestChange,requestChangeUnlocked,withPlanChangeLock,planChangeLockKey,applyDueStripe,expireDuePaypal,pendingForCustomer,currentRecurring,setStripePlan,scheduledStripeSubscription,scheduleStripeProvider,cancelPendingChange,monthlyValue,stripeChangeTiming,contractSnapshot,applySnapshot,planChangeRefusal,scheduleTargetPrice,subscriptionAccessQuantity,mappingQuantity,normalizedKind,replacementMapping,selectedTarget,reserveScheduledMediaPlacement,releaseScheduledMediaPlacement,assertNoAmbiguousLegacyMediaAssignment,cancelPendingChangeUnlocked,outstandingExtensionCheckout,assertNoOutstandingExtensionCheckout};

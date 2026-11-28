@@ -280,7 +280,7 @@ async function main() {
     expect(!/INSERT\s+INTO\s+subscriptions/i.test(ledgerSource), 'accounting sync must never create entitlement state.');
     expect(!/UPDATE\s+subscriptions/i.test(ledgerSource), 'accounting sync must never mutate entitlement state.');
     expect(paypalSource.includes('existingCapture.rowCount?null:payerId'), 'a historical one-time PayPal replay must not overwrite a newer payer identity.');
-    expect(completedOrderSource.indexOf("completeVerifiedProvider('paypal',order.id,'completed')") < completedOrderSource.indexOf('recordCompletedCapture(capture'), 'the local checkout must be completed before ledger persistence so an accounting failure cannot leave a paid checkout open.');
+    expect(completedOrderSource.indexOf('recordCompletedCapture(capture') < completedOrderSource.indexOf('lifecycle.activatePurchase') && completedOrderSource.indexOf('lifecycle.activatePurchase') < completedOrderSource.indexOf("completeVerifiedProvider('paypal',order.id,'completed')"), 'the verified capture must be persisted and access fulfilled before the checkout is closed as completed, so a failed fulfillment leaves the paid checkout open for recovery.');
     expect(completedOrderSource.includes('await recordCompletedCapture(capture'), 'the common completed-order path must persist the authoritative PayPal capture.');
     expect(completedOrderSource.includes('livePaypalHistory.assertCaptureOwner(providerId,mapping.customerId)'), 'capture ownership must be checked before the common PayPal activation path mutates local state.');
     expect(reconciliationSource.includes("providerHttp.fetchJson('paypal'"), 'scheduled PayPal reconciliation must use the canonical provider HTTP timeout/bounds layer.');

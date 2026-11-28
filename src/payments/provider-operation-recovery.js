@@ -191,7 +191,7 @@ async function recoverImmediate(op) {
   if (!subscription) throw manual('Plan-change subscription no longer exists.');
   const { target, mapping } = await loadTarget(request);
   const client = await stripeClient();
-  let remote = await client.subscriptions.retrieve(subscription.provider_subscription_id, { expand:['items.data.price'] });
+  let remote = await client.subscriptions.retrieve(subscription.provider_subscription_id, { expand:['items.data.price','latest_invoice'] });
   let observedPrice = stripePriceId(remote);
   await providerOps.observed(op.id, { result:{observedPrice,status:remote.status||null} });
   if (observedPrice !== request.targetPriceId) {
@@ -205,14 +205,21 @@ async function recoverImmediate(op) {
     request = op.request_snapshot || request;
     const item = remote.items?.data?.[0];
     if (!item?.id) throw manual('Stripe subscription has no editable item.');
-    remote = await client.subscriptions.update(subscription.provider_subscription_id, {
-      items:[{id:item.id,price:request.targetPriceId}],
-      proration_behavior:request.proration?'create_prorations':'none',
-      metadata:{...(remote.metadata||{}),internal_customer_id:String(op.owner_id),internal_plan_id:String(request.targetPlanId),internal_plan_price_id:String(request.targetPlanPriceId||'')}
-    }, { idempotencyKey:op.idempotency_key });
+    // Same payment-safe update as the original request: the additional charge is collected (or the update refused) by Stripe,
+    // under the operation's stable idempotency key, so a retry replays rather than charging twice.
+    remote = await client.subscriptions.update(subscription.provider_subscription_id,
+      customerPlanChange.immediateUpdateParams({
+        item, priceId:request.targetPriceId, remoteMetadata:remote.metadata,
+        customerId:String(op.owner_id), targetPlanId:String(request.targetPlanId),
+        planPriceId:request.targetPlanPriceId, targetQuantity:request.targetAccessQuantity || 1,
+        proration:Boolean(request.proration)
+      }), { idempotencyKey:op.idempotency_key });
     observedPrice = stripePriceId(remote);
     if (observedPrice !== request.targetPriceId) throw manual('Stripe accepted recovery but did not expose the intended target price.');
   }
+  // The upgraded access is only granted locally after Stripe proves the additional charge was collected (or nothing was due).
+  // This also covers a crash after Stripe applied the change: recovery must not turn an unpaid upgrade into access.
+  customerPlanChange.verifyImmediateUpgradeCollected(remote, { targetPriceId:request.targetPriceId, proration:Boolean(request.proration) });
   if (op.state === 'planned') {
     const alreadyBilledDifferentPlan = observedPrice === request.targetPriceId
       && String(subscription.plan_id) !== String(target.id);
