@@ -573,6 +573,118 @@ async function testStaleFreeRollbackCannotDeleteReplacementAccount() {
 }
 
 
+async function rollbackAuditCount(subscriptionId) {
+  const found = await query(`
+    SELECT 1 FROM audit_log
+    WHERE entity_type='subscription' AND entity_id=$1
+      AND action IN('subscription.trial.activation_rolled_back','subscription.free.claim_rolled_back')
+  `, [String(subscriptionId)]);
+  return found.rowCount;
+}
+
+async function testReadyTrialIsNotRolledBack() {
+  const customerId = await customer('trial-ready-rollback');
+  const planId = await plan('trial-ready-rollback', { billingInterval: 'trial', priceMinor: 0 });
+  const subscription = await insertSubscription(customerId, planId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  const serverId = await server('trial-ready', 'premium');
+  const readyAccount = await account({ customerId, serverId, lane: 'primary', label: 'trial-ready' });
+
+  const before = await customerAccessState.primaryJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(before.state, customerAccessState.ACCESS_STATES.ACTIVE_READY,
+    'fixture must be an ACTIVE_READY trial before the rollback is attempted');
+  assert.strictEqual(String(before.entitlement.subscription_id), String(subscription.id));
+
+  const result = await lifecycle.rollbackUnprovisionedJellyfinTrial(
+    customerId,
+    subscription.id,
+    { reason: 'stale view of a trial that is ready' }
+  );
+  assert.strictEqual(result.rolledBack, false, 'a ready trial must not be rolled back');
+  assert.strictEqual(result.reason, 'ready');
+
+  const row = (await query('SELECT status,current_period_end,replacement_reason FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing', 'a ready trial must keep its entitlement');
+  assert(new Date(row.current_period_end).getTime() > Date.now(), 'a ready trial must keep its access window');
+  assert.strictEqual(row.replacement_reason, null);
+  const kept = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [readyAccount.id]);
+  assert.strictEqual(kept.rowCount, 1, 'a ready trial must keep its account');
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 0, 'a skipped rollback must not be audited as a rollback');
+}
+
+async function testReadyFreeClaimIsNotRolledBack() {
+  const customerId = await customer('free-ready-rollback');
+  const freePlan = await canonicalFreePlan();
+  const subscription = await insertSubscription(customerId, freePlan.id, {
+    source: 'free_claim',
+    billingMode: 'payment',
+    periodEndSql: "NOW()+INTERVAL '3650 days'"
+  });
+  const serverId = await server('free-ready', 'free');
+  const readyAccount = await account({ customerId, serverId, lane: 'free', label: 'free-ready' });
+
+  const before = await customerAccessState.freeJellyfin(customerId, { includeBlocked: true });
+  assert.strictEqual(before.state, customerAccessState.ACCESS_STATES.ACTIVE_READY,
+    'fixture must be an ACTIVE_READY Free claim before the rollback is attempted');
+  assert.strictEqual(String(before.entitlement.subscription_id), String(subscription.id));
+
+  const result = await lifecycle.rollbackUnprovisionedFreeClaim(
+    customerId,
+    subscription.id,
+    { reason: 'stale view of a Free claim that is ready' }
+  );
+  assert.strictEqual(result.rolledBack, false, 'a ready Free claim must not be rolled back');
+  assert.strictEqual(result.reason, 'ready');
+
+  const row = (await query('SELECT status FROM subscriptions WHERE id=$1', [subscription.id])).rows[0];
+  assert.strictEqual(row.status, 'active', 'a ready Free claim must keep its entitlement');
+  const kept = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [readyAccount.id]);
+  assert.strictEqual(kept.rowCount, 1, 'a ready Free claim must keep its account');
+  assert.strictEqual(await rollbackAuditCount(subscription.id), 0);
+}
+
+async function testSupersededTrialIsNotRewritten() {
+  const customerId = await customer('trial-superseded-rollback');
+  const trialPlanId = await plan('trial-superseded-rollback', { billingInterval: 'trial', priceMinor: 0 });
+  const paidPlanId = await plan('trial-superseded-replacement', { priceMinor: 999 });
+  const old = await insertSubscription(customerId, trialPlanId, {
+    status: 'trialing',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  const replacement = await insertSubscription(customerId, paidPlanId, {
+    status: 'active',
+    source: 'manual',
+    billingMode: 'manual'
+  });
+  await query(
+    "UPDATE subscriptions SET superseded_by=$2,replaced_at=NOW(),replacement_reason='plan_change' WHERE id=$1",
+    [old.id, replacement.id]
+  );
+  const serverId = await server('trial-superseded', 'premium');
+  const replacementAccount = await account({ customerId, serverId, lane: 'primary', label: 'trial-superseded' });
+
+  const result = await lifecycle.rollbackUnprovisionedJellyfinTrial(
+    customerId,
+    old.id,
+    { reason: 'stale rollback of a replaced trial' }
+  );
+  assert.strictEqual(result.rolledBack, false, 'a replaced trial must not be rolled back');
+  assert.strictEqual(result.reason, 'not_current');
+
+  const row = (await query('SELECT status,replacement_reason,superseded_by FROM subscriptions WHERE id=$1', [old.id])).rows[0];
+  assert.strictEqual(row.status, 'trialing', 'a replaced trial row must not be rewritten');
+  assert.strictEqual(row.replacement_reason, 'plan_change',
+    'rewriting the reason would restore trial eligibility');
+  assert.strictEqual(String(row.superseded_by), String(replacement.id));
+  const kept = await query('SELECT id FROM jellyfin_accounts WHERE id=$1', [replacementAccount.id]);
+  assert.strictEqual(kept.rowCount, 1, 'the replacement account must survive');
+  assert.strictEqual(await rollbackAuditCount(old.id), 0);
+}
+
 async function testCanonicalLiveFreeClaimLockSelection() {
   const customerId = await customer('free-claim-lock');
   const freePlan = await canonicalFreePlan();
@@ -642,6 +754,9 @@ async function cleanup() {
   await testPermanentAccessBlocksTrialRollback();
   await testPaidProvisioningFailureRetainsEntitlement();
   await testStaleFreeRollbackCannotDeleteReplacementAccount();
+  await testReadyTrialIsNotRolledBack();
+  await testReadyFreeClaimIsNotRolledBack();
+  await testSupersededTrialIsNotRewritten();
   await testCanonicalLiveFreeClaimLockSelection();
   console.log('state-machine invariants DB smoke: ok');
 })().finally(async () => {

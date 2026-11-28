@@ -274,7 +274,193 @@ async function testStremioInstallLockTimeoutFallsThroughToActivation() {
   assert.strictEqual(cancelled().length, 1, 'a real link failure must still roll the trial back');
 }
 
+// One entry per single-service rollback: what it reads to judge readiness and
+// what makes the trial pass the same readiness test activation uses.
+const LANES = [
+  {
+    name: 'rollbackUnprovisionedJellyfinTrial', serviceType: 'jellyfin', key: 'jellyfin', read: 'accounts',
+    makeReady: () => { world.accounts = [account('ready')]; }
+  },
+  {
+    name: 'rollbackUnprovisionedEmbyTrial', serviceType: 'emby', key: 'emby', read: 'embyAccounts',
+    makeReady: () => { world.embyAccounts = [account('ready')]; }
+  },
+  {
+    name: 'rollbackUnprovisionedFreeClaim', key: 'free', read: 'accounts',
+    makeReady: () => { world.accounts = [account('ready', { access_lane: 'free' })]; }
+  },
+  {
+    name: 'rollbackUnprovisionedStremioTrial', serviceType: 'stremio', key: 'stremio', read: 'stremioEntitlement',
+    makeReady: () => { readyInstall(); }
+  }
+];
+
+async function testReadyUnderLockIsKept() {
+  for (const lane of LANES) {
+    // The account or link only appears once the lock is held.
+    reset({ [lane.key]: entitlement() });
+    world.onLock = () => lane.makeReady();
+    const result = await lifecycle[lane.name](CUSTOMER, TRIAL, { reason: 'stale view', reservationId: 'reservation-1' });
+    assert.deepStrictEqual(result, { rolledBack: false, reason: 'ready', subscriptionId: TRIAL }, lane.name);
+    assertUntouched(`${lane.name} with ready access`);
+    assert(world.reads.some(read => read.name === lane.read), `${lane.name} must read readiness`);
+    assert(world.reads.every(read => read.locked), `${lane.name} must read access state under the customer lock`);
+  }
+}
+
+async function testUnreadyStillRollsBack() {
+  for (const lane of LANES) {
+    reset({ [lane.key]: entitlement() });
+    const result = await lifecycle[lane.name](CUSTOMER, TRIAL, { reason: 'unready' });
+    assert.strictEqual(result.rolledBack, true, lane.name);
+    assert.strictEqual(result.id, TRIAL, `${lane.name} must keep returning the closed row`);
+    assert.strictEqual(cancelled().length, 1, lane.name);
+    assert(/superseded_by IS NULL/.test(cancelled()[0].sql), `${lane.name} must guard replaced rows`);
+    assert.strictEqual(audits().length, 1, lane.name);
+  }
+}
+
+async function testOnlyOwnLaneAccountsAreDeleted() {
+  const accounts = [
+    account('disabled', { disabled: true }),
+    account('wrong-server', { server_id: 'server-2' }),
+    account('legacy', { access_lane: null, server_id: 'server-3' }),
+    account('free', { access_lane: 'free' })
+  ];
+  reset({ jellyfin: entitlement(), accounts });
+  await lifecycle.rollbackUnprovisionedJellyfinTrial(CUSTOMER, TRIAL);
+  assert.deepStrictEqual(world.deleted, ['disabled', 'wrong-server', 'legacy'],
+    'trial rollback deletes the same primary-lane accounts as before and never the Free account');
+}
+
+async function testBlockedTrials() {
+  for (const lane of LANES) {
+    reset({ [lane.key]: entitlement({ blocked: true }) });
+    const kept = await lifecycle[lane.name](CUSTOMER, TRIAL, { retainBlocked: true });
+    assert.deepStrictEqual(kept, { rolledBack: false, reason: 'blocked', subscriptionId: TRIAL }, lane.name);
+    assertUntouched(`${lane.name} blocked, background`);
+
+    reset({ [lane.key]: entitlement({ blocked: true }) });
+    const closed = await lifecycle[lane.name](CUSTOMER, TRIAL);
+    assert.strictEqual(closed.rolledBack, true, `${lane.name}: activation still rolls a blocked trial back`);
+  }
+}
+
+async function testOperatorProtection() {
+  const cases = [
+    ['rollbackUnprovisionedJellyfinTrial', 'jellyfin', { permanent_access: true }],
+    ['rollbackUnprovisionedEmbyTrial', 'emby', { access_expires_at: Infinity }],
+    ['rollbackUnprovisionedStremioTrial', 'stremio', { access_expires_at: Infinity }],
+    ['rollbackUnprovisionedFreeClaim', 'free', { admin_jellyfin_mode: 'present' }]
+  ];
+  for (const [name, key, protection] of cases) {
+    reset({ [key]: entitlement(protection), accounts: [account('a')], embyAccounts: [account('b')] });
+    await assert.rejects(lifecycle[name](CUSTOMER, TRIAL),
+      error => error.code === 'OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED', name);
+    assert.deepStrictEqual(world.deleted, [], name);
+    assert.deepStrictEqual(world.writes, [], name);
+    assert.deepStrictEqual(world.revoked, [], name);
+  }
+}
+
+async function testSupersededTrialIsNeverRewritten() {
+  for (const lane of LANES) {
+    reset({ row: { id: TRIAL, status: 'trialing', superseded_by: 'newer-sub', live: true } });
+    const result = await lifecycle[lane.name](CUSTOMER, TRIAL, { reservationId: 'reservation-1' });
+    assert.deepStrictEqual(result, { rolledBack: false, reason: 'not_current', subscriptionId: TRIAL }, lane.name);
+    assert.deepStrictEqual(audits(), [], `${lane.name}: no audit for a replaced trial`);
+    assert(world.writes.every(write => /^UPDATE subscriptions .*superseded_by IS NULL/.test(write.sql)),
+      `${lane.name}: only the guarded no-op update may be attempted`);
+    assert.deepStrictEqual(world.deleted, [], lane.name);
+    assert.deepStrictEqual(world.revoked, [], lane.name);
+    assert.strictEqual(world.reconciles, 0, lane.name);
+  }
+}
+
+async function testStremioClosedTrialIsStillCleanedUp() {
+  // The bundle path closes the subscription first; a leftover link must still go.
+  reset({ row: { id: TRIAL, status: 'cancelled', superseded_by: null, live: false } });
+  readyInstall();
+  const result = await lifecycle.rollbackUnprovisionedStremioTrial(CUSTOMER, TRIAL);
+  assert.strictEqual(result.rolledBack, true);
+  assert.deepStrictEqual(world.revoked, ['entitlement-1', 'mappings']);
+}
+
+async function testBundle() {
+  reset({ jellyfin: entitlement(), accounts: [account('ready')] });
+  readyInstall();
+  let result = await lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL);
+  assert.strictEqual(result.reason, 'ready');
+  assertUntouched('ready bundle');
+
+  // Activation is strict: Jellyfin without an installation link is not ready.
+  reset({ jellyfin: entitlement(), accounts: [account('ready')] });
+  result = await lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL);
+  assert.strictEqual(result.rolledBack, true);
+  assert.deepStrictEqual(world.deleted, ['ready']);
+
+  // A caller that only judges the media half keeps a working media account.
+  reset({ jellyfin: entitlement(), accounts: [account('ready')] });
+  result = await lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL, { requireStremioInstall: false });
+  assert.strictEqual(result.reason, 'ready');
+  assertUntouched('bundle with ready media');
+
+  // A superseded media half means the Stremio half must not run.
+  reset({ row: { id: TRIAL, status: 'trialing', superseded_by: 'newer-sub', live: true } });
+  result = await lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL);
+  assert.strictEqual(result.reason, 'not_current');
+  assert.deepStrictEqual(audits(), []);
+  assert.deepStrictEqual(world.revoked, []);
+
+  // Operator protection and unreadable readiness stop before the Stremio half.
+  reset({ jellyfin: entitlement({ permanent_access: true }), accounts: [account('kept')] });
+  await assert.rejects(lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL),
+    error => error.code === 'OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED');
+  assert.deepStrictEqual(world.writes, []);
+  assert.deepStrictEqual(world.revoked, []);
+
+  reset({ jellyfin: entitlement() });
+  world.onLock = () => {
+    Object.defineProperty(world, 'accounts', { configurable: true, get() { throw new Error('read failed'); } });
+  };
+  await assert.rejects(lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL), /read failed/);
+  assert.deepStrictEqual(world.deleted, []);
+  assert.deepStrictEqual(world.writes, []);
+  assert.deepStrictEqual(world.revoked, []);
+
+  // A real, unready bundle is still removed from both halves.
+  reset({ jellyfin: entitlement(), stremio: entitlement(), stremioEntitlement: { id: 'entitlement-1' } });
+  result = await lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL);
+  assert.strictEqual(result.rolledBack, true);
+  assert.deepStrictEqual(world.revoked, ['entitlement-1', 'mappings']);
+
+  // Once the media half closed the trial, a busy Stremio half is not "pending".
+  reset({ jellyfin: entitlement(), locks: ['ok', 'timeout'] });
+  await assert.rejects(lifecycle.rollbackUnprovisionedBundleTrial(CUSTOMER, TRIAL),
+    error => error.code === 'TRIAL_BUNDLE_ROLLBACK_INCOMPLETE' && !error.cause);
+}
+
+async function testActivationSucceedsWhenAccessAppearsBeforeRollback() {
+  for (const lane of LANES.filter(item => item.serviceType)) {
+    reset({ plan: trialPlan(lane.serviceType), [lane.key]: entitlement() });
+    world.onLock = () => lane.makeReady();
+    const created = await lifecycle.startFreeTrial(CUSTOMER, 'trial');
+    assert.strictEqual(created.id, TRIAL, `${lane.serviceType} activation`);
+    assert.deepStrictEqual(cancelled(), [], `${lane.serviceType} activation`);
+    assert.deepStrictEqual(world.deleted, [], `${lane.serviceType} activation`);
+  }
+}
+
 (async () => {
+  await testReadyUnderLockIsKept();
+  await testUnreadyStillRollsBack();
+  await testOnlyOwnLaneAccountsAreDeleted();
+  await testBlockedTrials();
+  await testOperatorProtection();
+  await testSupersededTrialIsNeverRewritten();
+  await testStremioClosedTrialIsStillCleanedUp();
+  await testBundle();
+  await testActivationSucceedsWhenAccessAppearsBeforeRollback();
   await testRollbackLockTimeoutIsNotDestructive();
   await testActivationLockTimeoutKeepsTrial();
   await testStremioInstallLockTimeoutFallsThroughToActivation();

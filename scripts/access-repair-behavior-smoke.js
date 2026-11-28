@@ -452,6 +452,43 @@ function accessState({ free = [], primary = [] } = {}) {
     const result = await repair.repairFreeEntitlement('customer', 'free-busy-rollback');
     assert.strictEqual(result.status, 'deferred');
   }
+  // A rollback skipped under the lock is not a removal.
+  for (const [reason, status] of [['ready', 'ready'], ['blocked', 'skipped'], ['not_current', 'skipped']]) {
+    let options = null;
+    const repair = createAccessRepair({
+      customerAccessState: accessState({
+        primary: [{
+          state: STATES.INCONSISTENT_UNPAID,
+          entitlement: { subscription_id: 'trial-skip', billing_interval: 'trial', service_type: 'jellyfin' }
+        }]
+      }),
+      provisioning: { reconcileCustomer: async () => { throw new Error('must not reconcile after a skip'); } },
+      lifecycle: () => ({
+        rollbackUnprovisionedJellyfinTrial: async (_customer, _subscription, received) => {
+          options = received;
+          return { rolledBack: false, reason };
+        }
+      })
+    });
+    const result = await repair.repairUnpaidTrial('customer');
+    assert.deepStrictEqual(result, { status, reason, subscriptionId: 'trial-skip' });
+    assert.strictEqual(options.retainBlocked, true, 'background repair must keep blocked trials');
+
+    const missing = { state: STATES.INCONSISTENT_UNPAID, entitlement: { subscription_id: 'free-skip' } };
+    const free = createAccessRepair({
+      customerAccessState: accessState({ free: [missing, missing] }),
+      provisioning: { reconcileCustomer: async () => {} },
+      lifecycle: () => ({
+        rollbackUnprovisionedFreeClaim: async (_customer, _subscription, received) => {
+          assert.strictEqual(received.retainBlocked, true);
+          return { rolledBack: false, reason };
+        }
+      })
+    });
+    const freeResult = await free.repairFreeEntitlement('customer', 'free-skip');
+    assert.strictEqual(freeResult.status, status);
+    assert.strictEqual(freeResult.reason, reason);
+  }
 
   console.log('access repair behavior smoke: ok');
 })().catch(error => {

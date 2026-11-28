@@ -174,15 +174,59 @@ async function readyStremioInstallForSubscription(customerId,subscriptionId){
     return recovered?.credential?{entitlementId:row.id,credential:recovered.credential}:null;
 }
 
-async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason='Stremio trial installation link was not created'}={}){
+async function readyJellyfinBundleForSubscription(customerId,subscriptionId){
+    const account=await readyPrimaryJellyfinAccountForSubscription(customerId,subscriptionId);
+    if(!account)return null;
+    const install=await readyStremioInstallForSubscription(customerId,subscriptionId);
+    return install?{account,install}:null;
+}
+
+// A rollback that decided to change nothing. It is a truthy object, so callers
+// must test rolledBack===false rather than the result itself.
+function skippedRollback(reason,subscriptionId){return {rolledBack:false,reason,subscriptionId};}
+// PostgreSQL 'infinity' (permanent or administrator-granted access) reaches
+// JavaScript as the number Infinity.
+function neverExpires(value){return value===Infinity||String(value).toLowerCase()==='infinity';}
+function operatorProtectedRollbackError(message){
+    const error=new Error(message);
+    error.code='OPERATOR_PROTECTED_ACCESS_ROLLBACK_BLOCKED';
+    return error;
+}
+
+async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason='Stremio trial installation link was not created',retainBlocked=false}={}){
     let entitlementId=null;
-    const ended=await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>transaction(async client=>{
+    const ended=await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
+    // Everything that justifies a rollback is read again under the customer lock.
+    const target=(await query(`
+        SELECT (
+            (status IN ('active','trialing','past_due','paused') AND current_period_end>NOW())
+            OR (COALESCE(service_extension_days,0)>0 AND status IN ('active','trialing','past_due','paused','cancelled','expired')
+                AND current_period_end+((service_extension_days||' days')::interval)>NOW())
+        ) AS live
+        FROM subscriptions WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
+    `,[subscriptionId,customerId])).rows[0]||null;
+    if(!target)return skippedRollback('not_current',subscriptionId);
+    const current=await state.effectiveStremioSubscription(customerId,{includeBlocked:true});
+    const targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+    if(targetIsCurrent&&(customerAccessState.operatorProtected(current)||neverExpires(current.access_expires_at))){
+        throw operatorProtectedRollbackError('Automatic Stremio trial rollback is blocked by Permanent Access or explicit administrator-present authority.');
+    }
+    if(target.live&&await readyStremioInstallForSubscription(customerId,subscriptionId))return skippedRollback('ready',subscriptionId);
+    if(retainBlocked&&targetIsCurrent&&current.blocked)return skippedRollback('blocked',subscriptionId);
+
+    return transaction(async client=>{
         const entitlement=await client.query(`
             SELECT id FROM stremio_entitlements
             WHERE customer_id=$1 AND subscription_id=$2
             LIMIT 1
             FOR UPDATE
         `,[customerId,subscriptionId]);
+        // Confirm ownership before the first write: a superseded trial belongs
+        // to its replacement and keeps its link, history and audit trail.
+        const owned=await client.query(`
+            SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL FOR UPDATE
+        `,[subscriptionId,customerId]);
+        if(!owned.rows[0])return skippedRollback('not_current',subscriptionId);
         entitlementId=entitlement.rows[0]?.id||null;
         if(entitlementId){
             await client.query(`
@@ -207,7 +251,7 @@ async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reas
                 cancel_at_period_end=TRUE,
                 replacement_reason='trial_activation_failed',
                 updated_at=NOW()
-            WHERE id=$1 AND customer_id=$2
+            WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
             RETURNING id,status,current_period_end
         `,[subscriptionId,customerId]);
         await client.query(`
@@ -220,8 +264,10 @@ async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reas
             reason:String(reason||'Stremio trial installation link was not created').slice(0,500),
             noPlanNoLink:true
         })]);
-        return result.rows[0]||null;
-    }));
+        return {...result.rows[0],rolledBack:true};
+    });
+    });
+    if(ended.rolledBack===false)return ended;
 
     if(entitlementId){
         await stremioExternalPlaybackToken.revokeEntitlement(entitlementId).catch(error=>{
@@ -245,16 +291,19 @@ async function rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reas
     return ended;
 }
 
-async function rollbackUnprovisionedBundleTrial(customerId,subscriptionId,{mediaType='jellyfin',reason='Bundle trial activation failed'}={}){
+async function rollbackUnprovisionedBundleTrial(customerId,subscriptionId,{mediaType='jellyfin',reason='Bundle trial activation failed',requireStremioInstall=true,retainBlocked=false}={}){
     const mediaRollback=mediaType==='emby'?rollbackUnprovisionedEmbyTrial:rollbackUnprovisionedJellyfinTrial;
     let mediaResult=null,mediaError=null;
-    try{mediaResult=await mediaRollback(customerId,subscriptionId,{reason});}
+    try{mediaResult=await mediaRollback(customerId,subscriptionId,{reason,requireStremioInstall,retainBlocked});}
     catch(error){
-        // The media half never ran. Cancelling the trial through the Stremio
-        // half would turn "busy" into a destructive rollback.
-        if(isLockTimeoutError(error))throw error;
+        // The media half never removed anything (lock timeout, operator
+        // protection or an unreadable state). Cancelling the trial through the
+        // Stremio half would turn that uncertainty into a destructive rollback.
+        if(isLockTimeoutError(error)||error?.rollbackNotStarted)throw error;
         mediaError=error;
     }
+    // Ready, deliberately retained, or replaced: the trial is not ours to close.
+    if(mediaResult?.rolledBack===false)return mediaResult;
     let stremioError=null;
     try{await rollbackUnprovisionedStremioTrial(customerId,subscriptionId,{reason});}
     catch(error){stremioError=error;}
@@ -271,8 +320,8 @@ async function rollbackUnprovisionedBundleTrial(customerId,subscriptionId,{media
     return mediaResult;
 }
 
-async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed'}={}){
-    let targetIsCurrent=false;
+async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{reason='Jellyfin trial server assignment failed',requireStremioInstall=false,retainBlocked=false}={}){
+    let targetIsCurrent=false,removalStarted=false;
     try{
         return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
             const current=await state.effectiveSubscription(customerId,{includeBlocked:true});
@@ -283,9 +332,17 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
                 throw error;
             }
             if(targetIsCurrent){
+                // The caller saw an unready trial before it held the lock. Apply
+                // the activation readiness test again before removing anything.
+                if(await readyPrimaryJellyfinAccountForSubscription(customerId,subscriptionId)
+                    &&(!requireStremioInstall||await readyStremioInstallForSubscription(customerId,subscriptionId))){
+                    return skippedRollback('ready',subscriptionId);
+                }
+                if(retainBlocked&&current.blocked)return skippedRollback('blocked',subscriptionId);
                 const accounts=(await provisioning.normalAccounts(customerId))
                     .filter(account=>String(account.access_lane||'primary')==='primary');
                 for(const account of accounts){
+                    removalStarted=true;
                     await provisioning.deleteJellyfinAccount(account,{reason:'Jellyfin trial activation failed before server assignment completed'});
                 }
             }
@@ -299,9 +356,10 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
                         cancel_at_period_end=TRUE,
                         replacement_reason='trial_activation_failed',
                         updated_at=NOW()
-                    WHERE id=$1 AND customer_id=$2
+                    WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
                     RETURNING id,status,current_period_end,superseded_by
                 `,[subscriptionId,customerId]);
+                if(!ended.rows[0])return skippedRollback('not_current',subscriptionId);
                 await client.query(`
                     INSERT INTO audit_log(action,entity_type,entity_id,metadata)
                     VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
@@ -311,10 +369,11 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
                     targetWasCurrent:targetIsCurrent,
                     noPlanNoServer:targetIsCurrent
                 })]);
-                return ended.rows[0]||null;
+                return {...ended.rows[0],rolledBack:true};
             });
         });
     }catch(error){
+        if(!removalStarted&&error&&typeof error==='object')error.rollbackNotStarted=true;
         // If server deletion succeeded but the trial row could not be ended,
         // attempt to restore the server assignment. A non-paid trial must not
         // be left as a live plan with no server account.
@@ -329,17 +388,26 @@ async function rollbackUnprovisionedJellyfinTrial(customerId,subscriptionId,{rea
     }
 }
 
-async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason='Emby trial server assignment failed'}={}){
-    let targetIsCurrent=false;
+async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason='Emby trial server assignment failed',requireStremioInstall=false,retainBlocked=false}={}){
+    let targetIsCurrent=false,removalStarted=false;
     try{
         return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
             const current=await state.effectiveEmbySubscription(customerId,{includeBlocked:true});
             targetIsCurrent=Boolean(current&&String(current.subscription_id||'')===String(subscriptionId||''));
+            if(targetIsCurrent&&(customerAccessState.operatorProtected(current)||neverExpires(current.access_expires_at))){
+                throw operatorProtectedRollbackError('Automatic Emby trial rollback is blocked by Permanent Access or explicit administrator-present authority.');
+            }
             if(targetIsCurrent){
+                if(await readyEmbyAccountForSubscription(customerId,subscriptionId)
+                    &&(!requireStremioInstall||await readyStremioInstallForSubscription(customerId,subscriptionId))){
+                    return skippedRollback('ready',subscriptionId);
+                }
+                if(retainBlocked&&current.blocked)return skippedRollback('blocked',subscriptionId);
                 const accounts=await mediaReconciliation.accountsFor(customerId,'emby');
                 const targetServerId=current.media_server_id?String(current.media_server_id):null;
                 for(const account of accounts){
                     if(!account.disabled&&account.server_enabled&&(!targetServerId||String(account.server_id)===targetServerId)){
+                        removalStarted=true;
                         await provisioning.deleteJellyfinAccount(account,{reason:'Emby trial activation failed before server assignment completed'});
                     }
                 }
@@ -354,9 +422,10 @@ async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason=
                         cancel_at_period_end=TRUE,
                         replacement_reason='trial_activation_failed',
                         updated_at=NOW()
-                    WHERE id=$1 AND customer_id=$2
+                    WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
                     RETURNING id,status,current_period_end,superseded_by
                 `,[subscriptionId,customerId]);
+                if(!ended.rows[0])return skippedRollback('not_current',subscriptionId);
                 await client.query(`
                     INSERT INTO audit_log(action,entity_type,entity_id,metadata)
                     VALUES('subscription.trial.activation_rolled_back','subscription',$1,$2::jsonb)
@@ -367,10 +436,11 @@ async function rollbackUnprovisionedEmbyTrial(customerId,subscriptionId,{reason=
                     targetWasCurrent:targetIsCurrent,
                     noPlanNoServer:targetIsCurrent
                 })]);
-                return ended.rows[0]||null;
+                return {...ended.rows[0],rolledBack:true};
             });
         });
     }catch(error){
+        if(!removalStarted&&error&&typeof error==='object')error.rollbackNotStarted=true;
         // If remote account cleanup succeeded but the trial row could not be
         // ended, restore the exact current entitlement rather than leaving an
         // unpaid live plan with no Emby identity.
@@ -432,8 +502,11 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
             // strict activation below, which verifies it and can report pending.
             let linkFailed=!isLockTimeoutError(error);
             if(linkFailed){
-                try{await rollbackUnprovisionedStremioTrial(customerId,created.id,{reason:error.message});}
-                catch(rollbackError){
+                try{
+                    const outcome=await rollbackUnprovisionedStremioTrial(customerId,created.id,{reason:error.message});
+                    // Skipped under the lock: let strict activation decide.
+                    if(outcome?.rolledBack===false)linkFailed=false;
+                }catch(rollbackError){
                     if(!isLockTimeoutError(rollbackError))throw rollbackError;
                     linkFailed=false;
                 }
@@ -457,13 +530,7 @@ async function startFreeTrial(customerId, planCode, { mediaLocation = null } = {
             customerId,
             subscriptionId:created.id,
             reconcile:primitives.reconcileCommittedCustomerStrict,
-            verify:async(customer,subscriptionId)=>{
-                const account=await readyPrimaryJellyfinAccountForSubscription(customer,subscriptionId);
-                if(!account)return null;
-                if(type!=='bundle')return account;
-                const install=await readyStremioInstallForSubscription(customer,subscriptionId);
-                return install?{account,install}:null;
-            },
+            verify:type==='bundle'?readyJellyfinBundleForSubscription:readyPrimaryJellyfinAccountForSubscription,
             rollback:type==='bundle'
                 ?(customer,subscriptionId,options)=>rollbackUnprovisionedBundleTrial(customer,subscriptionId,{...options,mediaType:'jellyfin'})
                 :rollbackUnprovisionedJellyfinTrial,
@@ -533,7 +600,7 @@ async function readyFreeAccountForSubscription(customerId,subscriptionId){
     return access.state===customerAccessState.ACCESS_STATES.ACTIVE_READY?access.account:null;
 }
 
-async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created'}={}){
+async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reservationId=null,reason='Free Server account was not created',retainBlocked=false}={}){
     let targetIsCurrent=false;
     try{
         return await provisioning.reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{
@@ -549,6 +616,10 @@ async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reserva
             // If a newer subscription already superseded it, do not delete that
             // newer account while cleaning up the stale claim.
             if(targetIsCurrent){
+                // A claim that became ready while we waited for the lock keeps
+                // its account, its plan and its reservation.
+                if(await readyFreeAccountForSubscription(customerId,subscriptionId))return skippedRollback('ready',subscriptionId);
+                if(retainBlocked&&current.blocked)return skippedRollback('blocked',subscriptionId);
                 const accounts=(await provisioning.normalAccounts(customerId))
                     .filter(account=>String(account.access_lane||'')==='free');
                 for(const account of accounts){
@@ -565,9 +636,10 @@ async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reserva
                         cancel_at_period_end=TRUE,
                         replacement_reason=CASE WHEN source='free_claim' THEN 'free_claim_activation_failed' ELSE replacement_reason END,
                         updated_at=NOW()
-                    WHERE id=$1 AND customer_id=$2
+                    WHERE id=$1 AND customer_id=$2 AND superseded_by IS NULL
                     RETURNING id,status,current_period_end,superseded_by
                 `,[subscriptionId,customerId]);
+                if(!ended.rows[0])return skippedRollback('not_current',subscriptionId);
 
                 if(reservationId){
                     await client.query(`
@@ -587,7 +659,7 @@ async function rollbackUnprovisionedFreeClaim(customerId,subscriptionId,{reserva
                     targetWasCurrent:targetIsCurrent,
                     noPlanNoServer:targetIsCurrent
                 })]);
-                return ended.rows[0]||null;
+                return {...ended.rows[0],rolledBack:true};
             });
         });
     }catch(error){
@@ -850,6 +922,8 @@ module.exports = {
     startFreeTrial,
     readyPrimaryJellyfinAccountForSubscription,
     readyEmbyAccountForSubscription,
+    readyStremioInstallForSubscription,
+    readyJellyfinBundleForSubscription,
     rollbackUnprovisionedJellyfinTrial,
     rollbackUnprovisionedEmbyTrial,
     readyFreeAccountForSubscription,

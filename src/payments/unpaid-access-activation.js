@@ -50,11 +50,19 @@ async function activateOrRollback({
   if (isLockTimeout(reconcileError)) return pending(reconcileError);
 
   const reason = reconcileError?.message || missingReason;
+  let outcome;
   try {
-    await rollback(customerId, subscriptionId, { ...rollbackOptions, reason });
+    outcome = await rollback(customerId, subscriptionId, { ...rollbackOptions, reason });
   } catch (error) {
     if (isLockTimeout(error)) return pending(error);
     throw error;
+  }
+  if (outcome?.rolledBack === false) {
+    // The rollback re-checked under the lock and changed nothing.
+    const readyNow = await verify(customerId, subscriptionId);
+    if (readyNow) return { ready: readyNow, reconcileError: null };
+    // A replaced subscription is gone either way; anything else is still live.
+    if (outcome.reason !== 'not_current') return pending(reconcileError);
   }
 
   const error = new Error(failureMessage);

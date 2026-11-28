@@ -8,6 +8,12 @@ const { isLockTimeoutError } = require('../jellyfin/lock-errors');
 // this customer. Leave everything in place for a later pass.
 const DEFERRED_LOCK_TIMEOUT = Object.freeze({ status: 'deferred', reason: 'lock_timeout' });
 
+// Rollbacks re-check under the customer lock and may decline to change anything.
+function skippedRollbackOutcome(result) {
+  if (result?.rolledBack !== false) return null;
+  return { status: result.reason === 'ready' ? 'ready' : 'skipped', reason: result.reason };
+}
+
 function trialEntitlement(entitlement) {
   return String(entitlement?.contract_billing_interval || entitlement?.billing_interval || '').toLowerCase() === 'trial';
 }
@@ -92,14 +98,18 @@ function createAccessRepair(deps = {}) {
     }
 
     const lifecycle = lifecycleApi();
+    let result;
     try {
-      await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
-        reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account'
+      result = await lifecycle.rollbackUnprovisionedFreeClaim(customerId, subscriptionId, {
+        reason: reconcileError?.message || reason || 'Free entitlement had no enabled Free Server account',
+        retainBlocked: true
       });
     } catch (error) {
       if (isLockTimeoutError(error)) return { ...DEFERRED_LOCK_TIMEOUT, reconcileError };
       throw error;
     }
+    const skipped = skippedRollbackOutcome(result);
+    if (skipped) return { ...skipped, reconcileError };
     return { status: 'removed', reconcileError };
   }
 
@@ -124,9 +134,11 @@ function createAccessRepair(deps = {}) {
     }
 
     const lifecycle = lifecycleApi();
+    let result;
     try {
-      await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
-        reason: reason || 'Unpaid Jellyfin trial had no enabled server account'
+      result = await lifecycle.rollbackUnprovisionedJellyfinTrial(customerId, entitlement.subscription_id, {
+        reason: reason || 'Unpaid Jellyfin trial had no enabled server account',
+        retainBlocked: true
       });
     } catch (error) {
       if (isLockTimeoutError(error)) {
@@ -134,6 +146,8 @@ function createAccessRepair(deps = {}) {
       }
       throw error;
     }
+    const skipped = skippedRollbackOutcome(result);
+    if (skipped) return { ...skipped, subscriptionId: entitlement.subscription_id };
 
     // Converge the now no-plan state so stale provisioning metadata does not
     // keep advertising a deployment for an entitlement that was rolled back.

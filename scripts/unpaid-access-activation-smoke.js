@@ -223,6 +223,47 @@ const { activateOrRollback } = require('../src/payments/unpaid-access-activation
     );
     assert.strictEqual(rollbackCalls, 1, 'ordinary failures must still roll back');
   }
+  // A rollback that changed nothing is truthy and must not be read as removal.
+  {
+    const ready = { id: 'late-account' };
+    const answers = [null, ready];
+    const result = await activateOrRollback({
+      ...base,
+      reconcile: async () => {},
+      verify: async () => answers.shift(),
+      rollback: async () => ({ rolledBack: false, reason: 'ready' })
+    });
+    assert.strictEqual(result.ready, ready, 'access found ready under the lock must count as success');
+  }
+
+  for (const reason of ['ready', 'blocked']) {
+    let queued = 0;
+    await assert.rejects(
+      activateOrRollback({
+        ...base,
+        reconcile: async () => {},
+        rollback: async () => ({ rolledBack: false, reason }),
+        onPending: async () => { queued += 1; }
+      }),
+      error => error.code === 'PENDING',
+      'a skipped rollback keeps the entitlement, so no removal may be reported'
+    );
+    assert.strictEqual(queued, 1);
+  }
+
+  {
+    let queued = 0;
+    await assert.rejects(
+      activateOrRollback({
+        ...base,
+        reconcile: async () => {},
+        rollback: async () => ({ rolledBack: false, reason: 'not_current' }),
+        onPending: async () => { queued += 1; }
+      }),
+      error => error.code === 'FAILED'
+    );
+    assert.strictEqual(queued, 0);
+  }
 
   console.log('unpaid access activation smoke: ok');
 })().catch(error => {
