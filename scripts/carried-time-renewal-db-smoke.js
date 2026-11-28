@@ -15,6 +15,7 @@ const incidents=require('../src/payments/incidents');
 const prepaidRefunds=require('../src/payments/lifecycle-prepaid-refunds');
 const termination=require('../src/payments/subscription-termination');
 const carriedTime=require('../src/payments/carried-time');
+const subscriptionState=require('../src/entitlements/subscription-state');
 const operatorRefund=require('../src/payments/operator-refund');
 const crypto=require('crypto');
 
@@ -219,6 +220,13 @@ async function pastDue(){
     const bought=await renewing(customer,year,{periodEnd:fromNow(0.001)});
     await lifecycle.updateProviderSubscription({provider:'stripe',providerSubscriptionId:bought.ref,providerStatus:'past_due',periodEnd:advance?fromNow(advance):null});
     assert.equal(await blocked(await get(bought.row.id)),false,label+': carried days stay usable while a renewal is unpaid');
+    const row=await get(bought.row.id);
+    const hold=(await query(`SELECT created_at FROM customer_access_holds WHERE customer_id=$1 AND hold_type='payment_delinquency' AND released_at IS NULL`,[customer.id])).rows[0];
+    const expected=(await query(`SELECT LEAST($1::timestamptz,$2::timestamptz)+make_interval(days=>$3) AS paid_until`,[row.current_period_end,hold.created_at,row.service_extension_days])).rows[0].paid_until;
+    const entitlement=await subscriptionState.effectiveEmbySubscription(customer.id);
+    assert(entitlement,'paid carried days remain entitled');
+    same(entitlement.access_expires_at,expected,label+': canonical access expiry must exclude an unpaid advanced period');
+    if(advance)assert(ms(entitlement.access_expires_at)<ms(row.current_period_end),'provider billing date must not be shown as paid access');
     await query(`UPDATE customer_access_holds SET created_at=NOW()-INTERVAL '101 days' WHERE customer_id=$1`,[customer.id]);
     if(!advance)await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '101 days' WHERE id=$1`,[bought.row.id]);
     assert.equal(await blocked(await get(bought.row.id)),true,label+': blocked once the paid-through date has passed');

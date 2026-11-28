@@ -38,7 +38,7 @@ const CHECKOUT_SAFE=[
  'Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.',
  'Service credit cannot be mixed with a Plisio crypto payment. Use the full service-credit option when your balance covers the plan, or pay the Plisio amount without service credit.',
  'Service credit cannot be used for a same-plan access extension.',
- 'Promo codes are not available for subscription extensions.',
+ 'This win-back code is only available for a new subscription.',
  'Only your current paid plan can be extended. Refresh the page and try again.',
  'The selected extension no longer matches your current plan.',
  'The selected access allowance no longer matches your current plan.',
@@ -139,8 +139,8 @@ async function repurchaseAsExtension(req,provider,planCode,quantity,requested,op
  if(!holding.current)return null;
  const mustProtect=holding.unprotectedIds.length>0;
  if(!mustProtect&&options.length)return null;
- // Promo codes and service credit never apply to an extension.
- if(String(req.body.discountCode||'').trim()||wantsServiceCredit(req)){
+ // Ordinary promo codes may apply to an extension; service credit remains separate.
+ if(wantsServiceCredit(req)){
   if(mustProtect)throw samePlanRepurchase.refusal('UNPROTECTED');
   return null;
  }
@@ -195,7 +195,7 @@ async function stripeSuccessUrl(req,intent){return `${await stateUrl(req,'/accou
 function commercialSnapshot(choice,provider,discount=null){const p=choice.plan,variantKind=choice.accessVariantKind||p.variant_kind||null,quantity=choice.accessQuantity||choiceQuantity(p);return{kind:choice.extensionSubscriptionId?'subscription_extension':'direct_plan',extensionSubscriptionId:choice.extensionSubscriptionId||null,repurchaseReason:choice.repurchaseReason||null,planId:p.id,planPriceId:p.plan_price_id||null,planCode:p.code,planName:p.name,accessVariantId:p.access_variant_id||null,accessVariantKind:variantKind,accessQuantity:quantity,priceMinor:Number(p.price_minor||0),currency:String(p.currency||'').toUpperCase(),billingInterval:p.billing_interval,durationDays:Number(p.duration_days||30),streams:variantKind==='streams'?quantity:Number(p.streams||1),stremioHouseholdNetworkLimit:variantKind==='households'?quantity:Number(p.stremio_household_network_limit||1),allowDownloads:Boolean(p.allow_downloads),allowVideoTranscoding:Boolean(p.allow_video_transcoding),allowAudioTranscoding:Boolean(p.allow_audio_transcoding),allowLiveTv:Boolean(p.allow_live_tv),allowLiveTvManagement:Boolean(p.allow_live_tv_management),serverClass:p.server_class,requestMovieQuotaLimit:p.request_movie_quota_limit==null?null:Number(p.request_movie_quota_limit),requestMovieQuotaDays:p.request_movie_quota_days==null?null:Number(p.request_movie_quota_days),requestTvQuotaLimit:p.request_tv_quota_limit==null?null:Number(p.request_tv_quota_limit),requestTvQuotaDays:p.request_tv_quota_days==null?null:Number(p.request_tv_quota_days),mediaLocation:choice.mediaLocation||null,provider,checkoutMode:choice.mode,providerMappingId:p.external_id||null,providerMappingRecordId:p.provider_mapping_id||null,discountCodeId:discount?.discount?.id||null,discountCode:discount?.discount?.code||null,discountedMinor:discount?.discountedMinor??Number(p.price_minor||0),discountReservationId:discount?.reservation?.id||null};}
 async function livePrimaryRows(customerId){return(await query(`SELECT s.id,s.source,s.provider_subscription_id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND s.superseded_by IS NULL AND s.starts_at<=NOW() AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW()`,[customerId])).rows;}
 async function overlappingRecurring(customerId,target){const rows=await livePrimaryRows(customerId);return rows.filter(row=>serviceScope.overlaps(row,target)&&((row.source==='stripe'&&/^sub_/i.test(String(row.provider_subscription_id||'')))||(row.source==='paypal'&&/^I-/i.test(String(row.provider_subscription_id||'')))));}
-async function resumeExistingCheckout(customerId,provider,choice){
+async function resumeExistingCheckout(customerId,provider,choice,discountCode){
  const existing=await intents.getOutstandingForOwner('customer',customerId);
  if(!existing)return null;
 
@@ -206,7 +206,8 @@ async function resumeExistingCheckout(customerId,provider,choice){
  const requestedExtension=String(choice.extensionSubscriptionId||'');
  const sameLocation=String(existing.commercial_snapshot?.mediaLocation||'')===String(choice.mediaLocation||'');
  const sameTarget=existing.provider===provider&&
-   existing.checkout_mode===choice.mode&&samePlan&&samePrice&&sameLocation&&existingExtension===requestedExtension;
+   existing.checkout_mode===choice.mode&&samePlan&&samePrice&&sameLocation&&existingExtension===requestedExtension&&
+   discounts.normalizeCode(existing.commercial_snapshot?.discountCode)===discounts.normalizeCode(discountCode);
 
  if(sameTarget&&existing.provider_checkout_id){
   let resumed=null;
@@ -244,8 +245,7 @@ async function resumeExistingCheckout(customerId,provider,choice){
 async function begin(req,res,provider){
  await assertProviderCheckoutReady(provider);
  const choice=await chooseOrResolve(req,res,provider);if(!choice||res.headersSent)return null;
- if(choice.extensionSubscriptionId&&String(req.body.discountCode||'').trim())throw new Error('Promo codes are not available for subscription extensions.');
- const resumed=await resumeExistingCheckout(req.session.customerId,provider,choice);if(resumed)return resumed;
+ const resumed=await resumeExistingCheckout(req.session.customerId,provider,choice,req.body.discountCode);if(resumed)return resumed;
  const wantsCredit=wantsServiceCredit(req);
  if(choice.extensionSubscriptionId&&wantsCredit)throw new Error('Service credit cannot be used for a same-plan access extension.');
  if(wantsCredit&&provider==='paypal'&&choice.mode==='subscription')throw new Error('Service credit cannot be combined with a recurring PayPal subscription. Use Stripe, a one-time PayPal option, or full service credit.');
@@ -265,7 +265,7 @@ async function begin(req,res,provider){
 
   if(providerDue===0&&choice.mode==='payment'){
    await zeroValueCheckout.activateFullyDiscountedPayment({customerId:req.session.customerId,intentId:intent.id,nonce:intent.nonce,provider});
-   return{internal:true,message:'Your promo covered the full price. Your access has been activated without sending you to a payment provider.'};
+   return{internal:true,message:choice.extensionSubscriptionId?'Your promo covered the full extension price. The purchased time has been added to your existing access.':'Your promo covered the full price. Your access has been activated without sending you to a payment provider.'};
   }
   if(provider==='stripe'){
    const portal=await customers.getCustomerPortal(req.session.customerId);
