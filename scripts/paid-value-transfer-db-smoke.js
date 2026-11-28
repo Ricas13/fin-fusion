@@ -37,6 +37,13 @@ runDbSmoke('prepared monetary transfer DB smoke',()=>withRollback(async client=>
    const session={id:intent.provider_checkout_id,mode:'subscription',status:'complete',payment_status:'paid',subscription:sub.id,amount_total:row.commercial_snapshot.discountedMinor,currency:'usd'};
    const adapter=async()=>({subscriptions:{retrieve:async()=>sub},checkout:{sessions:{retrieve:async()=>session}}});
    await verifyTarget(row,intent,prepared,adapter);
+   const zeroRow={...row,commercial_snapshot:{...row.commercial_snapshot,discountedMinor:0,serviceCreditMinor:12000,grossDiscountedMinor:12000}};
+   const zeroSub={...sub,default_payment_method:'pm_test',latest_invoice:{...sub.latest_invoice,amount_paid:0,total:0,amount_due:0,amount_remaining:0}};
+   const zeroSession={...session,payment_status:'no_payment_required',amount_total:0,amount_subtotal:12000,total_details:{amount_discount:12000}};
+   const zeroAdapter=async()=>({subscriptions:{retrieve:async()=>zeroSub},checkout:{sessions:{retrieve:async()=>zeroSession}}});
+   await verifyTarget(zeroRow,intent,prepared,zeroAdapter);
+   await assert.rejects(()=>verifyTarget(zeroRow,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...zeroSub,default_payment_method:null})},checkout:{sessions:{retrieve:async()=>zeroSession}}})),/not conclusively verified/);
+   await assert.rejects(()=>verifyTarget(zeroRow,intent,prepared,async()=>({subscriptions:{retrieve:async()=>zeroSub},checkout:{sessions:{retrieve:async()=>({...zeroSession,total_details:{amount_discount:0}})}}})),/not conclusively verified/);
    await assert.rejects(()=>verifyTarget(row,intent,prepared,async()=>({subscriptions:{retrieve:async()=>({...sub,latest_invoice:{...sub.latest_invoice,amount_paid:0}})},checkout:{sessions:{retrieve:async()=>session}}})),/not conclusively verified/);
  }};
  const variantContract={...targetContract,accessVariantId:variant.id,accessVariantKind:'streams',accessQuantity:4,streams:4,priceMinor:18000,discountedMinor:18000,providerMappingRecordId:mapping.id,providerMappingId:mapping.external_id};
